@@ -471,9 +471,15 @@ export function parseYft(bytes, name = "model") {
       return null;
     }
 
-    console.log(`[YFT] Decoded resource: ${resource.data.length} bytes, system=${resource.systemSize}, graphics=${resource.graphicsSize}`);
+    console.log(
+      `[YFT] Decoded resource: ${resource.data.length} bytes, system=${resource.systemSize}, graphics=${resource.graphicsSize}`,
+    );
 
-    const reader = createReader(resource.data, resource.systemSize, resource.graphicsSize);
+    const reader = createReader(
+      resource.data,
+      resource.systemSize,
+      resource.graphicsSize,
+    );
 
     let drawable = parseFragType(reader, name);
 
@@ -498,7 +504,9 @@ export function parseYft(bytes, name = "model") {
     }
 
     const totalVerts = countTotalVertices(drawable);
-    console.log(`[YFT] Successfully parsed: ${drawable.models?.length} models, ${totalVerts} total vertices`);
+    console.log(
+      `[YFT] Successfully parsed: ${drawable.models?.length} models, ${totalVerts} total vertices`,
+    );
     return drawable;
   } catch (error) {
     console.error("[YFT] Parse error:", error);
@@ -563,7 +571,7 @@ function decodeResource(bytes) {
 function calcSegmentSize(flags) {
   if (!flags) return 0;
   const baseShift = (flags >> 0) & 0xf;
-  const count = ((flags >> 8) & 0xff);
+  const count = (flags >> 8) & 0xff;
   if (baseShift > 30 || count === 0) return 0;
   const pageSize = 1 << (baseShift + 12);
   return count * pageSize;
@@ -574,13 +582,18 @@ function createReader(bytes, systemSize, graphicsSize) {
   const len = bytes.length;
 
   return {
-    bytes, view, len,
+    bytes,
+    view,
+    len,
     systemSize: systemSize || len,
     graphicsSize: graphicsSize || 0,
     u8: (offset) => (offset >= 0 && offset < len ? view.getUint8(offset) : 0),
-    u16: (offset) => (offset >= 0 && offset + 2 <= len ? view.getUint16(offset, true) : 0),
-    u32: (offset) => (offset >= 0 && offset + 4 <= len ? view.getUint32(offset, true) : 0),
-    f32: (offset) => (offset >= 0 && offset + 4 <= len ? view.getFloat32(offset, true) : 0),
+    u16: (offset) =>
+      offset >= 0 && offset + 2 <= len ? view.getUint16(offset, true) : 0,
+    u32: (offset) =>
+      offset >= 0 && offset + 4 <= len ? view.getUint32(offset, true) : 0,
+    f32: (offset) =>
+      offset >= 0 && offset + 4 <= len ? view.getFloat32(offset, true) : 0,
     u64: (offset) => {
       if (offset < 0 || offset + 8 > len) return 0n;
       const lo = BigInt(view.getUint32(offset, true) >>> 0);
@@ -588,7 +601,9 @@ function createReader(bytes, systemSize, graphicsSize) {
       return (hi << 32n) | lo;
     },
     valid: (offset) => offset >= 0 && offset < len,
-    resolvePtr: function (ptr) { return resolvePointer(this, ptr); },
+    resolvePtr: function (ptr) {
+      return resolvePointer(this, ptr);
+    },
     validPtr: function (ptr) {
       if (!ptr || ptr === 0n) return false;
       const offset = this.resolvePtr(ptr);
@@ -613,7 +628,7 @@ function resolvePointer(reader, ptr) {
   }
 
   const offset = Number(p);
-  return (offset >= 0 && offset < reader.len) ? offset : 0;
+  return offset >= 0 && offset < reader.len ? offset : 0;
 }
 
 function parseFragType(reader, name) {
@@ -625,7 +640,9 @@ function parseFragType(reader, name) {
       const drawableOffset = reader.resolvePtr(drawablePtr);
       const drawable = parseDrawable(reader, drawableOffset, name);
       if (drawable && hasGeometry(drawable)) {
-        console.log(`[YFT] Found drawable via FragType offset 0x${ptrOffset.toString(16)}`);
+        console.log(
+          `[YFT] Found drawable via FragType offset 0x${ptrOffset.toString(16)}`,
+        );
         return drawable;
       }
     }
@@ -676,7 +693,13 @@ function parseDrawable(reader, offset, name) {
     const modelsPtr = reader.u64(baseOffset + lod.offset);
     if (!reader.validPtr(modelsPtr)) continue;
     const modelsOffset = reader.resolvePtr(modelsPtr);
-    const models = parseModelsPointerArray(reader, modelsOffset, name, lod.name, drawable.shaders);
+    const models = parseModelsPointerArray(
+      reader,
+      modelsOffset,
+      name,
+      lod.name,
+      drawable.shaders,
+    );
     if (models.length > 0) {
       drawable.models = models;
       break;
@@ -689,7 +712,13 @@ function parseDrawable(reader, offset, name) {
       const modelsPtr = reader.u64(baseOffset + altOffset);
       if (!reader.validPtr(modelsPtr)) continue;
       const modelsOffset = reader.resolvePtr(modelsPtr);
-      const models = parseModelsPointerArray(reader, modelsOffset, name, "high", drawable.shaders);
+      const models = parseModelsPointerArray(
+        reader,
+        modelsOffset,
+        name,
+        "high",
+        drawable.shaders,
+      );
       if (models.length > 0) {
         drawable.models = models;
         break;
@@ -726,7 +755,12 @@ function parseShader(reader, offset, index) {
   if (!reader.valid(offset) || offset + 48 > reader.len) return null;
   const nameHash = reader.u32(offset + 0x08) >>> 0;
   const hashHex = nameHash.toString(16).padStart(8, "0");
-  return { index, nameHash, name: identifyMaterialName(nameHash, hashHex), hashHex };
+  return {
+    index,
+    nameHash,
+    name: identifyMaterialName(nameHash, hashHex),
+    hashHex,
+  };
 }
 
 function identifyMaterialName(hash, hashHex) {
@@ -745,7 +779,12 @@ function parseModelsPointerArray(reader, offset, baseName, lodName, shaders) {
   let count = reader.u16(offset + 8);
 
   if (count === 0 || count > MAX_MODELS) {
-    const directModel = parseDrawableModel(reader, offset, `${baseName}_${lodName}_0`, shaders);
+    const directModel = parseDrawableModel(
+      reader,
+      offset,
+      `${baseName}_${lodName}_0`,
+      shaders,
+    );
     if (directModel && directModel.meshes.length > 0) return [directModel];
     return [];
   }
@@ -757,7 +796,12 @@ function parseModelsPointerArray(reader, offset, baseName, lodName, shaders) {
     const modelPtr = reader.u64(arrayOffset + i * 8);
     if (!reader.validPtr(modelPtr)) continue;
     const modelOffset = reader.resolvePtr(modelPtr);
-    const model = parseDrawableModel(reader, modelOffset, `${baseName}_${lodName}_${i}`, shaders);
+    const model = parseDrawableModel(
+      reader,
+      modelOffset,
+      `${baseName}_${lodName}_${i}`,
+      shaders,
+    );
     if (model && model.meshes.length > 0) models.push(model);
   }
   return models;
@@ -771,7 +815,8 @@ function parseDrawableModel(reader, offset, name, shaders) {
   let geometriesCount = reader.u16(offset + 0x10);
   const shaderMappingPtr = reader.u64(offset + 0x20);
 
-  if (geometriesCount === 0 || geometriesCount > MAX_GEOMETRIES) geometriesCount = 1;
+  if (geometriesCount === 0 || geometriesCount > MAX_GEOMETRIES)
+    geometriesCount = 1;
   if (!reader.validPtr(geometriesPtr)) return null;
 
   const geometriesArrayOffset = reader.resolvePtr(geometriesPtr);
@@ -816,12 +861,24 @@ function parseGeometry(reader, offset, name) {
     vertexData = parseVertexBuffer(reader, vbOffset, vertexDecl);
   }
 
-  if (!vertexData && reader.validPtr(vertexDataPtr) && vertexStride > 0 && verticesCount > 0) {
+  if (
+    !vertexData &&
+    reader.validPtr(vertexDataPtr) &&
+    vertexStride > 0 &&
+    verticesCount > 0
+  ) {
     const dataOffset = reader.resolvePtr(vertexDataPtr);
-    vertexData = parseVertexData(reader, dataOffset, vertexStride, verticesCount, vertexDecl);
+    vertexData = parseVertexData(
+      reader,
+      dataOffset,
+      vertexStride,
+      verticesCount,
+      vertexDecl,
+    );
   }
 
-  if (!vertexData || !vertexData.positions || vertexData.positions.length === 0) return null;
+  if (!vertexData || !vertexData.positions || vertexData.positions.length === 0)
+    return null;
 
   let indices = null;
   if (reader.validPtr(indexBufferPtr)) {
@@ -840,6 +897,8 @@ function parseGeometry(reader, offset, name) {
     normals: vertexData.normals,
     uvs: vertexData.uvs,
     uvs2: vertexData.uvs2,
+    uvs3: vertexData.uvs3,
+    uvs4: vertexData.uvs4,
     colors: vertexData.colors,
     tangents: vertexData.tangents,
     indices,
@@ -849,36 +908,183 @@ function parseGeometry(reader, offset, name) {
 // Parse the vertex declaration from geometry to get proper attribute offsets
 function parseVertexDeclaration(reader, geomOffset) {
   const stride = reader.u16(geomOffset + 0x70);
+  const fallback = detectVertexFormat(stride);
 
-  // The value at 0x68 in GTA V is often a pointer, not flags
-  // We need to use the stride to determine the vertex format
-  // Always use stride-based detection which is more reliable
-  const decl = detectVertexFormat(stride);
+  const vertexBufferPtr = reader.u64(geomOffset + 0x18);
+  if (!reader.validPtr(vertexBufferPtr)) return fallback;
 
-  console.log(`[YFT] Vertex format: stride=${stride}, normalOffset=${decl.normalOffset}, colorOffset=${decl.colorOffset}, uv0Offset=${decl.uv0Offset}, uv1Offset=${decl.uv1Offset}`);
+  const vbOffset = reader.resolvePtr(vertexBufferPtr);
+  let infoPtr = reader.u64(vbOffset + 0x30);
+  if (!reader.validPtr(infoPtr)) {
+    infoPtr = reader.u64(vbOffset + 0x38);
+  }
+  const decl = parseLegacyVertexDeclaration(reader, infoPtr, stride);
+
+  if (!decl) return fallback;
+
+  console.log(
+    `[YFT] Vertex format: stride=${decl.stride ?? stride}, normalOffset=${decl.normalOffset}, colorOffset=${decl.colorOffset}, uv0Offset=${decl.uv0Offset}, uv1Offset=${decl.uv1Offset}`,
+  );
 
   return decl;
+}
+
+function parseLegacyVertexDeclaration(reader, infoPtr, fallbackStride) {
+  if (!reader.validPtr(infoPtr)) return null;
+  const infoOffset = reader.resolvePtr(infoPtr);
+  if (!reader.valid(infoOffset) || infoOffset + 16 > reader.len) return null;
+
+  const flags = reader.u32(infoOffset);
+  const stride = reader.u16(infoOffset + 0x04);
+  const count = reader.u8(infoOffset + 0x07);
+  const types = reader.u64(infoOffset + 0x08);
+
+  if (!flags || count === 0) return null;
+
+  const decl = buildVertexDeclFromFlags(flags, types);
+  if (!decl) return null;
+  decl.stride = stride || fallbackStride || 0;
+  return decl;
+}
+
+function buildVertexDeclFromFlags(flags, types) {
+  const decl = {
+    positionOffset: -1,
+    normalOffset: -1,
+    colorOffset: -1,
+    uv0Offset: -1,
+    uv1Offset: -1,
+    uv2Offset: -1,
+    uv3Offset: -1,
+    uv4Offset: -1,
+    texcoordOffsets: Array(8).fill(-1),
+    texcoordTypes: Array(8).fill(null),
+    tangentOffset: -1,
+    positionType: null,
+    normalType: null,
+    colorType: null,
+    uv0Type: null,
+    uv1Type: null,
+    uv2Type: null,
+    uv3Type: null,
+    uv4Type: null,
+    tangentType: null,
+  };
+
+  let offset = 0;
+  for (let i = 0; i < 16; i++) {
+    if (((flags >>> i) & 1) === 0) continue;
+    const type = getVertexComponentType(types, i);
+
+    if (i === 0) {
+      decl.positionOffset = offset;
+      decl.positionType = type;
+    } else if (i === 3) {
+      decl.normalOffset = offset;
+      decl.normalType = type;
+    } else if (i === 4) {
+      decl.colorOffset = offset;
+      decl.colorType = type;
+    } else if (i >= 6 && i <= 13) {
+      const texIndex = i - 6;
+      decl.texcoordOffsets[texIndex] = offset;
+      decl.texcoordTypes[texIndex] = type;
+      if (texIndex === 0) {
+        decl.uv0Offset = offset;
+        decl.uv0Type = type;
+      } else if (texIndex === 1) {
+        decl.uv1Offset = offset;
+        decl.uv1Type = type;
+      } else if (texIndex === 2) {
+        decl.uv2Offset = offset;
+        decl.uv2Type = type;
+      } else if (texIndex === 3) {
+        decl.uv3Offset = offset;
+        decl.uv3Type = type;
+      } else if (texIndex === 4) {
+        decl.uv4Offset = offset;
+        decl.uv4Type = type;
+      }
+    } else if (i === 14) {
+      decl.tangentOffset = offset;
+      decl.tangentType = type;
+    }
+
+    offset += getVertexComponentSize(type);
+  }
+
+  if (offset === 0) return null;
+
+  return decl;
+}
+
+function getVertexComponentType(types, index) {
+  if (types === null || types === undefined) return 0;
+  const shift = BigInt(index * 4);
+  return Number((types >> shift) & 0xfn);
+}
+
+function getVertexComponentSize(type) {
+  switch (type) {
+    case 1: // Half2
+    case 2: // Float
+    case 8: // UByte4
+    case 9: // Colour
+    case 10: // RGBA8SNorm
+      return 4;
+    case 3: // Half4
+    case 5: // Float2
+      return 8;
+    case 6: // Float3
+      return 12;
+    case 7: // Float4
+      return 16;
+    default:
+      return 0;
+  }
 }
 
 function parseVertexBuffer(reader, offset, vertexDecl = null) {
   if (!reader.valid(offset) || offset + 64 > reader.len) return null;
 
-  let stride = 0, count = 0, dataPtr = 0n;
+  let stride = 0;
+  let count = 0;
+  let dataPtr = 0n;
 
-  const potentialCount1 = reader.u32(offset + 0x08);
-  const potentialStride1 = reader.u16(offset + 0x0c);
-  const potentialStride2 = reader.u16(offset + 0x08);
-  const potentialCount2 = reader.u32(offset + 0x18);
+  const legacyStride = reader.u16(offset + 0x08);
+  const legacyCount = reader.u32(offset + 0x18);
+  const legacyDataPtr = reader.u64(offset + 0x10);
+  const legacyDataPtr2 = reader.u64(offset + 0x20);
 
-  if (potentialStride1 > 0 && potentialStride1 <= 256 && potentialCount1 > 0 && potentialCount1 <= MAX_VERTICES) {
-    count = potentialCount1;
-    stride = potentialStride1;
-    dataPtr = reader.u64(offset + 0x18);
-  } else if (potentialStride2 > 0 && potentialStride2 <= 256 && potentialCount2 > 0 && potentialCount2 <= MAX_VERTICES) {
-    stride = potentialStride2;
-    count = potentialCount2;
-    dataPtr = reader.u64(offset + 0x10);
-    if (!reader.validPtr(dataPtr)) dataPtr = reader.u64(offset + 0x20);
+  if (
+    legacyStride > 0 &&
+    legacyStride <= 256 &&
+    legacyCount > 0 &&
+    legacyCount <= MAX_VERTICES
+  ) {
+    stride = legacyStride;
+    count = legacyCount;
+    dataPtr = reader.validPtr(legacyDataPtr) ? legacyDataPtr : legacyDataPtr2;
+  }
+
+  if (
+    (stride === 0 || count === 0 || !reader.validPtr(dataPtr)) &&
+    offset + 64 <= reader.len
+  ) {
+    const gen9Count = reader.u32(offset + 0x08);
+    const gen9Stride = reader.u16(offset + 0x0c);
+    const gen9DataPtr = reader.u64(offset + 0x18);
+    if (
+      gen9Stride > 0 &&
+      gen9Stride <= 256 &&
+      gen9Count > 0 &&
+      gen9Count <= MAX_VERTICES &&
+      reader.validPtr(gen9DataPtr)
+    ) {
+      stride = gen9Stride;
+      count = gen9Count;
+      dataPtr = gen9DataPtr;
+    }
   }
 
   if (stride === 0 || count === 0 || !reader.validPtr(dataPtr)) return null;
@@ -894,10 +1100,16 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
 
   const positions = new Float32Array(safeCount * 3);
   const normals = new Float32Array(safeCount * 3);
-  const uvs = new Float32Array(safeCount * 2);
-  const uvs2 = new Float32Array(safeCount * 2);
+  const uvSets = [
+    new Float32Array(safeCount * 2),
+    new Float32Array(safeCount * 2),
+    new Float32Array(safeCount * 2),
+    new Float32Array(safeCount * 2),
+  ];
   const colors = new Float32Array(safeCount * 4);
-  let hasNormals = false, hasUVs = false, hasUVs2 = false, hasColors = false;
+  const hasUVs = [false, false, false, false];
+  let hasNormals = false,
+    hasColors = false;
 
   // Use vertex declaration if available, otherwise fall back to stride-based detection
   const format = vertexDecl || detectVertexFormat(stride);
@@ -911,7 +1123,12 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
     let py = reader.f32(vOffset + posOffset + 4);
     let pz = reader.f32(vOffset + posOffset + 8);
 
-    if (Math.abs(px) > 50000 || Math.abs(py) > 50000 || Math.abs(pz) > 50000 || !isFinite(px)) {
+    if (
+      Math.abs(px) > 50000 ||
+      Math.abs(py) > 50000 ||
+      Math.abs(pz) > 50000 ||
+      !isFinite(px)
+    ) {
       px = halfToFloat(reader.u16(vOffset + posOffset));
       py = halfToFloat(reader.u16(vOffset + posOffset + 2));
       pz = halfToFloat(reader.u16(vOffset + posOffset + 4));
@@ -921,57 +1138,58 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
 
-    // Normal (dec3n packed format - 4 bytes)
+    // Normal
     const normalOffset = format.normalOffset;
-    if (normalOffset >= 0 && normalOffset + 4 <= stride) {
-      const packed = reader.u32(vOffset + normalOffset);
-      const nx = ((packed & 0x3ff) / 511.5) - 1.0;
-      const ny = (((packed >> 10) & 0x3ff) / 511.5) - 1.0;
-      const nz = (((packed >> 20) & 0x3ff) / 511.5) - 1.0;
-      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      if (len > 0.01 && len < 100) {
-        normals[i * 3] = nx / len;
-        normals[i * 3 + 1] = ny / len;
-        normals[i * 3 + 2] = nz / len;
-        hasNormals = true;
+    const normalType = format.normalType;
+    const normalSize = getVertexComponentSize(normalType) || 4;
+    if (normalOffset >= 0 && normalOffset + normalSize <= stride) {
+      const normal = readNormal(reader, vOffset + normalOffset, normalType);
+      if (normal) {
+        const [nx, ny, nz] = normal;
+        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 0.01 && len < 100) {
+          normals[i * 3] = nx / len;
+          normals[i * 3 + 1] = ny / len;
+          normals[i * 3 + 2] = nz / len;
+          hasNormals = true;
+        }
       }
     }
 
-    // Color (RGBA, 4 bytes)
+    // Color
     const colorOffset = format.colorOffset;
-    if (colorOffset >= 0 && colorOffset + 4 <= stride) {
-      const r = reader.u8(vOffset + colorOffset) / 255.0;
-      const g = reader.u8(vOffset + colorOffset + 1) / 255.0;
-      const b = reader.u8(vOffset + colorOffset + 2) / 255.0;
-      const a = reader.u8(vOffset + colorOffset + 3) / 255.0;
-      colors[i * 4] = r;
-      colors[i * 4 + 1] = g;
-      colors[i * 4 + 2] = b;
-      colors[i * 4 + 3] = a;
-      hasColors = true;
-    }
-
-    // UV0 (half2 format - 4 bytes)
-    const uv0Offset = format.uv0Offset;
-    if (uv0Offset >= 0 && uv0Offset + 4 <= stride) {
-      const u = halfToFloat(reader.u16(vOffset + uv0Offset));
-      const v = halfToFloat(reader.u16(vOffset + uv0Offset + 2));
-      if (isFinite(u) && isFinite(v) && Math.abs(u) < 1000 && Math.abs(v) < 1000) {
-        uvs[i * 2] = u;
-        uvs[i * 2 + 1] = v;
-        hasUVs = true;
+    const colorSize = getVertexComponentSize(format.colorType) || 4;
+    if (colorOffset >= 0 && colorOffset + colorSize <= stride) {
+      const color = readColor(reader, vOffset + colorOffset, format.colorType);
+      if (color) {
+        colors[i * 4] = color[0];
+        colors[i * 4 + 1] = color[1];
+        colors[i * 4 + 2] = color[2];
+        colors[i * 4 + 3] = color[3];
+        hasColors = true;
       }
     }
 
-    // UV1 (half2 format - 4 bytes)
-    const uv1Offset = format.uv1Offset;
-    if (uv1Offset >= 0 && uv1Offset + 4 <= stride) {
-      const u = halfToFloat(reader.u16(vOffset + uv1Offset));
-      const v = halfToFloat(reader.u16(vOffset + uv1Offset + 2));
-      if (isFinite(u) && isFinite(v) && Math.abs(u) < 1000 && Math.abs(v) < 1000) {
-        uvs2[i * 2] = u;
-        uvs2[i * 2 + 1] = v;
-        hasUVs2 = true;
+    // UV0
+    const texOffsets = format.texcoordOffsets || [];
+    const texTypes = format.texcoordTypes || [];
+    for (let t = 0; t < 4; t += 1) {
+      const offsetT = texOffsets[t] ?? -1;
+      const typeT = texTypes[t] ?? 1;
+      if (offsetT < 0) continue;
+      const sizeT = getVertexComponentSize(typeT) || 4;
+      if (offsetT + sizeT > stride) continue;
+      const uv = readTexcoord(reader, vOffset + offsetT, typeT);
+      if (
+        uv &&
+        isFinite(uv[0]) &&
+        isFinite(uv[1]) &&
+        Math.abs(uv[0]) < 1000 &&
+        Math.abs(uv[1]) < 1000
+      ) {
+        uvSets[t][i * 2] = uv[0];
+        uvSets[t][i * 2 + 1] = uv[1];
+        hasUVs[t] = true;
       }
     }
   }
@@ -979,11 +1197,100 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
   return {
     positions,
     normals: hasNormals ? normals : null,
-    uvs: hasUVs ? uvs : null,
-    uvs2: hasUVs2 ? uvs2 : null,
+    uvs: hasUVs[0] ? uvSets[0] : null,
+    uvs2: hasUVs[1] ? uvSets[1] : null,
+    uvs3: hasUVs[2] ? uvSets[2] : null,
+    uvs4: hasUVs[3] ? uvSets[3] : null,
     colors: hasColors ? colors : null,
     tangents: null,
   };
+}
+
+function readTexcoord(reader, offset, type) {
+  // GTA V uses DirectX texture coordinates (V=0 at top)
+  // WebGL/Three.js uses OpenGL coordinates (V=0 at bottom)
+  // We need to flip the V coordinate: v = 1 - v
+  const resolvedType = type ?? 1;
+  let u, v;
+  switch (resolvedType) {
+    case 5: // Float2
+      u = reader.f32(offset);
+      v = reader.f32(offset + 4);
+      break;
+    case 3: // Half4
+      u = halfToFloat(reader.u16(offset));
+      v = halfToFloat(reader.u16(offset + 2));
+      break;
+    case 7: // Float4
+      u = reader.f32(offset);
+      v = reader.f32(offset + 4);
+      break;
+    case 1: // Half2
+    default:
+      u = halfToFloat(reader.u16(offset));
+      v = halfToFloat(reader.u16(offset + 2));
+      break;
+  }
+  // Flip V coordinate from DirectX to OpenGL format
+  return [u, 1.0 - v];
+}
+
+function readNormal(reader, offset, type) {
+  switch (type) {
+    case 6: // Float3
+      return [
+        reader.f32(offset),
+        reader.f32(offset + 4),
+        reader.f32(offset + 8),
+      ];
+    case 7: // Float4
+      return [
+        reader.f32(offset),
+        reader.f32(offset + 4),
+        reader.f32(offset + 8),
+      ];
+    case 10: {
+      // RGBA8SNorm
+      const x = toSnorm8(reader.u8(offset));
+      const y = toSnorm8(reader.u8(offset + 1));
+      const z = toSnorm8(reader.u8(offset + 2));
+      return [x, y, z];
+    }
+    default:
+      return decodeDec3n(reader.u32(offset));
+  }
+}
+
+function readColor(reader, offset, type) {
+  const r = reader.u8(offset);
+  const g = reader.u8(offset + 1);
+  const b = reader.u8(offset + 2);
+  const a = reader.u8(offset + 3);
+  if (type === 10) {
+    return [
+      toUnormFromSnorm8(r),
+      toUnormFromSnorm8(g),
+      toUnormFromSnorm8(b),
+      toUnormFromSnorm8(a),
+    ];
+  }
+  return [r / 255.0, g / 255.0, b / 255.0, a / 255.0];
+}
+
+function decodeDec3n(packed) {
+  const nx = (packed & 0x3ff) / 511.5 - 1.0;
+  const ny = ((packed >> 10) & 0x3ff) / 511.5 - 1.0;
+  const nz = ((packed >> 20) & 0x3ff) / 511.5 - 1.0;
+  return [nx, ny, nz];
+}
+
+function toSnorm8(value) {
+  const signed = value > 127 ? value - 256 : value;
+  return Math.max(-1, Math.min(1, signed / 127));
+}
+
+function toUnormFromSnorm8(value) {
+  return (toSnorm8(value) + 1) * 0.5;
 }
 
 function detectVertexFormat(stride) {
@@ -1002,6 +1309,20 @@ function detectVertexFormat(stride) {
     colorOffset: -1,
     uv0Offset: -1,
     uv1Offset: -1,
+    uv2Offset: -1,
+    uv3Offset: -1,
+    uv4Offset: -1,
+    texcoordOffsets: Array(8).fill(-1),
+    texcoordTypes: Array(8).fill(null),
+    positionType: 6,
+    normalType: null,
+    colorType: 9,
+    uv0Type: 1,
+    uv1Type: 1,
+    uv2Type: 1,
+    uv3Type: 1,
+    uv4Type: 1,
+    tangentType: null,
   };
 
   switch (stride) {
@@ -1009,12 +1330,16 @@ function detectVertexFormat(stride) {
       // pos(12) + normal(4) + uv(4)
       format.normalOffset = 12;
       format.uv0Offset = 16;
+      format.texcoordOffsets[0] = 16;
+      format.texcoordTypes[0] = format.uv0Type;
       break;
     case 24:
       // pos(12) + normal(4) + color(4) + uv(4)
       format.normalOffset = 12;
       format.colorOffset = 16;
       format.uv0Offset = 20;
+      format.texcoordOffsets[0] = 20;
+      format.texcoordTypes[0] = format.uv0Type;
       break;
     case 28:
       // pos(12) + normal(4) + color(4) + uv(4) + uv2(4)
@@ -1022,23 +1347,33 @@ function detectVertexFormat(stride) {
       format.colorOffset = 16;
       format.uv0Offset = 20;
       format.uv1Offset = 24;
+      format.texcoordOffsets[0] = 20;
+      format.texcoordTypes[0] = format.uv0Type;
+      format.texcoordOffsets[1] = 24;
+      format.texcoordTypes[1] = format.uv1Type;
       break;
     case 32:
       // pos(12) + blendw(4) + blendi(4) + normal(4) + uv(4)
       format.normalOffset = 20;
       format.uv0Offset = 24;
+      format.texcoordOffsets[0] = 24;
+      format.texcoordTypes[0] = format.uv0Type;
       break;
     case 36:
       // pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4)
       format.normalOffset = 20;
       format.colorOffset = 24;
       format.uv0Offset = 28;
+      format.texcoordOffsets[0] = 28;
+      format.texcoordTypes[0] = format.uv0Type;
       break;
     case 40:
       // pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4) + tangent(4)
       format.normalOffset = 20;
       format.colorOffset = 24;
       format.uv0Offset = 28;
+      format.texcoordOffsets[0] = 28;
+      format.texcoordTypes[0] = format.uv0Type;
       break;
     case 44:
       // pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4) + uv2(4) + tangent(4)
@@ -1046,6 +1381,10 @@ function detectVertexFormat(stride) {
       format.colorOffset = 24;
       format.uv0Offset = 28;
       format.uv1Offset = 32;
+      format.texcoordOffsets[0] = 28;
+      format.texcoordTypes[0] = format.uv0Type;
+      format.texcoordOffsets[1] = 32;
+      format.texcoordTypes[1] = format.uv1Type;
       break;
     default:
       // Generic fallback: assume pos(12) + normal(4) + maybe color(4) + uv(4)
@@ -1054,6 +1393,10 @@ function detectVertexFormat(stride) {
       if (stride >= 24) {
         format.colorOffset = 16;
         format.uv0Offset = 20;
+      }
+      if (format.uv0Offset >= 0) {
+        format.texcoordOffsets[0] = format.uv0Offset;
+        format.texcoordTypes[0] = format.uv0Type;
       }
       break;
   }
@@ -1072,7 +1415,8 @@ function parseIndexBuffer(reader, offset) {
     dataPtr = reader.u64(offset + 0x18);
   }
 
-  if (count === 0 || count > MAX_INDICES || !reader.validPtr(dataPtr)) return null;
+  if (count === 0 || count > MAX_INDICES || !reader.validPtr(dataPtr))
+    return null;
 
   const dataOffset = reader.resolvePtr(dataPtr);
   const safeCount = Math.min(count, MAX_INDICES);
@@ -1090,7 +1434,10 @@ function halfToFloat(h) {
   let mant = h & 0x3ff;
   if (exp === 0) {
     if (mant === 0) return sign ? -0.0 : 0.0;
-    while (!(mant & 0x400)) { mant <<= 1; exp -= 1; }
+    while (!(mant & 0x400)) {
+      mant <<= 1;
+      exp -= 1;
+    }
     exp += 1;
     mant &= 0x3ff;
   } else if (exp === 31) {
@@ -1110,7 +1457,8 @@ function generateSequentialIndices(vertexCount) {
 }
 
 function hasGeometry(drawable) {
-  if (!drawable || !drawable.models || drawable.models.length === 0) return false;
+  if (!drawable || !drawable.models || drawable.models.length === 0)
+    return false;
   let totalVertices = 0;
   for (const model of drawable.models) {
     for (const mesh of model.meshes || []) {
@@ -1128,7 +1476,11 @@ function scanForDrawable(reader) {
     const modelsHigh = reader.u64(offset + 0x50);
     const modelsMed = reader.u64(offset + 0x58);
     const modelsLow = reader.u64(offset + 0x60);
-    if (reader.validPtr(modelsHigh) || reader.validPtr(modelsMed) || reader.validPtr(modelsLow)) {
+    if (
+      reader.validPtr(modelsHigh) ||
+      reader.validPtr(modelsMed) ||
+      reader.validPtr(modelsLow)
+    ) {
       return offset;
     }
   }

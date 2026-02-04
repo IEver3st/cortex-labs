@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, RotateCcw, Square, X } from "lucide-react";
+import { ChevronDown, Minus, RotateCcw, Square, X } from "lucide-react";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
@@ -32,10 +32,20 @@ const BUILT_IN_DEFAULTS = {
   backgroundColor: DEFAULT_BG,
 };
 
+const BUILT_IN_UI = {
+  colorsOpen: true,
+};
+
 function getInitialDefaults() {
   const prefs = loadPrefs();
   const stored = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
   return { ...BUILT_IN_DEFAULTS, ...stored };
+}
+
+function getInitialUi() {
+  const prefs = loadPrefs();
+  const stored = prefs?.ui && typeof prefs.ui === "object" ? prefs.ui : {};
+  return { ...BUILT_IN_UI, ...stored };
 }
 
 function App() {
@@ -55,6 +65,7 @@ function App() {
   const [texturePath, setTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
+  const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
   const [textureReloadToken, setTextureReloadToken] = useState(0);
   const [modelReloadToken, setModelReloadToken] = useState(0);
   const [textureTargets, setTextureTargets] = useState([]);
@@ -185,8 +196,15 @@ function App() {
     setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
     setBodyColor(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
-    savePrefs({ defaults: merged });
+    const prefs = loadPrefs() || {};
+    savePrefs({ ...prefs, defaults: merged });
   }, []);
+
+  useEffect(() => {
+    const prefs = loadPrefs() || {};
+    const ui = { ...(prefs.ui || {}), colorsOpen };
+    savePrefs({ ...prefs, ui });
+  }, [colorsOpen]);
 
   const completeOnboarding = useCallback(
     (next) => {
@@ -261,6 +279,11 @@ function App() {
     if (!isTauriRuntime) return;
     await getCurrentWindow().close();
   };
+
+  const handleCenterCamera = () => {
+    viewerApiRef.current?.reset?.();
+  };
+
 
   const handleDragOver = (event) => {
     event.preventDefault();
@@ -448,7 +471,7 @@ function App() {
           <div className="control-group">
             <Label>Select Vehicle Model</Label>
             <Button variant="outline" onClick={selectModel}>
-              Select .obj / .yft / .clmesh
+              Select Model
             </Button>
             <div className="file-meta mono">
               {(modelSourcePath || modelPath)
@@ -543,18 +566,18 @@ function App() {
             </div>
           </div>
 
-          {textureMode === "livery" ? (
+            {textureMode === "livery" ? (
             <div className="control-group">
               <Label>Exterior Only</Label>
               <div className="toggle-row">
                 <button
                   type="button"
-                  className={`toggle-switch ${liveryExteriorOnly ? "is-on" : ""}`}
+                  className={`settings-toggle ${liveryExteriorOnly ? "is-on" : ""}`}
                   onClick={() => setLiveryExteriorOnly((prev) => !prev)}
                   aria-pressed={liveryExteriorOnly}
                   aria-label="Toggle exterior only"
                 >
-                  <span className="toggle-switch-thumb" aria-hidden="true" />
+                  <span className="settings-toggle-dot" aria-hidden="true" />
                 </button>
                 <span className="toggle-switch-label">{liveryExteriorOnly ? "On" : "Off"}</span>
               </div>
@@ -563,60 +586,94 @@ function App() {
           ) : null}
 
           <div className="control-group">
-            <Label>Body Color</Label>
-            <div className="color-input">
-              <div className="color-swatch-wrapper">
-                <div className="color-swatch" style={{ background: bodyColor }} />
-                <input
-                  type="color"
-                  value={bodyColor}
-                  onChange={(event) => setBodyColor(event.currentTarget.value)}
-                  className="color-picker-native"
-                  aria-label="Body color picker"
-                />
-              </div>
-              <Input
-                className="mono h-8 px-2"
-                value={bodyColor}
-                onChange={(event) => setBodyColor(event.currentTarget.value)}
-              />
-              <Button
-                variant="ghost"
-                className="h-8 w-8 p-0 text-white/30 hover:text-white"
-                onClick={() => setBodyColor(DEFAULT_BODY)}
-                title="Revert to default"
+            <div className="settings-section">
+              <button
+                type="button"
+                className="settings-section-toggle"
+                onClick={() => setColorsOpen((prev) => !prev)}
+                aria-expanded={colorsOpen}
+                aria-controls="panel-colors"
               >
-                <RotateCcw className="h-3 w-3" />
-              </Button>
-            </div>
-          </div>
+                <span className="settings-section-title">Colors</span>
+                <motion.span
+                  className="settings-section-chevron"
+                  animate={{ rotate: colorsOpen ? 0 : -90 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <ChevronDown className="settings-section-chevron-svg" aria-hidden="true" />
+                </motion.span>
+              </button>
 
-          <div className="control-group">
-            <Label>Background Color</Label>
-            <div className="color-input">
-              <div className="color-swatch-wrapper">
-                <div className="color-swatch" style={{ background: backgroundColor }} />
-                <input
-                  type="color"
-                  value={backgroundColor}
-                  onChange={(event) => setBackgroundColor(event.currentTarget.value)}
-                  className="color-picker-native"
-                  aria-label="Background color picker"
-                />
-              </div>
-              <Input
-                className="mono h-8 px-2"
-                value={backgroundColor}
-                onChange={(event) => setBackgroundColor(event.currentTarget.value)}
-              />
-              <Button
-                variant="ghost"
-                className="h-8 w-8 p-0 text-white/30 hover:text-white"
-                onClick={() => setBackgroundColor(DEFAULT_BG)}
-                title="Revert to default"
-              >
-                <RotateCcw className="h-3 w-3" />
-              </Button>
+              <AnimatePresence initial={false}>
+                {colorsOpen ? (
+                  <motion.div
+                    id="panel-colors"
+                    className="settings-section-body panel-section-body"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                  >
+                    <div className="control-group">
+                      <Label>Body Color</Label>
+                      <div className="color-input">
+                        <div className="color-swatch-wrapper">
+                          <div className="color-swatch" style={{ background: bodyColor }} />
+                          <input
+                            type="color"
+                            value={bodyColor}
+                            onChange={(event) => setBodyColor(event.currentTarget.value)}
+                            className="color-picker-native"
+                            aria-label="Body color picker"
+                          />
+                        </div>
+                        <Input
+                          className="mono h-8 px-2"
+                          value={bodyColor}
+                          onChange={(event) => setBodyColor(event.currentTarget.value)}
+                        />
+                        <Button
+                          variant="ghost"
+                          className="h-8 w-8 p-0 text-white/30 hover:text-white"
+                          onClick={() => setBodyColor(DEFAULT_BODY)}
+                          title="Revert to default"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="control-group">
+                      <Label>Background Color</Label>
+                      <div className="color-input">
+                        <div className="color-swatch-wrapper">
+                          <div className="color-swatch" style={{ background: backgroundColor }} />
+                          <input
+                            type="color"
+                            value={backgroundColor}
+                            onChange={(event) => setBackgroundColor(event.currentTarget.value)}
+                            className="color-picker-native"
+                            aria-label="Background color picker"
+                          />
+                        </div>
+                        <Input
+                          className="mono h-8 px-2"
+                          value={backgroundColor}
+                          onChange={(event) => setBackgroundColor(event.currentTarget.value)}
+                        />
+                        <Button
+                          variant="ghost"
+                          className="h-8 w-8 p-0 text-white/30 hover:text-white"
+                          onClick={() => setBackgroundColor(DEFAULT_BG)}
+                          title="Revert to default"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
           </div>
 
@@ -657,6 +714,7 @@ function App() {
           backgroundColor={backgroundColor}
           textureReloadToken={textureReloadToken}
           textureTarget={resolvedTextureTarget}
+          textureMode={textureMode}
           liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
           onModelInfo={handleModelInfo}
           onModelError={handleModelError}
@@ -674,28 +732,34 @@ function App() {
         </AnimatePresence>
 
         <div className="viewer-toolbar">
-          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("front")}>
-            Front
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("side")}>
-            Side
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("angle")}>
-            3/4
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("top")}>
-            Top
-          </Button>
-          <span className="toolbar-separator" />
-          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-            Rot X
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-            Rot Y
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-            Rot Z
-          </Button>
+          <div className="viewer-toolbar-row">
+            <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("front")}>
+              Front
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("side")}>
+              Side
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("angle")}>
+              3/4
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("top")}>
+              Top
+            </Button>
+            <Button size="sm" variant="ghost" onClick={handleCenterCamera} disabled={!viewerReady}>
+              Center
+            </Button>
+          </div>
+          <div className="viewer-toolbar-row">
+            <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
+              Rot X
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
+              Rot Y
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
+              Rot Z
+            </Button>
+          </div>
         </div>
 
         <div className="viewer-hints">

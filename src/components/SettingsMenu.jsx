@@ -1,32 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Settings } from "lucide-react";
-
-function useHoverIntent({ closeDelayMs = 120 } = {}) {
-  const [open, setOpen] = useState(false);
-  const timerRef = useRef(null);
-
-  const clear = () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  };
-
-  const onEnter = () => {
-    clear();
-    setOpen(true);
-  };
-
-  const onLeave = () => {
-    clear();
-    timerRef.current = setTimeout(() => setOpen(false), closeDelayMs);
-  };
-
-  useEffect(() => () => clear(), []);
-
-  return { open, setOpen, onEnter, onLeave };
-}
+import { ChevronDown, Settings } from "lucide-react";
 
 function ColorField({ label, value, onChange, onReset }) {
   return (
@@ -61,7 +35,8 @@ export default function SettingsMenu({
   builtInDefaults,
   onSave,
 }) {
-  const { open, setOpen, onEnter, onLeave } = useHoverIntent({ closeDelayMs: 140 });
+  const [open, setOpen] = useState(false);
+  const [colorsOpen, setColorsOpen] = useState(true);
   const [hoveringIcon, setHoveringIcon] = useState(false);
   const wrapperRef = useRef(null);
   const popoverRef = useRef(null);
@@ -73,6 +48,28 @@ export default function SettingsMenu({
   useEffect(() => {
     setDraft({ ...defaults });
   }, [defaults]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event) => {
+      if (!wrapperRef.current) return;
+      if (wrapperRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -149,19 +146,20 @@ export default function SettingsMenu({
     setOpen(false);
   };
 
+  const toggleOpen = () => {
+    setOpen((prev) => !prev);
+  };
+
   return (
     <div
       ref={wrapperRef}
       className="settings-anchor"
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
     >
       <motion.button
         type="button"
         className="settings-cog"
         aria-label="Settings"
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
+        onClick={toggleOpen}
         onMouseEnter={() => setHoveringIcon(true)}
         onMouseLeave={() => setHoveringIcon(false)}
       >
@@ -227,18 +225,50 @@ export default function SettingsMenu({
               </button>
             </div>
 
-            <ColorField
-              label="Body"
-              value={draft.bodyColor}
-              onChange={(value) => setDraft((p) => ({ ...p, bodyColor: value }))}
-              onReset={() => setDraft((p) => ({ ...p, bodyColor: builtInDefaults.bodyColor }))}
-            />
-            <ColorField
-              label="Background"
-              value={draft.backgroundColor}
-              onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
-              onReset={() => setDraft((p) => ({ ...p, backgroundColor: builtInDefaults.backgroundColor }))}
-            />
+            <div className="settings-section">
+              <button
+                type="button"
+                className="settings-section-toggle"
+                onClick={() => setColorsOpen((prev) => !prev)}
+                aria-expanded={colorsOpen}
+                aria-controls="settings-colors"
+              >
+                <span className="settings-section-title">Colors</span>
+                <motion.span
+                  className="settings-section-chevron"
+                  animate={{ rotate: colorsOpen ? 0 : -90 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <ChevronDown className="settings-section-chevron-svg" aria-hidden="true" />
+                </motion.span>
+              </button>
+
+              <AnimatePresence initial={false}>
+                {colorsOpen ? (
+                  <motion.div
+                    id="settings-colors"
+                    className="settings-section-body"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                  >
+                    <ColorField
+                      label="Body"
+                      value={draft.bodyColor}
+                      onChange={(value) => setDraft((p) => ({ ...p, bodyColor: value }))}
+                      onReset={() => setDraft((p) => ({ ...p, bodyColor: builtInDefaults.bodyColor }))}
+                    />
+                    <ColorField
+                      label="Background"
+                      value={draft.backgroundColor}
+                      onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
+                      onReset={() => setDraft((p) => ({ ...p, backgroundColor: builtInDefaults.backgroundColor }))}
+                    />
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
+            </div>
 
             <div className="settings-actions">
               <button

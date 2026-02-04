@@ -7,9 +7,11 @@ import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "../lib/yft";
 
 const presets = {
-  front: new THREE.Vector3(0, 0.12, 1),
+  // Most GTA/FiveM vehicle assets treat -Z as "forward".
+  // Our presets define camera positions around the model, so "front" should be on -Z.
+  front: new THREE.Vector3(0, 0.12, -1),
   side: new THREE.Vector3(1, 0.1, 0),
-  angle: new THREE.Vector3(0.8, 0.12, 0.8),
+  angle: new THREE.Vector3(0.8, 0.12, -0.8),
   top: new THREE.Vector3(0, 1, 0),
 };
 
@@ -86,6 +88,7 @@ export default function Viewer({
   backgroundColor,
   textureReloadToken,
   textureTarget,
+  textureMode = "everything",
   liveryExteriorOnly = false,
   flipTextureY = true,
   onReady,
@@ -293,6 +296,7 @@ export default function Viewer({
             onModelErrorRef.current?.("YFT parsed but no mesh data was generated.");
             return;
           }
+          object.userData.sourceFormat = "yft";
         } else if (extension === "clmesh") {
           let bytes = null;
           try {
@@ -384,6 +388,20 @@ export default function Viewer({
         const center = new THREE.Vector3();
         box.getSize(size);
         box.getCenter(center);
+
+        // YFTs can arrive in a Z-up coordinate space (GTA/RAGE) while our viewer is Y-up.
+        // When that happens the model looks like it's pitched upward on X ("standing").
+        // Auto-correct by testing a -90deg X rotation and only applying it if it meaningfully
+        // reduces the model's height-to-footprint ratio.
+        if (object?.userData?.sourceFormat === "yft") {
+          const didFix = maybeAutoFixYftUpAxis(object, size);
+          if (didFix) {
+            box.setFromObject(object);
+            box.getSize(size);
+            box.getCenter(center);
+          }
+        }
+
         const isBoundsValid =
           Number.isFinite(size.x) &&
           Number.isFinite(size.y) &&
@@ -415,7 +433,7 @@ export default function Viewer({
           controlsRef.current.update();
         }
 
-        applyMaterial(object, resolvedBodyColor, textureRef.current, textureTarget, liveryExteriorOnly);
+        applyMaterial(object, resolvedBodyColor, textureRef.current, textureTarget, liveryExteriorOnly, textureMode);
       } catch (error) {
         const message =
           error && typeof error === "object" && "message" in error
@@ -438,8 +456,8 @@ export default function Viewer({
 
   useEffect(() => {
     if (!modelRef.current) return;
-    applyMaterial(modelRef.current, resolvedBodyColor, textureRef.current, textureTarget, liveryExteriorOnly);
-  }, [resolvedBodyColor, textureTarget, liveryExteriorOnly]);
+    applyMaterial(modelRef.current, resolvedBodyColor, textureRef.current, textureTarget, liveryExteriorOnly, textureMode);
+  }, [resolvedBodyColor, textureTarget, liveryExteriorOnly, textureMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -450,7 +468,7 @@ export default function Viewer({
         textureRef.current = null;
       }
       if (modelRef.current) {
-        applyMaterial(modelRef.current, resolvedBodyColor, null, textureTarget, liveryExteriorOnly);
+        applyMaterial(modelRef.current, resolvedBodyColor, null, textureTarget, liveryExteriorOnly, textureMode);
       }
       onTextureErrorRef.current?.("");
     };
@@ -493,7 +511,7 @@ export default function Viewer({
           textureRef.current = texture;
           URL.revokeObjectURL(url);
           if (modelRef.current) {
-            applyMaterial(modelRef.current, resolvedBodyColor, texture, textureTarget, liveryExteriorOnly);
+            applyMaterial(modelRef.current, resolvedBodyColor, texture, textureTarget, liveryExteriorOnly, textureMode);
           }
           onTextureErrorRef.current?.("");
           onTextureReload?.();
@@ -520,6 +538,7 @@ export default function Viewer({
     textureTarget,
     liveryExteriorOnly,
     flipTextureY,
+    textureMode,
   ]);
 
   return <div ref={containerRef} className="h-full w-full" />;
@@ -658,10 +677,11 @@ function readClmeshUintArray(bytes, offset, count) {
   return new Uint32Array(bytes.buffer, bytes.byteOffset + offset, count);
 }
 
-function applyMaterial(object, bodyColor, texture, textureTarget, liveryExteriorOnly) {
+function applyMaterial(object, bodyColor, texture, textureTarget, liveryExteriorOnly, textureMode) {
   const color = new THREE.Color(bodyColor);
   const target = textureTarget || ALL_TARGET;
   const exteriorOnly = Boolean(liveryExteriorOnly);
+  const preferUv2 = textureMode === "livery";
 
   object.traverse((child) => {
     if (!child.isMesh) return;
@@ -673,9 +693,11 @@ function applyMaterial(object, bodyColor, texture, textureTarget, liveryExterior
     ensureMeshLabel(child);
     const shouldApply = matchesTextureTarget(child, target);
     if (texture && shouldApply && child.geometry) {
-      if (!ensureTextureUVs(child.geometry)) {
+      if (!applyTextureUVSet(child.geometry, preferUv2)) {
         generateBoxProjectionUVs(child.geometry);
       }
+    } else if (!shouldApply && child.geometry) {
+      restoreBaseUVs(child.geometry);
     }
     if (exteriorOnly) {
       const shouldShow = shouldShowExterior(child, target, shouldApply);
@@ -716,14 +738,83 @@ function applyMaterial(object, bodyColor, texture, textureTarget, liveryExterior
   });
 }
 
-function ensureTextureUVs(geometry) {
-  if (!geometry) return false;
-  if (geometry.attributes.uv) return true;
-  if (geometry.attributes.uv2) {
-    geometry.setAttribute("uv", geometry.attributes.uv2.clone());
-    return true;
+function getBaseUVs(geometry) {
+  if (!geometry) return { uv0: null, uv1: null, uv2: null, uv3: null };
+  if (!geometry.userData.baseUv) {
+    geometry.userData.baseUv = geometry.attributes.uv || null;
   }
-  return false;
+  if (!geometry.userData.baseUv2) {
+    geometry.userData.baseUv2 = geometry.attributes.uv2 || null;
+  }
+  if (!geometry.userData.baseUv3) {
+    geometry.userData.baseUv3 = geometry.attributes.uv3 || null;
+  }
+  if (!geometry.userData.baseUv4) {
+    geometry.userData.baseUv4 = geometry.attributes.uv4 || null;
+  }
+  return {
+    uv0: geometry.userData.baseUv,
+    uv1: geometry.userData.baseUv2,
+    uv2: geometry.userData.baseUv3,
+    uv3: geometry.userData.baseUv4,
+  };
+}
+
+function scoreUVAttribute(attribute) {
+  if (!attribute || !attribute.array || attribute.itemSize < 2) return -1;
+  const count = Math.min(attribute.count || 0, 2000);
+  if (!count) return -1;
+  const array = attribute.array;
+  const stride = attribute.itemSize;
+  let inRange = 0;
+  let valid = 0;
+  for (let i = 0; i < count; i += 1) {
+    const u = array[i * stride];
+    const v = array[i * stride + 1];
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    valid += 1;
+    if (u >= 0 && u <= 1 && v >= 0 && v <= 1) inRange += 1;
+  }
+  if (!valid) return -1;
+  return inRange / valid;
+}
+
+function chooseUVAttribute(geometry, preferUv2) {
+  const { uv0, uv1, uv2, uv3 } = getBaseUVs(geometry);
+  const candidates = [uv0, uv1, uv2, uv3];
+
+  if (preferUv2) {
+    for (const index of [1, 2, 3, 0]) {
+      if (candidates[index]) return candidates[index];
+    }
+    return null;
+  }
+
+  if (uv0) return uv0;
+  if (uv1) return uv1;
+  if (uv2) return uv2;
+  if (uv3) return uv3;
+  return null;
+}
+
+function applyTextureUVSet(geometry, preferUv2) {
+  if (!geometry) return false;
+  const chosen = chooseUVAttribute(geometry, preferUv2);
+  if (!chosen) return false;
+  if (geometry.attributes.uv !== chosen) {
+    geometry.setAttribute("uv", chosen);
+    geometry.attributes.uv.needsUpdate = true;
+  }
+  return true;
+}
+
+function restoreBaseUVs(geometry) {
+  if (!geometry) return;
+  const { uv0 } = getBaseUVs(geometry);
+  if (uv0 && geometry.attributes.uv !== uv0) {
+    geometry.setAttribute("uv", uv0);
+    geometry.attributes.uv.needsUpdate = true;
+  }
 }
 
 function generateBoxProjectionUVs(geometry) {
@@ -997,6 +1088,46 @@ function getFileNameWithoutExtension(path) {
   return dot === -1 ? filename : filename.slice(0, dot);
 }
 
+function heightToFootprintRatio(size) {
+  if (!size) return Infinity;
+  const footprint = Math.max(size.x, size.z);
+  if (!Number.isFinite(footprint) || footprint <= 0) return Infinity;
+  const ratio = size.y / footprint;
+  return Number.isFinite(ratio) ? ratio : Infinity;
+}
+
+function maybeAutoFixYftUpAxis(object, initialSize) {
+  if (!object) return false;
+
+  const scoreA = heightToFootprintRatio(initialSize);
+  // Only correct when the model is obviously "standing" tall (pitched on X).
+  // This keeps thin/vertical parts from being flattened accidentally.
+  if (!Number.isFinite(scoreA) || scoreA <= 1.2) return false;
+
+  const originalQuat = object.quaternion.clone();
+
+  object.rotateX(-Math.PI / 2);
+  object.updateMatrixWorld(true);
+
+  const boxB = new THREE.Box3().setFromObject(object);
+  const sizeB = new THREE.Vector3();
+  boxB.getSize(sizeB);
+  const scoreB = heightToFootprintRatio(sizeB);
+
+  object.quaternion.copy(originalQuat);
+  object.updateMatrixWorld(true);
+
+  const isMeaningfullyBetter = Number.isFinite(scoreB) && scoreB < scoreA * 0.7;
+  const isNoLongerStanding = scoreB <= 1.2;
+
+  if (!isMeaningfullyBetter || !isNoLongerStanding) return false;
+
+  object.rotateX(-Math.PI / 2);
+  object.updateMatrixWorld(true);
+  object.userData.autoOriented = true;
+  return true;
+}
+
 function buildDrawableObject(drawable) {
   const root = new THREE.Group();
   root.name = drawable.name || "yft";
@@ -1032,6 +1163,14 @@ function buildDrawableObject(drawable) {
 
       if (mesh.uvs2) {
         geometry.setAttribute("uv2", new THREE.BufferAttribute(mesh.uvs2, 2));
+      }
+
+      if (mesh.uvs3) {
+        geometry.setAttribute("uv3", new THREE.BufferAttribute(mesh.uvs3, 2));
+      }
+
+      if (mesh.uvs4) {
+        geometry.setAttribute("uv4", new THREE.BufferAttribute(mesh.uvs4, 2));
       }
 
       if (mesh.colors) {

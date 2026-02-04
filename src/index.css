@@ -274,7 +274,7 @@ body {
   border-radius: var(--es-radius-surface);
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: #0c0d0f;
-  padding: 12px;
+  padding: calc(16px * var(--es-ui-scale));
   z-index: 40;
 }
 
@@ -304,23 +304,85 @@ body {
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(239, 244, 250, 0.78);
-  margin-bottom: 10px;
+  margin-bottom: calc(14px * var(--es-ui-scale));
 }
 
 .settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 6px 0;
+  gap: calc(12px * var(--es-ui-scale));
+  padding: calc(10px * var(--es-ui-scale)) 0;
   flex-wrap: wrap;
+}
+
+.settings-section {
+  margin-top: calc(6px * var(--es-ui-scale));
+  padding-top: calc(10px * var(--es-ui-scale));
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(10px * var(--es-ui-scale));
+  padding: calc(8px * var(--es-ui-scale)) calc(10px * var(--es-ui-scale));
+  margin: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--es-radius-control);
+  cursor: pointer;
+  color: rgba(239, 244, 250, 0.72);
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.settings-section-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(248, 250, 252, 0.92);
+}
+
+.settings-section-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.28);
+}
+
+.settings-section-title {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.settings-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.settings-section-chevron-svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-section-body {
+  overflow: hidden;
+  padding-top: calc(4px * var(--es-ui-scale));
+}
+
+.panel-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--panel-control-gap);
 }
 
 .settings-row-label {
   font-size: 12px;
   color: rgba(214, 221, 231, 0.7);
   letter-spacing: 0.2px;
-  flex: 1 1 120px;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -353,8 +415,11 @@ body {
 }
 
 .settings-toggle {
-  width: 40px;
-  height: 22px;
+  width: calc(40px * var(--es-ui-scale));
+  height: calc(22px * var(--es-ui-scale));
+  padding: calc(2px * var(--es-ui-scale));
+  display: inline-flex;
+  align-items: center;
   border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
@@ -364,14 +429,11 @@ body {
 }
 
 .settings-toggle-dot {
-  position: absolute;
-  top: 50%;
-  left: 3px;
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--es-ui-scale));
+  height: calc(16px * var(--es-ui-scale));
   border-radius: 999px;
   background: rgba(248, 250, 252, 0.85);
-  transform: translateY(-50%);
+  transform: translateX(0);
   transition: transform 0.18s ease;
 }
 
@@ -381,13 +443,14 @@ body {
 }
 
 .settings-toggle.is-on .settings-toggle-dot {
-  transform: translate(18px, -50%);
+  transform: translateX(calc(18px * var(--es-ui-scale)));
 }
 
 .settings-color {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(10px * var(--es-ui-scale));
+  row-gap: calc(8px * var(--es-ui-scale));
   flex: 1;
   justify-content: flex-end;
   flex-wrap: wrap;
@@ -396,7 +459,9 @@ body {
 
 .settings-input {
   height: 32px;
-  width: 110px;
+  width: auto;
+  flex: 1 1 9ch;
+  min-width: 9ch;
   border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
@@ -419,9 +484,9 @@ body {
 
 .settings-actions {
   display: flex;
-  gap: 10px;
+  gap: calc(12px * var(--es-ui-scale));
   justify-content: flex-end;
-  padding-top: 10px;
+  padding-top: calc(14px * var(--es-ui-scale));
   flex-wrap: wrap;
 }
 
@@ -564,6 +629,9 @@ body {
 .onb-toggle {
   width: 40px;
   height: 22px;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
   border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
@@ -572,14 +640,11 @@ body {
 }
 
 .onb-toggle-dot {
-  position: absolute;
-  top: 50%;
-  left: 3px;
   width: 16px;
   height: 16px;
   border-radius: 999px;
   background: rgba(248, 250, 252, 0.85);
-  transform: translateY(-50%);
+  transform: translateX(0);
   transition: transform 0.18s ease;
 }
 
@@ -589,7 +654,7 @@ body {
 }
 
 .onb-toggle.is-on .onb-toggle-dot {
-  transform: translate(18px, -50%);
+  transform: translateX(18px);
 }
 
 .onb-color {
@@ -649,14 +714,17 @@ body {
 }
 
 .texture-toggle {
+  --texture-toggle-pad: calc(3px * var(--es-ui-scale));
+  --texture-toggle-radius: var(--es-radius-control);
+  --texture-toggle-inner-radius: max(calc(var(--texture-toggle-radius) - var(--texture-toggle-pad)), 0px);
   position: relative;
   display: grid;
   grid-template-columns: 1fr 1fr;
   align-items: center;
   width: 100%;
   height: calc(34px * var(--es-ui-scale));
-  padding: calc(3px * var(--es-ui-scale));
-  border-radius: var(--es-radius-control);
+  padding: var(--texture-toggle-pad);
+  border-radius: var(--texture-toggle-radius);
   background: rgba(18, 18, 20, 0.55);
   border: 1px solid var(--es-border);
   overflow: hidden;
@@ -664,11 +732,11 @@ body {
 
 .texture-toggle-thumb {
   position: absolute;
-  top: calc(3px * var(--es-ui-scale));
-  left: calc(3px * var(--es-ui-scale));
-  width: calc(50% - calc(3px * var(--es-ui-scale)));
-  height: calc(100% - calc(6px * var(--es-ui-scale)));
-  border-radius: var(--es-radius-control);
+  top: var(--texture-toggle-pad);
+  left: var(--texture-toggle-pad);
+  width: calc(50% - var(--texture-toggle-pad));
+  height: calc(100% - (var(--texture-toggle-pad) * 2));
+  border-radius: var(--texture-toggle-inner-radius);
   background: rgba(125, 211, 252, 0.18);
   border: 1px solid rgba(125, 211, 252, 0.4);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
@@ -838,14 +906,20 @@ body {
   position: absolute;
   top: calc(var(--titlebar-height) + 24px);
   right: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
   border-radius: var(--es-radius-control);
   background: rgba(18, 18, 20, 0.45);
   border: 1px solid var(--es-border);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.viewer-toolbar-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .toolbar-separator {
