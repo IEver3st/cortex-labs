@@ -1,0 +1,2 @@
+hash is used to generate hash values for strings inside "names.txt".
+result values will be stored in "hashes.txt"

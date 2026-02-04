@@ -1,0 +1,75 @@
+{
+  "version": 2,
+  "dgSpecHash": "iLdhc94NoRw=",
+  "success": false,
+  "projectFilePath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+  "expectedPackageFiles": [],
+  "logs": [
+    {
+      "code": "NU1100",
+      "level": "Error",
+      "message": "Unable to resolve 'SharpDX (>= 4.2.0)' for 'net8.0'.",
+      "projectPath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "filePath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "libraryId": "SharpDX",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1100",
+      "level": "Error",
+      "message": "Unable to resolve 'SharpDX.Mathematics (>= 4.2.0)' for 'net8.0'.",
+      "projectPath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "filePath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "libraryId": "SharpDX.Mathematics",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1100",
+      "level": "Error",
+      "message": "Unable to resolve 'Microsoft.NETCore.App.Ref (= 8.0.23)' for 'net8.0'.",
+      "projectPath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "filePath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "libraryId": "Microsoft.NETCore.App.Ref",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1100",
+      "level": "Error",
+      "message": "Unable to resolve 'Microsoft.WindowsDesktop.App.Ref (= 8.0.23)' for 'net8.0'.",
+      "projectPath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "filePath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "libraryId": "Microsoft.WindowsDesktop.App.Ref",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1100",
+      "level": "Error",
+      "message": "Unable to resolve 'Microsoft.AspNetCore.App.Ref (= 8.0.23)' for 'net8.0'.",
+      "projectPath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "filePath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "libraryId": "Microsoft.AspNetCore.App.Ref",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1100",
+      "level": "Error",
+      "message": "Unable to resolve 'Microsoft.NETCore.App.Host.win-x64 (= 8.0.23)' for 'net8.0'.",
+      "projectPath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "filePath": "C:\\Users\\User\\Desktop\\Cortex Labs\\cortex-labs\\tools\\codewalker-bridge\\CodeWalkerBridge.csproj",
+      "libraryId": "Microsoft.NETCore.App.Host.win-x64",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+txd_merge is used to merge 2 txd files into one file.
+txd_merge reads parameters from "txd-merge.txt".

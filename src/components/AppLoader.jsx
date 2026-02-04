@@ -129,7 +129,7 @@ const GLYPHS = {
   triangle: buildTrianglePoints(),
 };
 
-export function LoadingGlyph({ kind, className }) {
+export function LoadingGlyph({ kind, className, ...props }) {
   const points = GLYPHS[kind] ?? GLYPHS.cube;
   return (
     <svg
@@ -138,6 +138,7 @@ export function LoadingGlyph({ kind, className }) {
       role="img"
       aria-label={`Loading shape: ${kind}`}
       shapeRendering="crispEdges"
+      {...props}
     >
       {points.map((point) => (
         <rect

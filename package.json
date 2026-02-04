@@ -1,7 +1,7 @@
 {
   "name": "cortex-labs",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,14 +10,16 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "@tauri-apps/plugin-fs": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2",
+    "dff-loader": "^1.0.1",
     "motion": "^11.18.2",
+    "pako": "^2.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "three": "^0.172.0",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "three": "^0.172.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.6.0",
