@@ -51,7 +51,6 @@ function getInitialUi() {
 function App() {
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef(null);
-  const modelReloadTimerRef = useRef(null);
   const isTauriRuntime =
     typeof window !== "undefined" &&
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
@@ -67,7 +66,6 @@ function App() {
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
   const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
   const [textureReloadToken, setTextureReloadToken] = useState(0);
-  const [modelReloadToken, setModelReloadToken] = useState(0);
   const [textureTargets, setTextureTargets] = useState([]);
   const [textureMode, setTextureMode] = useState(() => getInitialDefaults().textureMode);
   const [textureTarget, setTextureTarget] = useState("all");
@@ -97,14 +95,10 @@ function App() {
       setLiveryTarget("");
       setLiveryLabel("");
 
-      const lower = String(path).toLowerCase();
-      const isYft = lower.endsWith(".yft");
-
       setModelSourcePath(path);
       setModelLoading(true);
 
       try {
-        // Pass the file path directly to Viewer - it handles YFT parsing in JavaScript
         setModelPath(path);
       } catch (error) {
         const message =
@@ -154,16 +148,6 @@ function App() {
       setTextureReloadToken((prev) => prev + 1);
     }, 350);
   };
-
-  const scheduleModelReload = useCallback(() => {
-    if (modelReloadTimerRef.current) {
-      clearTimeout(modelReloadTimerRef.current);
-    }
-    modelReloadTimerRef.current = setTimeout(() => {
-      if (!modelSourcePath) return;
-      loadModel(modelSourcePath);
-    }, 400);
-  }, [loadModel, modelSourcePath]);
 
   const handleModelInfo = useCallback((info) => {
     const targets = info?.targets ?? [];
@@ -358,40 +342,6 @@ function App() {
       }
     };
   }, [texturePath]);
-
-  useEffect(() => {
-    let unlisten = null;
-
-    const start = async () => {
-      if (!isTauriRuntime) return;
-
-      const lower = String(modelSourcePath || "").toLowerCase();
-      const isYft = lower.endsWith(".yft");
-      if (!isYft || !modelSourcePath) {
-        await invoke("stop_model_watch").catch(() => null);
-        return;
-      }
-
-      await invoke("start_model_watch", { path: modelSourcePath }).catch(() => null);
-      unlisten = await listen("model:update", () => {
-        scheduleModelReload();
-      });
-    };
-
-    start();
-
-    return () => {
-      if (unlisten) {
-        unlisten();
-      }
-      if (isTauriRuntime) {
-        invoke("stop_model_watch").catch(() => null);
-      }
-      if (modelReloadTimerRef.current) {
-        clearTimeout(modelReloadTimerRef.current);
-      }
-    };
-  }, [isTauriRuntime, modelSourcePath, scheduleModelReload]);
 
   const onTextureReload = () => {
     setLastUpdate(new Date().toLocaleTimeString());
