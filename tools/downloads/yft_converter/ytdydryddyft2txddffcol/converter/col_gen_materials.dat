@@ -1,0 +1,162 @@
+skip
+shader: decal
+shader: decal_amb_only
+shader: decal_dirt
+shader: decal_emissive_only
+shader: decal_emissivenight_only
+shader: decal_glue
+shader: decal_normal_only
+shader: decal_shadow_only
+shader: decal_spec_only
+shader: decal_tnt
+shader: leaves
+end
+
+material:9
+shader: grass texture: -dirt -golf
+texture: grass -dirt -golf
+end
+
+material:16
+texture: grass +golf
+end
+
+material:1
+texture: tarmac
+end
+
+material:12
+texture: grass +dirt
+end
+
+material:20
+texture: meadow
+end
+
+material:35
+texture: stone -stairs
+texture: rock
+end
+
+material:161
+texture: stone +stairs
+end
+
+material:73
+texture: wood +step
+texture: wood +stairs
+end
+
+material:70
+texture: wood +bench
+end
+
+material:22
+texture: wood +floor
+end
+
+material:42
+texture: wood +crate
+
+material: 172
+texture: wood +fence
+end
+
+material:43
+texture: wood
+end
+
+material:6
+texture: gravel
+end
+
+material:139
+texture: rubbish
+end
+
+material:68
+texture: poster
+texture: billboard
+texture: plastic
+end
+
+material:4
+texture: pavement
+texture: alleypath
+end
+
+material:55
+texture: fence
+end
+
+material:7
+texture: concrete
+end
+
+material:56
+texture: girder
+end
+
+material:54
+texture: gate
+end
+
+material:33
+texture: sand
+end
+
+material:45
+shader: glass_breakable
+shader: glass_breakable_crack
+shader: glass_breakable_screendooralpha
+shader: glass_displacement
+shader: glass_emissive
+shader: glass_emissive_alpha
+shader: glass_emissivenight
+shader: glass_emissivenight_alpha
+shader: glass_env
+shader: glass_normal_spec_reflect
+shader: glass_pv
+shader: glass_pv_env
+shader: glass_reflect
+shader: glass_spec
+texture: glass
+end
+
+material:162
+texture: metal +step
+texture: alum +step
+texture: metal +stairs
+texture: alum +stairs
+end
+
+material:164
+texture: metal +floor
+texture: alum +floor
+end
+
+material:51
+texture: metal
+texture: alum
+end
+
+material:158
+texture: door
+end
+
+material:67
+texture: rubber
+texture: bball_court
+end
+
+material:50
+texture: garage +door
+end
+
+material:71
+texture: carpet -stairs
+end
+
+material:163
+texture: carpet +stairs
+end

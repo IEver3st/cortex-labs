@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader";
+import { DFFLoader } from "dff-loader";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
+import { parseYft } from "../lib/yft";
 
 const presets = {
   front: new THREE.Vector3(0, 0.12, 1),
@@ -88,6 +90,7 @@ export default function Viewer({
   flipTextureY = true,
   onReady,
   onModelInfo,
+  onModelError,
   onModelLoading,
   onTextureReload,
   onTextureError,
@@ -100,8 +103,10 @@ export default function Viewer({
   const modelRef = useRef(null);
   const textureRef = useRef(null);
   const fitRef = useRef({ center: new THREE.Vector3(), distance: 4 });
+  const [sceneReady, setSceneReady] = useState(false);
   const onReadyRef = useRef(onReady);
   const onModelInfoRef = useRef(onModelInfo);
+  const onModelErrorRef = useRef(onModelError);
   const onModelLoadingRef = useRef(onModelLoading);
   const onTextureErrorRef = useRef(onTextureError);
 
@@ -116,6 +121,10 @@ export default function Viewer({
   useEffect(() => {
     onModelInfoRef.current = onModelInfo;
   }, [onModelInfo]);
+
+  useEffect(() => {
+    onModelErrorRef.current = onModelError;
+  }, [onModelError]);
 
   useEffect(() => {
     onModelLoadingRef.current = onModelLoading;
@@ -165,6 +174,7 @@ export default function Viewer({
     sceneRef.current = scene;
     cameraRef.current = camera;
     controlsRef.current = controls;
+    setSceneReady(true);
 
     const resize = () => {
       if (!containerRef.current) return;
@@ -206,6 +216,23 @@ export default function Viewer({
         controls.target.copy(center);
         controls.update();
       },
+      rotateModel: (axis) => {
+        if (!modelRef.current) return;
+        const angle = Math.PI / 2; // 90 degrees
+        switch (axis) {
+          case "x":
+            modelRef.current.rotateX(angle);
+            break;
+          case "y":
+            modelRef.current.rotateY(angle);
+            break;
+          case "z":
+            modelRef.current.rotateZ(angle);
+            break;
+          default:
+            break;
+        }
+      },
     });
 
     return () => {
@@ -214,6 +241,7 @@ export default function Viewer({
       controls.dispose();
       renderer.dispose();
       renderer.domElement.remove();
+      setSceneReady(false);
     };
   }, []);
 
@@ -223,7 +251,7 @@ export default function Viewer({
   }, [backgroundColor]);
 
   useEffect(() => {
-    if (!sceneRef.current) return;
+    if (!sceneReady || !sceneRef.current) return;
 
     if (!modelPath) {
       onModelLoadingRef.current?.(false);
@@ -235,29 +263,94 @@ export default function Viewer({
     const loadModel = async () => {
       onModelLoadingRef.current?.(true);
       try {
-        let text = "";
-        try {
-          text = await readTextFile(modelPath);
-        } catch {
-          text = "";
-        }
-        if (!text || text.includes("\u0000") || !looksLikeObj(text)) {
+        const extension = getFileExtension(modelPath);
+        let object = null;
+
+        if (extension === "yft") {
+          let bytes = null;
           try {
-            const bytes = await readFile(modelPath);
-            text = decodeObjBytes(bytes);
+            bytes = await readFile(modelPath);
+          } catch {
+            onModelErrorRef.current?.("Failed to read YFT file.");
+            return;
+          }
+          if (cancelled) return;
+          const name = getFileNameWithoutExtension(modelPath) || "yft_model";
+          let drawable = null;
+          try {
+            drawable = parseYft(bytes, name);
+          } catch (err) {
+            console.error("[YFT] Parse error:", err);
+            onModelErrorRef.current?.("YFT parsing failed.");
+            return;
+          }
+          if (!drawable || !drawable.models?.length) {
+            onModelErrorRef.current?.("YFT parsing returned no drawable data.");
+            return;
+          }
+          object = buildDrawableObject(drawable);
+          if (!hasRenderableMeshes(object)) {
+            onModelErrorRef.current?.("YFT parsed but no mesh data was generated.");
+            return;
+          }
+        } else if (extension === "clmesh") {
+          let bytes = null;
+          try {
+            bytes = await readFile(modelPath);
+          } catch {
+            onModelErrorRef.current?.("Failed to read mesh cache.");
+            return;
+          }
+          if (cancelled) return;
+          const meshes = parseClmesh(bytes);
+          if (!meshes || meshes.length === 0) {
+            onModelErrorRef.current?.("Mesh cache contained no meshes.");
+            return;
+          }
+          object = buildClmeshObject(meshes);
+        } else if (extension === "dff") {
+          let bytes = null;
+          try {
+            bytes = await readFile(modelPath);
+          } catch {
+            return;
+          }
+          if (cancelled) return;
+          const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+          const loader = new DFFLoader();
+          try {
+            object = loader.parse(buffer);
+          } catch {
+            return;
+          }
+        } else {
+          let text = "";
+          try {
+            text = await readTextFile(modelPath);
+          } catch {
+            text = "";
+          }
+          if (!text || text.includes("\u0000") || !looksLikeObj(text)) {
+            try {
+              const bytes = await readFile(modelPath);
+              text = decodeObjBytes(bytes);
+            } catch {
+              return;
+            }
+          }
+          if (cancelled) return;
+          const loader = new OBJLoader();
+          try {
+            object = loader.parse(text);
           } catch {
             return;
           }
         }
-        if (cancelled) return;
-        const loader = new OBJLoader();
-        let object = null;
-        try {
-          object = loader.parse(text);
-        } catch {
+
+        if (!object) {
+          onModelErrorRef.current?.("Model loaded with no geometry.");
           return;
         }
-        if (!object) return;
         object.traverse((child) => {
           if (!child.isMesh) return;
           child.castShadow = false;
@@ -291,7 +384,22 @@ export default function Viewer({
         const center = new THREE.Vector3();
         box.getSize(size);
         box.getCenter(center);
+        const isBoundsValid =
+          Number.isFinite(size.x) &&
+          Number.isFinite(size.y) &&
+          Number.isFinite(size.z) &&
+          Number.isFinite(center.x) &&
+          Number.isFinite(center.y) &&
+          Number.isFinite(center.z);
+        if (!isBoundsValid) {
+          onModelErrorRef.current?.("Parsed model bounds are invalid.");
+          return;
+        }
         const maxDim = Math.max(size.x, size.y, size.z);
+        if (!Number.isFinite(maxDim) || maxDim <= 0) {
+          onModelErrorRef.current?.("Parsed model geometry is empty.");
+          return;
+        }
         const distance = Math.max(maxDim * 1.6, 2.4);
 
         fitRef.current = { center, distance };
@@ -308,6 +416,13 @@ export default function Viewer({
         }
 
         applyMaterial(object, resolvedBodyColor, textureRef.current, textureTarget, liveryExteriorOnly);
+      } catch (error) {
+        const message =
+          error && typeof error === "object" && "message" in error
+            ? `Model load failed: ${error.message}`
+            : "Model load failed.";
+        onModelErrorRef.current?.(message);
+        console.error(error);
       } finally {
         if (!cancelled) onModelLoadingRef.current?.(false);
       }
@@ -319,7 +434,7 @@ export default function Viewer({
       cancelled = true;
       onModelLoadingRef.current?.(false);
     };
-  }, [modelPath]);
+  }, [modelPath, sceneReady]);
 
   useEffect(() => {
     if (!modelRef.current) return;
@@ -410,6 +525,139 @@ export default function Viewer({
   return <div ref={containerRef} className="h-full w-full" />;
 }
 
+function buildClmeshObject(meshes) {
+  const root = new THREE.Group();
+  root.name = "clmesh";
+
+  meshes.forEach((mesh) => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+    if (mesh.normals) {
+      geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+    }
+    if (mesh.uvs) {
+      geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
+    }
+    if (mesh.indices) {
+      geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    }
+
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: 0.2,
+      roughness: 0.6,
+      side: THREE.DoubleSide,
+    });
+    material.name = mesh.materialName || "";
+
+    const threeMesh = new THREE.Mesh(geometry, material);
+    threeMesh.name = mesh.name || material.name || "mesh";
+    root.add(threeMesh);
+  });
+
+  return root;
+}
+
+function parseClmesh(bytes) {
+  if (!bytes || bytes.length < 8) {
+    throw new Error("Invalid mesh cache.");
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 0;
+  const magic = readClmeshMagic(bytes, offset);
+  if (magic !== "CLM1") {
+    throw new Error("Mesh cache magic mismatch.");
+  }
+  offset += 4;
+
+  const version = view.getUint16(offset, true);
+  offset += 2;
+  if (version !== 1) {
+    throw new Error(`Unsupported mesh cache version ${version}.`);
+  }
+
+  const meshCount = view.getUint16(offset, true);
+  offset += 2;
+
+  const decoder = new TextDecoder("utf-8");
+  const meshes = [];
+
+  for (let i = 0; i < meshCount; i += 1) {
+    const name = readClmeshString(view, bytes, decoder, () => offset, (next) => {
+      offset = next;
+    });
+    const materialName = readClmeshString(view, bytes, decoder, () => offset, (next) => {
+      offset = next;
+    });
+
+    const vertexCount = view.getUint32(offset, true);
+    offset += 4;
+    const indexCount = view.getUint32(offset, true);
+    offset += 4;
+    const flags = view.getUint8(offset);
+    offset += 1;
+
+    const positions = readClmeshFloatArray(bytes, offset, vertexCount * 3);
+    offset += vertexCount * 3 * 4;
+
+    let normals = null;
+    if (flags & 0x1) {
+      normals = readClmeshFloatArray(bytes, offset, vertexCount * 3);
+      offset += vertexCount * 3 * 4;
+    }
+
+    let uvs = null;
+    if (flags & 0x2) {
+      uvs = readClmeshFloatArray(bytes, offset, vertexCount * 2);
+      offset += vertexCount * 2 * 4;
+    }
+
+    const indices = readClmeshUintArray(bytes, offset, indexCount);
+    offset += indexCount * 4;
+
+    meshes.push({ name, materialName, positions, normals, uvs, indices });
+  }
+
+  return meshes;
+}
+
+function readClmeshMagic(bytes, offset) {
+  if (offset + 4 > bytes.length) return "";
+  return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+}
+
+function readClmeshString(view, bytes, decoder, getOffset, setOffset) {
+  let offset = getOffset();
+  if (offset + 2 > bytes.length) return "";
+  const length = view.getUint16(offset, true);
+  offset += 2;
+  const end = offset + length;
+  if (end > bytes.length) {
+    setOffset(bytes.length);
+    return "";
+  }
+  const value = decoder.decode(bytes.subarray(offset, end));
+  setOffset(end);
+  return value;
+}
+
+function readClmeshFloatArray(bytes, offset, count) {
+  const length = count * 4;
+  if (offset + length > bytes.length) {
+    throw new Error("Mesh cache is truncated.");
+  }
+  return new Float32Array(bytes.buffer, bytes.byteOffset + offset, count);
+}
+
+function readClmeshUintArray(bytes, offset, count) {
+  const length = count * 4;
+  if (offset + length > bytes.length) {
+    throw new Error("Mesh cache is truncated.");
+  }
+  return new Uint32Array(bytes.buffer, bytes.byteOffset + offset, count);
+}
+
 function applyMaterial(object, bodyColor, texture, textureTarget, liveryExteriorOnly) {
   const color = new THREE.Color(bodyColor);
   const target = textureTarget || ALL_TARGET;
@@ -422,13 +670,13 @@ function applyMaterial(object, bodyColor, texture, textureTarget, liveryExterior
       child.userData.baseMaterial = child.material;
     }
 
-    // Generate UVs if missing and texture is being applied
-    if (texture && child.geometry && !child.geometry.attributes.uv) {
-      generateBoxProjectionUVs(child.geometry);
-    }
-
     ensureMeshLabel(child);
     const shouldApply = matchesTextureTarget(child, target);
+    if (texture && shouldApply && child.geometry) {
+      if (!ensureTextureUVs(child.geometry)) {
+        generateBoxProjectionUVs(child.geometry);
+      }
+    }
     if (exteriorOnly) {
       const shouldShow = shouldShowExterior(child, target, shouldApply);
       child.visible = shouldShow;
@@ -466,6 +714,16 @@ function applyMaterial(object, bodyColor, texture, textureTarget, liveryExterior
       child.userData.appliedMaterial = null;
     }
   });
+}
+
+function ensureTextureUVs(geometry) {
+  if (!geometry) return false;
+  if (geometry.attributes.uv) return true;
+  if (geometry.attributes.uv2) {
+    geometry.setAttribute("uv", geometry.attributes.uv2.clone());
+    return true;
+  }
+  return false;
 }
 
 function generateBoxProjectionUVs(geometry) {
@@ -671,24 +929,32 @@ function scoreLiveryName(name) {
   const raw = name.toString().trim().toLowerCase();
   if (!raw) return 0;
 
-  if (raw.includes("carpaint") || raw.includes("car_paint") || raw.includes("car-paint")) return 120;
-  if (raw.includes("livery")) return 100;
+  // Vehicle paint materials (highest priority for livery application)
+  if (raw.includes("vehicle_paint") || raw.includes("carpaint") || raw.includes("car_paint") || raw.includes("car-paint")) return 120;
+  if (raw.includes("livery")) return 110;
 
-  if (raw.includes("sign_1") || raw.includes("sign-1") || raw.includes("sign1")) return 90;
-  if (raw.includes("sign_2") || raw.includes("sign-2") || raw.includes("sign2")) return 80;
-  if (raw.includes("sign_3") || raw.includes("sign-3") || raw.includes("sign3")) return 70;
+  // Sign materials (common for sponsor decals)
+  if (raw.includes("vehicle_sign") || raw.includes("sign_1") || raw.includes("sign-1") || raw.includes("sign1")) return 95;
+  if (raw.includes("sign_2") || raw.includes("sign-2") || raw.includes("sign2")) return 85;
+  if (raw.includes("sign_3") || raw.includes("sign-3") || raw.includes("sign3")) return 75;
+
+  // Vehicle decal material
+  if (raw.includes("vehicle_decal")) return 90;
 
   const tokens = tokenizeName(raw);
   const tokenSet = new Set(tokens);
 
-  if (tokenSet.has("sign") && tokenSet.has("1")) return 90;
-  if (tokenSet.has("sign") && tokenSet.has("2")) return 80;
-  if (tokenSet.has("sign") && tokenSet.has("3")) return 70;
+  if (tokenSet.has("sign") && tokenSet.has("1")) return 95;
+  if (tokenSet.has("sign") && tokenSet.has("2")) return 85;
+  if (tokenSet.has("sign") && tokenSet.has("3")) return 75;
   if (tokenSet.has("sign")) return 65;
 
   if (raw.includes("decal") || tokenSet.has("decal") || tokenSet.has("decals")) return 55;
   if (raw.includes("logo") || tokenSet.has("logo") || tokenSet.has("logos")) return 50;
   if (raw.includes("wrap") || tokenSet.has("wrap")) return 45;
+
+  // Generic material hash patterns that might be paint
+  if (raw.startsWith("material_") && !raw.includes("glass") && !raw.includes("tire") && !raw.includes("interior")) return 30;
 
   return 0;
 }
@@ -720,4 +986,126 @@ function getFileExtension(path) {
   const lastDot = normalized.lastIndexOf(".");
   if (lastDot === -1) return "";
   return normalized.slice(lastDot + 1).toLowerCase();
+}
+
+function getFileNameWithoutExtension(path) {
+  if (!path) return "";
+  const normalized = path.toString();
+  const parts = normalized.split(/[\\/]/);
+  const filename = parts[parts.length - 1] || "";
+  const dot = filename.lastIndexOf(".");
+  return dot === -1 ? filename : filename.slice(0, dot);
+}
+
+function buildDrawableObject(drawable) {
+  const root = new THREE.Group();
+  root.name = drawable.name || "yft";
+
+  drawable.models.forEach((model) => {
+    const group = new THREE.Group();
+    group.name = model.name || root.name;
+
+    model.meshes.forEach((mesh) => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+
+      if (mesh.normals) {
+        geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+      }
+
+      if (mesh.uvs) {
+        geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
+        // Debug: log UV range for first mesh
+        if (mesh.uvs.length > 0) {
+          let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+          for (let i = 0; i < mesh.uvs.length; i += 2) {
+            minU = Math.min(minU, mesh.uvs[i]);
+            maxU = Math.max(maxU, mesh.uvs[i]);
+            minV = Math.min(minV, mesh.uvs[i + 1]);
+            maxV = Math.max(maxV, mesh.uvs[i + 1]);
+          }
+          console.log(`[YFT] Mesh "${mesh.name || mesh.materialName}" UV range: U=[${minU.toFixed(3)}, ${maxU.toFixed(3)}] V=[${minV.toFixed(3)}, ${maxV.toFixed(3)}]`);
+        }
+      } else {
+        console.log(`[YFT] Mesh "${mesh.name || mesh.materialName}" has no UVs`);
+      }
+
+      if (mesh.uvs2) {
+        geometry.setAttribute("uv2", new THREE.BufferAttribute(mesh.uvs2, 2));
+      }
+
+      if (mesh.colors) {
+        geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 4));
+      }
+
+      if (mesh.tangents) {
+        geometry.setAttribute("tangent", new THREE.BufferAttribute(mesh.tangents, 4));
+      }
+
+      if (mesh.indices) {
+        geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+      }
+
+      const matName = (mesh.materialName || "").toLowerCase();
+      const isGlass = matName.includes("glass") || matName.includes("window");
+      const isChrome = matName.includes("chrome") || matName.includes("metal");
+      const isTire = matName.includes("tire") || matName.includes("rubber");
+      const isPaint = matName.includes("paint") || matName.includes("carpaint") || matName.includes("livery");
+
+      let metalness = 0.2;
+      let roughness = 0.6;
+      let opacity = 1.0;
+      let transparent = false;
+
+      if (isGlass) {
+        metalness = 0.0;
+        roughness = 0.1;
+        opacity = 0.3;
+        transparent = true;
+      } else if (isChrome) {
+        metalness = 0.9;
+        roughness = 0.1;
+      } else if (isTire) {
+        metalness = 0.0;
+        roughness = 0.9;
+      } else if (isPaint) {
+        metalness = 0.4;
+        roughness = 0.3;
+      }
+
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        metalness,
+        roughness,
+        opacity,
+        transparent,
+        side: THREE.DoubleSide,
+        vertexColors: mesh.colors ? true : false,
+      });
+      material.name = mesh.materialName || "";
+
+      const threeMesh = new THREE.Mesh(geometry, material);
+      threeMesh.name = mesh.name || material.name || "mesh";
+      threeMesh.userData.materialType = isPaint ? "paint" : isGlass ? "glass" : isChrome ? "chrome" : "default";
+
+      group.add(threeMesh);
+    });
+
+    if (group.children.length > 0) {
+      root.add(group);
+    }
+  });
+
+  return root;
+}
+
+function hasRenderableMeshes(object) {
+  if (!object) return false;
+  let count = 0;
+  object.traverse((child) => {
+    if (child.isMesh && child.geometry?.attributes?.position?.count > 0) {
+      count += 1;
+    }
+  });
+  return count > 0;
 }

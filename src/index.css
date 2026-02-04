@@ -7,6 +7,8 @@
   --es-info: #7dd3fc;
   --es-border: rgba(255, 255, 255, 0.08);
   --es-radius: 16px;
+  --es-radius-surface: calc(var(--es-radius) * var(--es-ui-scale));
+  --es-radius-control: calc((var(--es-radius) - 4px) * var(--es-ui-scale));
   --titlebar-height: calc(40px * var(--es-ui-scale));
   --panel-width: clamp(240px, 22vw, 320px);
   --panel-pad: calc(20px * var(--es-ui-scale));
@@ -69,12 +71,13 @@ body {
   letter-spacing: 0.4px;
 }
 
-.titlebar-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--es-success);
-  box-shadow: 0 0 8px rgba(32, 201, 151, 0.5);
+.titlebar-logo {
+  width: calc(18px * var(--es-ui-scale));
+  height: calc(18px * var(--es-ui-scale));
+  display: block;
+  flex: 0 0 auto;
+  color: rgba(236, 240, 246, 0.92);
+  filter: drop-shadow(0 0 8px rgba(125, 211, 252, 0.18));
 }
 
 .titlebar-title {
@@ -95,7 +98,7 @@ body {
 .titlebar-btn {
   width: 28px;
   height: 28px;
-  border-radius: 10px;
+  border-radius: var(--es-radius-control);
   border: none;
   background: transparent;
   color: rgba(234, 239, 246, 0.55);
@@ -162,16 +165,47 @@ body {
   left: 24px;
   width: var(--panel-width);
   max-height: calc(100% - var(--titlebar-height) - 48px);
-  overflow: auto;
+  overflow: visible;
   background: rgba(12, 13, 15, 0.65);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--es-radius);
+  border-radius: var(--es-radius-surface);
   padding: var(--panel-pad);
   display: flex;
   flex-direction: column;
   gap: var(--panel-control-gap);
   box-shadow: none;
   z-index: 5;
+}
+
+.control-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--panel-control-gap);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(125, 211, 252, 0.5) rgba(10, 12, 14, 0.35);
+}
+
+.control-panel-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.control-panel-scroll::-webkit-scrollbar-track {
+  background: rgba(10, 12, 14, 0.35);
+  border-radius: 999px;
+}
+
+.control-panel-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.65), rgba(125, 211, 252, 0.25));
+  border-radius: 999px;
+  border: 2px solid rgba(10, 12, 14, 0.55);
+}
+
+.control-panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.45));
 }
 
 .panel-header {
@@ -197,21 +231,24 @@ body {
 .settings-cog {
   width: 28px;
   height: 28px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
+  padding: 0;
+  border-radius: var(--es-radius-control);
+  border: none;
+  background: transparent;
   color: rgba(234, 239, 246, 0.65);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  transition: color 0.16s ease, transform 0.12s ease;
 }
 
 .settings-cog:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.14);
   color: rgba(248, 250, 252, 0.92);
+}
+
+.settings-cog:active {
+  transform: translateY(1px);
 }
 
 .settings-cog:focus-visible {
@@ -225,15 +262,40 @@ body {
 }
 
 .settings-pop {
-  position: absolute;
-  top: 36px;
-  right: 0;
+  position: fixed;
   width: min(320px, 72vw);
-  border-radius: 14px;
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: min(62vh, calc(100vh - var(--titlebar-height) - 64px));
+  overflow: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(125, 211, 252, 0.5) rgba(10, 12, 14, 0.35);
+  border-radius: var(--es-radius-surface);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(12, 13, 15, 0.96);
+  background: #0c0d0f;
   padding: 12px;
   z-index: 40;
+}
+
+.settings-pop::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.settings-pop::-webkit-scrollbar-track {
+  background: rgba(10, 12, 14, 0.35);
+  border-radius: 999px;
+}
+
+.settings-pop::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.65), rgba(125, 211, 252, 0.25));
+  border-radius: 999px;
+  border: 2px solid rgba(10, 12, 14, 0.55);
+}
+
+.settings-pop::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.45));
 }
 
 .settings-title {
@@ -251,20 +313,25 @@ body {
   justify-content: space-between;
   gap: 10px;
   padding: 6px 0;
+  flex-wrap: wrap;
 }
 
 .settings-row-label {
   font-size: 12px;
   color: rgba(214, 221, 231, 0.7);
   letter-spacing: 0.2px;
+  flex: 1 1 120px;
+  min-width: 0;
 }
 
 .settings-seg {
   display: inline-flex;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  border-radius: var(--es-radius-control);
   background: rgba(255, 255, 255, 0.03);
   overflow: hidden;
+  max-width: 100%;
+  width: 100%;
 }
 
 .settings-seg-btn {
@@ -276,6 +343,8 @@ body {
   color: rgba(239, 244, 250, 0.7);
   cursor: pointer;
   transition: background 0.16s ease, color 0.16s ease;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .settings-seg-btn.is-on {
@@ -286,7 +355,7 @@ body {
 .settings-toggle {
   width: 40px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
   position: relative;
@@ -321,27 +390,31 @@ body {
   gap: 8px;
   flex: 1;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .settings-input {
   height: 32px;
   width: 110px;
-  border-radius: 10px;
+  border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(239, 244, 250, 0.9);
   padding: 0 10px;
   outline: none;
+  max-width: 100%;
 }
 
 .settings-mini {
   height: 32px;
   padding: 0 10px;
-  border-radius: 10px;
+  border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
   color: rgba(214, 221, 231, 0.7);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .settings-actions {
@@ -349,13 +422,14 @@ body {
   gap: 10px;
   justify-content: flex-end;
   padding-top: 10px;
+  flex-wrap: wrap;
 }
 
 .settings-secondary,
 .settings-primary {
   height: 34px;
   padding: 0 12px;
-  border-radius: 10px;
+  border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   font-family: var(--font-hud);
   font-size: 11px;
@@ -386,7 +460,7 @@ body {
 
 .onb-card {
   width: min(calc(880px * var(--es-ui-scale)), 94vw);
-  border-radius: 18px;
+  border-radius: var(--es-radius-surface);
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(12, 13, 15, 0.86);
   display: grid;
@@ -466,7 +540,7 @@ body {
 .onb-seg {
   display: inline-flex;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  border-radius: var(--es-radius-control);
   background: rgba(255, 255, 255, 0.03);
   overflow: hidden;
 }
@@ -490,7 +564,7 @@ body {
 .onb-toggle {
   width: 40px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
   position: relative;
@@ -527,7 +601,7 @@ body {
 .onb-input {
   height: 32px;
   width: 120px;
-  border-radius: 10px;
+  border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(239, 244, 250, 0.9);
@@ -544,7 +618,7 @@ body {
 .onb-primary {
   height: 38px;
   padding: 0 14px;
-  border-radius: 12px;
+  border-radius: var(--es-radius-control);
   border: 1px solid rgba(125, 211, 252, 0.25);
   background: rgba(125, 211, 252, 0.16);
   color: rgba(230, 248, 255, 0.95);
@@ -582,7 +656,7 @@ body {
   width: 100%;
   height: calc(34px * var(--es-ui-scale));
   padding: calc(3px * var(--es-ui-scale));
-  border-radius: 999px;
+  border-radius: var(--es-radius-control);
   background: rgba(18, 18, 20, 0.55);
   border: 1px solid var(--es-border);
   overflow: hidden;
@@ -594,7 +668,7 @@ body {
   left: calc(3px * var(--es-ui-scale));
   width: calc(50% - calc(3px * var(--es-ui-scale)));
   height: calc(100% - calc(6px * var(--es-ui-scale)));
-  border-radius: 999px;
+  border-radius: var(--es-radius-control);
   background: rgba(125, 211, 252, 0.18);
   border: 1px solid rgba(125, 211, 252, 0.4);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
@@ -629,7 +703,7 @@ body {
 .texture-toggle-option:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.35);
-  border-radius: 999px;
+  border-radius: var(--es-radius-control);
 }
 
 .texture-toggle-option:active {
@@ -641,7 +715,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: calc(8px * var(--es-ui-scale)) calc(10px * var(--es-ui-scale));
-  border-radius: calc(12px * var(--es-ui-scale));
+  border-radius: var(--es-radius-control);
   border: 1px dashed var(--es-border);
   background: rgba(18, 18, 20, 0.45);
   color: rgba(233, 239, 246, 0.82);
@@ -680,7 +754,7 @@ body {
   width: calc(42px * var(--es-ui-scale));
   height: calc(22px * var(--es-ui-scale));
   padding: calc(2px * var(--es-ui-scale));
-  border-radius: 999px;
+  border-radius: var(--es-radius-control);
   border: 1px solid var(--es-border);
   background: rgba(18, 18, 20, 0.55);
   cursor: pointer;
@@ -752,7 +826,7 @@ body {
 
 .drop-card {
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: var(--es-radius-control);
   border: 1px solid rgba(125, 211, 252, 0.35);
   background: rgba(12, 14, 18, 0.55);
   color: rgba(219, 233, 244, 0.95);
@@ -765,12 +839,20 @@ body {
   top: calc(var(--titlebar-height) + 24px);
   right: 24px;
   display: inline-flex;
+  align-items: center;
   gap: 8px;
   padding: 6px;
-  border-radius: calc(var(--es-radius) - 6px);
+  border-radius: var(--es-radius-control);
   background: rgba(18, 18, 20, 0.45);
   border: 1px solid var(--es-border);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--es-border);
+  margin: 0 4px;
 }
 
 .viewer-hints {
@@ -783,7 +865,7 @@ body {
   padding: 8px 10px;
   font-size: calc(11px * var(--es-ui-scale));
   color: rgba(223, 228, 236, 0.6);
-  border-radius: calc(var(--es-radius) - 8px);
+  border-radius: var(--es-radius-control);
   background: rgba(18, 18, 20, 0.45);
   border: 1px solid var(--es-border);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
@@ -830,7 +912,7 @@ body {
 .color-swatch {
   width: 100%;
   height: 100%;
-  border-radius: 8px;
+  border-radius: var(--es-radius-control);
   border: 1px solid var(--es-border);
   background: #000;
   cursor: pointer;

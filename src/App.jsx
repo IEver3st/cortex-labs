@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, RotateCcw, Square, X } from "lucide-react";
-import AppLoader from "./components/AppLoader";
+import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
 import Viewer from "./components/Viewer";
@@ -41,6 +41,7 @@ function getInitialDefaults() {
 function App() {
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef(null);
+  const modelReloadTimerRef = useRef(null);
   const isTauriRuntime =
     typeof window !== "undefined" &&
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
@@ -50,10 +51,12 @@ function App() {
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
 
   const [modelPath, setModelPath] = useState("");
+  const [modelSourcePath, setModelSourcePath] = useState("");
   const [texturePath, setTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
   const [textureReloadToken, setTextureReloadToken] = useState(0);
+  const [modelReloadToken, setModelReloadToken] = useState(0);
   const [textureTargets, setTextureTargets] = useState([]);
   const [textureMode, setTextureMode] = useState(() => getInitialDefaults().textureMode);
   const [textureTarget, setTextureTarget] = useState("all");
@@ -72,6 +75,42 @@ function App() {
   const bootTimerRef = useRef(null);
 
   const isBooting = !booted;
+
+  const loadModel = useCallback(
+    async (path) => {
+      if (!path) return;
+
+      setDialogError("");
+      setTextureTargets([]);
+      setTextureTarget("all");
+      setLiveryTarget("");
+      setLiveryLabel("");
+
+      const lower = String(path).toLowerCase();
+      const isYft = lower.endsWith(".yft");
+
+      setModelSourcePath(path);
+      setModelLoading(true);
+
+      try {
+        // Pass the file path directly to Viewer - it handles YFT parsing in JavaScript
+        setModelPath(path);
+      } catch (error) {
+        const message =
+          typeof error === "string"
+            ? error
+            : error && typeof error === "object" && "message" in error
+              ? error.message
+              : "Model load failed.";
+        setDialogError(message);
+        setModelPath("");
+        console.error(error);
+      } finally {
+        setModelLoading(false);
+      }
+    },
+    [isTauriRuntime],
+  );
 
   useEffect(() => {
     // Ensure the loader gets time to display even when the viewer initializes instantly.
@@ -105,6 +144,16 @@ function App() {
     }, 350);
   };
 
+  const scheduleModelReload = useCallback(() => {
+    if (modelReloadTimerRef.current) {
+      clearTimeout(modelReloadTimerRef.current);
+    }
+    modelReloadTimerRef.current = setTimeout(() => {
+      if (!modelSourcePath) return;
+      loadModel(modelSourcePath);
+    }, 400);
+  }, [loadModel, modelSourcePath]);
+
   const handleModelInfo = useCallback((info) => {
     const targets = info?.targets ?? [];
     setTextureTargets(targets);
@@ -122,6 +171,11 @@ function App() {
 
   const handleModelLoading = useCallback((loading) => {
     setModelLoading(Boolean(loading));
+  }, []);
+
+  const handleModelError = useCallback((message) => {
+    setDialogError(message || "Failed to load model.");
+    setModelPath("");
   }, []);
 
   const applyAndPersistDefaults = useCallback((next) => {
@@ -149,16 +203,12 @@ function App() {
       return;
     }
     try {
-      const selected = await open({
-        filters: [{ name: "OBJ Model", extensions: ["obj"] }],
-      });
+        const selected = await open({
+          filters: [{ name: "Model", extensions: ["obj", "yft", "clmesh"] }],
+        });
       setDialogError("");
       if (typeof selected === "string") {
-        setTextureTargets([]);
-        setTextureTarget("all");
-        setLiveryTarget("");
-        setLiveryLabel("");
-        setModelPath(selected);
+        await loadModel(selected);
       }
     } catch (error) {
       setDialogError("Dialog permission blocked. Check Tauri capabilities.");
@@ -231,24 +281,23 @@ function App() {
     }
 
     const files = Array.from(event.dataTransfer?.files || []);
-    const objFile = files.find((file) => file.name?.toLowerCase().endsWith(".obj"));
+    const modelFile = files.find((file) => {
+      const name = file.name?.toLowerCase();
+      return name?.endsWith(".obj") || name?.endsWith(".yft") || name?.endsWith(".clmesh");
+    });
 
-    if (!objFile) {
-      setDialogError("Only .obj files are supported for drop.");
+    if (!modelFile) {
+      setDialogError("Only .obj, .yft, and .clmesh files are supported for drop.");
       return;
     }
 
-    if (!objFile.path) {
+    if (!modelFile.path) {
       setDialogError("Unable to read dropped file path.");
       return;
     }
 
     setDialogError("");
-    setTextureTargets([]);
-    setTextureTarget("all");
-    setLiveryTarget("");
-    setLiveryLabel("");
-    setModelPath(objFile.path);
+    loadModel(modelFile.path);
   };
 
   useEffect(() => {
@@ -287,6 +336,40 @@ function App() {
     };
   }, [texturePath]);
 
+  useEffect(() => {
+    let unlisten = null;
+
+    const start = async () => {
+      if (!isTauriRuntime) return;
+
+      const lower = String(modelSourcePath || "").toLowerCase();
+      const isYft = lower.endsWith(".yft");
+      if (!isYft || !modelSourcePath) {
+        await invoke("stop_model_watch").catch(() => null);
+        return;
+      }
+
+      await invoke("start_model_watch", { path: modelSourcePath }).catch(() => null);
+      unlisten = await listen("model:update", () => {
+        scheduleModelReload();
+      });
+    };
+
+    start();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+      if (isTauriRuntime) {
+        invoke("stop_model_watch").catch(() => null);
+      }
+      if (modelReloadTimerRef.current) {
+        clearTimeout(modelReloadTimerRef.current);
+      }
+    };
+  }, [isTauriRuntime, modelSourcePath, scheduleModelReload]);
+
   const onTextureReload = () => {
     setLastUpdate(new Date().toLocaleTimeString());
   };
@@ -309,11 +392,11 @@ function App() {
       transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
       style={{ pointerEvents: isBooting ? "none" : "auto" }}
     >
-      <div className="titlebar">
-        <div className="titlebar-brand" data-tauri-drag-region>
-          <span className="titlebar-dot" aria-hidden="true" />
-          <span className="titlebar-title">Cortex Labs</span>
-        </div>
+        <div className="titlebar">
+          <div className="titlebar-brand" data-tauri-drag-region>
+            <LoadingGlyph kind="cube" className="titlebar-logo" aria-hidden="true" />
+            <span className="titlebar-title">Cortex Labs</span>
+          </div>
         <div className="titlebar-spacer" data-tauri-drag-region />
         <div className="titlebar-controls">
           <button
@@ -361,190 +444,194 @@ function App() {
             />
           </div>
         </div>
-
-        <div className="control-group">
-          <Label>Vehicle Model</Label>
-          <Button variant="outline" onClick={selectModel}>
-            Select .obj
-          </Button>
-          <div className="file-meta mono">
-            {modelPath ? modelPath.split(/[\\/]/).pop() : "No model selected"}
-          </div>
-        </div>
-
-        <div className="control-group">
-          <Label>Texture</Label>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="flex-1 border-sky-300/30 text-sky-300 hover:bg-sky-300/10"
-              onClick={selectTexture}
-            >
-              Select Texture
+        <div className="control-panel-scroll">
+          <div className="control-group">
+            <Label>Select Vehicle Model</Label>
+            <Button variant="outline" onClick={selectModel}>
+              Select .obj / .yft / .clmesh
             </Button>
-            {texturePath && (
+            <div className="file-meta mono">
+              {(modelSourcePath || modelPath)
+                ? (modelSourcePath || modelPath).split(/[\\/]/).pop()
+                : "No model selected"}
+            </div>
+            {modelLoading ? <div className="file-meta">Preparing model…</div> : null}
+          </div>
+
+          <div className="control-group">
+            <Label>Texture</Label>
+            <div className="flex gap-2">
               <Button
                 variant="outline"
-                className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
-                onClick={() => setTexturePath("")}
-                title="Unload texture"
+                className="flex-1 border-sky-300/30 text-sky-300 hover:bg-sky-300/10"
+                onClick={selectTexture}
               >
-                <X className="h-4 w-4" />
+                Select Texture
               </Button>
-            )}
-          </div>
-          <div className="file-meta mono">
-            {texturePath ? texturePath.split(/[\\/]/).pop() : "No texture selected"}
-          </div>
-        </div>
-
-        <div className="control-group">
-          <Label>Texture Mode</Label>
-          <div className="texture-toggle" data-mode={textureMode} role="group" aria-label="Texture mode">
-            <span className="texture-toggle-thumb" aria-hidden="true" />
-            <button
-              type="button"
-              className={`texture-toggle-option ${textureMode === "everything" ? "is-active" : ""}`}
-              onClick={() => setTextureMode("everything")}
-              aria-pressed={textureMode === "everything"}
-            >
-              Everything
-            </button>
-            <button
-              type="button"
-              className={`texture-toggle-option ${textureMode === "livery" ? "is-active" : ""}`}
-              onClick={() => setTextureMode("livery")}
-              aria-pressed={textureMode === "livery"}
-            >
-              Livery
-            </button>
-          </div>
-          <div className="file-meta mono">
-            {textureMode === "livery"
-              ? "Auto-detects carpaint/livery targets from model names."
-              : "Everything uses the target picker (All meshes by default)."}
-          </div>
-        </div>
-
-        <div className="control-group">
-          <Label>Apply Texture To</Label>
-          {textureMode === "livery" ? (
-            <div className="texture-auto-target">
-              <span className="texture-auto-badge">Auto</span>
-              <span className="texture-auto-value">{liveryStatusLabel}</span>
+              {texturePath && (
+                <Button
+                  variant="outline"
+                  className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                  onClick={() => setTexturePath("")}
+                  title="Unload texture"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
-          ) : (
-            <Select value={textureTarget} onValueChange={setTextureTarget}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select target" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All meshes</SelectItem>
-                {textureTargets.map((target) => (
-                  <SelectItem key={target.value} value={target.value}>
-                    {target.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <div className="file-meta mono">
-            {textureMode === "livery"
-              ? liveryHint
-              : textureTargets.length
-                ? "Targets come from OBJ material or mesh names."
-                : "Load a model to list material targets."}
+            <div className="file-meta mono">
+              {texturePath ? texturePath.split(/[\\/]/).pop() : "No texture selected"}
+            </div>
           </div>
-        </div>
 
-        {textureMode === "livery" ? (
           <div className="control-group">
-            <Label>Exterior Only</Label>
-            <div className="toggle-row">
+            <Label>Texture Mode</Label>
+            <div className="texture-toggle" data-mode={textureMode} role="group" aria-label="Texture mode">
+              <span className="texture-toggle-thumb" aria-hidden="true" />
               <button
                 type="button"
-                className={`toggle-switch ${liveryExteriorOnly ? "is-on" : ""}`}
-                onClick={() => setLiveryExteriorOnly((prev) => !prev)}
-                aria-pressed={liveryExteriorOnly}
-                aria-label="Toggle exterior only"
+                className={`texture-toggle-option ${textureMode === "everything" ? "is-active" : ""}`}
+                onClick={() => setTextureMode("everything")}
+                aria-pressed={textureMode === "everything"}
               >
-                <span className="toggle-switch-thumb" aria-hidden="true" />
+                Everything
               </button>
-              <span className="toggle-switch-label">{liveryExteriorOnly ? "On" : "Off"}</span>
+              <button
+                type="button"
+                className={`texture-toggle-option ${textureMode === "livery" ? "is-active" : ""}`}
+                onClick={() => setTextureMode("livery")}
+                aria-pressed={textureMode === "livery"}
+              >
+                Livery
+              </button>
             </div>
-            <div className="file-meta mono">Hides interior, glass, and wheel meshes in livery view.</div>
+            <div className="file-meta mono">
+              {textureMode === "livery"
+                ? "Auto-detects carpaint/livery targets from model names."
+                : "Everything uses the target picker (All meshes by default)."}
+            </div>
           </div>
-        ) : null}
 
-        <div className="control-group">
-          <Label>Body Color</Label>
-          <div className="color-input">
-            <div className="color-swatch-wrapper">
-              <div className="color-swatch" style={{ background: bodyColor }} />
-              <input
-                type="color"
+          <div className="control-group">
+            <Label>Apply Texture To</Label>
+            {textureMode === "livery" ? (
+              <div className="texture-auto-target">
+                <span className="texture-auto-badge">Auto</span>
+                <span className="texture-auto-value">{liveryStatusLabel}</span>
+              </div>
+            ) : (
+              <Select value={textureTarget} onValueChange={setTextureTarget}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select target" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All meshes</SelectItem>
+                  {textureTargets.map((target) => (
+                    <SelectItem key={target.value} value={target.value}>
+                      {target.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <div className="file-meta mono">
+              {textureMode === "livery"
+                ? liveryHint
+                : textureTargets.length
+                  ? "Targets come from OBJ material or mesh names."
+                  : "Load a model to list material targets."}
+            </div>
+          </div>
+
+          {textureMode === "livery" ? (
+            <div className="control-group">
+              <Label>Exterior Only</Label>
+              <div className="toggle-row">
+                <button
+                  type="button"
+                  className={`toggle-switch ${liveryExteriorOnly ? "is-on" : ""}`}
+                  onClick={() => setLiveryExteriorOnly((prev) => !prev)}
+                  aria-pressed={liveryExteriorOnly}
+                  aria-label="Toggle exterior only"
+                >
+                  <span className="toggle-switch-thumb" aria-hidden="true" />
+                </button>
+                <span className="toggle-switch-label">{liveryExteriorOnly ? "On" : "Off"}</span>
+              </div>
+              <div className="file-meta mono">Hides interior, glass, and wheel meshes in livery view.</div>
+            </div>
+          ) : null}
+
+          <div className="control-group">
+            <Label>Body Color</Label>
+            <div className="color-input">
+              <div className="color-swatch-wrapper">
+                <div className="color-swatch" style={{ background: bodyColor }} />
+                <input
+                  type="color"
+                  value={bodyColor}
+                  onChange={(event) => setBodyColor(event.currentTarget.value)}
+                  className="color-picker-native"
+                  aria-label="Body color picker"
+                />
+              </div>
+              <Input
+                className="mono h-8 px-2"
                 value={bodyColor}
                 onChange={(event) => setBodyColor(event.currentTarget.value)}
-                className="color-picker-native"
-                aria-label="Body color picker"
               />
+              <Button
+                variant="ghost"
+                className="h-8 w-8 p-0 text-white/30 hover:text-white"
+                onClick={() => setBodyColor(DEFAULT_BODY)}
+                title="Revert to default"
+              >
+                <RotateCcw className="h-3 w-3" />
+              </Button>
             </div>
-            <Input
-              className="mono h-8 px-2"
-              value={bodyColor}
-              onChange={(event) => setBodyColor(event.currentTarget.value)}
-            />
-            <Button
-              variant="ghost"
-              className="h-8 w-8 p-0 text-white/30 hover:text-white"
-              onClick={() => setBodyColor(DEFAULT_BODY)}
-              title="Revert to default"
-            >
-              <RotateCcw className="h-3 w-3" />
-            </Button>
           </div>
-        </div>
 
-        <div className="control-group">
-          <Label>Background Color</Label>
-          <div className="color-input">
-            <div className="color-swatch-wrapper">
-              <div className="color-swatch" style={{ background: backgroundColor }} />
-              <input
-                type="color"
+          <div className="control-group">
+            <Label>Background Color</Label>
+            <div className="color-input">
+              <div className="color-swatch-wrapper">
+                <div className="color-swatch" style={{ background: backgroundColor }} />
+                <input
+                  type="color"
+                  value={backgroundColor}
+                  onChange={(event) => setBackgroundColor(event.currentTarget.value)}
+                  className="color-picker-native"
+                  aria-label="Background color picker"
+                />
+              </div>
+              <Input
+                className="mono h-8 px-2"
                 value={backgroundColor}
                 onChange={(event) => setBackgroundColor(event.currentTarget.value)}
-                className="color-picker-native"
-                aria-label="Background color picker"
               />
+              <Button
+                variant="ghost"
+                className="h-8 w-8 p-0 text-white/30 hover:text-white"
+                onClick={() => setBackgroundColor(DEFAULT_BG)}
+                title="Revert to default"
+              >
+                <RotateCcw className="h-3 w-3" />
+              </Button>
             </div>
-            <Input
-              className="mono h-8 px-2"
-              value={backgroundColor}
-              onChange={(event) => setBackgroundColor(event.currentTarget.value)}
-            />
-            <Button
-              variant="ghost"
-              className="h-8 w-8 p-0 text-white/30 hover:text-white"
-              onClick={() => setBackgroundColor(DEFAULT_BG)}
-              title="Revert to default"
-            >
-              <RotateCcw className="h-3 w-3" />
-            </Button>
           </div>
-        </div>
 
-        <div className="status-strip">
-          <div className="flex items-center gap-2">
-            <span className={watchStatus === "watching" ? "status-dot" : "h-2 w-2 rounded-full bg-white/20"} />
-            <span>
-              {watchStatus === "watching" ? "Watching for saves" : watchStatus === "error" ? "Watcher error" : "Idle"}
-            </span>
+          <div className="status-strip">
+            <div className="flex items-center gap-2">
+              <span className={watchStatus === "watching" ? "status-dot" : "h-2 w-2 rounded-full bg-white/20"} />
+              <span>
+                {watchStatus === "watching" ? "Watching for saves" : watchStatus === "error" ? "Watcher error" : "Idle"}
+              </span>
+            </div>
+            <span>Last update: {lastUpdate}</span>
           </div>
-          <span>Last update: {lastUpdate}</span>
+          {dialogError ? <div className="file-meta">{dialogError}</div> : null}
+          {textureError ? <div className="file-meta">{textureError}</div> : null}
         </div>
-        {dialogError ? <div className="file-meta">{dialogError}</div> : null}
-        {textureError ? <div className="file-meta">{textureError}</div> : null}
       </motion.aside>
 
       <motion.section
@@ -559,11 +646,12 @@ function App() {
       >
         {isDragging ? (
           <div className="drop-overlay">
-            <div className="drop-card">Drop .obj to load</div>
+            <div className="drop-card">Drop .obj / .yft / .clmesh to load</div>
           </div>
         ) : null}
         <Viewer
           modelPath={modelPath}
+          modelReloadToken={modelReloadToken}
           texturePath={texturePath}
           bodyColor={bodyColor}
           backgroundColor={backgroundColor}
@@ -571,6 +659,7 @@ function App() {
           textureTarget={resolvedTextureTarget}
           liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
           onModelInfo={handleModelInfo}
+          onModelError={handleModelError}
           onModelLoading={handleModelLoading}
           onReady={(api) => {
             viewerApiRef.current = api;
@@ -596,6 +685,16 @@ function App() {
           </Button>
           <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.setPreset("top")}>
             Top
+          </Button>
+          <span className="toolbar-separator" />
+          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
+            Rot X
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
+            Rot Y
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
+            Rot Z
           </Button>
         </div>
 

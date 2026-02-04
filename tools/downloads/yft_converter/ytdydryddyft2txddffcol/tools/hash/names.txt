@@ -1,0 +1,5 @@
+# Example:
+# trafficlight_01
+# hash value will be generated and stored to "hashes.txt"
+# '#' symbol is used to comment lines
+# Note: using space symbol within name is prohibited
