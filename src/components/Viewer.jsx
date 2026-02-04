@@ -15,6 +15,52 @@ const defaultBody = "#dfe4ea";
 const ALL_TARGET = "all";
 const MATERIAL_TARGET_PREFIX = "material:";
 const MESH_TARGET_PREFIX = "mesh:";
+const LIVERY_TOKEN_SPLIT = /[^a-z0-9]+/g;
+const EXTERIOR_INCLUDE_TOKENS = [
+  "carpaint",
+  "car_paint",
+  "car-paint",
+  "livery",
+  "sign",
+  "decal",
+  "logo",
+  "wrap",
+  "body",
+  "bodyshell",
+  "shell",
+  "exterior",
+  "panel",
+  "door",
+  "hood",
+  "bonnet",
+  "roof",
+  "trunk",
+  "boot",
+  "bumper",
+  "fender",
+  "quarter",
+  "skirt",
+  "spoiler",
+  "mirror",
+  "lid",
+];
+const EXTERIOR_EXCLUDE_TOKENS = [
+  "glass",
+  "window",
+  "interior",
+  "seat",
+  "dash",
+  "steer",
+  "wheel",
+  "tire",
+  "rim",
+  "brake",
+  "engine",
+  "suspension",
+  "chassis",
+  "under",
+  "undercarriage",
+];
 const objSignature = /^(?:#|mtllib|o|g|v|vn|vt|f)\s/m;
 
 const looksLikeObj = (text) => objSignature.test(text);
@@ -38,9 +84,11 @@ export default function Viewer({
   backgroundColor,
   textureReloadToken,
   textureTarget,
+  liveryExteriorOnly = false,
   flipTextureY = true,
   onReady,
   onModelInfo,
+  onModelLoading,
   onTextureReload,
   onTextureError,
 }) {
@@ -54,6 +102,7 @@ export default function Viewer({
   const fitRef = useRef({ center: new THREE.Vector3(), distance: 4 });
   const onReadyRef = useRef(onReady);
   const onModelInfoRef = useRef(onModelInfo);
+  const onModelLoadingRef = useRef(onModelLoading);
   const onTextureErrorRef = useRef(onTextureError);
 
   const resolvedBodyColor = bodyColor || defaultBody;
@@ -67,6 +116,10 @@ export default function Viewer({
   useEffect(() => {
     onModelInfoRef.current = onModelInfo;
   }, [onModelInfo]);
+
+  useEffect(() => {
+    onModelLoadingRef.current = onModelLoading;
+  }, [onModelLoading]);
 
   useEffect(() => {
     onTextureErrorRef.current = onTextureError;
@@ -170,92 +223,108 @@ export default function Viewer({
   }, [backgroundColor]);
 
   useEffect(() => {
-    if (!modelPath || !sceneRef.current) return;
+    if (!sceneRef.current) return;
+
+    if (!modelPath) {
+      onModelLoadingRef.current?.(false);
+      return;
+    }
 
     let cancelled = false;
 
     const loadModel = async () => {
-      let text = "";
+      onModelLoadingRef.current?.(true);
       try {
-        text = await readTextFile(modelPath);
-      } catch {
-        text = "";
-      }
-      if (!text || text.includes("\u0000") || !looksLikeObj(text)) {
+        let text = "";
         try {
-          const bytes = await readFile(modelPath);
-          text = decodeObjBytes(bytes);
+          text = await readTextFile(modelPath);
+        } catch {
+          text = "";
+        }
+        if (!text || text.includes("\u0000") || !looksLikeObj(text)) {
+          try {
+            const bytes = await readFile(modelPath);
+            text = decodeObjBytes(bytes);
+          } catch {
+            return;
+          }
+        }
+        if (cancelled) return;
+        const loader = new OBJLoader();
+        let object = null;
+        try {
+          object = loader.parse(text);
         } catch {
           return;
         }
-      }
-      if (cancelled) return;
-      const loader = new OBJLoader();
-      let object = null;
-      try {
-        object = loader.parse(text);
-      } catch {
-        return;
-      }
-      if (!object) return;
-      object.traverse((child) => {
-        if (!child.isMesh) return;
-        child.castShadow = false;
-        child.receiveShadow = false;
-        if (!child.geometry) return;
-        const normalAttr = child.geometry.attributes?.normal;
-        if (!normalAttr || normalAttr.count === 0) {
-          child.geometry.computeVertexNormals();
-          child.geometry.normalizeNormals?.();
+        if (!object) return;
+        object.traverse((child) => {
+          if (!child.isMesh) return;
+          child.castShadow = false;
+          child.receiveShadow = false;
+          if (!child.geometry) return;
+          const normalAttr = child.geometry.attributes?.normal;
+          if (!normalAttr || normalAttr.count === 0) {
+            child.geometry.computeVertexNormals();
+            child.geometry.normalizeNormals?.();
+          }
+        });
+
+        if (modelRef.current) {
+          sceneRef.current.remove(modelRef.current);
+          disposeObject(modelRef.current);
         }
-      });
 
-      if (modelRef.current) {
-        sceneRef.current.remove(modelRef.current);
-        disposeObject(modelRef.current);
+        modelRef.current = object;
+        sceneRef.current.add(object);
+
+        const targets = collectTextureTargets(object);
+        const liveryTarget = findLiveryTarget(object);
+        onModelInfoRef.current?.({
+          targets,
+          liveryTarget: liveryTarget?.value || "",
+          liveryLabel: liveryTarget?.label || "",
+        });
+
+        const box = new THREE.Box3().setFromObject(object);
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const distance = Math.max(maxDim * 1.6, 2.4);
+
+        fitRef.current = { center, distance };
+
+        if (cameraRef.current && controlsRef.current) {
+          cameraRef.current.near = Math.max(distance / 100, 0.01);
+          cameraRef.current.far = Math.max(distance * 50, 100);
+          cameraRef.current.position.set(center.x + distance, center.y + distance * 0.2, center.z + distance);
+          cameraRef.current.updateProjectionMatrix();
+          controlsRef.current.target.copy(center);
+          controlsRef.current.minDistance = Math.max(distance * 0.05, 0.1);
+          controlsRef.current.maxDistance = distance * 10;
+          controlsRef.current.update();
+        }
+
+        applyMaterial(object, resolvedBodyColor, textureRef.current, textureTarget, liveryExteriorOnly);
+      } finally {
+        if (!cancelled) onModelLoadingRef.current?.(false);
       }
-
-      modelRef.current = object;
-      sceneRef.current.add(object);
-
-      const targets = collectTextureTargets(object);
-      onModelInfoRef.current?.({ targets });
-
-      const box = new THREE.Box3().setFromObject(object);
-      const size = new THREE.Vector3();
-      const center = new THREE.Vector3();
-      box.getSize(size);
-      box.getCenter(center);
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const distance = Math.max(maxDim * 1.6, 2.4);
-
-      fitRef.current = { center, distance };
-
-      if (cameraRef.current && controlsRef.current) {
-        cameraRef.current.near = Math.max(distance / 100, 0.01);
-        cameraRef.current.far = Math.max(distance * 50, 100);
-        cameraRef.current.position.set(center.x + distance, center.y + distance * 0.2, center.z + distance);
-        cameraRef.current.updateProjectionMatrix();
-        controlsRef.current.target.copy(center);
-        controlsRef.current.minDistance = Math.max(distance * 0.05, 0.1);
-        controlsRef.current.maxDistance = distance * 10;
-        controlsRef.current.update();
-      }
-
-      applyMaterial(object, resolvedBodyColor, textureRef.current, textureTarget);
     };
 
     loadModel();
 
     return () => {
       cancelled = true;
+      onModelLoadingRef.current?.(false);
     };
   }, [modelPath]);
 
   useEffect(() => {
     if (!modelRef.current) return;
-    applyMaterial(modelRef.current, resolvedBodyColor, textureRef.current, textureTarget);
-  }, [resolvedBodyColor, textureTarget]);
+    applyMaterial(modelRef.current, resolvedBodyColor, textureRef.current, textureTarget, liveryExteriorOnly);
+  }, [resolvedBodyColor, textureTarget, liveryExteriorOnly]);
 
   useEffect(() => {
     let cancelled = false;
@@ -266,7 +335,7 @@ export default function Viewer({
         textureRef.current = null;
       }
       if (modelRef.current) {
-        applyMaterial(modelRef.current, resolvedBodyColor, null, textureTarget);
+        applyMaterial(modelRef.current, resolvedBodyColor, null, textureTarget, liveryExteriorOnly);
       }
       onTextureErrorRef.current?.("");
     };
@@ -309,7 +378,7 @@ export default function Viewer({
           textureRef.current = texture;
           URL.revokeObjectURL(url);
           if (modelRef.current) {
-            applyMaterial(modelRef.current, resolvedBodyColor, texture, textureTarget);
+            applyMaterial(modelRef.current, resolvedBodyColor, texture, textureTarget, liveryExteriorOnly);
           }
           onTextureErrorRef.current?.("");
           onTextureReload?.();
@@ -334,15 +403,17 @@ export default function Viewer({
     textureLoader,
     onTextureReload,
     textureTarget,
+    liveryExteriorOnly,
     flipTextureY,
   ]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 }
 
-function applyMaterial(object, bodyColor, texture, textureTarget) {
+function applyMaterial(object, bodyColor, texture, textureTarget, liveryExteriorOnly) {
   const color = new THREE.Color(bodyColor);
   const target = textureTarget || ALL_TARGET;
+  const exteriorOnly = Boolean(liveryExteriorOnly);
 
   object.traverse((child) => {
     if (!child.isMesh) return;
@@ -358,6 +429,12 @@ function applyMaterial(object, bodyColor, texture, textureTarget) {
 
     ensureMeshLabel(child);
     const shouldApply = matchesTextureTarget(child, target);
+    if (exteriorOnly) {
+      const shouldShow = shouldShowExterior(child, target, shouldApply);
+      child.visible = shouldShow;
+    } else if (!child.visible) {
+      child.visible = true;
+    }
 
     if (shouldApply) {
       if (child.material === child.userData.appliedMaterial) {
@@ -510,6 +587,26 @@ function matchesTextureTarget(child, textureTarget) {
   return true;
 }
 
+function shouldShowExterior(child, textureTarget, matchesTarget) {
+  if (matchesTarget && textureTarget !== ALL_TARGET) return true;
+  const label = ensureMeshLabel(child);
+  if (matchesExteriorName(label)) return true;
+  const baseMaterial = child.userData?.baseMaterial || child.material;
+  const names = getMaterialNames(baseMaterial);
+  return names.some(matchesExteriorName);
+}
+
+function matchesExteriorName(name) {
+  if (!name) return false;
+  const raw = name.toString().trim().toLowerCase();
+  if (!raw) return false;
+  const hasInclude = EXTERIOR_INCLUDE_TOKENS.some((token) => raw.includes(token));
+  if (hasInclude) return true;
+  const hasExclude = EXTERIOR_EXCLUDE_TOKENS.some((token) => raw.includes(token));
+  if (hasExclude) return false;
+  return false;
+}
+
 function collectTextureTargets(object) {
   const materialNames = new Set();
   const meshNames = new Set();
@@ -537,6 +634,84 @@ function collectTextureTargets(object) {
   }
 
   return targets;
+}
+
+function findLiveryTarget(object) {
+  let best = null;
+
+  object.traverse((child) => {
+    if (!child.isMesh) return;
+
+    const materialNames = getMaterialNames(child.material);
+    materialNames.forEach((name) => {
+      const score = scoreLiveryName(name);
+      if (score <= 0) return;
+      const candidate = makeLiveryCandidate(name, "material", score);
+      if (isBetterLiveryCandidate(candidate, best)) {
+        best = candidate;
+      }
+    });
+
+    const meshLabel = ensureMeshLabel(child);
+    const meshScore = scoreLiveryName(meshLabel);
+    if (meshScore > 0) {
+      const candidate = makeLiveryCandidate(meshLabel, "mesh", meshScore);
+      if (isBetterLiveryCandidate(candidate, best)) {
+        best = candidate;
+      }
+    }
+  });
+
+  if (!best) return null;
+  return { value: best.value, label: best.label };
+}
+
+function scoreLiveryName(name) {
+  if (!name) return 0;
+  const raw = name.toString().trim().toLowerCase();
+  if (!raw) return 0;
+
+  if (raw.includes("carpaint") || raw.includes("car_paint") || raw.includes("car-paint")) return 120;
+  if (raw.includes("livery")) return 100;
+
+  if (raw.includes("sign_1") || raw.includes("sign-1") || raw.includes("sign1")) return 90;
+  if (raw.includes("sign_2") || raw.includes("sign-2") || raw.includes("sign2")) return 80;
+  if (raw.includes("sign_3") || raw.includes("sign-3") || raw.includes("sign3")) return 70;
+
+  const tokens = tokenizeName(raw);
+  const tokenSet = new Set(tokens);
+
+  if (tokenSet.has("sign") && tokenSet.has("1")) return 90;
+  if (tokenSet.has("sign") && tokenSet.has("2")) return 80;
+  if (tokenSet.has("sign") && tokenSet.has("3")) return 70;
+  if (tokenSet.has("sign")) return 65;
+
+  if (raw.includes("decal") || tokenSet.has("decal") || tokenSet.has("decals")) return 55;
+  if (raw.includes("logo") || tokenSet.has("logo") || tokenSet.has("logos")) return 50;
+  if (raw.includes("wrap") || tokenSet.has("wrap")) return 45;
+
+  return 0;
+}
+
+function tokenizeName(raw) {
+  return raw.replace(LIVERY_TOKEN_SPLIT, " ").trim().split(" ").filter(Boolean);
+}
+
+function makeLiveryCandidate(name, type, baseScore) {
+  const isMaterial = type === "material";
+  return {
+    value: `${isMaterial ? MATERIAL_TARGET_PREFIX : MESH_TARGET_PREFIX}${name}`,
+    label: `${isMaterial ? "Material" : "Mesh"}: ${name}`,
+    score: baseScore + (isMaterial ? 5 : 0),
+    isMaterial,
+  };
+}
+
+function isBetterLiveryCandidate(candidate, best) {
+  if (!best) return true;
+  if (candidate.score !== best.score) return candidate.score > best.score;
+  if (candidate.isMaterial !== best.isMaterial) return candidate.isMaterial;
+  return candidate.label.localeCompare(best.label) < 0;
 }
 
 function getFileExtension(path) {
