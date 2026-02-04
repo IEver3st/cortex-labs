@@ -205,9 +205,9 @@ function App() {
       return;
     }
     try {
-        const selected = await open({
-          filters: [{ name: "Model", extensions: ["obj", "yft", "clmesh"] }],
-        });
+      const selected = await open({
+        filters: [{ name: "Model", extensions: ["obj", "yft", "clmesh", "dff"] }],
+      });
       setDialogError("");
       if (typeof selected === "string") {
         await loadModel(selected);
@@ -290,11 +290,11 @@ function App() {
     const files = Array.from(event.dataTransfer?.files || []);
     const modelFile = files.find((file) => {
       const name = file.name?.toLowerCase();
-      return name?.endsWith(".obj") || name?.endsWith(".yft") || name?.endsWith(".clmesh");
+      return name?.endsWith(".obj") || name?.endsWith(".dff");
     });
 
     if (!modelFile) {
-      setDialogError("Only .obj, .yft, and .clmesh files are supported for drop.");
+      setDialogError("Only .obj and .dff files are supported for drop.");
       return;
     }
 
@@ -653,12 +653,11 @@ function App() {
       >
         {isDragging ? (
           <div className="drop-overlay">
-            <div className="drop-card">Drop .obj / .yft / .clmesh to load</div>
+            <div className="drop-card">Drop .obj / .dff to load</div>
           </div>
         ) : null}
         <Viewer
           modelPath={modelPath}
-          modelReloadToken={modelReloadToken}
           texturePath={texturePath}
           bodyColor={bodyColor}
           backgroundColor={backgroundColor}
