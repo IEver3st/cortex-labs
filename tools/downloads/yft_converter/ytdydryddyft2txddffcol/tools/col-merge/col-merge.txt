@@ -1,5 +1,0 @@
-# Example:
-# mycol.col coll
-# collision models from folder "coll" will be stored in mycol.col file
-# '#' symbol is used to comment lines
-# Note: using space symbol within file paths is prohibited

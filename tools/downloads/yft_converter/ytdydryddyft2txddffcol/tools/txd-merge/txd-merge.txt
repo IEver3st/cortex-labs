@@ -1,5 +1,0 @@
-# Example:
-# txd_file_1.txd txd_file_2.txd
-# textures from "txd_file_2.txd" will be "added into txd_file_1.txd"
-# '#' symbol is used to comment lines
-# Note: using space symbol within file paths is prohibited

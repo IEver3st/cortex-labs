@@ -1,2 +1,0 @@
-col_merge is used to merge all .col files in folder into one file.
-col_merge reads parameters from "col-merge.txt".

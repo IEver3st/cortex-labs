@@ -1,5 +1,0 @@
-model/texture/collision file (inside IMG) name length - 20 symbols
-texture name length - 31 symbols
-vertex/face count (collision) - 32767
-vertex count (models) - 65535
-collision vertex coord max ranges - (-256.0;256.0)
