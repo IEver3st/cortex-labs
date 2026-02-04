@@ -1,0 +1,306 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Share+Tech+Mono&display=swap");
+
+:root {
+  --font-hud: 'Share Tech Mono', 'Courier New', monospace;
+  --es-ui-scale: 1;
+  --es-success: #20c997;
+  --es-info: #7dd3fc;
+  --es-border: rgba(255, 255, 255, 0.08);
+  --es-radius: 16px;
+  --titlebar-height: calc(40px * var(--es-ui-scale));
+  --panel-width: clamp(240px, 22vw, 320px);
+  --panel-pad: calc(20px * var(--es-ui-scale));
+  --panel-gap: calc(14px * var(--es-ui-scale));
+  --panel-control-gap: calc(10px * var(--es-ui-scale));
+  --viewer-pad: calc(18px * var(--es-ui-scale));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", var(--font-hud), sans-serif;
+  color: #eef2f6;
+  background: #1a1c1e;
+  overflow: hidden;
+}
+
+.app-shell {
+  position: relative;
+  display: block;
+  padding: 0;
+  height: 100%;
+}
+
+.titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-height);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 calc(20px * var(--es-ui-scale));
+  background: linear-gradient(180deg, rgba(16, 17, 19, 0.45), rgba(12, 13, 15, 0.15));
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  user-select: none;
+  z-index: 10;
+}
+
+.titlebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: calc(13px * var(--es-ui-scale));
+  color: rgba(234, 239, 246, 0.85);
+  letter-spacing: 0.4px;
+}
+
+.titlebar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--es-success);
+  box-shadow: 0 0 8px rgba(32, 201, 151, 0.5);
+}
+
+.titlebar-title {
+  font-weight: 600;
+}
+
+.titlebar-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.titlebar-spacer {
+  flex: 1;
+  height: 100%;
+}
+
+.titlebar-btn {
+  width: 32px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(18, 18, 20, 0.35);
+  color: rgba(234, 239, 246, 0.7);
+  font-size: 12px;
+  font-family: "JetBrains Mono", monospace;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.titlebar-btn:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(248, 250, 252, 0.95);
+  background: rgba(24, 25, 28, 0.55);
+}
+
+.titlebar-btn:active {
+  transform: translateY(1px);
+}
+
+.titlebar-close:hover {
+  border-color: rgba(255, 120, 120, 0.5);
+  background: rgba(140, 48, 48, 0.4);
+  color: #fff;
+}
+
+.control-panel {
+  position: absolute;
+  top: calc(var(--titlebar-height) + 24px);
+  left: 24px;
+  width: var(--panel-width);
+  max-height: calc(100% - var(--titlebar-height) - 48px);
+  overflow: auto;
+  background: rgba(12, 13, 15, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--es-radius);
+  padding: var(--panel-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--panel-control-gap);
+  box-shadow: none;
+  z-index: 5;
+}
+
+.panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.panel-title {
+  font-family: var(--font-hud);
+  font-size: calc(20px * var(--es-ui-scale));
+  letter-spacing: 0.4px;
+  font-weight: 600;
+}
+
+.panel-subtitle {
+  font-family: var(--font-hud);
+  font-size: calc(12px * var(--es-ui-scale));
+  color: rgba(230, 235, 242, 0.65);
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-meta {
+  font-size: calc(11px * var(--es-ui-scale));
+  color: rgba(201, 208, 217, 0.65);
+  word-break: break-all;
+  line-height: 1.2;
+}
+
+.viewer-shell {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.viewer-shell.is-dragging {
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.5);
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 12, 0.25);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.drop-card {
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  background: rgba(12, 14, 18, 0.55);
+  color: rgba(219, 233, 244, 0.95);
+  font-size: calc(12px * var(--es-ui-scale));
+  letter-spacing: 0.3px;
+}
+
+.viewer-toolbar {
+  position: absolute;
+  top: calc(var(--titlebar-height) + 24px);
+  right: 24px;
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: calc(var(--es-radius) - 6px);
+  background: rgba(18, 18, 20, 0.45);
+  border: 1px solid var(--es-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.viewer-hints {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: calc(11px * var(--es-ui-scale));
+  color: rgba(223, 228, 236, 0.6);
+  border-radius: calc(var(--es-radius) - 8px);
+  background: rgba(18, 18, 20, 0.45);
+  border: 1px solid var(--es-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.status-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: calc(11px * var(--es-ui-scale));
+  color: rgba(214, 221, 231, 0.6);
+  padding: 6px 0 0;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--es-success);
+  box-shadow: 0 0 8px rgba(32, 201, 151, 0.6);
+}
+
+.color-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-input .mono {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  font-size: 13px;
+}
+
+.color-swatch-wrapper {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.color-swatch {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--es-border);
+  background: #000;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.color-swatch:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.color-picker-native {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+button,
+label {
+  font-family: var(--font-hud);
+}
+
+.mono {
+  font-family: var(--font-hud);
+}
+
+.font-hud {
+  font-family: var(--font-hud);
+}
