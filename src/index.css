@@ -338,7 +338,7 @@ body {
 /* Mode Tabs Navigation */
 .mode-tabs {
   display: flex;
-  gap: calc(6px * var(--es-ui-scale));
+  gap: calc(3px * var(--es-ui-scale));
   padding: calc(6px * var(--es-ui-scale));
   background: transparent;
   border-radius: calc(var(--es-radius-control) + 2px);
@@ -350,8 +350,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: calc(6px * var(--es-ui-scale));
-  padding: calc(8px * var(--es-ui-scale)) calc(10px * var(--es-ui-scale));
+  gap: calc(4px * var(--es-ui-scale));
+  padding: calc(8px * var(--es-ui-scale)) calc(4px * var(--es-ui-scale));
   border: 1px solid transparent;
   background: transparent;
   border-radius: calc(var(--es-radius-control) - 4px);

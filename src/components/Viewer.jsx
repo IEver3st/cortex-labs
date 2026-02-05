@@ -595,7 +595,7 @@ export default function Viewer({
             onModelErrorRef.current?.("YFT parsing returned no drawable data.");
             return;
           }
-          object = buildDrawableObject(drawable);
+          object = buildDrawableObject(drawable, { useVertexColors: false });
           if (!hasRenderableMeshes(object)) {
             onModelErrorRef.current?.("YFT parsed but no mesh data was generated.");
             return;
@@ -1417,6 +1417,7 @@ export default function Viewer({
                 metalness: baseMaterial.metalness ?? 0.2,
                 roughness: baseMaterial.roughness ?? 0.6,
               });
+              setupLiveryShader(ytdMaterial);
               ytdMaterial.name = baseMaterial.name;
               ytdMaterial.needsUpdate = true;
               mesh.userData.ytdMaterial = ytdMaterial;
@@ -1452,6 +1453,7 @@ export default function Viewer({
           metalness: baseMaterial.metalness ?? 0.2,
           roughness: baseMaterial.roughness ?? 0.6,
         });
+        setupLiveryShader(ytdMaterial);
         ytdMaterial.name = baseMaterial.name || matName;
 
         if (hasDiffuse) {
@@ -1638,6 +1640,29 @@ function getMeshList(object) {
   return meshes;
 }
 
+function setupLiveryShader(material) {
+  material.onBeforeCompile = (shader) => {
+    // Modify the fragment shader to blend texture with body color based on alpha
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <map_fragment>",
+      `
+      #ifdef USE_MAP
+        vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+        #ifdef DECODE_VIDEO_TEXTURE
+          sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
+        #endif
+        // Blend texture color with body color based on texture alpha
+        diffuseColor.rgb = mix(diffuseColor.rgb, sampledDiffuseColor.rgb, sampledDiffuseColor.a);
+        // Keep material fully opaque
+        diffuseColor.a = 1.0;
+      #endif
+      `
+    );
+  };
+  // Force shader recompilation
+  material.needsUpdate = true;
+}
+
 function getOrCreateAppliedMaterial(mesh, color) {
   if (mesh.userData.appliedMaterial) return mesh.userData.appliedMaterial;
   const material = new THREE.MeshStandardMaterial({
@@ -1647,6 +1672,7 @@ function getOrCreateAppliedMaterial(mesh, color) {
     metalness: 0.2,
     roughness: 0.6,
   });
+  setupLiveryShader(material);
   mesh.userData.appliedMaterial = material;
   return material;
 }
@@ -2401,17 +2427,25 @@ function createPsdTexture(imageData, bitsPerChannel) {
 
 async function loadPsdTexture(bytes) {
   const { readPsd } = await import("ag-psd");
-  const psd = readPsd(bytes, { skipThumbnail: true, useImageData: true });
+  // Don't use useImageData - let ag-psd render layers to canvas for reliability
+  const psd = readPsd(bytes, { skipThumbnail: true });
+
+  // Prefer canvas (properly composited layers) over imageData (pre-saved composite that may be stale/corrupted)
+  const canvas = psd?.canvas;
+  if (canvas && typeof canvas.getContext === "function") {
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.premultiplyAlpha = false;
+    return texture;
+  }
+
+  // Fall back to imageData if canvas not available
   const imageData = psd?.imageData;
   if (imageData) {
     const texture = createPsdTexture(imageData, psd?.bitsPerChannel);
     if (texture) return texture;
   }
-  const canvas = psd?.canvas;
-  if (!canvas || typeof canvas.getContext !== "function") {
-    throw new Error("PSD decoder did not return image data.");
-  }
-  return new THREE.CanvasTexture(canvas);
+
+  throw new Error("PSD decoder did not return image data.");
 }
 
 function getFileNameWithoutExtension(path) {
