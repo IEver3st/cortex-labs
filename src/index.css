@@ -488,15 +488,15 @@ body {
 }
 
 .settings-dialog {
-  width: min(calc(920px * var(--es-ui-scale)), 94vw);
-  max-height: min(calc(720px * var(--es-ui-scale)), 86vh);
+  width: min(calc(760px * var(--es-ui-scale)), 92vw);
+  height: min(calc(860px * var(--es-ui-scale)), 92vh);
   background: #0f1114;
   border: 1px solid var(--es-border);
   border-radius: var(--es-radius-surface);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
 }
 
 .settings-dialog-header {
@@ -532,8 +532,8 @@ body {
   width: calc(32px * var(--es-ui-scale));
   height: calc(32px * var(--es-ui-scale));
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  border: none;
+  background: transparent;
   color: rgba(233, 238, 244, 0.78);
   display: inline-flex;
   align-items: center;
@@ -804,6 +804,16 @@ body {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.settings-version {
+  margin-top: auto;
+  padding-top: calc(12px * var(--es-ui-scale));
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: calc(10px * var(--es-ui-scale));
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(201, 208, 217, 0.55);
+}
+
 .settings-footer .settings-actions {
   padding-top: 0;
 }
@@ -811,7 +821,7 @@ body {
 @media (max-width: 900px) {
   .settings-dialog {
     width: 94vw;
-    max-height: 90vh;
+    height: 90vh;
   }
 
   .settings-shell {
@@ -852,7 +862,7 @@ body {
 @media (max-width: 640px) {
   .settings-dialog {
     width: 94vw;
-    max-height: 92vh;
+    height: 92vh;
   }
 
   .settings-dialog-header {
@@ -1283,7 +1293,7 @@ body {
   font-size: calc(18px * var(--es-ui-scale));
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--panel-ink);
+  color: var(--es-success);
   font-weight: 600;
 }
 

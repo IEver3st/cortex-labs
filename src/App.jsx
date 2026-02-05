@@ -109,7 +109,6 @@ function App() {
   const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
   const [panelOpen, setPanelOpen] = useState(() => ({
     model: true,
-    overview: true,
     templates: true,
     targeting: true,
     overlays: false,
@@ -588,18 +587,6 @@ function App() {
       : windowLiveryTarget
         ? "Auto-detecting glass/window materials. Use dropdown to override."
         : "No window material auto-detected. Select a material below.";
-  const modeCaption =
-    textureMode === "livery"
-      ? "Livery mode"
-      : textureMode === "everything"
-        ? "Everything mode"
-        : "EUP mode";
-  const modeOverview =
-    textureMode === "livery"
-      ? "Auto-detects carpaint and livery targets from model material names. Ideal for vehicle livery development."
-      : textureMode === "everything"
-        ? "Full control over texture targeting. Apply textures to all meshes or pick specific materials."
-        : "Designed for Emergency Uniforms Pack clothing. Load .ydd drawables and apply uniform textures.";
   const modelLabel = getFileLabel(modelSourcePath || modelPath, "No model selected");
   const primaryTemplateLabel =
     textureMode === "livery"
@@ -765,24 +752,12 @@ function App() {
           >
             <div className="control-group">
               <Label>Select Model</Label>
-              <Button variant="outline" onClick={selectModel}>
+              <Button variant="outline" className="border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10" onClick={selectModel}>
                 Select Model
               </Button>
               <div className="file-meta mono">{modelLabel}</div>
               {modelLoading ? <div className="file-meta">Preparing model…</div> : null}
             </div>
-          </PanelSection>
-
-          <PanelSection
-            title="Mode Overview"
-            caption={modeCaption}
-            open={panelOpen.overview}
-            onToggle={() => togglePanel("overview")}
-            contentId="panel-overview"
-          >
-            <p className="mode-description">
-              {modeOverview}
-            </p>
           </PanelSection>
 
           {textureMode === "livery" ? (
@@ -797,13 +772,13 @@ function App() {
                 <div className="control-group">
                   <Label>Vehicle Template</Label>
                   <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-white/10 text-white/80 hover:bg-white/5"
-                      onClick={selectTexture}
-                    >
-                      Select Livery
-                    </Button>
+                      <Button
+                        variant="outline"
+                        className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
+                        onClick={selectTexture}
+                      >
+                        Select Livery
+                      </Button>
                     {texturePath && (
                       <Button
                         variant="outline"
@@ -862,7 +837,7 @@ function App() {
                       <div className="flex gap-2">
                         <Button
                           variant="outline"
-                          className="flex-1 border-white/10 text-white/80 hover:bg-white/5"
+                          className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
                           onClick={selectWindowTexture}
                         >
                           Select Glass
@@ -948,7 +923,7 @@ function App() {
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
-                      className="flex-1 border-white/10 text-white/80 hover:bg-white/5"
+                      className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
                       onClick={selectTexture}
                     >
                       Select Texture
@@ -1024,7 +999,7 @@ function App() {
                       <div className="flex gap-2">
                         <Button
                           variant="outline"
-                          className="flex-1 border-white/10 text-white/80 hover:bg-white/5"
+                          className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
                           onClick={selectWindowTexture}
                         >
                           Select Secondary
@@ -1086,7 +1061,7 @@ function App() {
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
-                      className="flex-1 border-white/10 text-white/80 hover:bg-white/5"
+                      className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
                       onClick={selectTexture}
                     >
                       Select Uniform
@@ -1311,13 +1286,13 @@ function App() {
                 <div className="toolbar-divider" />
                 <motion.div layout className="viewer-toolbar-group">
                   <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-                    <span className="mono opacity-50 mr-1">X</span>Rot
+                    <span className="mono mr-1 text-red-400">X</span>Rot
                   </Button>
                   <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-                    <span className="mono opacity-50 mr-1">Y</span>Rot
+                    <span className="mono mr-1 text-green-400">Y</span>Rot
                   </Button>
                   <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-                    <span className="mono opacity-50 mr-1">Z</span>Rot
+                    <span className="mono mr-1 text-blue-400">Z</span>Rot
                   </Button>
                 </motion.div>
                 <div className="toolbar-divider" />

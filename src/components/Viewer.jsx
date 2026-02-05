@@ -619,7 +619,7 @@ export default function Viewer({
             onModelErrorRef.current?.("YDD parsing returned no drawable data.");
             return;
           }
-          object = buildDrawableObject(drawable);
+          object = buildDrawableObject(drawable, { useVertexColors: false });
           if (!hasRenderableMeshes(object)) {
             onModelErrorRef.current?.("YDD parsed but no mesh data was generated.");
             return;
@@ -928,15 +928,7 @@ export default function Viewer({
         }
       };
 
-      const loadPsd = async () => {
-        const { readPsd } = await import("ag-psd");
-        const psd = readPsd(bytes, { skipThumbnail: true });
-        const canvas = psd?.canvas;
-        if (!canvas || typeof canvas.getContext !== "function") {
-          throw new Error("PSD decoder did not return a canvas.");
-        }
-        return new THREE.CanvasTexture(canvas);
-      };
+      const loadPsd = async () => loadPsdTexture(bytes);
 
       const loadTiff = async () => {
         const mod = await import("utif");
@@ -1173,15 +1165,7 @@ export default function Viewer({
         }
       };
 
-      const loadPsd = async () => {
-        const { readPsd } = await import("ag-psd");
-        const psd = readPsd(bytes, { skipThumbnail: true });
-        const canvas = psd?.canvas;
-        if (!canvas || typeof canvas.getContext !== "function") {
-          throw new Error("PSD decoder did not return a canvas.");
-        }
-        return new THREE.CanvasTexture(canvas);
-      };
+      const loadPsd = async () => loadPsdTexture(bytes);
 
       const loadTiff = async () => {
         const mod = await import("utif");
@@ -2097,6 +2081,97 @@ function sniffTextureSignature(bytes) {
   return { kind: "", mime: "" };
 }
 
+function clamp01(value) {
+  if (!Number.isFinite(value)) return 0;
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
+function toByteFromU16(value) {
+  return Math.min(255, Math.max(0, Math.round(value / 257)));
+}
+
+function toSrgbByteFromLinear(value) {
+  return Math.min(255, Math.max(0, Math.round(Math.pow(clamp01(value), 1 / 2.2) * 255)));
+}
+
+function normalizePsdImageData(imageData, bitsPerChannel) {
+  if (!imageData) return null;
+  const width = imageData.width;
+  const height = imageData.height;
+  const source = imageData.data;
+  if (!width || !height || !source) return null;
+  const expected = width * height * 4;
+  if (!Number.isFinite(expected) || expected <= 0) return null;
+  if (source.length < expected) return null;
+
+  const bitDepth = Number.isFinite(bitsPerChannel) ? bitsPerChannel : 8;
+
+  if (bitDepth === 16 && source instanceof Uint16Array) {
+    const data = new Uint8Array(expected);
+    for (let i = 0; i < expected; i += 1) {
+      data[i] = toByteFromU16(source[i]);
+    }
+    return { width, height, data };
+  }
+
+  if (bitDepth === 32 && source instanceof Float32Array) {
+    const data = new Uint8Array(expected);
+    for (let i = 0; i < expected; i += 4) {
+      data[i] = toSrgbByteFromLinear(source[i]);
+      data[i + 1] = toSrgbByteFromLinear(source[i + 1]);
+      data[i + 2] = toSrgbByteFromLinear(source[i + 2]);
+      data[i + 3] = Math.min(255, Math.max(0, Math.round(clamp01(source[i + 3]) * 255)));
+    }
+    return { width, height, data };
+  }
+
+  if (source instanceof Uint8Array) {
+    return { width, height, data: source };
+  }
+
+  if (source instanceof Uint8ClampedArray) {
+    const data = new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+    return { width, height, data };
+  }
+
+  const data = new Uint8Array(expected);
+  for (let i = 0; i < expected; i += 1) {
+    const value = source[i] ?? 0;
+    data[i] = Math.min(255, Math.max(0, Math.round(value)));
+  }
+  return { width, height, data };
+}
+
+function createPsdTexture(imageData, bitsPerChannel) {
+  const normalized = normalizePsdImageData(imageData, bitsPerChannel);
+  if (!normalized) return null;
+  const texture = new THREE.DataTexture(
+    normalized.data,
+    normalized.width,
+    normalized.height,
+    THREE.RGBAFormat,
+  );
+  texture.premultiplyAlpha = false;
+  return texture;
+}
+
+async function loadPsdTexture(bytes) {
+  const { readPsd } = await import("ag-psd");
+  const psd = readPsd(bytes, { skipThumbnail: true, useImageData: true });
+  const imageData = psd?.imageData;
+  if (imageData) {
+    const texture = createPsdTexture(imageData, psd?.bitsPerChannel);
+    if (texture) return texture;
+  }
+  const canvas = psd?.canvas;
+  if (!canvas || typeof canvas.getContext !== "function") {
+    throw new Error("PSD decoder did not return image data.");
+  }
+  return new THREE.CanvasTexture(canvas);
+}
+
 function getFileNameWithoutExtension(path) {
   if (!path) return "";
   const normalized = path.toString();
@@ -2146,7 +2221,8 @@ function maybeAutoFixYftUpAxis(object, initialSize) {
   return true;
 }
 
-function buildDrawableObject(drawable) {
+function buildDrawableObject(drawable, options = {}) {
+  const useVertexColors = options.useVertexColors !== false;
   const root = new THREE.Group();
   root.name = drawable.name || "yft";
 
@@ -2178,7 +2254,8 @@ function buildDrawableObject(drawable) {
         geometry.setAttribute("uv4", new THREE.BufferAttribute(mesh.uvs4, 2));
       }
 
-      if (mesh.colors) {
+      const hasVertexColors = Boolean(mesh.colors && useVertexColors);
+      if (hasVertexColors) {
         geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 4));
       }
 
@@ -2224,7 +2301,7 @@ function buildDrawableObject(drawable) {
         opacity,
         transparent,
         side: THREE.DoubleSide,
-        vertexColors: mesh.colors ? true : false,
+        vertexColors: hasVertexColors,
       });
       material.name = mesh.materialName || "";
 

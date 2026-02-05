@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, Settings } from "lucide-react";
+import appMeta from "../../package.json";
 
 function ColorField({ label, value, onChange, onReset }) {
   return (
@@ -75,11 +76,6 @@ export default function SettingsMenu({
         description: "Baseline texture behavior and viewing rules.",
       },
       {
-        id: "window",
-        label: "Window",
-        description: "Window overlay defaults and target behavior.",
-      },
-      {
         id: "camera",
         label: "Camera",
         description: "Keyboard movement and camera controls.",
@@ -141,6 +137,7 @@ export default function SettingsMenu({
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={() => setOpen(false)}
                 >
                   <motion.div
                     className="settings-dialog"
@@ -148,6 +145,7 @@ export default function SettingsMenu({
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 8, scale: 0.98 }}
                     transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                    onClick={(e) => e.stopPropagation()}
                   >
                     <div className="settings-dialog-header">
                       <button
@@ -181,6 +179,7 @@ export default function SettingsMenu({
                             </motion.button>
                           ))}
                         </div>
+                        <div className="settings-version">Cortex Studio v{appMeta.version}</div>
                       </nav>
 
                       <div className="settings-content">
@@ -238,49 +237,6 @@ export default function SettingsMenu({
                                   >
                                     <span className="settings-toggle-dot" />
                                   </button>
-                                </div>
-                              </section>
-                            ) : null}
-
-                            {activeSection === "window" ? (
-                              <section className="settings-panel" id="settings-panel-window" aria-label="Window">
-                                <div className="settings-panel-title">Window overlay</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Enable overlay</div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.windowTemplateEnabled ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, windowTemplateEnabled: !p.windowTemplateEnabled }))}
-                                    aria-pressed={draft.windowTemplateEnabled}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Default target</div>
-                                  <div className="settings-seg">
-                                    <button
-                                      type="button"
-                                      className={`settings-seg-btn ${draft.windowTextureTarget === "auto" ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, windowTextureTarget: "auto" }))}
-                                    >
-                                      Auto
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`settings-seg-btn ${draft.windowTextureTarget === "all" ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, windowTextureTarget: "all" }))}
-                                    >
-                                      All
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`settings-seg-btn ${draft.windowTextureTarget === "none" ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, windowTextureTarget: "none" }))}
-                                    >
-                                      None
-                                    </button>
-                                  </div>
                                 </div>
                               </section>
                             ) : null}
