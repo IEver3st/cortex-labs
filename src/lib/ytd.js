@@ -57,9 +57,7 @@ export function parseYtd(bytes, options = {}) {
       return null;
     }
 
-    console.log(
-      `[YTD] Decoded resource: ${resource.data.length} bytes, system=${resource.systemSize}, graphics=${resource.graphicsSize}`
-    );
+    // Resource decoded — skip verbose logging for performance
 
     const reader = createReader(
       resource.data,
@@ -79,7 +77,7 @@ export function parseYtd(bytes, options = {}) {
       return null;
     }
 
-    console.log(`[YTD] Successfully parsed ${Object.keys(textures).length} textures`);
+    // Parsed successfully
     return textures;
   } catch (error) {
     console.error("[YTD] Parse error:", error);
@@ -231,21 +229,8 @@ function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) 
     if (textureCount === 0 || textureCount > 512) continue;
     if (!reader.validPtr(texturesPtr)) continue;
 
-    console.log(`[YTD] Found texture dictionary at offset 0x${baseOffset.toString(16)}: ${textureCount} textures`);
-
     const texturesArrayOffset = reader.resolvePtr(texturesPtr);
     const hashesArrayOffset = reader.validPtr(hashesPtr) ? reader.resolvePtr(hashesPtr) : 0;
-
-    console.log(`[YTD] texturesPtr=0x${texturesPtr.toString(16)}, resolved to offset ${texturesArrayOffset}`);
-
-    // Debug: print first few raw bytes at texture array
-    if (texturesArrayOffset > 0 && texturesArrayOffset < reader.len - 64) {
-      const sample = [];
-      for (let j = 0; j < 64; j++) {
-        sample.push(reader.u8(texturesArrayOffset + j).toString(16).padStart(2, '0'));
-      }
-      console.log(`[YTD] First 64 bytes at texture array: ${sample.join(' ')}`);
-    }
 
     let parsedCount = 0;
     let failedCount = 0;
@@ -262,9 +247,6 @@ function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) 
       const textureOffset = reader.resolvePtr(texturePtr);
 
       if (textureOffset === 0 || textureOffset >= reader.len) {
-        if (i < 3) {
-          console.log(`[YTD] Texture ${i}: invalid offset from ptr 0x${texturePtr.toString(16)} -> ${textureOffset}`);
-        }
         failedCount++;
         continue;
       }
@@ -284,18 +266,12 @@ function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) 
 
         textures[name] = texture;
         parsedCount++;
-        if (parsedCount <= 3) {
-          console.log(`[YTD] Parsed texture: ${name} (${texture.width}x${texture.height})`);
-        }
       } else {
-        if (failedCount < 3) {
-          console.log(`[YTD] Texture ${i}: parseTexture returned null at offset ${textureOffset}`);
-        }
         failedCount++;
       }
     }
 
-    console.log(`[YTD] Parsed ${parsedCount}/${textureCount} textures (${failedCount} failed)`);
+    // Parsing complete: parsedCount / textureCount
 
 
     if (Object.keys(textures).length > 0) break;
@@ -343,9 +319,6 @@ function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, dec
   const isPow2 = (d) => d > 0 && (d & (d - 1)) === 0;
 
   if (!isValidDim(width) || !isValidDim(height) || !isPow2(width) || !isPow2(height)) {
-    if (debugIndex >= 0 && debugIndex < 3) {
-      console.log(`[YTD] Texture ${debugIndex}: invalid dimensions ${width}x${height}`);
-    }
     return null;
   }
 
@@ -408,14 +381,7 @@ function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, dec
   }
 
   if (dataOffset === 0) {
-    if (debugIndex >= 0 && debugIndex < 3) {
-      console.log(`[YTD] Texture ${debugIndex}: could not find data pointer for ${name || 'unnamed'} ${width}x${height}`);
-    }
     return null;
-  }
-
-  if (debugIndex >= 0 && debugIndex < 3) {
-    console.log(`[YTD] Texture ${debugIndex}: ${name || 'unnamed'} ${width}x${height} format="${formatStr}" dataOffset=${dataOffset}`);
   }
 
   // Decide whether to decode RGBA for this texture.
@@ -429,9 +395,6 @@ function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, dec
     rgba = decodeTexture(reader, dataOffset, width, height, format, 0);
 
     if (!rgba) {
-      if (debugIndex >= 0 && debugIndex < 3) {
-        console.log(`[YTD] Texture ${debugIndex}: decode failed`);
-      }
       return null;
     }
   }
@@ -486,51 +449,99 @@ function decodeTexture(reader, offset, width, height, format, stride) {
   return rgba;
 }
 
-// DXT1 (BC1) Decoder
+// Pre-allocated scratch buffers for block decoders — avoids per-block allocations
+// Each color palette has 4 entries x 4 channels (RGBA) = 16 values
+const _colorPalette = new Uint8Array(16); // 4 colors x 4 channels
+const _alphaPalette = new Uint8Array(8);  // 8 alpha values
+
+// Decode RGB565 color directly into palette at the given slot (0-3)
+function decode565Into(c, slot) {
+  const base = slot << 2;
+  _colorPalette[base]     = ((c >> 11) & 0x1F) * 255 / 31 + 0.5 | 0;
+  _colorPalette[base + 1] = ((c >> 5) & 0x3F) * 255 / 63 + 0.5 | 0;
+  _colorPalette[base + 2] = (c & 0x1F) * 255 / 31 + 0.5 | 0;
+  _colorPalette[base + 3] = 255;
+}
+
+// Build the 4-color palette in-place from two 565 endpoints
+function buildColorPalette(c0, c1, fourColor) {
+  decode565Into(c0, 0);
+  decode565Into(c1, 1);
+
+  if (fourColor) {
+    // 4-color mode: interpolate 2/3 and 1/3
+    _colorPalette[8]  = ((_colorPalette[0] * 2 + _colorPalette[4]) / 3) | 0;
+    _colorPalette[9]  = ((_colorPalette[1] * 2 + _colorPalette[5]) / 3) | 0;
+    _colorPalette[10] = ((_colorPalette[2] * 2 + _colorPalette[6]) / 3) | 0;
+    _colorPalette[11] = 255;
+    _colorPalette[12] = ((_colorPalette[0] + _colorPalette[4] * 2) / 3) | 0;
+    _colorPalette[13] = ((_colorPalette[1] + _colorPalette[5] * 2) / 3) | 0;
+    _colorPalette[14] = ((_colorPalette[2] + _colorPalette[6] * 2) / 3) | 0;
+    _colorPalette[15] = 255;
+  } else {
+    // 3-color + transparent mode
+    _colorPalette[8]  = ((_colorPalette[0] + _colorPalette[4]) >> 1);
+    _colorPalette[9]  = ((_colorPalette[1] + _colorPalette[5]) >> 1);
+    _colorPalette[10] = ((_colorPalette[2] + _colorPalette[6]) >> 1);
+    _colorPalette[11] = 255;
+    _colorPalette[12] = 0;
+    _colorPalette[13] = 0;
+    _colorPalette[14] = 0;
+    _colorPalette[15] = 0;
+  }
+}
+
+// DXT1 (BC1) Decoder — optimized with pre-allocated palette and direct byte writes
 function decodeDXT1(reader, offset, width, height, rgba) {
   const blocksX = Math.ceil(width / 4);
   const blocksY = Math.ceil(height / 4);
+  const w4 = width << 2; // width * 4 bytes per pixel
 
   let blockOffset = offset;
 
   for (let by = 0; by < blocksY; by++) {
+    const baseY = by << 2;
     for (let bx = 0; bx < blocksX; bx++) {
+      const baseX = bx << 2;
       const c0 = reader.u16(blockOffset);
       const c1 = reader.u16(blockOffset + 2);
       const indices = reader.u32(blockOffset + 4);
       blockOffset += 8;
 
-      const colors = decodeColors565(c0, c1, c0 > c1);
+      buildColorPalette(c0, c1, c0 > c1);
 
       for (let py = 0; py < 4; py++) {
+        const y = baseY + py;
+        if (y >= height) break;
+        const rowBase = y * w4;
         for (let px = 0; px < 4; px++) {
-          const x = bx * 4 + px;
-          const y = by * 4 + py;
-          if (x >= width || y >= height) continue;
+          const x = baseX + px;
+          if (x >= width) continue;
 
-          const idx = (indices >> ((py * 4 + px) * 2)) & 0x3;
-          const color = colors[idx];
-
-          const pixelOffset = (y * width + x) * 4;
-          rgba[pixelOffset] = color[0];
-          rgba[pixelOffset + 1] = color[1];
-          rgba[pixelOffset + 2] = color[2];
-          rgba[pixelOffset + 3] = color[3];
+          const idx = ((indices >> ((py * 4 + px) << 1)) & 0x3) << 2;
+          const pixelOffset = rowBase + (x << 2);
+          rgba[pixelOffset]     = _colorPalette[idx];
+          rgba[pixelOffset + 1] = _colorPalette[idx + 1];
+          rgba[pixelOffset + 2] = _colorPalette[idx + 2];
+          rgba[pixelOffset + 3] = _colorPalette[idx + 3];
         }
       }
     }
   }
 }
 
-// DXT3 (BC2) Decoder
+// DXT3 (BC2) Decoder — optimized
 function decodeDXT3(reader, offset, width, height, rgba) {
   const blocksX = Math.ceil(width / 4);
   const blocksY = Math.ceil(height / 4);
+  const w4 = width << 2;
 
   let blockOffset = offset;
 
   for (let by = 0; by < blocksY; by++) {
+    const baseY = by << 2;
     for (let bx = 0; bx < blocksX; bx++) {
+      const baseX = bx << 2;
       // Alpha block (8 bytes)
       const alphaLo = reader.u32(blockOffset);
       const alphaHi = reader.u32(blockOffset + 4);
@@ -542,27 +553,28 @@ function decodeDXT3(reader, offset, width, height, rgba) {
       const indices = reader.u32(blockOffset + 4);
       blockOffset += 8;
 
-      const colors = decodeColors565(c0, c1, true);
+      buildColorPalette(c0, c1, true);
 
       for (let py = 0; py < 4; py++) {
+        const y = baseY + py;
+        if (y >= height) break;
+        const rowBase = y * w4;
         for (let px = 0; px < 4; px++) {
-          const x = bx * 4 + px;
-          const y = by * 4 + py;
-          if (x >= width || y >= height) continue;
+          const x = baseX + px;
+          if (x >= width) continue;
 
-          const idx = (indices >> ((py * 4 + px) * 2)) & 0x3;
-          const color = colors[idx];
+          const idx = ((indices >> ((py * 4 + px) << 1)) & 0x3) << 2;
 
           // Get explicit alpha
           const alphaIdx = py * 4 + px;
           const alphaBits = alphaIdx < 8 ? alphaLo : alphaHi;
           const alphaShift = (alphaIdx % 8) * 4;
-          const alpha = ((alphaBits >> alphaShift) & 0xF) * 17; // Scale 4-bit to 8-bit
+          const alpha = ((alphaBits >> alphaShift) & 0xF) * 17;
 
-          const pixelOffset = (y * width + x) * 4;
-          rgba[pixelOffset] = color[0];
-          rgba[pixelOffset + 1] = color[1];
-          rgba[pixelOffset + 2] = color[2];
+          const pixelOffset = rowBase + (x << 2);
+          rgba[pixelOffset]     = _colorPalette[idx];
+          rgba[pixelOffset + 1] = _colorPalette[idx + 1];
+          rgba[pixelOffset + 2] = _colorPalette[idx + 2];
           rgba[pixelOffset + 3] = alpha;
         }
       }
@@ -570,30 +582,48 @@ function decodeDXT3(reader, offset, width, height, rgba) {
   }
 }
 
-// DXT5 (BC3) Decoder
+// Build alpha palette in-place for BC3 blocks
+function buildAlphaPalette(a0, a1) {
+  _alphaPalette[0] = a0;
+  _alphaPalette[1] = a1;
+
+  if (a0 > a1) {
+    _alphaPalette[2] = ((6 * a0 + 1 * a1) / 7) | 0;
+    _alphaPalette[3] = ((5 * a0 + 2 * a1) / 7) | 0;
+    _alphaPalette[4] = ((4 * a0 + 3 * a1) / 7) | 0;
+    _alphaPalette[5] = ((3 * a0 + 4 * a1) / 7) | 0;
+    _alphaPalette[6] = ((2 * a0 + 5 * a1) / 7) | 0;
+    _alphaPalette[7] = ((1 * a0 + 6 * a1) / 7) | 0;
+  } else {
+    _alphaPalette[2] = ((4 * a0 + 1 * a1) / 5) | 0;
+    _alphaPalette[3] = ((3 * a0 + 2 * a1) / 5) | 0;
+    _alphaPalette[4] = ((2 * a0 + 3 * a1) / 5) | 0;
+    _alphaPalette[5] = ((1 * a0 + 4 * a1) / 5) | 0;
+    _alphaPalette[6] = 0;
+    _alphaPalette[7] = 255;
+  }
+}
+
+// DXT5 (BC3) Decoder — optimized with pre-allocated palettes
 function decodeDXT5(reader, offset, width, height, rgba) {
   const blocksX = Math.ceil(width / 4);
   const blocksY = Math.ceil(height / 4);
+  const w4 = width << 2;
 
   let blockOffset = offset;
 
   for (let by = 0; by < blocksY; by++) {
+    const baseY = by << 2;
     for (let bx = 0; bx < blocksX; bx++) {
+      const baseX = bx << 2;
       // Alpha block (8 bytes)
       const alpha0 = reader.u8(blockOffset);
       const alpha1 = reader.u8(blockOffset + 1);
-      const alphaBits0 = reader.u8(blockOffset + 2);
-      const alphaBits1 = reader.u8(blockOffset + 3);
-      const alphaBits2 = reader.u8(blockOffset + 4);
-      const alphaBits3 = reader.u8(blockOffset + 5);
-      const alphaBits4 = reader.u8(blockOffset + 6);
-      const alphaBits5 = reader.u8(blockOffset + 7);
+      const alphaBitsLo = reader.u8(blockOffset + 2) | (reader.u8(blockOffset + 3) << 8) | (reader.u8(blockOffset + 4) << 16);
+      const alphaBitsHi = reader.u8(blockOffset + 5) | (reader.u8(blockOffset + 6) << 8) | (reader.u8(blockOffset + 7) << 16);
       blockOffset += 8;
 
-      const alphaBitsLo = alphaBits0 | (alphaBits1 << 8) | (alphaBits2 << 16);
-      const alphaBitsHi = alphaBits3 | (alphaBits4 << 8) | (alphaBits5 << 16);
-
-      const alphas = decodeAlphaBC3(alpha0, alpha1);
+      buildAlphaPalette(alpha0, alpha1);
 
       // Color block (8 bytes)
       const c0 = reader.u16(blockOffset);
@@ -601,35 +631,29 @@ function decodeDXT5(reader, offset, width, height, rgba) {
       const indices = reader.u32(blockOffset + 4);
       blockOffset += 8;
 
-      const colors = decodeColors565(c0, c1, true);
+      buildColorPalette(c0, c1, true);
 
       for (let py = 0; py < 4; py++) {
+        const y = baseY + py;
+        if (y >= height) break;
+        const rowBase = y * w4;
         for (let px = 0; px < 4; px++) {
-          const x = bx * 4 + px;
-          const y = by * 4 + py;
-          if (x >= width || y >= height) continue;
+          const x = baseX + px;
+          if (x >= width) continue;
 
-          const colorIdx = (indices >> ((py * 4 + px) * 2)) & 0x3;
-          const color = colors[colorIdx];
+          const colorIdx = ((indices >> ((py * 4 + px) << 1)) & 0x3) << 2;
 
           // Get interpolated alpha
           const alphaPixelIdx = py * 4 + px;
-          let alphaBits, alphaShift;
-          if (alphaPixelIdx < 8) {
-            alphaBits = alphaBitsLo;
-            alphaShift = alphaPixelIdx * 3;
-          } else {
-            alphaBits = alphaBitsHi;
-            alphaShift = (alphaPixelIdx - 8) * 3;
-          }
+          const alphaBits = alphaPixelIdx < 8 ? alphaBitsLo : alphaBitsHi;
+          const alphaShift = alphaPixelIdx < 8 ? alphaPixelIdx * 3 : (alphaPixelIdx - 8) * 3;
           const alphaIdx = (alphaBits >> alphaShift) & 0x7;
-          const alpha = alphas[alphaIdx];
 
-          const pixelOffset = (y * width + x) * 4;
-          rgba[pixelOffset] = color[0];
-          rgba[pixelOffset + 1] = color[1];
-          rgba[pixelOffset + 2] = color[2];
-          rgba[pixelOffset + 3] = alpha;
+          const pixelOffset = rowBase + (x << 2);
+          rgba[pixelOffset]     = _colorPalette[colorIdx];
+          rgba[pixelOffset + 1] = _colorPalette[colorIdx + 1];
+          rgba[pixelOffset + 2] = _colorPalette[colorIdx + 2];
+          rgba[pixelOffset + 3] = _alphaPalette[alphaIdx];
         }
       }
     }
@@ -729,84 +753,51 @@ function fillBlock(bx, by, width, height, rgba, color) {
   }
 }
 
-// Decode A8R8G8B8 format
+// Decode A8R8G8B8 format — optimized with direct byte array access
 function decodeARGB8(reader, offset, width, height, rgba, stride) {
   const rowStride = stride > 0 ? stride : width * 4;
+  const bytes = reader.bytes;
+  const len = reader.len;
+  const rowPixels = width << 2;
 
   for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const srcOffset = offset + y * rowStride + x * 4;
-      const dstOffset = (y * width + x) * 4;
+    const srcRowBase = offset + y * rowStride;
+    const dstRowBase = y * rowPixels;
+    if (srcRowBase + rowPixels > len) break;
 
-      // ARGB -> RGBA
-      rgba[dstOffset + 2] = reader.u8(srcOffset);     // B
-      rgba[dstOffset + 1] = reader.u8(srcOffset + 1); // G
-      rgba[dstOffset] = reader.u8(srcOffset + 2);     // R
-      rgba[dstOffset + 3] = reader.u8(srcOffset + 3); // A
+    for (let x = 0; x < width; x++) {
+      const srcOff = srcRowBase + (x << 2);
+      const dstOff = dstRowBase + (x << 2);
+
+      // BGRA -> RGBA swizzle
+      rgba[dstOff]     = bytes[srcOff + 2]; // R
+      rgba[dstOff + 1] = bytes[srcOff + 1]; // G
+      rgba[dstOff + 2] = bytes[srcOff];     // B
+      rgba[dstOff + 3] = bytes[srcOff + 3]; // A
     }
   }
 }
 
+// Legacy helpers kept for BC7 extractBC7Colors which still uses array-based colors
 function decodeColors565(c0, c1, hasAlpha) {
-  const colors = new Array(4);
+  const r0 = ((c0 >> 11) & 0x1F) * 255 / 31 + 0.5 | 0;
+  const g0 = ((c0 >> 5) & 0x3F) * 255 / 63 + 0.5 | 0;
+  const b0 = (c0 & 0x1F) * 255 / 31 + 0.5 | 0;
+  const r1 = ((c1 >> 11) & 0x1F) * 255 / 31 + 0.5 | 0;
+  const g1 = ((c1 >> 5) & 0x3F) * 255 / 63 + 0.5 | 0;
+  const b1 = (c1 & 0x1F) * 255 / 31 + 0.5 | 0;
 
-  colors[0] = decode565(c0);
-  colors[0][3] = 255;
-
-  colors[1] = decode565(c1);
-  colors[1][3] = 255;
+  const colors = [[r0, g0, b0, 255], [r1, g1, b1, 255], null, null];
 
   if (c0 > c1 || hasAlpha) {
-    colors[2] = [
-      Math.floor((colors[0][0] * 2 + colors[1][0]) / 3),
-      Math.floor((colors[0][1] * 2 + colors[1][1]) / 3),
-      Math.floor((colors[0][2] * 2 + colors[1][2]) / 3),
-      255,
-    ];
-    colors[3] = [
-      Math.floor((colors[0][0] + colors[1][0] * 2) / 3),
-      Math.floor((colors[0][1] + colors[1][1] * 2) / 3),
-      Math.floor((colors[0][2] + colors[1][2] * 2) / 3),
-      255,
-    ];
+    colors[2] = [((r0 * 2 + r1) / 3) | 0, ((g0 * 2 + g1) / 3) | 0, ((b0 * 2 + b1) / 3) | 0, 255];
+    colors[3] = [((r0 + r1 * 2) / 3) | 0, ((g0 + g1 * 2) / 3) | 0, ((b0 + b1 * 2) / 3) | 0, 255];
   } else {
-    colors[2] = [
-      Math.floor((colors[0][0] + colors[1][0]) / 2),
-      Math.floor((colors[0][1] + colors[1][1]) / 2),
-      Math.floor((colors[0][2] + colors[1][2]) / 2),
-      255,
-    ];
-    colors[3] = [0, 0, 0, 0]; // Transparent
+    colors[2] = [((r0 + r1) >> 1), ((g0 + g1) >> 1), ((b0 + b1) >> 1), 255];
+    colors[3] = [0, 0, 0, 0];
   }
 
   return colors;
-}
-
-function decode565(c) {
-  const r = ((c >> 11) & 0x1F) * 255 / 31;
-  const g = ((c >> 5) & 0x3F) * 255 / 63;
-  const b = (c & 0x1F) * 255 / 31;
-  return [Math.round(r), Math.round(g), Math.round(b)];
-}
-
-function decodeAlphaBC3(a0, a1) {
-  const alphas = new Array(8);
-  alphas[0] = a0;
-  alphas[1] = a1;
-
-  if (a0 > a1) {
-    for (let i = 2; i < 8; i++) {
-      alphas[i] = Math.floor(((8 - i) * a0 + (i - 1) * a1) / 7);
-    }
-  } else {
-    for (let i = 2; i < 6; i++) {
-      alphas[i] = Math.floor(((6 - i) * a0 + (i - 1) * a1) / 5);
-    }
-    alphas[6] = 0;
-    alphas[7] = 255;
-  }
-
-  return alphas;
 }
 
 /**

@@ -1,9 +1,34 @@
-import { useCallback, useEffect, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo, memo } from "react";
 import { X, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
+/* ───── Shared OffscreenCanvas for thumbnail scaling ───── */
+let _sharedOffscreen = null;
+function getSharedOffscreen(w, h) {
+  if (!_sharedOffscreen || _sharedOffscreen.width < w || _sharedOffscreen.height < h) {
+    _sharedOffscreen = new OffscreenCanvas(Math.max(w, _sharedOffscreen?.width || 0), Math.max(h, _sharedOffscreen?.height || 0));
+  }
+  return _sharedOffscreen;
+}
+
+// Simple bitmap cache keyed by texture name + dimensions to avoid re-rendering
+const _thumbCache = new Map();
+const THUMB_CACHE_LIMIT = 128;
+
+function pruneThumbCache() {
+  if (_thumbCache.size <= THUMB_CACHE_LIMIT) return;
+  // Evict oldest entries (Map preserves insertion order)
+  const toDelete = _thumbCache.size - THUMB_CACHE_LIMIT;
+  let count = 0;
+  for (const key of _thumbCache.keys()) {
+    if (count >= toDelete) break;
+    _thumbCache.delete(key);
+    count++;
+  }
+}
+
 /* ───── Thumbnail — renders RGBA data onto a tiny canvas ───── */
-const TextureThumb = memo(function TextureThumb({ rgba, width, height }) {
+const TextureThumb = memo(function TextureThumb({ rgba, width, height, name }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -30,13 +55,27 @@ const TextureThumb = memo(function TextureThumb({ rgba, width, height }) {
       return;
     }
 
-    // Create ImageData from the full RGBA, draw it scaled
+    // Check bitmap cache first
+    const cacheKey = `${name || ""}:${width}x${height}`;
+    const cachedBitmap = _thumbCache.get(cacheKey);
+    if (cachedBitmap) {
+      ctx.drawImage(cachedBitmap, 0, 0, w, h);
+      return;
+    }
+
+    // Create ImageData from the full RGBA, draw it scaled via shared OffscreenCanvas
     try {
       const full = new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength), width, height);
-      const offscreen = new OffscreenCanvas(width, height);
+      const offscreen = getSharedOffscreen(width, height);
       const offCtx = offscreen.getContext("2d");
       offCtx.putImageData(full, 0, 0);
-      ctx.drawImage(offscreen, 0, 0, w, h);
+      ctx.drawImage(offscreen, 0, 0, width, height, 0, 0, w, h);
+
+      // Cache the bitmap for future renders
+      createImageBitmap(offscreen, 0, 0, width, height).then((bitmap) => {
+        _thumbCache.set(cacheKey, bitmap);
+        pruneThumbCache();
+      }).catch(() => { /* ignore cache miss */ });
     } catch {
       // Fallback: draw a placeholder
       ctx.fillStyle = "#1a1a2e";
@@ -45,7 +84,7 @@ const TextureThumb = memo(function TextureThumb({ rgba, width, height }) {
       ctx.font = "10px monospace";
       ctx.fillText("?", w / 2 - 3, h / 2 + 3);
     }
-  }, [rgba, width, height]);
+  }, [rgba, width, height, name]);
 
   return <canvas ref={canvasRef} className="ytd-thumb-canvas" />;
 });
@@ -131,8 +170,8 @@ export default function YtdBrowser({
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
 
-  // Build a flat list of all textures with their category
-  const allTextures = useCallback(() => {
+  // Build a flat list of all textures with their category — memoized
+  const textures = useMemo(() => {
     if (!rawTextures) return [];
     const result = [];
     const catLookup = {};
@@ -148,10 +187,17 @@ export default function YtdBrowser({
       }
     }
 
+    // Pre-build a Map for O(1) assignment lookups instead of O(n) find() per texture
+    const assignmentMap = new Map();
+    if (mappingMeta?.assignments) {
+      for (const a of mappingMeta.assignments) {
+        assignmentMap.set(a.textureName, a);
+      }
+    }
+
     for (const [name, tex] of Object.entries(rawTextures)) {
       const category = catLookup[name] || "other";
-      // Find the assignment from meta
-      const assignment = mappingMeta?.assignments?.find((a) => a.textureName === name);
+      const assignment = assignmentMap.get(name);
       result.push({
         name,
         category,
@@ -166,21 +212,37 @@ export default function YtdBrowser({
     return result;
   }, [rawTextures, categorizedTextures, mappingMeta]);
 
-  const textures = allTextures();
+  // Memoize filtered list and counts together
+  const { filtered, counts } = useMemo(() => {
+    const searchLower = search ? search.toLowerCase() : "";
+    const filteredList = textures.filter((t) => {
+      if (filter !== "all" && t.category !== filter) return false;
+      if (searchLower && !t.name.toLowerCase().includes(searchLower)) return false;
+      return true;
+    });
 
-  const filtered = textures.filter((t) => {
-    if (filter !== "all" && t.category !== filter) return false;
-    if (search && !t.name.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+    // Single pass to count categories
+    let diffuse = 0, normal = 0, specular = 0, other = 0;
+    for (const t of textures) {
+      switch (t.category) {
+        case "diffuse": diffuse++; break;
+        case "normal": normal++; break;
+        case "specular": specular++; break;
+        default: other++; break;
+      }
+    }
 
-  const counts = {
-    all: textures.length,
-    diffuse: textures.filter((t) => t.category === "diffuse").length,
-    normal: textures.filter((t) => t.category === "normal").length,
-    specular: textures.filter((t) => t.category === "specular").length,
-    other: textures.filter((t) => t.category === "detail" || t.category === "other").length,
-  };
+    return {
+      filtered: filteredList,
+      counts: {
+        all: textures.length,
+        diffuse,
+        normal,
+        specular,
+        other,
+      },
+    };
+  }, [textures, filter, search]);
 
   if (!open) return null;
 
@@ -247,7 +309,7 @@ export default function YtdBrowser({
                 {filtered.map((tex) => (
                   <div key={tex.name} className="ytd-modal-card">
                     <div className="ytd-modal-card-preview">
-                      <TextureThumb rgba={tex.rgba} width={tex.width} height={tex.height} />
+                      <TextureThumb rgba={tex.rgba} width={tex.width} height={tex.height} name={tex.name} />
                       <div className="ytd-modal-card-dims">{tex.width}x{tex.height}</div>
                     </div>
                     <div className="ytd-modal-card-info">

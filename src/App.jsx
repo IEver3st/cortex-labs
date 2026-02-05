@@ -175,6 +175,11 @@ function App() {
   // on demand without re-reading the file.
   const ytdBytesRef = useRef(null);
 
+  // Persistent YTD decode worker — reused across decode calls to avoid
+  // the overhead of creating/destroying workers and to benefit from the
+  // worker's internal decompression cache.
+  const ytdDecodeWorkerRef = useRef(null);
+
   // Dual-model (multi-model) state
   const dualViewerApiRef = useRef(null);
   const [dualModelAPath, setDualModelAPath] = useState("");
@@ -590,25 +595,39 @@ function App() {
     }
   };
 
-  // Decode specific YTD textures by name. Spins up a short-lived worker
-  // that re-parses the cached raw bytes but only decodes the requested names.
+  // Decode specific YTD textures by name. Reuses a persistent worker
+  // to avoid worker creation overhead and to benefit from the worker's
+  // internal decompression/metadata cache across successive decode calls.
   const decodeYtdTextures = useCallback(async (names) => {
     const rawBytes = ytdBytesRef.current;
     if (!rawBytes || names.length === 0) return {};
 
+    // Lazily create the persistent decode worker
+    if (!ytdDecodeWorkerRef.current) {
+      ytdDecodeWorkerRef.current = new YtdWorker();
+    }
+    const worker = ytdDecodeWorkerRef.current;
+
     return new Promise((resolve, reject) => {
-      const worker = new YtdWorker();
+      // Temporarily override handlers for this request
+      const prevOnMessage = worker.onmessage;
+      const prevOnError = worker.onerror;
+
       worker.onmessage = (e) => {
-        worker.terminate();
+        // Restore previous handlers
+        worker.onmessage = prevOnMessage;
+        worker.onerror = prevOnError;
         if (e.data.error) reject(new Error(e.data.error));
         else resolve(e.data.textures || {});
       };
       worker.onerror = (err) => {
-        worker.terminate();
+        worker.onmessage = prevOnMessage;
+        worker.onerror = prevOnError;
+        // Worker errored fatally — recreate it next time
+        ytdDecodeWorkerRef.current = null;
         reject(err);
       };
-      // Send a copy of the bytes (slice) so the original stays available for
-      // future decode requests (e.g. when the user opens the YTD browser).
+      // Send a copy of the bytes (slice) so the original stays available
       const copy = rawBytes.slice(0);
       worker.postMessage({ type: "decode", bytes: copy, names }, [copy]);
     });
@@ -677,6 +696,11 @@ function App() {
     setYtdMappingMeta(null);
     setYtdOverrides({});
     ytdBytesRef.current = null;
+    // Terminate the persistent decode worker to free memory
+    if (ytdDecodeWorkerRef.current) {
+      ytdDecodeWorkerRef.current.terminate();
+      ytdDecodeWorkerRef.current = null;
+    }
   };
 
   // YTD override handler — user changed a texture's material assignment in the browser

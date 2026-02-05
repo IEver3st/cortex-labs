@@ -73,7 +73,7 @@ const EXTERIOR_EXCLUDE_TOKENS = [
   "under",
   "undercarriage",
 ];
-const TEXTURE_CACHE_LIMIT = 8;
+const TEXTURE_CACHE_LIMIT = 16;
 const textureCache = new Map();
 
 function getTextureCacheKey(path, flipY, reloadToken) {
@@ -1373,46 +1373,18 @@ export default function Viewer({
     }
     const materialNames = Array.from(materialNamesSet);
 
-    console.log("[YTD] Model material names:", materialNames);
-    console.log("[YTD] Shader texture refs:", materialTextureRefs);
-    console.log("[YTD] YTD texture categories:", {
-      diffuse: Object.keys(ytdTextures.diffuse || {}),
-      normal: Object.keys(ytdTextures.normal || {}),
-      specular: Object.keys(ytdTextures.specular || {}),
-    });
+    // Debug logging removed for performance — uncomment if debugging texture matching:
+    // console.log("[YTD] Model material names:", materialNames);
+    // console.log("[YTD] Shader texture refs:", materialTextureRefs);
 
     if (materialNames.length === 0) {
-      console.log("[YTD] No material names found in model");
       return;
     }
 
     // --- Phase 1: Match textures to materials (metadata only, synchronous) ---
     const mapping = matchTexturesToMaterials(ytdTextures, materialNames, materialTextureRefs);
 
-    // Log results
     const meta = mapping._meta;
-    if (meta) {
-      console.log(`[YTD] Root texture base: "${meta.rootBase}"`);
-      if (meta.assignments) {
-        for (const a of meta.assignments) {
-          console.log(`[YTD]   ${a.textureName} → role="${a.role}" → material="${a.materialName || "(unassigned)"}"`);
-        }
-      }
-    }
-    let matchCount = 0;
-    for (const matName of Object.keys(mapping)) {
-      if (matName === "_meta") continue;
-      const m = mapping[matName];
-      if (m.diffuse || m.normal || m.specular) {
-        matchCount++;
-        console.log(`[YTD] Matched "${matName}" →`, {
-          diffuse: m.diffuse?.originalName || m.diffuse?.name || null,
-          normal: m.normal?.originalName || m.normal?.name || null,
-          specular: m.specular?.originalName || m.specular?.name || null,
-        });
-      }
-    }
-    console.log(`[YTD] ${matchCount}/${materialNames.length} materials matched`);
 
     // Apply user overrides on top of auto-mapping
     if (ytdOverrides && Object.keys(ytdOverrides).length > 0) {
@@ -1472,7 +1444,7 @@ export default function Viewer({
       if (m.specular) neededNames.add(m.specular.originalName || m.specular.name);
     }
 
-    console.log(`[YTD] Need to decode ${neededNames.size} textures (out of ${Object.keys(ytdTextures.diffuse || {}).length + Object.keys(ytdTextures.normal || {}).length + Object.keys(ytdTextures.specular || {}).length + Object.keys(ytdTextures.detail || {}).length + Object.keys(ytdTextures.other || {}).length} total)`);
+    // neededNames.size textures need decoding
 
     // --- Phase 2: Decode only the needed textures (async, off main thread) ---
     const applyDecodedTextures = async () => {

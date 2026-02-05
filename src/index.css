@@ -572,8 +572,8 @@ body {
 .settings-nav {
   display: flex;
   flex-direction: column;
-  gap: calc(8px * var(--es-ui-scale));
-  padding: 0 calc(12px * var(--es-ui-scale)) 0 0;
+  gap: calc(2px * var(--es-ui-scale));
+  padding: 0;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   background: transparent;
   min-height: 0;
@@ -654,19 +654,21 @@ body {
 }
 
 .settings-nav-item {
-  border-left: 2px solid transparent;
+  position: relative;
   background: transparent;
   color: rgba(214, 221, 231, 0.76);
-  border-radius: 0;
+  border-radius: var(--es-radius-control) 0 0 var(--es-radius-control);
   width: 100%;
-  padding: calc(10px * var(--es-ui-scale)) calc(6px * var(--es-ui-scale)) calc(10px * var(--es-ui-scale)) calc(10px * var(--es-ui-scale));
+  padding: calc(10px * var(--es-ui-scale)) calc(12px * var(--es-ui-scale));
   text-align: left;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: calc(4px * var(--es-ui-scale));
-  transition: color 0.16s ease, border-color 0.16s ease;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.16s ease;
+  border: 1px solid transparent;
+  border-right: none;
+  margin-right: -1px;
 }
 
 .settings-nav-item:last-of-type {
@@ -675,11 +677,15 @@ body {
 
 .settings-nav-item:hover {
   color: rgba(248, 250, 252, 0.95);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .settings-nav-item.is-active {
-  border-left-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.04);
   color: rgba(248, 250, 252, 0.98);
+  border-color: rgba(255, 255, 255, 0.08);
+  border-right: 1px solid #0f1114;
+  z-index: 2;
 }
 
 .settings-nav-item:focus-visible {
@@ -1836,10 +1842,10 @@ body {
 
 .update-toast-label {
   text-transform: uppercase;
-  color: rgba(239, 244, 250, 0.5);
+  color: #ffffff;
   font-size: calc(10px * var(--es-ui-scale));
   letter-spacing: 0.1em;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .update-toast-version {
@@ -3074,3 +3080,46 @@ label {
 /* ═══════════════════════════════════════════ */
 
 
+
+/* ── Settings Confirmation ── */
+.settings-confirm-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.settings-confirm-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: calc(11px * var(--es-ui-scale));
+  color: rgba(239, 244, 250, 0.85);
+  flex: 1;
+}
+
+.settings-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-danger-btn {
+  height: calc(30px * var(--es-ui-scale));
+  padding: 0 calc(12px * var(--es-ui-scale));
+  border-radius: var(--es-radius-control);
+  background: rgba(220, 38, 38, 0.15);
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  color: #fca5a5;
+  font-family: var(--font-hud);
+  font-size: calc(10.5px * var(--es-ui-scale));
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-danger-btn:hover {
+  background: rgba(220, 38, 38, 0.3);
+  color: #fff;
+}

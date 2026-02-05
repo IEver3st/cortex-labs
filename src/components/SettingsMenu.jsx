@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, Layers, Shirt, FlaskConical } from "lucide-react";
+import { ArrowLeft, Settings, Car, Layers, Shirt, FlaskConical, AlertTriangle } from "lucide-react";
 import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
 import {
@@ -51,6 +51,13 @@ export default function SettingsMenu({
   const [hoveringIcon, setHoveringIcon] = useState(false);
   const [activeSection, setActiveSection] = useState("defaults");
   const [portalNode, setPortalNode] = useState(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  const performReset = () => {
+    setDraft({ ...builtInDefaults });
+    setHotkeysDraft({ ...DEFAULT_HOTKEYS });
+    setConfirmReset(false);
+  };
 
   const initialDraft = useMemo(() => ({ ...defaults }), [defaults]);
   const [draft, setDraft] = useState(initialDraft);
@@ -256,28 +263,55 @@ export default function SettingsMenu({
                                     type="button"
                                     className={`mode-tab ${draft.textureMode === "livery" ? "is-active" : ""}`}
                                     onClick={() => setDraft((p) => ({ ...p, textureMode: "livery" }))}
-                                    whileTap={{ scale: 0.98 }}
+                                    whileTap={{ scale: 0.95 }}
                                   >
-                                    <Car className="mode-tab-icon" aria-hidden="true" />
-                                    <span>Livery</span>
+                                    <div className="mode-tab-content">
+                                      <Car className="mode-tab-icon" aria-hidden="true" />
+                                      <span>Livery</span>
+                                    </div>
+                                    {draft.textureMode === "livery" && (
+                                      <motion.div
+                                        layoutId="settings-mode-highlight"
+                                        className="mode-tab-bg"
+                                        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                      />
+                                    )}
                                   </motion.button>
                                   <motion.button
                                     type="button"
                                     className={`mode-tab ${draft.textureMode === "everything" ? "is-active" : ""}`}
                                     onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
-                                    whileTap={{ scale: 0.98 }}
+                                    whileTap={{ scale: 0.95 }}
                                   >
-                                    <Layers className="mode-tab-icon" aria-hidden="true" />
-                                    <span>All</span>
+                                    <div className="mode-tab-content">
+                                      <Layers className="mode-tab-icon" aria-hidden="true" />
+                                      <span>All</span>
+                                    </div>
+                                    {draft.textureMode === "everything" && (
+                                      <motion.div
+                                        layoutId="settings-mode-highlight"
+                                        className="mode-tab-bg"
+                                        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                      />
+                                    )}
                                   </motion.button>
                                   <motion.button
                                     type="button"
                                     className={`mode-tab ${draft.textureMode === "eup" ? "is-active" : ""}`}
                                     onClick={() => setDraft((p) => ({ ...p, textureMode: "eup" }))}
-                                    whileTap={{ scale: 0.98 }}
+                                    whileTap={{ scale: 0.95 }}
                                   >
-                                    <Shirt className="mode-tab-icon" aria-hidden="true" />
-                                    <span>EUP</span>
+                                    <div className="mode-tab-content">
+                                      <Shirt className="mode-tab-icon" aria-hidden="true" />
+                                      <span>EUP</span>
+                                    </div>
+                                    {draft.textureMode === "eup" && (
+                                      <motion.div
+                                        layoutId="settings-mode-highlight"
+                                        className="mode-tab-bg"
+                                        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                      />
+                                    )}
                                   </motion.button>
                                 </div>
                               </div>
@@ -426,21 +460,43 @@ export default function SettingsMenu({
                         </AnimatePresence>
 
                         <div className="settings-footer">
-                          <div className="settings-actions">
-                            <button
-                              type="button"
-                              className="settings-secondary"
-                              onClick={() => {
-                                setDraft({ ...builtInDefaults });
-                                setHotkeysDraft({ ...DEFAULT_HOTKEYS });
-                              }}
-                            >
-                              Reset all
-                            </button>
-                            <button type="button" className="settings-primary" onClick={save}>
-                              Save
-                            </button>
-                          </div>
+                          {confirmReset ? (
+                            <div className="settings-confirm-overlay">
+                              <div className="settings-confirm-content">
+                                <AlertTriangle className="h-4 w-4 text-orange-400" />
+                                <span>Are you sure? This cannot be undone.</span>
+                              </div>
+                              <div className="settings-confirm-actions">
+                                <button
+                                  type="button"
+                                  className="settings-mini"
+                                  onClick={() => setConfirmReset(false)}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="settings-danger-btn"
+                                  onClick={performReset}
+                                >
+                                  Yes, Reset All
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="settings-actions">
+                              <button
+                                type="button"
+                                className="settings-secondary"
+                                onClick={() => setConfirmReset(true)}
+                              >
+                                Reset all
+                              </button>
+                              <button type="button" className="settings-primary" onClick={save}>
+                                Save
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
