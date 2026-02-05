@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings } from "lucide-react";
+import { ArrowLeft, Settings, Car, Layers, Shirt } from "lucide-react";
 import appMeta from "../../package.json";
+import HotkeyInput from "./HotkeyInput";
+import {
+  DEFAULT_HOTKEYS,
+  HOTKEY_ACTIONS,
+  HOTKEY_CATEGORIES,
+  HOTKEY_LABELS,
+  mergeHotkeys,
+} from "../lib/hotkeys";
 
 function ColorField({ label, value, onChange, onReset }) {
   return (
@@ -36,6 +44,8 @@ export default function SettingsMenu({
   defaults,
   builtInDefaults,
   onSave,
+  hotkeys,
+  onSaveHotkeys,
 }) {
   const [open, setOpen] = useState(false);
   const [hoveringIcon, setHoveringIcon] = useState(false);
@@ -45,9 +55,19 @@ export default function SettingsMenu({
   const initialDraft = useMemo(() => ({ ...defaults }), [defaults]);
   const [draft, setDraft] = useState(initialDraft);
 
+  const initialHotkeysDraft = useMemo(
+    () => mergeHotkeys(hotkeys, DEFAULT_HOTKEYS),
+    [hotkeys]
+  );
+  const [hotkeysDraft, setHotkeysDraft] = useState(initialHotkeysDraft);
+
   useEffect(() => {
     setDraft({ ...defaults });
   }, [defaults]);
+
+  useEffect(() => {
+    setHotkeysDraft(mergeHotkeys(hotkeys, DEFAULT_HOTKEYS));
+  }, [hotkeys]);
 
   useEffect(() => {
     if (!open) return;
@@ -76,6 +96,11 @@ export default function SettingsMenu({
         description: "Baseline texture behavior and viewing rules.",
       },
       {
+        id: "hotkeys",
+        label: "Hotkeys",
+        description: "Keyboard shortcuts for quick actions.",
+      },
+      {
         id: "camera",
         label: "Camera",
         description: "Keyboard movement and camera controls.",
@@ -93,7 +118,26 @@ export default function SettingsMenu({
 
   const save = () => {
     onSave?.(draft);
+    onSaveHotkeys?.(hotkeysDraft);
     setOpen(false);
+  };
+
+  const updateHotkey = (action, hotkey) => {
+    setHotkeysDraft((prev) => ({
+      ...prev,
+      [action]: hotkey,
+    }));
+  };
+
+  const clearHotkey = (action) => {
+    setHotkeysDraft((prev) => ({
+      ...prev,
+      [action]: { key: "", ctrl: false, alt: false, shift: false },
+    }));
+  };
+
+  const resetAllHotkeys = () => {
+    setHotkeysDraft({ ...DEFAULT_HOTKEYS });
   };
 
   const toggleOpen = () => {
@@ -202,28 +246,34 @@ export default function SettingsMenu({
                                 <div className="settings-panel-title">Texture defaults</div>
                                 <div className="settings-row">
                                 <div className="settings-row-label">Default mode</div>
-                                <div className="settings-seg">
-                                  <button
+                                <div className="mode-tabs">
+                                  <motion.button
                                     type="button"
-                                    className={`settings-seg-btn ${draft.textureMode === "livery" ? "is-on" : ""}`}
+                                    className={`mode-tab ${draft.textureMode === "livery" ? "is-active" : ""}`}
                                     onClick={() => setDraft((p) => ({ ...p, textureMode: "livery" }))}
+                                    whileTap={{ scale: 0.98 }}
                                   >
-                                    Livery
-                                  </button>
-                                  <button
+                                    <Car className="mode-tab-icon" aria-hidden="true" />
+                                    <span>Livery</span>
+                                  </motion.button>
+                                  <motion.button
                                     type="button"
-                                    className={`settings-seg-btn ${draft.textureMode === "everything" ? "is-on" : ""}`}
+                                    className={`mode-tab ${draft.textureMode === "everything" ? "is-active" : ""}`}
                                     onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
+                                    whileTap={{ scale: 0.98 }}
                                   >
-                                    All
-                                  </button>
-                                  <button
+                                    <Layers className="mode-tab-icon" aria-hidden="true" />
+                                    <span>All</span>
+                                  </motion.button>
+                                  <motion.button
                                     type="button"
-                                    className={`settings-seg-btn ${draft.textureMode === "eup" ? "is-on" : ""}`}
+                                    className={`mode-tab ${draft.textureMode === "eup" ? "is-active" : ""}`}
                                     onClick={() => setDraft((p) => ({ ...p, textureMode: "eup" }))}
+                                    whileTap={{ scale: 0.98 }}
                                   >
-                                    EUP
-                                  </button>
+                                    <Shirt className="mode-tab-icon" aria-hidden="true" />
+                                    <span>EUP</span>
+                                  </motion.button>
                                 </div>
                               </div>
 
@@ -236,6 +286,40 @@ export default function SettingsMenu({
                                     aria-pressed={draft.liveryExteriorOnly}
                                   >
                                     <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+                              </section>
+                            ) : null}
+
+                            {activeSection === "hotkeys" ? (
+                              <section className="settings-panel" id="settings-panel-hotkeys" aria-label="Hotkeys">
+                                {Object.entries(HOTKEY_CATEGORIES).map(([categoryId, category]) => (
+                                  <div key={categoryId} className="settings-hotkey-category">
+                                    <div className="settings-panel-title">{category.label}</div>
+                                    {category.actions.map((action) => (
+                                      <div key={action} className="settings-row">
+                                        <div className="settings-row-label">{HOTKEY_LABELS[action]}</div>
+                                        <HotkeyInput
+                                          value={hotkeysDraft[action]}
+                                          onChange={(hotkey) => updateHotkey(action, hotkey)}
+                                          onClear={() => clearHotkey(action)}
+                                        />
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                                <div className="settings-row">
+                                  <div className="settings-row-note">
+                                    Click a hotkey field and press your desired key combination.
+                                  </div>
+                                </div>
+                                <div className="settings-hotkey-reset">
+                                  <button
+                                    type="button"
+                                    className="settings-mini"
+                                    onClick={resetAllHotkeys}
+                                  >
+                                    Reset all hotkeys
                                   </button>
                                 </div>
                               </section>
@@ -287,7 +371,14 @@ export default function SettingsMenu({
 
                         <div className="settings-footer">
                           <div className="settings-actions">
-                            <button type="button" className="settings-secondary" onClick={() => setDraft({ ...builtInDefaults })}>
+                            <button
+                              type="button"
+                              className="settings-secondary"
+                              onClick={() => {
+                                setDraft({ ...builtInDefaults });
+                                setHotkeysDraft({ ...DEFAULT_HOTKEYS });
+                              }}
+                            >
                               Reset all
                             </button>
                             <button type="button" className="settings-primary" onClick={save}>

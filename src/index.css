@@ -9,7 +9,7 @@
   --es-radius: 16px;
   --es-radius-surface: calc(var(--es-radius) * var(--es-ui-scale));
   --es-radius-control: calc((var(--es-radius) - 4px) * var(--es-ui-scale));
-  --titlebar-height: calc(40px * var(--es-ui-scale));
+  --titlebar-height: calc(32px * var(--es-ui-scale));
   --panel-width: clamp(240px, 22vw, 320px);
   --panel-pad: calc(20px * var(--es-ui-scale));
   --panel-gap: calc(14px * var(--es-ui-scale));
@@ -489,7 +489,7 @@ body {
 
 .settings-dialog {
   width: min(calc(760px * var(--es-ui-scale)), 92vw);
-  height: min(calc(860px * var(--es-ui-scale)), 92vh);
+  height: min(calc(774px * var(--es-ui-scale)), 92vh);
   background: #0f1114;
   border: 1px solid var(--es-border);
   border-radius: var(--es-radius-surface);
@@ -518,7 +518,7 @@ body {
   font-size: calc(14px * var(--es-ui-scale));
   letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--es-success);
 }
 
 .settings-dialog-sub {
@@ -1004,7 +1004,7 @@ body {
   padding: calc(2px * var(--es-ui-scale));
   display: inline-flex;
   align-items: center;
-  border-radius: var(--es-radius-control);
+  border-radius: 4px; /* Square style */
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
   position: relative;
@@ -1015,7 +1015,7 @@ body {
 .settings-toggle-dot {
   width: calc(16px * var(--es-ui-scale));
   height: calc(16px * var(--es-ui-scale));
-  border-radius: 999px;
+  border-radius: 2px; /* Square dot */
   background: rgba(248, 250, 252, 0.85);
   transform: translateX(0);
   transition: transform 0.18s ease;
@@ -1088,24 +1088,125 @@ body {
 }
 
 .settings-secondary {
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(214, 221, 231, 0.72);
+  background: rgba(239, 68, 68, 0.08); /* Red tint */
+  border-color: rgba(239, 68, 68, 0.3);
+  color: rgba(239, 68, 68, 0.85); /* Red text */
 }
 
 .settings-secondary:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(239, 244, 250, 0.9);
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: rgba(255, 120, 120, 0.95);
 }
 
 .settings-primary {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: rgba(248, 250, 252, 0.92);
+  background: rgba(125, 211, 252, 0.08); /* Blue tint */
+  border-color: rgba(125, 211, 252, 0.4);
+  color: rgba(125, 211, 252, 0.95); /* Blue text */
 }
 
 .settings-primary:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(125, 211, 252, 0.15);
+  border-color: rgba(125, 211, 252, 0.6);
+}
+
+/* Hotkey Input Styles */
+.settings-hotkey-category {
+  margin-bottom: calc(16px * var(--es-ui-scale));
+}
+
+.settings-hotkey-category:last-child {
+  margin-bottom: 0;
+}
+
+.settings-hotkey-reset {
+  margin-top: calc(12px * var(--es-ui-scale));
+  padding-top: calc(12px * var(--es-ui-scale));
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.hotkey-input-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px * var(--es-ui-scale));
+  flex-shrink: 0;
+}
+
+.hotkey-input {
+  height: calc(32px * var(--es-ui-scale));
+  min-width: calc(120px * var(--es-ui-scale));
+  padding: 0 calc(12px * var(--es-ui-scale));
+  border-radius: var(--es-radius-control);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(239, 244, 250, 0.9);
+  font-family: var(--font-hud);
+  font-size: calc(11px * var(--es-ui-scale));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hotkey-input:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.hotkey-input:focus {
+  outline: none;
+}
+
+.hotkey-input.is-capturing {
+  background: rgba(125, 211, 252, 0.08);
+  border-color: rgba(125, 211, 252, 0.5);
+  box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.15);
+  animation: hotkey-pulse 1.2s ease-in-out infinite;
+}
+
+.hotkey-input.is-invalid {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: rgba(239, 68, 68, 0.85);
+}
+
+@keyframes hotkey-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.08);
+  }
+}
+
+.hotkey-input-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hotkey-clear {
+  width: calc(24px * var(--es-ui-scale));
+  height: calc(24px * var(--es-ui-scale));
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(214, 221, 231, 0.5);
+  font-size: calc(14px * var(--es-ui-scale));
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.hotkey-clear:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: rgba(239, 68, 68, 0.85);
 }
 
 .onb-shell {
@@ -1477,7 +1578,7 @@ body {
   justify-content: center;
   height: calc(18px * var(--es-ui-scale));
   padding: 0 calc(6px * var(--es-ui-scale));
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(32, 201, 151, 0.2);
   border: 1px solid rgba(32, 201, 151, 0.45);
   color: var(--es-success);
@@ -1631,8 +1732,9 @@ body {
 }
 
 .toolbar-toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: transparent;
   color: rgba(239, 244, 250, 0.95);
+  transform: translateX(1px);
 }
 
 .toolbar-toggle-btn.is-collapsed {
@@ -1643,6 +1745,7 @@ body {
 
 .toolbar-toggle-btn.is-collapsed:hover {
   color: #fff;
+  transform: translateX(-1px);
 }
 
 

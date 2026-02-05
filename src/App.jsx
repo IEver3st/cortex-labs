@@ -10,6 +10,12 @@ import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
 import Viewer from "./components/Viewer";
 import { loadOnboarded, loadPrefs, savePrefs, setOnboarded } from "./lib/prefs";
+import {
+  DEFAULT_HOTKEYS,
+  HOTKEY_ACTIONS,
+  findMatchingAction,
+  mergeHotkeys,
+} from "./lib/hotkeys";
 import { Button } from "./components/ui/button";
 import { Label } from "./components/ui/label";
 import { Input } from "./components/ui/input";
@@ -49,6 +55,12 @@ function getInitialUi() {
   const prefs = loadPrefs();
   const stored = prefs?.ui && typeof prefs.ui === "object" ? prefs.ui : {};
   return { ...BUILT_IN_UI, ...stored };
+}
+
+function getInitialHotkeys() {
+  const prefs = loadPrefs();
+  const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
+  return mergeHotkeys(stored, DEFAULT_HOTKEYS);
 }
 
 function getFileLabel(path, emptyLabel) {
@@ -95,6 +107,7 @@ function App() {
     typeof window.__TAURI_INTERNALS__?.invoke === "function";
 
   const [defaults, setDefaults] = useState(() => getInitialDefaults());
+  const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
@@ -296,11 +309,21 @@ function App() {
     savePrefs({ ...prefs, defaults: merged });
   }, []);
 
+  const saveHotkeys = useCallback((next) => {
+    setHotkeys(next);
+    const prefs = loadPrefs() || {};
+    savePrefs({ ...prefs, hotkeys: next });
+  }, []);
+
   useEffect(() => {
     const prefs = loadPrefs() || {};
     const ui = { ...(prefs.ui || {}), colorsOpen };
     savePrefs({ ...prefs, ui });
   }, [colorsOpen]);
+
+  const selectModelRef = useRef(null);
+  const selectTextureRef = useRef(null);
+  const selectWindowTextureRef = useRef(null);
 
   const completeOnboarding = useCallback(
     (next) => {
@@ -353,6 +376,7 @@ function App() {
               "tif",
               "tiff",
               "psd",
+              "ai",
             ],
           },
         ],
@@ -412,6 +436,7 @@ function App() {
               "tif",
               "tiff",
               "psd",
+              "ai",
             ],
           },
         ],
@@ -426,6 +451,71 @@ function App() {
       console.error(error);
     }
   };
+
+  // Keep refs updated for hotkey handler
+  selectModelRef.current = selectModel;
+  selectTextureRef.current = selectTexture;
+  selectWindowTextureRef.current = selectWindowTexture;
+
+  // Hotkey event handler
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // Ignore if typing in an input
+      const target = event.target;
+      if (target instanceof Element) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        if (target.isContentEditable) return;
+        // Ignore if a hotkey input is capturing
+        if (target.classList.contains("hotkey-input")) return;
+      }
+
+      const action = findMatchingAction(hotkeys, event);
+      if (!action) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      switch (action) {
+        case HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY:
+          setLiveryExteriorOnly((prev) => !prev);
+          break;
+        case HOTKEY_ACTIONS.MODE_LIVERY:
+          setTextureMode("livery");
+          break;
+        case HOTKEY_ACTIONS.MODE_ALL:
+          setTextureMode("everything");
+          break;
+        case HOTKEY_ACTIONS.MODE_EUP:
+          setTextureMode("eup");
+          break;
+        case HOTKEY_ACTIONS.CYCLE_MODE:
+          setTextureMode((prev) => {
+            if (prev === "livery") return "everything";
+            if (prev === "everything") return "eup";
+            return "livery";
+          });
+          break;
+        case HOTKEY_ACTIONS.TOGGLE_PANEL:
+          setPanelCollapsed((prev) => !prev);
+          break;
+        case HOTKEY_ACTIONS.SELECT_MODEL:
+          selectModelRef.current?.();
+          break;
+        case HOTKEY_ACTIONS.SELECT_LIVERY:
+          selectTextureRef.current?.();
+          break;
+        case HOTKEY_ACTIONS.SELECT_GLASS:
+          selectWindowTextureRef.current?.();
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hotkeys]);
 
   const handleCenterCamera = () => {
     viewerApiRef.current?.reset?.();
@@ -615,7 +705,7 @@ function App() {
         <div className="titlebar">
           <div className="titlebar-brand" data-tauri-drag-region>
             <LoadingGlyph kind="cube" className="titlebar-logo" aria-hidden="true" />
-            <span className="titlebar-title">Cortex Studio</span>
+
           </div>
         <div className="titlebar-spacer" data-tauri-drag-region />
         <div className="titlebar-controls">
@@ -701,6 +791,8 @@ function App() {
               defaults={defaults}
               builtInDefaults={BUILT_IN_DEFAULTS}
               onSave={applyAndPersistDefaults}
+              hotkeys={hotkeys}
+              onSaveHotkeys={saveHotkeys}
             />
           </div>
           <div className="mode-tabs" role="tablist" aria-label="Editor mode">
@@ -755,7 +847,6 @@ function App() {
               <Button variant="outline" className="border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10" onClick={selectModel}>
                 Select Model
               </Button>
-              <div className="file-meta mono">{modelLabel}</div>
               {modelLoading ? <div className="file-meta">Preparing model…</div> : null}
             </div>
           </PanelSection>
@@ -790,7 +881,7 @@ function App() {
                       </Button>
                     )}
                   </div>
-                  <div className="file-meta mono">{primaryTemplateLabel}</div>
+
                 </div>
               </PanelSection>
 
@@ -853,9 +944,7 @@ function App() {
                           </Button>
                         )}
                       </div>
-                      <div className="file-meta mono">
-                        {windowTexturePath ? windowTexturePath.split(/[\\/]/).pop() : "No glass template selected"}
-                      </div>
+
                       <Label>Apply Glass To</Label>
                       <Select value={liveryWindowOverride || "auto"} onValueChange={(val) => setLiveryWindowOverride(val === "auto" ? "" : val)}>
                         <SelectTrigger className="w-full">
@@ -939,7 +1028,7 @@ function App() {
                       </Button>
                     )}
                   </div>
-                  <div className="file-meta mono">{primaryTemplateLabel}</div>
+
                 </div>
               </PanelSection>
 
@@ -1250,8 +1339,8 @@ function App() {
           className="viewer-toolbar"
           transition={{ 
             type: "spring",
-            stiffness: 500,
-            damping: 30
+            stiffness: 2000,
+            damping: 60
           }}
         >
           <AnimatePresence mode="wait" initial={false}>
@@ -1263,7 +1352,7 @@ function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
+                transition={{ duration: 0.01 }}
               >
                 <motion.div layout className="viewer-toolbar-group">
                   <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>

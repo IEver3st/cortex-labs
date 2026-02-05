@@ -947,17 +947,37 @@ export default function Viewer({
         return new THREE.DataTexture(rgba, w, h, THREE.RGBAFormat);
       };
 
+      const loadAi = async () => {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+          "pdfjs-dist/build/pdf.worker.min.mjs",
+          import.meta.url
+        ).href;
+        const loadingTask = pdfjsLib.getDocument({ data: buffer });
+        const pdf = await loadingTask.promise;
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 2.0 });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const context = canvas.getContext("2d");
+        await page.render({ canvasContext: context, viewport }).promise;
+        return new THREE.CanvasTexture(canvas);
+      };
+
       const attempts = [];
       const kind = (extension || "").toLowerCase();
       const sigKind = (signature.kind || "").toLowerCase();
       const isTiff = kind === "tif" || kind === "tiff" || sigKind === "tif" || sigKind === "tiff";
       const isPsd = kind === "psd" || sigKind === "psd";
       const isDds = kind === "dds" || sigKind === "dds";
+      const isAi = kind === "ai" || sigKind === "ai" || sigKind === "ai-ps";
 
       if (isDds) attempts.push(loadDds);
       if (kind === "tga") attempts.push(loadTga);
       if (isPsd) attempts.push(loadPsd);
       if (isTiff) attempts.push(loadTiff);
+      if (isAi) attempts.push(loadAi);
       attempts.push(loadNative);
 
       let texture = null;
@@ -1184,17 +1204,37 @@ export default function Viewer({
         return new THREE.DataTexture(rgba, w, h, THREE.RGBAFormat);
       };
 
+      const loadAi = async () => {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+          "pdfjs-dist/build/pdf.worker.min.mjs",
+          import.meta.url
+        ).href;
+        const loadingTask = pdfjsLib.getDocument({ data: buffer });
+        const pdf = await loadingTask.promise;
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 2.0 });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const context = canvas.getContext("2d");
+        await page.render({ canvasContext: context, viewport }).promise;
+        return new THREE.CanvasTexture(canvas);
+      };
+
       const attempts = [];
       const kind = (extension || "").toLowerCase();
       const sigKind = (signature.kind || "").toLowerCase();
       const isTiff = kind === "tif" || kind === "tiff" || sigKind === "tif" || sigKind === "tiff";
       const isPsd = kind === "psd" || sigKind === "psd";
       const isDds = kind === "dds" || sigKind === "dds";
+      const isAi = kind === "ai" || sigKind === "ai" || sigKind === "ai-ps";
 
       if (isDds) attempts.push(loadDds);
       if (kind === "tga") attempts.push(loadTga);
       if (isPsd) attempts.push(loadPsd);
       if (isTiff) attempts.push(loadTiff);
+      if (isAi) attempts.push(loadAi);
       attempts.push(loadNative);
 
       let texture = null;
@@ -2076,6 +2116,16 @@ function sniffTextureSignature(bytes) {
     (bytes[11] === 0x66 || bytes[11] === 0x73)
   ) {
     return { kind: "avif", mime: "image/avif" };
+  }
+
+  // Adobe Illustrator (PDF-based): "%PDF"
+  if (b0 === 0x25 && b1 === 0x50 && b2 === 0x44 && b3 === 0x46) {
+    return { kind: "ai", mime: "application/pdf" };
+  }
+
+  // Adobe Illustrator (PostScript-based): "%!PS"
+  if (b0 === 0x25 && b1 === 0x21 && b2 === 0x50 && b3 === 0x53) {
+    return { kind: "ai-ps", mime: "application/postscript" };
   }
 
   return { kind: "", mime: "" };
