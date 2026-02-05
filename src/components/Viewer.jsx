@@ -161,6 +161,7 @@ export default function Viewer({
   onTextureReload,
   onTextureError,
   onWindowTextureError,
+  onFormatWarning,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -191,6 +192,7 @@ export default function Viewer({
   const onModelLoadingRef = useRef(onModelLoading);
   const onTextureErrorRef = useRef(onTextureError);
   const onWindowTextureErrorRef = useRef(onWindowTextureError);
+  const onFormatWarningRef = useRef(onFormatWarning);
 
   const resolvedBodyColor = bodyColor || defaultBody;
 
@@ -219,6 +221,10 @@ export default function Viewer({
   useEffect(() => {
     onWindowTextureErrorRef.current = onWindowTextureError;
   }, [onWindowTextureError]);
+
+  useEffect(() => {
+    onFormatWarningRef.current = onFormatWarning;
+  }, [onFormatWarning]);
 
   const materialStateRef = useRef({
     bodyColor: resolvedBodyColor,
@@ -993,15 +999,26 @@ export default function Viewer({
           texture = await attempt();
           if (texture) break;
         } catch (error) {
-          lastError = error;
+          // Check for unsupported bit depth error and show modal
+          if (error?.type === "unsupported-bit-depth") {
+            console.log("[Texture] Unsupported bit depth detected:", error.bitDepth);
+            onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth });
+            return; // Don't continue trying other loaders
+          }
+          // Preserve meaningful Error objects with messages
+          // Don't let them get overwritten by Events from native image load failures
+          if (!lastError || (error instanceof Error && error.message)) {
+            lastError = error;
+          }
         }
       }
 
       if (!texture) {
         console.error("[Texture] Load failed:", lastError);
-        onTextureErrorRef.current?.(
-          "Texture failed to load. Try exporting to PNG or JPG if your editor uses a specialized format.",
-        );
+        // Use the actual error message if available, otherwise use generic message
+        const errorMessage = lastError?.message || 
+          "Texture failed to load. Try exporting to PNG or JPG if your editor uses a specialized format.";
+        onTextureErrorRef.current?.(errorMessage);
         return;
       }
 
@@ -2365,18 +2382,32 @@ function toSrgbByteFromLinear(value) {
 }
 
 function normalizePsdImageData(imageData, bitsPerChannel) {
-  if (!imageData) return null;
+  if (!imageData) {
+    console.warn("[PSD Normalize] imageData is null/undefined");
+    return null;
+  }
   const width = imageData.width;
   const height = imageData.height;
   const source = imageData.data;
-  if (!width || !height || !source) return null;
+  if (!width || !height || !source) {
+    console.warn("[PSD Normalize] Missing width/height/data:", { width, height, hasSource: !!source });
+    return null;
+  }
   const expected = width * height * 4;
-  if (!Number.isFinite(expected) || expected <= 0) return null;
-  if (source.length < expected) return null;
+  if (!Number.isFinite(expected) || expected <= 0) {
+    console.warn("[PSD Normalize] Invalid expected size:", expected);
+    return null;
+  }
+  if (source.length < expected) {
+    console.warn("[PSD Normalize] Source length too short:", source.length, "expected:", expected);
+    return null;
+  }
 
   const bitDepth = Number.isFinite(bitsPerChannel) ? bitsPerChannel : 8;
+  console.log("[PSD Normalize] Processing with bitDepth:", bitDepth, "sourceType:", source?.constructor?.name, "sourceLength:", source.length);
 
   if (bitDepth === 16 && source instanceof Uint16Array) {
+    console.log("[PSD Normalize] Using 16-bit Uint16Array path");
     const data = new Uint8Array(expected);
     for (let i = 0; i < expected; i += 1) {
       data[i] = toByteFromU16(source[i]);
@@ -2385,6 +2416,7 @@ function normalizePsdImageData(imageData, bitsPerChannel) {
   }
 
   if (bitDepth === 32 && source instanceof Float32Array) {
+    console.log("[PSD Normalize] Using 32-bit Float32Array path");
     const data = new Uint8Array(expected);
     for (let i = 0; i < expected; i += 4) {
       data[i] = toSrgbByteFromLinear(source[i]);
@@ -2396,14 +2428,17 @@ function normalizePsdImageData(imageData, bitsPerChannel) {
   }
 
   if (source instanceof Uint8Array) {
+    console.log("[PSD Normalize] Using Uint8Array path");
     return { width, height, data: source };
   }
 
   if (source instanceof Uint8ClampedArray) {
+    console.log("[PSD Normalize] Using Uint8ClampedArray path");
     const data = new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
     return { width, height, data };
   }
 
+  console.log("[PSD Normalize] Using generic fallback path");
   const data = new Uint8Array(expected);
   for (let i = 0; i < expected; i += 1) {
     const value = source[i] ?? 0;
@@ -2425,27 +2460,68 @@ function createPsdTexture(imageData, bitsPerChannel) {
   return texture;
 }
 
+/**
+ * Detect the bit depth of a PSD file from its header.
+ * Returns the bits per channel (8, 16, or 32).
+ */
+function detectPsdBitDepth(bytes) {
+  if (!bytes || bytes.length < 26) return 8;
+  
+  // Check PSD signature "8BPS"
+  if (bytes[0] !== 0x38 || bytes[1] !== 0x42 || bytes[2] !== 0x50 || bytes[3] !== 0x53) {
+    return 8; // Not a valid PSD, let ag-psd handle it
+  }
+  
+  // Bit depth is at offset 22-23 (big-endian)
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const depth = view.getUint16(22, false);
+  return depth;
+}
+
 async function loadPsdTexture(bytes) {
-  const { readPsd } = await import("ag-psd");
-  // Don't use useImageData - let ag-psd render layers to canvas for reliability
-  const psd = readPsd(bytes, { skipThumbnail: true });
-
-  // Prefer canvas (properly composited layers) over imageData (pre-saved composite that may be stale/corrupted)
-  const canvas = psd?.canvas;
-  if (canvas && typeof canvas.getContext === "function") {
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.premultiplyAlpha = false;
-    return texture;
+  console.log("[PSD] Starting PSD texture load, bytes length:", bytes?.length);
+  
+  const bitDepth = detectPsdBitDepth(bytes);
+  console.log("[PSD] Detected bit depth:", bitDepth);
+  
+  // 16-bit and 32-bit PSDs are not supported - throw a special error
+  if (bitDepth === 16 || bitDepth === 32) {
+    const error = new Error(`${bitDepth}-bit PSD not supported`);
+    error.type = "unsupported-bit-depth";
+    error.bitDepth = bitDepth;
+    throw error;
   }
+  
+  // Use ag-psd for 8-bit PSDs (works great)
+  try {
+    const { readPsd } = await import("ag-psd");
+    const psd = readPsd(bytes, { skipThumbnail: true });
+    
+    console.log("[PSD] ag-psd parsed - bitsPerChannel:", psd?.bitsPerChannel, "hasCanvas:", !!psd?.canvas, "hasImageData:", !!psd?.imageData);
+    
+    // Prefer canvas (properly composited layers)
+    const canvas = psd?.canvas;
+    if (canvas && typeof canvas.getContext === "function") {
+      console.log("[PSD] Using ag-psd canvas path");
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.premultiplyAlpha = false;
+      return texture;
+    }
 
-  // Fall back to imageData if canvas not available
-  const imageData = psd?.imageData;
-  if (imageData) {
-    const texture = createPsdTexture(imageData, psd?.bitsPerChannel);
-    if (texture) return texture;
+    // Fall back to imageData if canvas not available
+    const imageData = psd?.imageData;
+    if (imageData) {
+      const texture = createPsdTexture(imageData, psd?.bitsPerChannel);
+      if (texture) {
+        console.log("[PSD] Created texture from ag-psd imageData");
+        return texture;
+      }
+    }
+    
+    throw new Error("PSD parsed but no image data found. The file may be empty or corrupted.");
+  } catch (err) {
+    throw err;
   }
-
-  throw new Error("PSD decoder did not return image data.");
 }
 
 function getFileNameWithoutExtension(path) {

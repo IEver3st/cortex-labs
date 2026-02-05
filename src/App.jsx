@@ -5,12 +5,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { Car, ChevronLeft, ChevronRight, FolderOpen, Layers, Minus, RotateCcw, Shirt, Square, X } from "lucide-react";
+import { AlertTriangle, Car, ChevronLeft, ChevronRight, FolderOpen, Layers, Link2, Minus, Move3d, RotateCcw, Shirt, Square, Unlink, X } from "lucide-react";
 import { parseYtd, categorizeTextures } from "./lib/ytd";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
 import Viewer from "./components/Viewer";
+import DualModelViewer from "./components/DualModelViewer";
 import { loadOnboarded, loadPrefs, savePrefs, setOnboarded } from "./lib/prefs";
 import {
   DEFAULT_HOTKEYS,
@@ -42,6 +43,7 @@ const BUILT_IN_DEFAULTS = {
   bodyColor: DEFAULT_BODY,
   backgroundColor: DEFAULT_BG,
   experimentalSettings: false,
+  showHints: true,
 };
 
 const BUILT_IN_UI = {
@@ -141,6 +143,7 @@ function App() {
   const [windowTextureTarget, setWindowTextureTarget] = useState(() => getInitialDefaults().windowTextureTarget || "auto");
 
   const [cameraWASD, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
+  const [showHints, setShowHints] = useState(() => Boolean(getInitialDefaults().showHints ?? true));
   const [windowLiveryTarget, setWindowLiveryTarget] = useState("");
   const [windowLiveryLabel, setWindowLiveryLabel] = useState("");
   const [liveryWindowOverride, setLiveryWindowOverride] = useState(""); // Manual override for glass material in livery mode
@@ -154,9 +157,25 @@ function App() {
   const [ytdTextures, setYtdTextures] = useState(null);
   const [ytdLoading, setYtdLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Dual-model (multi-model) state
+  const dualViewerApiRef = useRef(null);
+  const [dualModelAPath, setDualModelAPath] = useState("");
+  const [dualModelBPath, setDualModelBPath] = useState("");
+  const [dualTextureAPath, setDualTextureAPath] = useState("");
+  const [dualTextureBPath, setDualTextureBPath] = useState("");
+  const [dualTextureAReloadToken, setDualTextureAReloadToken] = useState(0);
+  const [dualTextureBReloadToken, setDualTextureBReloadToken] = useState(0);
+  const [dualSelectedSlot, setDualSelectedSlot] = useState("A");
+  const [dualModelALoading, setDualModelALoading] = useState(false);
+  const [dualModelBLoading, setDualModelBLoading] = useState(false);
+  const [dualModelAError, setDualModelAError] = useState("");
+  const [dualModelBError, setDualModelBError] = useState("");
+
   const [modelLoading, setModelLoading] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
   const [booted, setBooted] = useState(false);
+  const [formatWarning, setFormatWarning] = useState(null); // { type: "16bit-psd", bitDepth: 16 }
   const bootStartRef = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
   const bootTimerRef = useRef(null);
 
@@ -294,6 +313,10 @@ function App() {
     setWindowTextureError(message || "");
   }, []);
 
+  const handleFormatWarning = useCallback((warning) => {
+    setFormatWarning(warning);
+  }, []);
+
   const handleModelLoading = useCallback((loading) => {
     setModelLoading(Boolean(loading));
   }, []);
@@ -312,6 +335,7 @@ function App() {
     setWindowTextureTarget(merged.windowTextureTarget || "auto");
 
     setCameraWASD(Boolean(merged.cameraWASD));
+    setShowHints(Boolean(merged.showHints ?? true));
     setBodyColor(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
     setExperimentalSettings(Boolean(merged.experimentalSettings));
@@ -501,6 +525,32 @@ function App() {
   const clearYtd = () => {
     setYtdPath("");
     setYtdTextures(null);
+  };
+
+  // Dual-model file selectors
+  const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
+  const textureExtsDual = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai"];
+
+  const selectDualModel = async (slot) => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await open({ filters: [{ name: "Model", extensions: modelExtsDual }] });
+      if (typeof selected === "string") {
+        if (slot === "A") { setDualModelAError(""); setDualModelAPath(selected); }
+        else { setDualModelBError(""); setDualModelBPath(selected); }
+      }
+    } catch { /* dialog blocked */ }
+  };
+
+  const selectDualTexture = async (slot) => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await open({ filters: [{ name: "Texture", extensions: textureExtsDual }] });
+      if (typeof selected === "string") {
+        if (slot === "A") setDualTextureAPath(selected);
+        else setDualTextureBPath(selected);
+      }
+    } catch { /* dialog blocked */ }
   };
 
   // Keep refs updated for hotkey handler
@@ -697,9 +747,9 @@ function App() {
     };
   }, [texturePath, windowTexturePath, windowTemplateEnabled]);
 
-  const onTextureReload = () => {
+  const onTextureReload = useCallback(() => {
     setLastUpdate(new Date().toLocaleTimeString());
-  };
+  }, []);
 
   const resolvedTextureTarget =
     textureMode === "livery" ? liveryTarget || "all" : textureTarget;
@@ -883,6 +933,20 @@ function App() {
               <Shirt className="mode-tab-icon" aria-hidden="true" />
               <span>EUP</span>
             </motion.button>
+            {experimentalSettings ? (
+              <motion.button
+                type="button"
+                role="tab"
+                className={`mode-tab ${textureMode === "multi" ? "is-active" : ""}`}
+                onClick={() => setTextureMode("multi")}
+                aria-selected={textureMode === "multi"}
+                aria-controls="mode-panel-multi"
+                whileTap={{ scale: 0.98 }}
+              >
+                <Link2 className="mode-tab-icon" aria-hidden="true" />
+                <span>Multi</span>
+              </motion.button>
+            ) : null}
           </div>
         </div>
         <div className="control-panel-scroll">
@@ -1288,6 +1352,187 @@ function App() {
             </div>
           ) : null}
 
+          {textureMode === "multi" ? (
+            <div className="mode-content" id="mode-panel-multi" role="tabpanel">
+              {/* ── Slot Selector ── */}
+              <div className="dual-slot-tabs">
+                <button
+                  type="button"
+                  className={`dual-slot-tab dual-slot-tab--a ${dualSelectedSlot === "A" ? "is-active" : ""}`}
+                  onClick={() => setDualSelectedSlot("A")}
+                >
+                  <span className="dual-slot-dot dual-slot-dot--a" />
+                  <span>Slot A</span>
+                </button>
+                <button
+                  type="button"
+                  className={`dual-slot-tab dual-slot-tab--b ${dualSelectedSlot === "B" ? "is-active" : ""}`}
+                  onClick={() => setDualSelectedSlot("B")}
+                >
+                  <span className="dual-slot-dot dual-slot-dot--b" />
+                  <span>Slot B</span>
+                </button>
+              </div>
+
+              {/* ── Slot A ── */}
+              <PanelSection
+                title="Slot A — Model"
+                caption={getFileLabel(dualModelAPath, "No model")}
+                open={dualSelectedSlot === "A" || !dualModelBPath}
+                onToggle={() => setDualSelectedSlot("A")}
+                contentId="panel-dual-a-model"
+              >
+                <div className="control-group">
+                  <Label>Model A (e.g. Truck)</Label>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10"
+                      onClick={() => selectDualModel("A")}
+                    >
+                      Select Model A
+                    </Button>
+                    {dualModelAPath && (
+                      <Button
+                        variant="outline"
+                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                        onClick={() => { setDualModelAPath(""); setDualModelAError(""); }}
+                        title="Unload model A"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {dualModelALoading ? <div className="file-meta">Loading model A...</div> : null}
+                  {dualModelAError ? <div className="file-meta text-red-400/80">{dualModelAError}</div> : null}
+                </div>
+                <div className="control-group">
+                  <Label>Template A</Label>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10"
+                      onClick={() => selectDualTexture("A")}
+                    >
+                      Select Livery A
+                    </Button>
+                    {dualTextureAPath && (
+                      <Button
+                        variant="outline"
+                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                        onClick={() => setDualTextureAPath("")}
+                        title="Unload texture A"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {dualTextureAPath ? (
+                    <div className="file-meta mono">{getFileLabel(dualTextureAPath, "")}</div>
+                  ) : null}
+                </div>
+              </PanelSection>
+
+              {/* ── Slot B ── */}
+              <PanelSection
+                title="Slot B — Model"
+                caption={getFileLabel(dualModelBPath, "No model")}
+                open={dualSelectedSlot === "B" || !dualModelAPath}
+                onToggle={() => setDualSelectedSlot("B")}
+                contentId="panel-dual-b-model"
+              >
+                <div className="control-group">
+                  <Label>Model B (e.g. Trailer)</Label>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10"
+                      onClick={() => selectDualModel("B")}
+                    >
+                      Select Model B
+                    </Button>
+                    {dualModelBPath && (
+                      <Button
+                        variant="outline"
+                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                        onClick={() => { setDualModelBPath(""); setDualModelBError(""); }}
+                        title="Unload model B"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {dualModelBLoading ? <div className="file-meta">Loading model B...</div> : null}
+                  {dualModelBError ? <div className="file-meta text-red-400/80">{dualModelBError}</div> : null}
+                </div>
+                <div className="control-group">
+                  <Label>Template B</Label>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10"
+                      onClick={() => selectDualTexture("B")}
+                    >
+                      Select Livery B
+                    </Button>
+                    {dualTextureBPath && (
+                      <Button
+                        variant="outline"
+                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                        onClick={() => setDualTextureBPath("")}
+                        title="Unload texture B"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {dualTextureBPath ? (
+                    <div className="file-meta mono">{getFileLabel(dualTextureBPath, "")}</div>
+                  ) : null}
+                </div>
+              </PanelSection>
+
+              {/* ── Alignment Tools ── */}
+              <PanelSection
+                title="Alignment"
+                caption="Position & snap"
+                open={true}
+                onToggle={() => {}}
+                contentId="panel-dual-alignment"
+              >
+                <div className="control-group">
+                  <Label>Selected</Label>
+                  <div className="dual-selected-indicator">
+                    <Move3d className="h-3.5 w-3.5" />
+                    <span>Drag the {dualSelectedSlot === "A" ? "orange" : "purple"} arrows in the viewport to move Slot {dualSelectedSlot}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 border-white/10 text-white/60 hover:text-white/90 hover:bg-white/5"
+                      onClick={() => dualViewerApiRef.current?.snapTogether?.()}
+                      disabled={!dualModelAPath || !dualModelBPath}
+                    >
+                      <Link2 className="h-3.5 w-3.5 mr-1.5" />
+                      Snap Together
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1 border-white/10 text-white/60 hover:text-white/90 hover:bg-white/5"
+                      onClick={() => dualViewerApiRef.current?.resetPositions?.()}
+                    >
+                      <Unlink className="h-3.5 w-3.5 mr-1.5" />
+                      Reset Positions
+                    </Button>
+                  </div>
+                  <div className="file-meta mono">
+                    Load a truck/cab in Slot A and a trailer in Slot B. Use the gizmo arrows or Snap Together to align them.
+                  </div>
+                </div>
+              </PanelSection>
+            </div>
+          ) : null}
+
           <PanelSection
             title="Colors"
             caption="Body + background"
@@ -1391,34 +1636,58 @@ function App() {
             <div className="drop-card">Drop {modelDropLabel} to load</div>
             </div>
           ) : null}
-        <Viewer
-          modelPath={modelPath}
-          texturePath={texturePath}
-          windowTexturePath={windowTemplateEnabled ? windowTexturePath : ""}
-          bodyColor={bodyColor}
-          backgroundColor={backgroundColor}
-          textureReloadToken={textureReloadToken}
-          windowTextureReloadToken={windowTextureReloadToken}
-          textureTarget={resolvedTextureTarget}
-          windowTextureTarget={resolvedWindowTextureTarget}
-          textureMode={textureMode}
-          wasdEnabled={cameraWASD}
-          liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
-          ytdTextures={ytdTextures}
-          onModelInfo={handleModelInfo}
-          onModelError={handleModelError}
-          onModelLoading={handleModelLoading}
-          onReady={(api) => {
-            viewerApiRef.current = api;
-            setViewerReady(true);
-          }}
-          onTextureReload={onTextureReload}
-          onTextureError={handleTextureError}
-          onWindowTextureError={handleWindowTextureError}
-        />
+        {textureMode === "multi" ? (
+          <DualModelViewer
+            modelAPath={dualModelAPath}
+            modelBPath={dualModelBPath}
+            textureAPath={dualTextureAPath}
+            textureBPath={dualTextureBPath}
+            textureAReloadToken={dualTextureAReloadToken}
+            textureBReloadToken={dualTextureBReloadToken}
+            bodyColor={bodyColor}
+            backgroundColor={backgroundColor}
+            selectedSlot={dualSelectedSlot}
+            onSelectSlot={setDualSelectedSlot}
+            onReady={(api) => {
+              dualViewerApiRef.current = api;
+              if (!viewerReady) setViewerReady(true);
+            }}
+            onModelAError={setDualModelAError}
+            onModelBError={setDualModelBError}
+            onModelALoading={setDualModelALoading}
+            onModelBLoading={setDualModelBLoading}
+          />
+        ) : (
+          <Viewer
+            modelPath={modelPath}
+            texturePath={texturePath}
+            windowTexturePath={windowTemplateEnabled ? windowTexturePath : ""}
+            bodyColor={bodyColor}
+            backgroundColor={backgroundColor}
+            textureReloadToken={textureReloadToken}
+            windowTextureReloadToken={windowTextureReloadToken}
+            textureTarget={resolvedTextureTarget}
+            windowTextureTarget={resolvedWindowTextureTarget}
+            textureMode={textureMode}
+            wasdEnabled={cameraWASD}
+            liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
+            ytdTextures={ytdTextures}
+            onModelInfo={handleModelInfo}
+            onModelError={handleModelError}
+            onModelLoading={handleModelLoading}
+            onReady={(api) => {
+              viewerApiRef.current = api;
+              setViewerReady(true);
+            }}
+            onTextureReload={onTextureReload}
+            onTextureError={handleTextureError}
+            onWindowTextureError={handleWindowTextureError}
+            onFormatWarning={handleFormatWarning}
+          />
+        )}
 
         <AnimatePresence>
-          {modelLoading ? <AppLoader variant="background" /> : null}
+          {(modelLoading || (textureMode === "multi" && (dualModelALoading || dualModelBLoading))) ? <AppLoader variant="background" /> : null}
         </AnimatePresence>
 
         <motion.div 
@@ -1441,36 +1710,73 @@ function App() {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.01 }}
               >
-                <motion.div layout className="viewer-toolbar-group">
-                  <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>
-                    Front
-                  </Button>
-                  <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("side")}>
-                    Side
-                  </Button>
-                  <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")}>
-                    3/4
-                  </Button>
-                  <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("top")}>
-                    Top
-                  </Button>
-                  <div className="toolbar-divider" />
-                  <Button size="sm" variant="ghost" className="toolbar-btn" onClick={handleCenterCamera} disabled={!viewerReady}>
-                    Center
-                  </Button>
-                </motion.div>
-                <div className="toolbar-divider" />
-                <motion.div layout className="viewer-toolbar-group">
-                  <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-                    <span className="mono mr-1 text-red-400">X</span>Rot
-                  </Button>
-                  <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-                    <span className="mono mr-1 text-green-400">Y</span>Rot
-                  </Button>
-                  <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-                    <span className="mono mr-1 text-blue-400">Z</span>Rot
-                  </Button>
-                </motion.div>
+                {textureMode === "multi" ? (
+                  <>
+                    <motion.div layout className="viewer-toolbar-group">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className={`toolbar-btn ${dualSelectedSlot === "A" ? "toolbar-btn--slot-a" : ""}`}
+                        onClick={() => setDualSelectedSlot("A")}
+                      >
+                        <span className="dual-slot-dot dual-slot-dot--a inline-block mr-1" />Slot A
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className={`toolbar-btn ${dualSelectedSlot === "B" ? "toolbar-btn--slot-b" : ""}`}
+                        onClick={() => setDualSelectedSlot("B")}
+                      >
+                        <span className="dual-slot-dot dual-slot-dot--b inline-block mr-1" />Slot B
+                      </Button>
+                    </motion.div>
+                    <div className="toolbar-divider" />
+                    <motion.div layout className="viewer-toolbar-group">
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
+                        <Link2 className="w-3 h-3 mr-1" />Snap
+                      </Button>
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.resetPositions?.()}>
+                        <Unlink className="w-3 h-3 mr-1" />Reset
+                      </Button>
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.reset?.()}>
+                        Center
+                      </Button>
+                    </motion.div>
+                  </>
+                ) : (
+                  <>
+                    <motion.div layout className="viewer-toolbar-group">
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>
+                        Front
+                      </Button>
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("side")}>
+                        Side
+                      </Button>
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")}>
+                        3/4
+                      </Button>
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("top")}>
+                        Top
+                      </Button>
+                      <div className="toolbar-divider" />
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={handleCenterCamera} disabled={!viewerReady}>
+                        Center
+                      </Button>
+                    </motion.div>
+                    <div className="toolbar-divider" />
+                    <motion.div layout className="viewer-toolbar-group">
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
+                        <span className="mono mr-1 text-red-400">X</span>Rot
+                      </Button>
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
+                        <span className="mono mr-1 text-green-400">Y</span>Rot
+                      </Button>
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
+                        <span className="mono mr-1 text-blue-400">Z</span>Rot
+                      </Button>
+                    </motion.div>
+                  </>
+                )}
                 <div className="toolbar-divider" />
                 <motion.button 
                   layout
@@ -1498,17 +1804,114 @@ function App() {
           </AnimatePresence>
         </motion.div>
 
-        <div className="viewer-hints">
-          <span>Left drag: Rotate</span>
-          <span>Right drag: Pan</span>
-          <span>Scroll: Zoom</span>
-        </div>
+        {showHints ? (
+          <div className="viewer-hints">
+            <span>Left drag: Rotate</span>
+            <span>Right drag: Pan</span>
+            <span>Scroll: Zoom</span>
+          </div>
+        ) : null}
       </motion.section>
 
       <AnimatePresence>{isBooting ? <AppLoader /> : null}</AnimatePresence>
       <AnimatePresence>
         {!isBooting && showOnboarding ? (
           <Onboarding initialDefaults={defaults} onComplete={completeOnboarding} />
+        ) : null}
+      </AnimatePresence>
+
+      {/* Format Warning Modal */}
+      <AnimatePresence>
+        {formatWarning ? (
+          <motion.div
+            className="warning-modal-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setFormatWarning(null)}
+          >
+            <motion.div
+              className="warning-modal"
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="warning-modal-header">
+                <AlertTriangle className="warning-modal-icon" />
+                <div className="warning-modal-title-group">
+                  <div className="warning-modal-title">
+                    {formatWarning.bitDepth}-Bit PSD Not Supported
+                  </div>
+                  <div className="warning-modal-subtitle">
+                    High bit depth format detected
+                  </div>
+                </div>
+              </div>
+
+              <div className="warning-modal-body">
+                <div className="warning-modal-content">
+                  <div className="warning-modal-section">
+                    <div className="warning-modal-text">
+                      This PSD file uses <strong>{formatWarning.bitDepth}-bit</strong> color depth (high dynamic range), 
+                      which cannot be loaded directly.
+                    </div>
+                  </div>
+
+                  <div className="warning-modal-section">
+                    <div className="warning-modal-section-title">How to Convert</div>
+                    <div className="warning-modal-steps">
+                      <div className="warning-modal-step">
+                        <span className="warning-modal-step-num">1</span>
+                        <span className="warning-modal-step-text">Open the file in <strong>Photoshop</strong></span>
+                      </div>
+                      <div className="warning-modal-step">
+                        <span className="warning-modal-step-num">2</span>
+                        <span className="warning-modal-step-text">
+                          Go to <span className="warning-modal-code">Image → Mode → 8 Bits/Channel</span>
+                        </span>
+                      </div>
+                      <div className="warning-modal-step">
+                        <span className="warning-modal-step-num">3</span>
+                        <span className="warning-modal-step-text">Save the file and reload it here</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="warning-modal-section">
+                    <div className="warning-modal-section-title">Trade-offs</div>
+                    <div className="warning-modal-note">
+                      8-bit has 256 color levels per channel vs {formatWarning.bitDepth === 16 ? "65,536" : "billions"} in {formatWarning.bitDepth}-bit. 
+                      For game textures, 8-bit is typically sufficient and more widely compatible.
+                    </div>
+                  </div>
+
+                  <div className="warning-modal-section">
+                    <div className="warning-modal-section-title">Alternative</div>
+                    <div className="warning-modal-text">
+                      Export as <strong>PNG</strong> or <strong>JPEG</strong> which automatically converts to 8-bit.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="warning-modal-footer">
+                <button
+                  type="button"
+                  className="warning-modal-btn warning-modal-btn-primary"
+                  onClick={() => {
+                    setFormatWarning(null);
+                    setTexturePath("");
+                    setTextureError("");
+                  }}
+                >
+                  GOT IT
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
         ) : null}
       </AnimatePresence>
     </motion.div>

@@ -344,11 +344,23 @@ export default function SettingsMenu({
                                     <span className="settings-toggle-dot" />
                                   </button>
                                 </div>
-                                <div className="settings-row">
-                                  <div className="settings-row-note">
-                                    W/A/S/D pan, Q/E rise, Shift to boost.
+                                  <div className="settings-row">
+                                    <div className="settings-row-note">
+                                      W/A/S/D pan, Q/E rise, Shift to boost.
+                                    </div>
                                   </div>
-                                </div>
+
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">Show hints</div>
+                                    <button
+                                      type="button"
+                                      className={`settings-toggle ${draft.showHints ? "is-on" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, showHints: !p.showHints }))}
+                                      aria-pressed={draft.showHints}
+                                    >
+                                      <span className="settings-toggle-dot" />
+                                    </button>
+                                  </div>
                               </section>
                             ) : null}
 
