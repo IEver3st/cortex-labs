@@ -206,7 +206,7 @@ export default function AppLoader({ variant = "boot" }) {
         </motion.div>
 
         <div className="loader-meta">
-          <div className="loader-title">Cortex Labs</div>
+          <div className="loader-title">Cortex Studio</div>
           <div className="loader-subtitle">Initializing...</div>
         </div>
       </motion.div>

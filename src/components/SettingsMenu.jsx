@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDown, Settings } from "lucide-react";
+import { ArrowLeft, Settings } from "lucide-react";
 
 function ColorField({ label, value, onChange, onReset }) {
   return (
@@ -36,11 +37,9 @@ export default function SettingsMenu({
   onSave,
 }) {
   const [open, setOpen] = useState(false);
-  const [colorsOpen, setColorsOpen] = useState(true);
   const [hoveringIcon, setHoveringIcon] = useState(false);
-  const wrapperRef = useRef(null);
-  const popoverRef = useRef(null);
-  const [popoverStyle, setPopoverStyle] = useState({});
+  const [activeSection, setActiveSection] = useState("defaults");
+  const [portalNode, setPortalNode] = useState(null);
 
   const initialDraft = useMemo(() => ({ ...defaults }), [defaults]);
   const [draft, setDraft] = useState(initialDraft);
@@ -52,94 +51,49 @@ export default function SettingsMenu({
   useEffect(() => {
     if (!open) return;
 
-    const handlePointerDown = (event) => {
-      if (!wrapperRef.current) return;
-      if (wrapperRef.current.contains(event.target)) return;
-      setOpen(false);
-    };
-
     const handleKeyDown = (event) => {
       if (event.key === "Escape") setOpen(false);
     };
 
-    document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open]);
 
-  useLayoutEffect(() => {
-    if (!open) return;
-    if (typeof window === "undefined") return;
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    setPortalNode(document.body);
+  }, []);
 
-    let frame = 0;
-    const padding = 12;
-    const gap = 8;
+  const sections = useMemo(
+    () => [
+      {
+        id: "defaults",
+        label: "Defaults",
+        description: "Baseline texture behavior and viewing rules.",
+      },
+      {
+        id: "window",
+        label: "Window",
+        description: "Window overlay defaults and target behavior.",
+      },
+      {
+        id: "camera",
+        label: "Camera",
+        description: "Keyboard movement and camera controls.",
+      },
+      {
+        id: "colors",
+        label: "Colors",
+        description: "Body and background hues for new sessions.",
+      },
+    ],
+    [],
+  );
 
-    const update = () => {
-      const anchor = wrapperRef.current?.getBoundingClientRect();
-      const popover = popoverRef.current?.getBoundingClientRect();
-      if (!anchor || !popover) return;
-
-      const panel = wrapperRef.current?.closest?.(".control-panel");
-      let panelLeft = anchor.left;
-      let panelPaddingLeft = 0;
-      let panelPaddingRight = 0;
-      let panelWidth = popover.width;
-
-      if (panel) {
-        const panelRect = panel.getBoundingClientRect();
-        panelLeft = panelRect.left;
-        const styles = window.getComputedStyle(panel);
-        panelPaddingLeft = parseFloat(styles.paddingLeft) || 0;
-        panelPaddingRight = parseFloat(styles.paddingRight) || 0;
-        panelWidth = Math.max(0, panelRect.width - panelPaddingLeft - panelPaddingRight);
-      }
-
-      const maxWidth = Math.max(160, window.innerWidth - padding * 2);
-      const width = Math.min(panelWidth || popover.width, maxWidth);
-
-      let left = panelLeft + panelPaddingLeft;
-      left = Math.min(Math.max(left, padding), window.innerWidth - width - padding);
-
-      let top = anchor.bottom + gap;
-      const maxTop = window.innerHeight - popover.height - padding;
-      if (top > maxTop) {
-        const above = anchor.top - popover.height - gap;
-        top = above >= padding ? above : Math.max(padding, maxTop);
-      }
-
-      setPopoverStyle({
-        left: `${Math.round(left)}px`,
-        top: `${Math.round(top)}px`,
-        width: `${Math.round(width)}px`,
-      });
-    };
-
-    const schedule = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(update);
-    };
-
-    schedule();
-
-    const resizeObserver = new ResizeObserver(schedule);
-    if (popoverRef.current) resizeObserver.observe(popoverRef.current);
-    if (wrapperRef.current) resizeObserver.observe(wrapperRef.current);
-
-    window.addEventListener("resize", schedule);
-    window.addEventListener("scroll", schedule, true);
-
-    return () => {
-      cancelAnimationFrame(frame);
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", schedule);
-      window.removeEventListener("scroll", schedule, true);
-    };
-  }, [open]);
+  const activeMeta = sections.find((section) => section.id === activeSection) ?? sections[0];
 
   const save = () => {
     onSave?.(draft);
@@ -151,10 +105,7 @@ export default function SettingsMenu({
   };
 
   return (
-    <div
-      ref={wrapperRef}
-      className="settings-anchor"
-    >
+    <div className="settings-anchor">
       <motion.button
         type="button"
         className="settings-cog"
@@ -180,111 +131,223 @@ export default function SettingsMenu({
         </motion.span>
       </motion.button>
 
-      <AnimatePresence>
-        {open ? (
-          <motion.div
-            className="settings-pop"
-            ref={popoverRef}
-            style={popoverStyle}
-            initial={{ opacity: 0, y: -6, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.985 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="settings-title">Defaults</div>
-
-            <div className="settings-row">
-              <div className="settings-row-label">Apply texture mode</div>
-              <div className="settings-seg">
-                <button
-                  type="button"
-                  className={`settings-seg-btn ${draft.textureMode === "everything" ? "is-on" : ""}`}
-                  onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
-                >
-                  Everything
-                </button>
-                <button
-                  type="button"
-                  className={`settings-seg-btn ${draft.textureMode === "livery" ? "is-on" : ""}`}
-                  onClick={() => setDraft((p) => ({ ...p, textureMode: "livery" }))}
-                >
-                  Livery
-                </button>
-              </div>
-            </div>
-
-            <div className="settings-row">
-              <div className="settings-row-label">Exterior only</div>
-              <button
-                type="button"
-                className={`settings-toggle ${draft.liveryExteriorOnly ? "is-on" : ""}`}
-                onClick={() => setDraft((p) => ({ ...p, liveryExteriorOnly: !p.liveryExteriorOnly }))}
-                aria-pressed={draft.liveryExteriorOnly}
-              >
-                <span className="settings-toggle-dot" />
-              </button>
-            </div>
-
-            <div className="settings-section">
-              <button
-                type="button"
-                className="settings-section-toggle"
-                onClick={() => setColorsOpen((prev) => !prev)}
-                aria-expanded={colorsOpen}
-                aria-controls="settings-colors"
-              >
-                <span className="settings-section-title">Colors</span>
-                <motion.span
-                  className="settings-section-chevron"
-                  animate={{ rotate: colorsOpen ? 0 : -90 }}
+      {portalNode
+        ? createPortal(
+            <AnimatePresence>
+              {open ? (
+                <motion.div
+                  className="settings-page"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
                   transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                 >
-                  <ChevronDown className="settings-section-chevron-svg" aria-hidden="true" />
-                </motion.span>
-              </button>
-
-              <AnimatePresence initial={false}>
-                {colorsOpen ? (
                   <motion.div
-                    id="settings-colors"
-                    className="settings-section-body"
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
+                    className="settings-dialog"
+                    initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.98 }}
                     transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                   >
-                    <ColorField
-                      label="Body"
-                      value={draft.bodyColor}
-                      onChange={(value) => setDraft((p) => ({ ...p, bodyColor: value }))}
-                      onReset={() => setDraft((p) => ({ ...p, bodyColor: builtInDefaults.bodyColor }))}
-                    />
-                    <ColorField
-                      label="Background"
-                      value={draft.backgroundColor}
-                      onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
-                      onReset={() => setDraft((p) => ({ ...p, backgroundColor: builtInDefaults.backgroundColor }))}
-                    />
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-            </div>
+                    <div className="settings-dialog-header">
+                      <button
+                        type="button"
+                        className="settings-back"
+                        onClick={() => setOpen(false)}
+                        aria-label="Back"
+                      >
+                        <ArrowLeft className="settings-back-icon" aria-hidden="true" />
+                      </button>
+                      <div className="settings-dialog-title-group">
+                        <div className="settings-dialog-title">Settings</div>
+                        <div className="settings-dialog-sub">Cortex Studio</div>
+                      </div>
+                    </div>
+                    <div className="settings-shell">
+                      <nav className="settings-nav" aria-label="Settings sections">
+                        <div className="settings-nav-title">Sections</div>
+                        <div className="settings-nav-list" role="list">
+                          {sections.map((section) => (
+                            <motion.button
+                              key={section.id}
+                              type="button"
+                              className={`settings-nav-item ${activeSection === section.id ? "is-active" : ""}`}
+                              onClick={() => setActiveSection(section.id)}
+                              aria-current={activeSection === section.id ? "page" : undefined}
+                              whileTap={{ scale: 0.98 }}
+                            >
+                              <span className="settings-nav-item-label">{section.label}</span>
+                              <span className="settings-nav-item-meta">{section.description}</span>
+                            </motion.button>
+                          ))}
+                        </div>
+                      </nav>
 
-            <div className="settings-actions">
-              <button
-                type="button"
-                className="settings-secondary"
-                onClick={() => setDraft({ ...builtInDefaults })}
-              >
-                Reset all
-              </button>
-              <button type="button" className="settings-primary" onClick={save}>
-                Save
-              </button>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+                      <div className="settings-content">
+                        <div className="settings-content-header">
+                          <div className="settings-content-title">{activeMeta.label}</div>
+                          <div className="settings-content-sub">{activeMeta.description}</div>
+                        </div>
+
+                        <AnimatePresence mode="wait">
+                          <motion.div
+                            key={activeSection}
+                            className="settings-content-body"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -8 }}
+                            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                          >
+                            {activeSection === "defaults" ? (
+                              <section className="settings-panel" id="settings-panel-defaults" aria-label="Defaults">
+                                <div className="settings-panel-title">Texture defaults</div>
+                                <div className="settings-row">
+                                <div className="settings-row-label">Default mode</div>
+                                <div className="settings-seg">
+                                  <button
+                                    type="button"
+                                    className={`settings-seg-btn ${draft.textureMode === "livery" ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, textureMode: "livery" }))}
+                                  >
+                                    Livery
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`settings-seg-btn ${draft.textureMode === "everything" ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
+                                  >
+                                    All
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`settings-seg-btn ${draft.textureMode === "eup" ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, textureMode: "eup" }))}
+                                  >
+                                    EUP
+                                  </button>
+                                </div>
+                              </div>
+
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Exterior only</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.liveryExteriorOnly ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, liveryExteriorOnly: !p.liveryExteriorOnly }))}
+                                    aria-pressed={draft.liveryExteriorOnly}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+                              </section>
+                            ) : null}
+
+                            {activeSection === "window" ? (
+                              <section className="settings-panel" id="settings-panel-window" aria-label="Window">
+                                <div className="settings-panel-title">Window overlay</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Enable overlay</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.windowTemplateEnabled ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, windowTemplateEnabled: !p.windowTemplateEnabled }))}
+                                    aria-pressed={draft.windowTemplateEnabled}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Default target</div>
+                                  <div className="settings-seg">
+                                    <button
+                                      type="button"
+                                      className={`settings-seg-btn ${draft.windowTextureTarget === "auto" ? "is-on" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, windowTextureTarget: "auto" }))}
+                                    >
+                                      Auto
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`settings-seg-btn ${draft.windowTextureTarget === "all" ? "is-on" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, windowTextureTarget: "all" }))}
+                                    >
+                                      All
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`settings-seg-btn ${draft.windowTextureTarget === "none" ? "is-on" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, windowTextureTarget: "none" }))}
+                                    >
+                                      None
+                                    </button>
+                                  </div>
+                                </div>
+                              </section>
+                            ) : null}
+
+                            {activeSection === "camera" ? (
+                              <section className="settings-panel" id="settings-panel-camera" aria-label="Camera">
+                                <div className="settings-panel-title">Camera controls</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">WASD mode</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.cameraWASD ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, cameraWASD: !p.cameraWASD }))}
+                                    aria-pressed={draft.cameraWASD}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-note">
+                                    W/A/S/D pan, Q/E rise, Shift to boost.
+                                  </div>
+                                </div>
+                              </section>
+                            ) : null}
+
+                            {activeSection === "colors" ? (
+                              <section className="settings-panel" id="settings-panel-colors" aria-label="Colors">
+                                <div className="settings-panel-title">Color defaults</div>
+                                <div className="settings-panel-grid">
+                                  <ColorField
+                                    label="Body"
+                                    value={draft.bodyColor}
+                                    onChange={(value) => setDraft((p) => ({ ...p, bodyColor: value }))}
+                                    onReset={() => setDraft((p) => ({ ...p, bodyColor: builtInDefaults.bodyColor }))}
+                                  />
+                                  <ColorField
+                                    label="Background"
+                                    value={draft.backgroundColor}
+                                    onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
+                                    onReset={() => setDraft((p) => ({ ...p, backgroundColor: builtInDefaults.backgroundColor }))}
+                                  />
+                                </div>
+                              </section>
+                            ) : null}
+                          </motion.div>
+                        </AnimatePresence>
+
+                        <div className="settings-footer">
+                          <div className="settings-actions">
+                            <button type="button" className="settings-secondary" onClick={() => setDraft({ ...builtInDefaults })}>
+                              Reset all
+                            </button>
+                            <button type="button" className="settings-primary" onClick={save}>
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>,
+            portalNode,
+          )
+        : null}
     </div>
   );
 }

@@ -70,7 +70,7 @@ export default function Onboarding({ initialDefaults, onComplete }) {
               </motion.div>
             </AnimatePresence>
           </motion.div>
-          <div className="onb-brand">Cortex Labs</div>
+          <div className="onb-brand">Cortex Studio</div>
           <div className="onb-sub">Set your defaults once. You can change them later.</div>
         </div>
 
@@ -94,17 +94,24 @@ export default function Onboarding({ initialDefaults, onComplete }) {
               <div className="onb-seg">
                 <button
                   type="button"
-                  className={`onb-seg-btn ${draft.textureMode === "everything" ? "is-on" : ""}`}
-                  onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
-                >
-                  Everything
-                </button>
-                <button
-                  type="button"
                   className={`onb-seg-btn ${draft.textureMode === "livery" ? "is-on" : ""}`}
                   onClick={() => setDraft((p) => ({ ...p, textureMode: "livery" }))}
                 >
                   Livery
+                </button>
+                <button
+                  type="button"
+                  className={`onb-seg-btn ${draft.textureMode === "everything" ? "is-on" : ""}`}
+                  onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className={`onb-seg-btn ${draft.textureMode === "eup" ? "is-on" : ""}`}
+                  onClick={() => setDraft((p) => ({ ...p, textureMode: "eup" }))}
+                >
+                  EUP
                 </button>
               </div>
             </div>

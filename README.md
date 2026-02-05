@@ -1,12 +1,12 @@
-![Cortex Labs UI](https://cdn.discordapp.com/attachments/723540538627981362/1468705447883047124/image.png?ex=6984fe0a&is=6983ac8a&hm=c6a7be58b5cf6a7b3aa71b2d5655962cfd691762b8ca24b932b0d7dc7553075e&)
+![Cortex Studio UI](https://cdn.discordapp.com/attachments/723540538627981362/1468705447883047124/image.png?ex=6984fe0a&is=6983ac8a&hm=c6a7be58b5cf6a7b3aa71b2d5655962cfd691762b8ca24b932b0d7dc7553075e&)
 # Tauri + React
 
 This template should help get you started developing with Tauri and React in Vite.
 
 ## Model Support
 
-- `.obj`: loaded directly in the viewer.
 - `.yft` (FiveM/GTA V): converted to RenderWare `.dff` via a bundled converter sidecar and parsed with `dff-loader`.
+- `.obj` is intentionally unsupported: out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported.
 
 See:
 
@@ -17,18 +17,18 @@ See:
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 
-# Cortex Labs
+# Cortex Studio
 
-Cortex Labs is a real-time livery previewer for GTA V / FiveM vehicle assets.
+Cortex Studio is a real-time livery previewer for GTA V / FiveM vehicle assets.
 Its purpose is simple: let livery creators see texture changes instantly on a 3D model while they work.
 It is free forever and fully open source under the MIT license.
 
 Built with Tauri v2, React, Vite, and Three.js.
 
-## Why Cortex Labs
+## Why Cortex Studio
 
 Livery work is iterative. Exporting, loading, and reloading in-game is slow and breaks flow.
-Cortex Labs keeps your livery work live so you can focus on design instead of tooling.
+Cortex Studio keeps your livery work live so you can focus on design instead of tooling.
 
 ## Key Features
 
@@ -43,7 +43,6 @@ Cortex Labs keeps your livery work live so you can focus on design instead of to
 ## Supported Files
 
 Models:
-- `.obj`
 - `.yft` (GTA V/FiveM fragment)
 - `.clmesh` (mesh cache)
 - `.dff` (RenderWare)
@@ -55,7 +54,7 @@ Textures:
 
 1. Load a model using the file picker or drag-and-drop.
 2. Select a texture file for your livery.
-3. Cortex Labs watches the texture file and reloads it on every save.
+3. Cortex Studio watches the texture file and reloads it on every save.
 4. Livery mode tries to auto-detect the correct material target using mesh/material names.
 5. Adjust body/background colors and camera presets to inspect details quickly.
 

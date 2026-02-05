@@ -171,6 +171,12 @@ struct WatchState {
 }
 
 #[derive(Default)]
+struct WindowWatchState {
+    watcher: Mutex<Option<RecommendedWatcher>>,
+    path: Mutex<Option<PathBuf>>,
+}
+
+#[derive(Default)]
 struct ModelWatchState {
     watcher: Mutex<Option<RecommendedWatcher>>,
     path: Mutex<Option<PathBuf>>,
@@ -233,6 +239,75 @@ fn start_watch(
 
 #[tauri::command]
 fn stop_watch(state: State<WatchState>) -> Result<(), String> {
+    let mut watcher_guard = state
+        .watcher
+        .lock()
+        .map_err(|_| "watcher lock failed".to_string())?;
+    let mut path_guard = state
+        .path
+        .lock()
+        .map_err(|_| "path lock failed".to_string())?;
+
+    if let Some(mut watcher) = watcher_guard.take() {
+        if let Some(prev_path) = path_guard.take() {
+            let _ = watcher.unwatch(&prev_path);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn start_window_watch(
+    path: String,
+    app: tauri::AppHandle,
+    state: State<WindowWatchState>,
+) -> Result<(), String> {
+    let mut watcher_guard = state
+        .watcher
+        .lock()
+        .map_err(|_| "watcher lock failed".to_string())?;
+    let mut path_guard = state
+        .path
+        .lock()
+        .map_err(|_| "path lock failed".to_string())?;
+
+    if let Some(mut existing) = watcher_guard.take() {
+        if let Some(prev_path) = path_guard.take() {
+            let _ = existing.unwatch(&prev_path);
+        }
+    }
+
+    let app_handle = app.clone();
+    let mut watcher =
+        notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = res {
+                let payload = WatchPayload {
+                    path: event
+                        .paths
+                        .get(0)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    kind: format!("{:?}", event.kind),
+                };
+                let _ = app_handle.emit("texture:update", payload);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
+    let path_buf = PathBuf::from(&path);
+    watcher
+        .watch(&path_buf, RecursiveMode::NonRecursive)
+        .map_err(|e| e.to_string())?;
+
+    *path_guard = Some(path_buf);
+    *watcher_guard = Some(watcher);
+
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_window_watch(state: State<WindowWatchState>) -> Result<(), String> {
     let mut watcher_guard = state
         .watcher
         .lock()
@@ -657,6 +732,7 @@ STDERR:\n{}\nSTDOUT:\n{}\nLOG:\n{}",
 pub fn run() {
     tauri::Builder::default()
         .manage(WatchState::default())
+        .manage(WindowWatchState::default())
         .manage(ModelWatchState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -664,6 +740,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             start_watch,
             stop_watch,
+            start_window_watch,
+            stop_window_watch,
             start_model_watch,
             stop_model_watch,
             parse_yft,

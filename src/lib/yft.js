@@ -11,6 +11,9 @@ const MAX_MODELS = 64;
 const MAX_GEOMETRIES = 256;
 const MAX_VERTICES = 1000000;
 const MAX_INDICES = 3000000;
+const DEFAULT_SCAN_LIMIT = 0x10000;
+const DEFAULT_SCAN_STRIDE = 16;
+const DEFAULT_SCAN_MAX_CANDIDATES = 24;
 
 // Shader name list adapted from CodeWalker.Core/strings.txt (shader names for gen9).
 // Used to map ShaderFX.Name hashes to readable labels.
@@ -458,7 +461,7 @@ const SHADER_NAME_BY_HASH = (() => {
   return map;
 })();
 
-export function parseYft(bytes, name = "model") {
+export function parseYft(bytes, name = "model", options = {}) {
   if (!bytes || bytes.length < 16) {
     console.warn("[YFT] File too small");
     return null;
@@ -480,6 +483,7 @@ export function parseYft(bytes, name = "model") {
       resource.systemSize,
       resource.graphicsSize,
     );
+    const scanSettings = normalizeScanSettings(options, reader.len);
 
     let drawable = parseFragType(reader, name);
 
@@ -492,9 +496,13 @@ export function parseYft(bytes, name = "model") {
     }
 
     if (!drawable || !hasGeometry(drawable)) {
-      const offset = scanForDrawable(reader);
-      if (offset > 0) {
-        drawable = parseDrawable(reader, offset, name);
+      if (scanSettings.preferBestDrawable) {
+        drawable = scanForBestDrawable(reader, name, scanSettings);
+      } else {
+        const offset = scanForDrawable(reader, scanSettings);
+        if (offset > 0) {
+          drawable = parseDrawable(reader, offset, name);
+        }
       }
     }
 
@@ -1468,9 +1476,35 @@ function hasGeometry(drawable) {
   return totalVertices > 0;
 }
 
-function scanForDrawable(reader) {
-  const limit = Math.min(reader.len - 200, 0x10000);
-  for (let offset = 0; offset <= limit; offset += 16) {
+function normalizeScanSettings(options, readerLen) {
+  const settings = options && typeof options === "object" ? options : {};
+  let scanLimit = settings.scanLimit;
+  if (scanLimit === undefined) scanLimit = DEFAULT_SCAN_LIMIT;
+  if (!Number.isFinite(scanLimit)) scanLimit = readerLen;
+  scanLimit = Math.max(0, Math.min(readerLen - 200, scanLimit));
+
+  let scanStride = settings.scanStride;
+  if (!Number.isFinite(scanStride) || scanStride <= 0) scanStride = DEFAULT_SCAN_STRIDE;
+  scanStride = Math.max(1, Math.floor(scanStride));
+
+  let scanMaxCandidates = settings.scanMaxCandidates;
+  if (!Number.isFinite(scanMaxCandidates) || scanMaxCandidates <= 0)
+    scanMaxCandidates = DEFAULT_SCAN_MAX_CANDIDATES;
+  scanMaxCandidates = Math.max(1, Math.floor(scanMaxCandidates));
+
+  const preferBestDrawable = Boolean(settings.preferBestDrawable);
+
+  return { scanLimit, scanStride, scanMaxCandidates, preferBestDrawable };
+}
+
+function scanForDrawableCandidates(reader, scanLimit, scanStride, maxCandidates) {
+  if (!reader || !Number.isFinite(scanLimit) || scanLimit <= 0) return [];
+  const limit = Math.min(reader.len - 200, scanLimit);
+  if (limit <= 0) return [];
+  const stride = Math.max(1, Math.floor(scanStride || DEFAULT_SCAN_STRIDE));
+  const candidates = [];
+
+  for (let offset = 0; offset <= limit; offset += stride) {
     const shaderPtr = reader.u64(offset + 0x10);
     if (!reader.validPtr(shaderPtr)) continue;
     const modelsHigh = reader.u64(offset + 0x50);
@@ -1481,8 +1515,44 @@ function scanForDrawable(reader) {
       reader.validPtr(modelsMed) ||
       reader.validPtr(modelsLow)
     ) {
-      return offset;
+      candidates.push(offset);
+      if (candidates.length >= maxCandidates) break;
     }
   }
-  return 0;
+
+  return candidates;
+}
+
+function scanForDrawable(reader, settings) {
+  const candidates = scanForDrawableCandidates(
+    reader,
+    settings.scanLimit,
+    settings.scanStride,
+    1,
+  );
+  return candidates[0] || 0;
+}
+
+function scanForBestDrawable(reader, name, settings) {
+  const candidates = scanForDrawableCandidates(
+    reader,
+    settings.scanLimit,
+    settings.scanStride,
+    settings.scanMaxCandidates,
+  );
+  if (candidates.length === 0) return null;
+
+  let best = null;
+  let bestVertices = 0;
+  for (const offset of candidates) {
+    const drawable = parseDrawable(reader, offset, name);
+    if (!drawable || !hasGeometry(drawable)) continue;
+    const totalVertices = countTotalVertices(drawable);
+    if (!best || totalVertices > bestVertices) {
+      best = drawable;
+      bestVertices = totalVertices;
+    }
+  }
+
+  return best;
 }
