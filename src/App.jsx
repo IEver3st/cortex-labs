@@ -1979,14 +1979,20 @@ function App() {
               transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
             >
               <div className="update-toast-content">
-                <div className="update-toast-text">
-                  <span className="update-toast-label">Update available</span>
-                  <span className="update-toast-version">v{update.latest}</span>
+                <div className="update-toast-header">
+                  <div className="update-toast-title-row">
+                    <span className="update-toast-label">Update available</span>
+                    <span className="update-toast-version">v{update.latest}</span>
+                  </div>
+                  <div className="update-toast-desc">
+                    A new version of Cortex Studio is available to download. Would you like to download it now?
+                  </div>
                 </div>
-                <div className="update-toast-actions">
+                
+                <div className="update-toast-footer status-strip">
                   <button
                     type="button"
-                    className="update-toast-btn update-toast-btn--open"
+                    className="update-toast-dismiss-btn update-toast-link-blue"
                     onClick={() => {
                       if (update.url) {
                         if (isTauriRuntime) {
@@ -1997,15 +2003,15 @@ function App() {
                       }
                     }}
                   >
-                    Download
-                    <ArrowUpRight className="update-toast-icon" />
+                    Download Update
                   </button>
+
                   <button
                     type="button"
-                    className="update-toast-btn update-toast-btn--dismiss"
+                    className="update-toast-dismiss-btn"
                     onClick={update.dismiss}
                   >
-                    <X className="update-toast-icon" />
+                    Not now
                   </button>
                 </div>
               </div>
