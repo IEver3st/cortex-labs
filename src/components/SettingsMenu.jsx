@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, Layers, Shirt } from "lucide-react";
+import { ArrowLeft, Settings, Car, Layers, Shirt, FlaskConical } from "lucide-react";
 import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
 import {
@@ -109,6 +109,11 @@ export default function SettingsMenu({
         id: "colors",
         label: "Colors",
         description: "Body and background hues for new sessions.",
+      },
+      {
+        id: "experimental",
+        label: "Experimental",
+        description: "Bleeding edge features and debug tools.",
       },
     ],
     [],
@@ -363,6 +368,33 @@ export default function SettingsMenu({
                                     onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
                                     onReset={() => setDraft((p) => ({ ...p, backgroundColor: builtInDefaults.backgroundColor }))}
                                   />
+                                </div>
+                              </section>
+                            ) : null}
+
+                            {activeSection === "experimental" ? (
+                              <section className="settings-panel" id="settings-panel-experimental" aria-label="Experimental">
+                                <div className="settings-panel-title">Experimental features</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">
+                                    <div className="flex items-center gap-2">
+                                      <FlaskConical className="h-3 w-3 text-orange-400" />
+                                      <span>Enable experimental settings</span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.experimentalSettings ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, experimentalSettings: !p.experimentalSettings }))}
+                                    aria-pressed={draft.experimentalSettings}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-note text-orange-400/80">
+                                    These features are not fully stable and may cause issues. Use at your own risk.
+                                  </div>
                                 </div>
                               </section>
                             ) : null}

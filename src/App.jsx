@@ -4,7 +4,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Car, ChevronLeft, ChevronRight, Layers, Minus, RotateCcw, Shirt, Square, X } from "lucide-react";
+import { readFile } from "@tauri-apps/plugin-fs";
+import { Car, ChevronLeft, ChevronRight, FolderOpen, Layers, Minus, RotateCcw, Shirt, Square, X } from "lucide-react";
+import { parseYtd, categorizeTextures } from "./lib/ytd";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
@@ -39,6 +41,7 @@ const BUILT_IN_DEFAULTS = {
   cameraWASD: false,
   bodyColor: DEFAULT_BODY,
   backgroundColor: DEFAULT_BG,
+  experimentalSettings: false,
 };
 
 const BUILT_IN_UI = {
@@ -119,6 +122,7 @@ function App() {
   const [windowTexturePath, setWindowTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
+  const [experimentalSettings, setExperimentalSettings] = useState(() => Boolean(getInitialDefaults().experimentalSettings));
   const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
   const [panelOpen, setPanelOpen] = useState(() => ({
     model: true,
@@ -145,6 +149,9 @@ function App() {
   const [dialogError, setDialogError] = useState("");
   const [textureError, setTextureError] = useState("");
   const [windowTextureError, setWindowTextureError] = useState("");
+  const [ytdPath, setYtdPath] = useState("");
+  const [ytdTextures, setYtdTextures] = useState(null);
+  const [ytdLoading, setYtdLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [modelLoading, setModelLoading] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
@@ -305,6 +312,7 @@ function App() {
     setCameraWASD(Boolean(merged.cameraWASD));
     setBodyColor(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
+    setExperimentalSettings(Boolean(merged.experimentalSettings));
     const prefs = loadPrefs() || {};
     savePrefs({ ...prefs, defaults: merged });
   }, []);
@@ -450,6 +458,47 @@ function App() {
       setDialogError("Dialog permission blocked. Check Tauri capabilities.");
       console.error(error);
     }
+  };
+
+  const selectYtd = async () => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
+    try {
+      const selected = await open({
+        filters: [{ name: "Texture Dictionary", extensions: ["ytd"] }],
+      });
+      setDialogError("");
+      if (typeof selected === "string") {
+        setYtdLoading(true);
+        try {
+          const bytes = await readFile(selected);
+          const textures = parseYtd(bytes);
+          if (textures && Object.keys(textures).length > 0) {
+            const categorized = categorizeTextures(textures);
+            setYtdPath(selected);
+            setYtdTextures(categorized);
+            console.log("[YTD] Loaded textures:", Object.keys(textures));
+          } else {
+            setDialogError("No textures found in YTD file.");
+          }
+        } catch (err) {
+          console.error("[YTD] Load error:", err);
+          setDialogError("Failed to parse YTD file.");
+        } finally {
+          setYtdLoading(false);
+        }
+      }
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
+  };
+
+  const clearYtd = () => {
+    setYtdPath("");
+    setYtdTextures(null);
   };
 
   // Keep refs updated for hotkey handler
@@ -849,6 +898,41 @@ function App() {
               </Button>
               {modelLoading ? <div className="file-meta">Preparing model…</div> : null}
             </div>
+            {experimentalSettings ? (
+              <div className="control-group">
+                <Label>Texture Dictionary (YTD)</Label>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10"
+                    onClick={selectYtd}
+                    disabled={ytdLoading}
+                  >
+                    <FolderOpen className="h-4 w-4 mr-2" />
+                    {ytdLoading ? "Loading..." : "Load YTD"}
+                  </Button>
+                  {ytdPath && (
+                    <Button
+                      variant="outline"
+                      className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                      onClick={clearYtd}
+                      title="Unload YTD"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                {ytdPath && (
+                  <div className="file-meta mono">{ytdPath.split(/[\\/]/).pop()}</div>
+                )}
+                {ytdTextures && (
+                  <div className="file-meta">
+                    {Object.keys(ytdTextures.diffuse).length} diffuse, {Object.keys(ytdTextures.normal).length} normal, {Object.keys(ytdTextures.specular).length} specular
+                  </div>
+                )}
+                <div className="file-meta mono">Auto-maps diffuse, normal, and specular textures to materials.</div>
+              </div>
+            ) : null}
           </PanelSection>
 
           {textureMode === "livery" ? (
@@ -1318,6 +1402,7 @@ function App() {
           textureMode={textureMode}
           wasdEnabled={cameraWASD}
           liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
+          ytdTextures={ytdTextures}
           onModelInfo={handleModelInfo}
           onModelError={handleModelError}
           onModelLoading={handleModelLoading}

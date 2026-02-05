@@ -474,9 +474,9 @@ export function parseYft(bytes, name = "model", options = {}) {
       return null;
     }
 
-    console.log(
-      `[YFT] Decoded resource: ${resource.data.length} bytes, system=${resource.systemSize}, graphics=${resource.graphicsSize}`,
-    );
+    // console.log(
+    //   `[YFT] Decoded resource: ${resource.data.length} bytes, system=${resource.systemSize}, graphics=${resource.graphicsSize}`,
+    // );
 
     const reader = createReader(
       resource.data,
@@ -511,10 +511,10 @@ export function parseYft(bytes, name = "model", options = {}) {
       return null;
     }
 
-    const totalVerts = countTotalVertices(drawable);
-    console.log(
-      `[YFT] Successfully parsed: ${drawable.models?.length} models, ${totalVerts} total vertices`,
-    );
+    // const totalVerts = countTotalVertices(drawable);
+    // console.log(
+    //   `[YFT] Successfully parsed: ${drawable.models?.length} models, ${totalVerts} total vertices`,
+    // );
     return drawable;
   } catch (error) {
     console.error("[YFT] Parse error:", error);
@@ -648,9 +648,9 @@ function parseFragType(reader, name) {
       const drawableOffset = reader.resolvePtr(drawablePtr);
       const drawable = parseDrawable(reader, drawableOffset, name);
       if (drawable && hasGeometry(drawable)) {
-        console.log(
-          `[YFT] Found drawable via FragType offset 0x${ptrOffset.toString(16)}`,
-        );
+        // console.log(
+        //   `[YFT] Found drawable via FragType offset 0x${ptrOffset.toString(16)}`,
+        // );
         return drawable;
       }
     }
@@ -930,9 +930,9 @@ function parseVertexDeclaration(reader, geomOffset) {
 
   if (!decl) return fallback;
 
-  console.log(
-    `[YFT] Vertex format: stride=${decl.stride ?? stride}, normalOffset=${decl.normalOffset}, colorOffset=${decl.colorOffset}, uv0Offset=${decl.uv0Offset}, uv1Offset=${decl.uv1Offset}`,
-  );
+  // console.log(
+  //   `[YFT] Vertex format: stride=${decl.stride ?? stride}, normalOffset=${decl.normalOffset}, colorOffset=${decl.colorOffset}, uv0Offset=${decl.uv0Offset}, uv1Offset=${decl.uv1Offset}`,
+  // );
 
   return decl;
 }
