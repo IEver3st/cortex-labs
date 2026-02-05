@@ -333,8 +333,8 @@ export default function SettingsMenu({
                             {activeSection === "camera" ? (
                               <section className="settings-panel" id="settings-panel-camera" aria-label="Camera">
                                 <div className="settings-panel-title">Camera controls</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">WASD mode</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">WASD mode</div>
                                   <button
                                     type="button"
                                     className={`settings-toggle ${draft.cameraWASD ? "is-on" : ""}`}

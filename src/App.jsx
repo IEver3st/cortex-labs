@@ -139,6 +139,7 @@ function App() {
   const [liveryTarget, setLiveryTarget] = useState("");
   const [liveryLabel, setLiveryLabel] = useState("");
   const [windowTextureTarget, setWindowTextureTarget] = useState(() => getInitialDefaults().windowTextureTarget || "auto");
+
   const [cameraWASD, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
   const [windowLiveryTarget, setWindowLiveryTarget] = useState("");
   const [windowLiveryLabel, setWindowLiveryLabel] = useState("");
@@ -309,6 +310,7 @@ function App() {
     setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
     setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
     setWindowTextureTarget(merged.windowTextureTarget || "auto");
+
     setCameraWASD(Boolean(merged.cameraWASD));
     setBodyColor(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
@@ -1488,7 +1490,7 @@ function App() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setToolbarCollapsed(false)}
-                title="Expand Toolbar"
+                  title="Expand Toolbar"
               >
                 <ChevronLeft className="w-4 h-4" />
               </motion.button>
