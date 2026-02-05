@@ -1,4 +1,4 @@
-<<<<<<< Updated upstream
+![Cortex Labs UI](https://cdn.discordapp.com/attachments/723540538627981362/1468705447883047124/image.png?ex=6984fe0a&is=6983ac8a&hm=c6a7be58b5cf6a7b3aa71b2d5655962cfd691762b8ca24b932b0d7dc7553075e&)
 # Tauri + React
 
 This template should help get you started developing with Tauri and React in Vite.
@@ -16,7 +16,7 @@ See:
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-=======
+
 # Cortex Labs
 
 Cortex Labs is a real-time livery previewer for GTA V / FiveM vehicle assets.
@@ -115,4 +115,4 @@ MIT. Free forever. Contributions are welcome.
 ## Contributing
 
 Open an issue or submit a PR. If you change file formats or loaders, include a small sample asset and steps to reproduce.
->>>>>>> Stashed changes
+
