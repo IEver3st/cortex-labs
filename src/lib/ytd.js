@@ -39,9 +39,12 @@ const FORMAT_MAP = {
 /**
  * Parse a YTD file and extract all textures
  * @param {Uint8Array} bytes - Raw YTD file data
+ * @param {Object} [options] - { metadataOnly: boolean, decodeNames: string[] }
+ *   - metadataOnly: if true, skip RGBA decoding (returns rgba: null for each texture)
+ *   - decodeNames: if provided, only decode RGBA for textures whose name is in this set
  * @returns {Object} - Dictionary of textures { name: { width, height, rgba, format } }
  */
-export function parseYtd(bytes) {
+export function parseYtd(bytes, options = {}) {
   if (!bytes || bytes.length < 16) {
     console.warn("[YTD] File too small");
     return null;
@@ -64,7 +67,12 @@ export function parseYtd(bytes) {
       resource.graphicsSize
     );
 
-    const textures = parseTextureDictionary(reader);
+    const metadataOnly = options.metadataOnly || false;
+    const decodeSet = options.decodeNames
+      ? new Set(options.decodeNames.map((n) => n.toLowerCase()))
+      : null;
+
+    const textures = parseTextureDictionary(reader, metadataOnly, decodeSet);
 
     if (!textures || Object.keys(textures).length === 0) {
       console.warn("[YTD] No textures found");
@@ -190,7 +198,7 @@ function resolvePointer(reader, ptr) {
   return offset >= 0 && offset < reader.len ? offset : 0;
 }
 
-function parseTextureDictionary(reader) {
+function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) {
   const textures = {};
 
   // Try different structure offsets for TextureDictionary
@@ -261,7 +269,7 @@ function parseTextureDictionary(reader) {
         continue;
       }
 
-      const texture = parseTexture(reader, textureOffset, i);
+      const texture = parseTexture(reader, textureOffset, i, metadataOnly, decodeSet);
 
       if (texture) {
         // Get name from hash or generate one
@@ -296,7 +304,7 @@ function parseTextureDictionary(reader) {
   return textures;
 }
 
-function parseTexture(reader, offset, debugIndex = -1) {
+function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, decodeSet = null) {
   if (!reader.valid(offset) || offset + 160 > reader.len) return null;
 
 
@@ -410,14 +418,22 @@ function parseTexture(reader, offset, debugIndex = -1) {
     console.log(`[YTD] Texture ${debugIndex}: ${name || 'unnamed'} ${width}x${height} format="${formatStr}" dataOffset=${dataOffset}`);
   }
 
-  // Decode texture
-  const rgba = decodeTexture(reader, dataOffset, width, height, format, 0);
+  // Decide whether to decode RGBA for this texture.
+  // - metadataOnly: never decode (fast first pass)
+  // - decodeSet: only decode if this texture's name is in the set
+  const shouldDecode = !metadataOnly &&
+    (!decodeSet || (name && decodeSet.has(name.toLowerCase())));
 
-  if (!rgba) {
-    if (debugIndex >= 0 && debugIndex < 3) {
-      console.log(`[YTD] Texture ${debugIndex}: decode failed`);
+  let rgba = null;
+  if (shouldDecode) {
+    rgba = decodeTexture(reader, dataOffset, width, height, format, 0);
+
+    if (!rgba) {
+      if (debugIndex >= 0 && debugIndex < 3) {
+        console.log(`[YTD] Texture ${debugIndex}: decode failed`);
+      }
+      return null;
     }
-    return null;
   }
 
   return {
@@ -843,53 +859,225 @@ function getTextureBaseName(name) {
 }
 
 /**
- * Match YTD textures to model materials
- * @param {Object} categorizedTextures - From categorizeTextures()
- * @param {Array} materialNames - List of material names from the model
- * @returns {Object} - Mapping of material name to textures
+ * Shader role mapping: what semantic role each GTA V shader type plays.
+ * Used to match shaders to textures via the qualifier system below.
  */
-export function matchTexturesToMaterials(categorizedTextures, materialNames) {
+const SHADER_ROLE = {
+  // Paint / body shaders — the main vehicle body
+  vehicle_paint1: "paint", vehicle_paint2: "paint", vehicle_paint3: "paint",
+  vehicle_paint4: "paint", vehicle_paint5: "paint", vehicle_paint6: "paint",
+  vehicle_paint7: "paint", vehicle_paint8: "paint", vehicle_paint9: "paint",
+  vehicle_paint1_enveff: "paint", vehicle_paint2_enveff: "paint", vehicle_paint3_enveff: "paint",
+  vehicle_paint3_lvr: "paint", vehicle_paint4_emissive: "paint", vehicle_paint4_enveff: "paint",
+  // Interior
+  vehicle_interior: "interior", vehicle_interior2: "interior",
+  vehicle_dash: "interior", vehicle_dash_emissive: "interior", vehicle_dash_emissive_opaque: "interior",
+  // Detail / decal
+  vehicle_detail: "detail", vehicle_detail2: "detail",
+  vehicle_decal: "decal", vehicle_decal2: "decal",
+  vehicle_badges: "detail", vehicle_licenseplate: "detail",
+  // Generic mesh
+  vehicle_mesh: "mesh", vehicle_mesh2: "mesh",
+  vehicle_mesh_enveff: "mesh", vehicle_mesh2_enveff: "mesh",
+  vehicle_shuts: "mesh", vehicle_generic: "mesh", vehicle_basic: "mesh",
+  vehicle_nosplash: "mesh", vehicle_nowater: "mesh",
+  vehicle_cutout: "mesh", vehicle_cloth: "mesh", vehicle_cloth2: "mesh",
+  vehicle_blurredrotor: "mesh", vehicle_blurredrotor_emissive: "mesh",
+  // Glass / windows
+  glass: "glass", glass_pv: "glass", glass_env: "glass",
+  vehicle_vehglass: "glass", vehicle_vehglass_inner: "glass",
+  // Lights / emissive
+  vehicle_lights: "lights", vehicle_lights2: "lights",
+  vehicle_lightsemissive: "lights", vehicle_lightsemissive_siren: "lights",
+  vehicle_emissive_alpha: "lights", vehicle_emissive_opaque: "lights",
+  // Tires / tracks
+  vehicle_tire: "tire", vehicle_tire_emissive: "tire",
+  vehicle_track: "tire", vehicle_track2: "tire",
+  vehicle_track_ammo: "tire", vehicle_track_cutout: "tire",
+  vehicle_track_emissive: "tire", vehicle_track_siren: "tire", vehicle_track2_emissive: "tire",
+  // Sign materials (livery overlay areas)
+  vehicle_sign: "sign", vehicle_sign2: "sign",
+};
+
+/**
+ * Maps texture qualifier suffixes (the part after the vehicle name prefix)
+ * to the shader role they correspond to.
+ * e.g. "tillertrl1_interior_d" → qualifier "interior" → role "interior"
+ */
+const QUALIFIER_TO_ROLE = {
+  interior: "interior", cabin: "interior", inside: "interior", dash: "interior",
+  sign: "sign", sign_1: "sign", sign_2: "sign", sign_3: "sign",
+  lights: "lights", light: "lights", lamp: "lights", emissive: "lights",
+  detail: "detail", badge: "detail", emblem: "detail", logo: "detail", plate: "detail",
+  decal: "decal",
+  glass: "glass", window: "glass", windshield: "glass",
+  tire: "tire", tyre: "tire", wheel: "tire", rubber: "tire", track: "tire",
+  mesh: "mesh", chrome: "mesh", metal: "mesh", trim: "mesh",
+  body: "paint", paint: "paint", livery: "paint", skin: "paint",
+};
+
+/**
+ * Match YTD textures to model materials.
+ *
+ * Uses a prioritised strategy:
+ *   1. **Direct texture references** – if the YFT shader parameters contain
+ *      explicit texture names (DiffuseSampler, BumpSampler, SpecSampler), match
+ *      those names against YTD entries.  This is the most accurate method.
+ *   2. **Direct name match** – material name equals a texture base name.
+ *   3. **Role-based heuristic** – shader type (vehicle_paint3 → "paint") is
+ *      matched to a texture qualifier (vehiclename_interior → "interior").
+ *
+ * @param {Object} categorizedTextures - { diffuse, normal, specular, detail, other }
+ * @param {Array} materialNames - Shader/material names from the model
+ * @param {Object} [materialTextureRefs] - { materialName: { diffuse: "texName", normal: "texName_n", specular: "texName_s" } }
+ * @returns {Object} mapping + { _meta: { rootBase, assignments[] } }
+ */
+export function matchTexturesToMaterials(categorizedTextures, materialNames, materialTextureRefs = {}) {
   const mapping = {};
+  const assignments = []; // for UI display
 
+  // Build a case-insensitive lookup of ALL raw textures by original name
+  const allTexturesByName = {};  // lowerName → { texture, category, baseName }
+  for (const cat of ["diffuse", "normal", "specular", "detail", "other"]) {
+    for (const [baseName, tex] of Object.entries(categorizedTextures[cat] || {})) {
+      const origName = (tex.originalName || tex.name || baseName).toLowerCase();
+      allTexturesByName[origName] = { texture: tex, category: cat, baseName };
+      // Also index by baseName in case the ref uses the stripped form
+      allTexturesByName[baseName.toLowerCase()] = { texture: tex, category: cat, baseName };
+    }
+  }
+
+  const allDiffuse = Object.entries(categorizedTextures.diffuse || {});
+  const allNormal = Object.entries(categorizedTextures.normal || {});
+  const allSpecular = Object.entries(categorizedTextures.specular || {});
+
+  // Track which textures have been assigned (for the UI browser)
+  const assignedTextures = new Map(); // textureName → materialName
+
+  // --- Assign textures to each material ---
   for (const materialName of materialNames) {
-    const lowerMat = materialName.toLowerCase();
+    mapping[materialName] = { diffuse: null, normal: null, specular: null };
+
+    // ── Strategy 1: Direct shader texture references ──
+    const refs = materialTextureRefs[materialName];
+    if (refs) {
+      let matched = false;
+      for (const [role, texRefName] of Object.entries(refs)) {
+        if (!texRefName) continue;
+        const lowerRef = texRefName.toLowerCase();
+        const found = allTexturesByName[lowerRef];
+        if (!found) continue;
+
+        // Map shader param role to our channel name
+        const channel = role === "normal" || role === "normal2" ? "normal"
+          : role === "specular" ? "specular"
+          : "diffuse";  // diffuse, diffuse2, diffuse3, detail, etc. → diffuse
+
+        if (!mapping[materialName][channel]) {
+          mapping[materialName][channel] = found.texture;
+          assignedTextures.set(texRefName, materialName);
+          matched = true;
+        }
+      }
+
+      // If we got at least a diffuse from refs, also try to find matching
+      // normal/specular by convention (same base name + _n / _s suffix)
+      if (matched && mapping[materialName].diffuse) {
+        const diffName = (mapping[materialName].diffuse.originalName || mapping[materialName].diffuse.name || "").toLowerCase();
+        const diffBase = getTextureBaseName(diffName);
+        if (!mapping[materialName].normal) {
+          mapping[materialName].normal = findByBaseName(allNormal, diffBase);
+        }
+        if (!mapping[materialName].specular) {
+          mapping[materialName].specular = findByBaseName(allSpecular, diffBase);
+        }
+      }
+
+      if (matched) continue;
+    }
+
+    // ── Strategy 2: Direct name match ──
+    const lowerMat = materialName.toLowerCase().trim();
     const baseMat = getTextureBaseName(lowerMat);
-
-    mapping[materialName] = {
-      diffuse: null,
-      normal: null,
-      specular: null,
-    };
-
-    // Try exact match first
-    if (categorizedTextures.diffuse[lowerMat]) {
-      mapping[materialName].diffuse = categorizedTextures.diffuse[lowerMat];
-    } else if (categorizedTextures.diffuse[baseMat]) {
-      mapping[materialName].diffuse = categorizedTextures.diffuse[baseMat];
+    const directDiffuse = categorizedTextures.diffuse?.[lowerMat] || categorizedTextures.diffuse?.[baseMat];
+    if (directDiffuse) {
+      mapping[materialName].diffuse = directDiffuse;
+      mapping[materialName].normal = categorizedTextures.normal?.[lowerMat] || categorizedTextures.normal?.[baseMat] || null;
+      mapping[materialName].specular = categorizedTextures.specular?.[lowerMat] || categorizedTextures.specular?.[baseMat] || null;
+      continue;
     }
 
-    if (categorizedTextures.normal[lowerMat]) {
-      mapping[materialName].normal = categorizedTextures.normal[lowerMat];
-    } else if (categorizedTextures.normal[baseMat]) {
-      mapping[materialName].normal = categorizedTextures.normal[baseMat];
-    }
+    // ── Strategy 3: Role-based heuristic (legacy fallback) ──
+    const shaderRole = SHADER_ROLE[lowerMat];
+    if (shaderRole) {
+      // Find the first diffuse texture that matches this role by qualifier
+      for (const [baseName, tex] of allDiffuse) {
+        const lowerBase = baseName.toLowerCase();
+        let texRole = null;
 
-    if (categorizedTextures.specular[lowerMat]) {
-      mapping[materialName].specular = categorizedTextures.specular[lowerMat];
-    } else if (categorizedTextures.specular[baseMat]) {
-      mapping[materialName].specular = categorizedTextures.specular[baseMat];
-    }
+        // Check qualifier keywords
+        for (const [qKey, qRole] of Object.entries(QUALIFIER_TO_ROLE)) {
+          if (lowerBase === qKey || lowerBase.endsWith("_" + qKey) || lowerBase.includes("_" + qKey + "_")) {
+            texRole = qRole;
+            break;
+          }
+        }
 
-    // Fuzzy matching for partial names
-    if (!mapping[materialName].diffuse) {
-      for (const [texName, tex] of Object.entries(categorizedTextures.diffuse)) {
-        if (texName.includes(baseMat) || baseMat.includes(texName)) {
+        if (texRole === shaderRole) {
           mapping[materialName].diffuse = tex;
+          mapping[materialName].normal = findByBaseName(allNormal, baseName);
+          mapping[materialName].specular = findByBaseName(allSpecular, baseName);
           break;
         }
       }
     }
   }
 
+  // --- Build assignments list for the YTD Browser UI ---
+  for (const cat of ["diffuse", "normal", "specular", "detail", "other"]) {
+    for (const [baseName, tex] of Object.entries(categorizedTextures[cat] || {})) {
+      const texName = tex.originalName || tex.name || baseName;
+      const assignedMat = assignedTextures.get(texName) || null;
+
+      // Also check non-ref assignments
+      let materialName = assignedMat;
+      if (!materialName) {
+        for (const matName of materialNames) {
+          const m = mapping[matName];
+          if (!m) continue;
+          for (const ch of ["diffuse", "normal", "specular"]) {
+            const t = m[ch];
+            if (t && (t.originalName || t.name) === texName) {
+              materialName = matName;
+              break;
+            }
+          }
+          if (materialName) break;
+        }
+      }
+
+      // Determine role based on category
+      const role = cat === "diffuse" ? "diffuse" : cat === "normal" ? "normal" : cat === "specular" ? "specular" : cat;
+
+      assignments.push({
+        textureName: texName,
+        baseName,
+        role,
+        materialName,
+      });
+    }
+  }
+
+  mapping._meta = { rootBase: null, assignments, materialNames };
   return mapping;
+}
+
+/**
+ * Find a texture entry whose base name matches.
+ */
+function findByBaseName(entries, targetBase) {
+  for (const [baseName, tex] of entries) {
+    if (baseName === targetBase) return tex;
+  }
+  return null;
 }

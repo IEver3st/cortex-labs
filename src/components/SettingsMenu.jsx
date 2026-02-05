@@ -293,6 +293,18 @@ export default function SettingsMenu({
                                     <span className="settings-toggle-dot" />
                                   </button>
                                 </div>
+
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Hide text labels</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.hideRotText ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, hideRotText: !p.hideRotText }))}
+                                    aria-pressed={draft.hideRotText}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
                               </section>
                             ) : null}
 

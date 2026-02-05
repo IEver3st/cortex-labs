@@ -11,8 +11,9 @@ import { matchTexturesToMaterials } from "../lib/ytd";
 const presets = {
   // Most GTA/FiveM vehicle assets treat -Z as "forward".
   // Our presets define camera positions around the model, so "front" should be on -Z.
-  front: new THREE.Vector3(0, 0.12, -1),
-  side: new THREE.Vector3(1, 0.1, 0),
+  front: new THREE.Vector3(0, 0, -1),
+  back: new THREE.Vector3(0, 0, 1),
+  side: new THREE.Vector3(1, 0, 0),
   angle: new THREE.Vector3(0.8, 0.12, -0.8),
   top: new THREE.Vector3(0, 1, 0),
 };
@@ -154,6 +155,8 @@ export default function Viewer({
   flipTextureY = true,
   wasdEnabled = false,
   ytdTextures = null,
+  ytdOverrides = {},
+  decodeYtdTextures = null,
   onReady,
   onModelInfo,
   onModelError,
@@ -162,6 +165,7 @@ export default function Viewer({
   onTextureError,
   onWindowTextureError,
   onFormatWarning,
+  onYtdMappingUpdate,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -1321,10 +1325,16 @@ export default function Viewer({
     flipTextureY,
   ]);
 
-  // Apply YTD textures to model materials
+  // Apply YTD textures to model materials.
+  // This effect runs in two phases:
+  //   1. Synchronous: match metadata-only textures to model materials (fast).
+  //   2. Async: decode only the matched textures via a Web Worker, then apply.
   useEffect(() => {
+    let cancelled = false;
+
     if (!modelRef.current || !ytdTextures) {
       // Clear YTD textures if ytdTextures is null
+      if (!ytdTextures) onYtdMappingUpdate?.(null);
       if (!ytdTextures && ytdTextureMapRef.current.size > 0) {
         for (const texture of ytdTextureMapRef.current.values()) {
           texture.dispose?.();
@@ -1346,17 +1356,25 @@ export default function Viewer({
       return;
     }
 
-    // Collect material names from the model
+    // Collect material names and their shader texture references from the model
     const meshes = getMeshList(modelRef.current);
     const materialNamesSet = new Set();
+    const materialTextureRefs = {};   // { materialName: { diffuse: "texName", normal: "texName_n", ... } }
     for (const mesh of meshes) {
       const baseMaterial = mesh.userData.baseMaterial || mesh.material;
       const names = getMaterialNames(baseMaterial);
-      names.forEach((name) => materialNamesSet.add(name));
+      names.forEach((name) => {
+        materialNamesSet.add(name);
+        // Collect texture references from the YFT shader parameters
+        if (mesh.userData.textureRefs && !materialTextureRefs[name]) {
+          materialTextureRefs[name] = mesh.userData.textureRefs;
+        }
+      });
     }
     const materialNames = Array.from(materialNamesSet);
 
     console.log("[YTD] Model material names:", materialNames);
+    console.log("[YTD] Shader texture refs:", materialTextureRefs);
     console.log("[YTD] YTD texture categories:", {
       diffuse: Object.keys(ytdTextures.diffuse || {}),
       normal: Object.keys(ytdTextures.normal || {}),
@@ -1368,147 +1386,233 @@ export default function Viewer({
       return;
     }
 
-    // Create Three.js textures from YTD data
-    const createYtdTexture = (textureData, isNormalMap = false) => {
-      if (!textureData || !textureData.rgba) return null;
+    // --- Phase 1: Match textures to materials (metadata only, synchronous) ---
+    const mapping = matchTexturesToMaterials(ytdTextures, materialNames, materialTextureRefs);
 
-      const cacheKey = `ytd:${textureData.originalName || textureData.name || "unknown"}`;
-      if (ytdTextureMapRef.current.has(cacheKey)) {
-        return ytdTextureMapRef.current.get(cacheKey);
+    // Log results
+    const meta = mapping._meta;
+    if (meta) {
+      console.log(`[YTD] Root texture base: "${meta.rootBase}"`);
+      if (meta.assignments) {
+        for (const a of meta.assignments) {
+          console.log(`[YTD]   ${a.textureName} → role="${a.role}" → material="${a.materialName || "(unassigned)"}"`);
+        }
       }
-
-      const texture = new THREE.DataTexture(
-        textureData.rgba,
-        textureData.width,
-        textureData.height,
-        THREE.RGBAFormat
-      );
-
-      texture.colorSpace = isNormalMap ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.wrapT = THREE.RepeatWrapping;
-      texture.magFilter = THREE.LinearFilter;
-      texture.minFilter = THREE.LinearMipmapLinearFilter;
-      texture.generateMipmaps = true;
-      texture.flipY = true;
-      texture.needsUpdate = true;
-      texture.anisotropy = rendererRef.current?.capabilities.getMaxAnisotropy() || 1;
-
-      ytdTextureMapRef.current.set(cacheKey, texture);
-      return texture;
-    };
-
-    // ytdTextures is already categorized from App.jsx (has diffuse, normal, specular, etc.)
-    const mapping = matchTexturesToMaterials(ytdTextures, materialNames);
-
-    console.log("[YTD] Texture mapping result:", mapping);
-
-    // Check if any textures were matched
-    let hasAnyMatch = false;
+    }
+    let matchCount = 0;
     for (const matName of Object.keys(mapping)) {
-      if (mapping[matName].diffuse || mapping[matName].normal || mapping[matName].specular) {
-        hasAnyMatch = true;
-        console.log(`[YTD] Match found for material "${matName}":`, mapping[matName]);
+      if (matName === "_meta") continue;
+      const m = mapping[matName];
+      if (m.diffuse || m.normal || m.specular) {
+        matchCount++;
+        console.log(`[YTD] Matched "${matName}" →`, {
+          diffuse: m.diffuse?.originalName || m.diffuse?.name || null,
+          normal: m.normal?.originalName || m.normal?.name || null,
+          specular: m.specular?.originalName || m.specular?.name || null,
+        });
+      }
+    }
+    console.log(`[YTD] ${matchCount}/${materialNames.length} materials matched`);
+
+    // Apply user overrides on top of auto-mapping
+    if (ytdOverrides && Object.keys(ytdOverrides).length > 0) {
+      for (const [texName, targetMat] of Object.entries(ytdOverrides)) {
+        let texData = null;
+        for (const cat of ["diffuse", "normal", "specular", "detail", "other"]) {
+          for (const [, entry] of Object.entries(ytdTextures[cat] || {})) {
+            if ((entry.originalName || entry.name) === texName) {
+              texData = entry;
+              break;
+            }
+          }
+          if (texData) break;
+        }
+        if (!texData) continue;
+
+        for (const matName of materialNames) {
+          if (matName === "_meta") continue;
+          const m = mapping[matName];
+          if (!m) continue;
+          if ((m.diffuse?.originalName || m.diffuse?.name) === texName) m.diffuse = null;
+          if ((m.normal?.originalName || m.normal?.name) === texName) m.normal = null;
+          if ((m.specular?.originalName || m.specular?.name) === texName) m.specular = null;
+        }
+
+        if (targetMat === null) {
+          if (meta?.assignments) {
+            const aIdx = meta.assignments.findIndex((a) => a.textureName === texName);
+            if (aIdx >= 0) meta.assignments[aIdx].materialName = null;
+          }
+          continue;
+        }
+
+        if (mapping[targetMat]) {
+          const cat = texData.originalName?.match(/_n$/i) || texName.match(/_n$/i) ? "normal"
+            : texData.originalName?.match(/_s$/i) || texName.match(/_s$/i) ? "specular"
+            : "diffuse";
+          mapping[targetMat][cat] = texData;
+          if (meta?.assignments) {
+            const aIdx = meta.assignments.findIndex((a) => a.textureName === texName);
+            if (aIdx >= 0) meta.assignments[aIdx].materialName = targetMat;
+          }
+        }
       }
     }
 
-    if (!hasAnyMatch) {
-      console.log("[YTD] No automatic matches found. Applying first diffuse texture to all texturable materials.");
-      // Fallback: apply first available diffuse texture to paint/livery materials
-      const diffuseTextures = Object.values(ytdTextures.diffuse || {});
-      if (diffuseTextures.length > 0) {
-        const firstDiffuse = diffuseTextures[0];
-        const diffuseTex = createYtdTexture(firstDiffuse, false);
-        if (diffuseTex) {
-          for (const mesh of meshes) {
-            const baseMaterial = mesh.userData.baseMaterial || mesh.material;
-            const matName = (baseMaterial.name || "").toLowerCase();
-            // Apply to paint, livery, sign, or decal materials
-            if (matName.includes("paint") || matName.includes("livery") ||
-                matName.includes("sign") || matName.includes("decal") ||
-                matName.includes("body")) {
-              const ytdMaterial = new THREE.MeshStandardMaterial({
-                color: 0xffffff,
-                map: diffuseTex,
-                side: THREE.DoubleSide,
-                metalness: baseMaterial.metalness ?? 0.2,
-                roughness: baseMaterial.roughness ?? 0.6,
-              });
-              setupLiveryShader(ytdMaterial);
-              ytdMaterial.name = baseMaterial.name;
-              ytdMaterial.needsUpdate = true;
-              mesh.userData.ytdMaterial = ytdMaterial;
-              mesh.material = ytdMaterial;
-              console.log(`[YTD] Applied fallback texture to material: ${baseMaterial.name}`);
+    // Report mapping metadata to parent for the YTD browser
+    if (meta) onYtdMappingUpdate?.(meta);
+
+    // --- Collect the unique texture names that are actually needed ---
+    const neededNames = new Set();
+    for (const matName of Object.keys(mapping)) {
+      if (matName === "_meta") continue;
+      const m = mapping[matName];
+      if (m.diffuse) neededNames.add(m.diffuse.originalName || m.diffuse.name);
+      if (m.normal) neededNames.add(m.normal.originalName || m.normal.name);
+      if (m.specular) neededNames.add(m.specular.originalName || m.specular.name);
+    }
+
+    console.log(`[YTD] Need to decode ${neededNames.size} textures (out of ${Object.keys(ytdTextures.diffuse || {}).length + Object.keys(ytdTextures.normal || {}).length + Object.keys(ytdTextures.specular || {}).length + Object.keys(ytdTextures.detail || {}).length + Object.keys(ytdTextures.other || {}).length} total)`);
+
+    // --- Phase 2: Decode only the needed textures (async, off main thread) ---
+    const applyDecodedTextures = async () => {
+      // If all matched textures already have rgba (e.g. previously decoded), skip worker
+      let allDecoded = true;
+      for (const matName of Object.keys(mapping)) {
+        if (matName === "_meta") continue;
+        const m = mapping[matName];
+        if (m.diffuse && !m.diffuse.rgba) { allDecoded = false; break; }
+        if (m.normal && !m.normal.rgba) { allDecoded = false; break; }
+        if (m.specular && !m.specular.rgba) { allDecoded = false; break; }
+      }
+
+      // Decode via worker if we have undecoded textures and a decode function
+      if (!allDecoded && decodeYtdTextures && neededNames.size > 0) {
+        try {
+          const decoded = await decodeYtdTextures(Array.from(neededNames));
+          if (cancelled) return;
+
+          // Merge decoded RGBA back into the mapping entries
+          for (const matName of Object.keys(mapping)) {
+            if (matName === "_meta") continue;
+            const m = mapping[matName];
+            for (const channel of ["diffuse", "normal", "specular"]) {
+              const texEntry = m[channel];
+              if (texEntry && !texEntry.rgba) {
+                const texName = texEntry.originalName || texEntry.name;
+                const dec = decoded[texName];
+                if (dec?.rgba) {
+                  texEntry.rgba = dec.rgba;
+                }
+              }
             }
           }
-          requestRender();
+        } catch (err) {
+          console.error("[YTD] Decode error:", err);
           return;
         }
       }
-    }
 
-    // Apply textures to matching materials
-    for (const mesh of meshes) {
-      const baseMaterial = mesh.userData.baseMaterial || mesh.material;
-      const matNames = getMaterialNames(baseMaterial);
+      if (cancelled) return;
 
-      for (const matName of matNames) {
-        const texSet = mapping[matName];
-        if (!texSet) continue;
+      // Create Three.js textures from decoded RGBA data (with cache)
+      const createYtdTexture = (textureData, isNormalMap = false) => {
+        if (!textureData || !textureData.rgba) return null;
 
-        const hasDiffuse = texSet.diffuse;
-        const hasNormal = texSet.normal;
-        const hasSpecular = texSet.specular;
-
-        if (!hasDiffuse && !hasNormal && !hasSpecular) continue;
-
-        // Create new material with YTD textures
-        const ytdMaterial = new THREE.MeshStandardMaterial({
-          color: 0xffffff,
-          side: THREE.DoubleSide,
-          metalness: baseMaterial.metalness ?? 0.2,
-          roughness: baseMaterial.roughness ?? 0.6,
-        });
-        setupLiveryShader(ytdMaterial);
-        ytdMaterial.name = baseMaterial.name || matName;
-
-        if (hasDiffuse) {
-          const diffuseTex = createYtdTexture(texSet.diffuse, false);
-          if (diffuseTex) {
-            ytdMaterial.map = diffuseTex;
-          }
+        const cacheKey = `ytd:${textureData.originalName || textureData.name || "unknown"}`;
+        if (ytdTextureMapRef.current.has(cacheKey)) {
+          return ytdTextureMapRef.current.get(cacheKey);
         }
 
-        if (hasNormal) {
-          const normalTex = createYtdTexture(texSet.normal, true);
-          if (normalTex) {
-            ytdMaterial.normalMap = normalTex;
-            ytdMaterial.normalScale = new THREE.Vector2(1, 1);
-          }
-        }
+        const texture = new THREE.DataTexture(
+          textureData.rgba,
+          textureData.width,
+          textureData.height,
+          THREE.RGBAFormat
+        );
 
-        if (hasSpecular) {
-          const specTex = createYtdTexture(texSet.specular, false);
-          if (specTex) {
-            // Use specular as roughness/metalness map
-            ytdMaterial.roughnessMap = specTex;
-            ytdMaterial.metalnessMap = specTex;
-          }
-        }
+        texture.colorSpace = isNormalMap ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.magFilter = THREE.LinearFilter;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.generateMipmaps = true;
+        texture.flipY = true;
+        texture.needsUpdate = true;
+        texture.anisotropy = rendererRef.current?.capabilities.getMaxAnisotropy() || 1;
 
-        ytdMaterial.needsUpdate = true;
-        mesh.userData.ytdMaterial = ytdMaterial;
-        mesh.material = ytdMaterial;
+        ytdTextureMapRef.current.set(cacheKey, texture);
+        return texture;
+      };
+
+      // Apply textures to matching materials
+      for (const mesh of meshes) {
+        if (cancelled) return;
+        const baseMaterial = mesh.userData.baseMaterial || mesh.material;
+        const matNames = getMaterialNames(baseMaterial);
+
+        for (const matName of matNames) {
+          const texSet = mapping[matName];
+          if (!texSet) continue;
+
+          const hasDiffuse = texSet.diffuse?.rgba;
+          const hasNormal = texSet.normal?.rgba;
+          const hasSpecular = texSet.specular?.rgba;
+
+          if (!hasDiffuse && !hasNormal && !hasSpecular) continue;
+
+          const isGlassMat = matName.toLowerCase().includes("glass") || matName.toLowerCase().includes("window");
+          const isPaintMat = matName.toLowerCase().includes("paint") || matName.toLowerCase().includes("livery");
+
+          const ytdMaterial = new THREE.MeshStandardMaterial({
+            color: isPaintMat ? 0xffffff : (baseMaterial.color?.getHex?.() ?? 0xffffff),
+            side: THREE.DoubleSide,
+            metalness: baseMaterial.metalness ?? (isPaintMat ? 0.4 : 0.2),
+            roughness: baseMaterial.roughness ?? (isPaintMat ? 0.3 : 0.6),
+            transparent: isGlassMat ? true : (baseMaterial.transparent ?? false),
+            opacity: isGlassMat ? 0.6 : (baseMaterial.opacity ?? 1.0),
+          });
+
+          if (isPaintMat) setupLiveryShader(ytdMaterial);
+
+          ytdMaterial.name = baseMaterial.name || matName;
+
+          if (hasDiffuse) {
+            const diffuseTex = createYtdTexture(texSet.diffuse, false);
+            if (diffuseTex) ytdMaterial.map = diffuseTex;
+          }
+
+          if (hasNormal) {
+            const normalTex = createYtdTexture(texSet.normal, true);
+            if (normalTex) {
+              ytdMaterial.normalMap = normalTex;
+              ytdMaterial.normalScale = new THREE.Vector2(1, 1);
+            }
+          }
+
+          if (hasSpecular) {
+            const specTex = createYtdTexture(texSet.specular, false);
+            if (specTex) {
+              ytdMaterial.roughnessMap = specTex;
+              ytdMaterial.metalnessMap = specTex;
+            }
+          }
+
+          ytdMaterial.needsUpdate = true;
+          mesh.userData.ytdMaterial = ytdMaterial;
+          mesh.material = ytdMaterial;
+        }
       }
-    }
 
-    requestRender();
+      requestRender();
+    };
+
+    applyDecodedTextures();
 
     return () => {
-      // Cleanup is handled when ytdTextures changes to null
+      cancelled = true;
     };
-  }, [ytdTextures, modelLoadedVersion, requestRender]);
+  }, [ytdTextures, ytdOverrides, modelLoadedVersion, requestRender, decodeYtdTextures]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 }
@@ -1540,6 +1644,10 @@ function buildClmeshObject(meshes) {
 
     const threeMesh = new THREE.Mesh(geometry, material);
     threeMesh.name = mesh.name || material.name || "mesh";
+    // Store shader texture references so YTD matching can use direct name lookups
+    if (mesh.textureRefs && Object.keys(mesh.textureRefs).length > 0) {
+      threeMesh.userData.textureRefs = mesh.textureRefs;
+    }
     root.add(threeMesh);
   });
 
@@ -2660,6 +2768,10 @@ function buildDrawableObject(drawable, options = {}) {
       const threeMesh = new THREE.Mesh(geometry, material);
       threeMesh.name = mesh.name || material.name || "mesh";
       threeMesh.userData.materialType = isPaint ? "paint" : isGlass ? "glass" : isChrome ? "chrome" : "default";
+      // Store shader texture references so YTD matching can use direct name lookups
+      if (mesh.textureRefs && Object.keys(mesh.textureRefs).length > 0) {
+        threeMesh.userData.textureRefs = mesh.textureRefs;
+      }
 
       group.add(threeMesh);
     });

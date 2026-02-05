@@ -5,14 +5,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { AlertTriangle, Car, ChevronLeft, ChevronRight, FolderOpen, Layers, Link2, Minus, Move3d, RotateCcw, Shirt, Square, Unlink, X } from "lucide-react";
-import { parseYtd, categorizeTextures } from "./lib/ytd";
+import { AlertTriangle, Car, ChevronLeft, ChevronRight, Eye, EyeOff, FolderOpen, History, Layers, Link2, Minus, RotateCcw, Shirt, Square, Unlink, X } from "lucide-react";
+import { categorizeTextures } from "./lib/ytd";
+import YtdWorker from "./lib/ytd.worker.js?worker";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
 import Viewer from "./components/Viewer";
 import DualModelViewer from "./components/DualModelViewer";
-import { loadOnboarded, loadPrefs, savePrefs, setOnboarded } from "./lib/prefs";
+import YtdBrowser from "./components/YtdBrowser";
+import { loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession, loadSession, clearSession } from "./lib/prefs";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_ACTIONS,
@@ -44,6 +46,7 @@ const BUILT_IN_DEFAULTS = {
   backgroundColor: DEFAULT_BG,
   experimentalSettings: false,
   showHints: true,
+  hideRotText: false,
 };
 
 const BUILT_IN_UI = {
@@ -144,6 +147,7 @@ function App() {
 
   const [cameraWASD, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
   const [showHints, setShowHints] = useState(() => Boolean(getInitialDefaults().showHints ?? true));
+  const [hideRotText, setHideRotText] = useState(() => Boolean(getInitialDefaults().hideRotText));
   const [windowLiveryTarget, setWindowLiveryTarget] = useState("");
   const [windowLiveryLabel, setWindowLiveryLabel] = useState("");
   const [liveryWindowOverride, setLiveryWindowOverride] = useState(""); // Manual override for glass material in livery mode
@@ -155,8 +159,15 @@ function App() {
   const [windowTextureError, setWindowTextureError] = useState("");
   const [ytdPath, setYtdPath] = useState("");
   const [ytdTextures, setYtdTextures] = useState(null);
+  const [ytdRawTextures, setYtdRawTextures] = useState(null);
   const [ytdLoading, setYtdLoading] = useState(false);
+  const [ytdBrowserOpen, setYtdBrowserOpen] = useState(false);
+  const [ytdOverrides, setYtdOverrides] = useState({});
   const [isDragging, setIsDragging] = useState(false);
+
+  // Holds the raw YTD file bytes so the worker can decode specific textures
+  // on demand without re-reading the file.
+  const ytdBytesRef = useRef(null);
 
   // Dual-model (multi-model) state
   const dualViewerApiRef = useRef(null);
@@ -171,6 +182,10 @@ function App() {
   const [dualModelBLoading, setDualModelBLoading] = useState(false);
   const [dualModelAError, setDualModelAError] = useState("");
   const [dualModelBError, setDualModelBError] = useState("");
+  const [dualGizmoVisible, setDualGizmoVisible] = useState(true);
+
+  // YTD mapping results for the inline viewer
+  const [ytdMappingMeta, setYtdMappingMeta] = useState(null);
 
   const [modelLoading, setModelLoading] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
@@ -178,6 +193,13 @@ function App() {
   const [formatWarning, setFormatWarning] = useState(null); // { type: "16bit-psd", bitDepth: 16 }
   const bootStartRef = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
   const bootTimerRef = useRef(null);
+
+  // Session restore state
+  const [pendingSession, setPendingSession] = useState(() => loadSession());
+  const [sessionPromptDismissed, setSessionPromptDismissed] = useState(false);
+  // Track dual-model positions (updated by DualModelViewer via callback)
+  const [dualModelAPos, setDualModelAPos] = useState([0, 0, 0]);
+  const [dualModelBPos, setDualModelBPos] = useState([0, 0, 3]);
 
   const isBooting = !booted;
   const modelExtensions = textureMode === "eup" ? ["yft", "clmesh", "dff", "ydd"] : ["yft", "clmesh", "dff"];
@@ -248,6 +270,50 @@ function App() {
       }
     };
   }, [viewerReady]);
+
+  // ─── Auto-save session whenever meaningful state changes ───
+  const sessionSaveTimerRef = useRef(null);
+  useEffect(() => {
+    // Don't save during boot / before onboarding
+    if (isBooting || showOnboarding) return;
+    // Don't save if nothing is loaded
+    const hasContent = modelPath || dualModelAPath || dualModelBPath || texturePath || dualTextureAPath || dualTextureBPath;
+    if (!hasContent) return;
+
+    if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
+    sessionSaveTimerRef.current = setTimeout(() => {
+      saveSession({
+        textureMode,
+        // Standard viewer state
+        modelPath: modelPath || "",
+        texturePath: texturePath || "",
+        windowTexturePath: windowTexturePath || "",
+        windowTemplateEnabled,
+        bodyColor,
+        backgroundColor,
+        liveryExteriorOnly,
+        ytdPath: ytdPath || "",
+        // Multi-model state
+        dualModelAPath: dualModelAPath || "",
+        dualModelBPath: dualModelBPath || "",
+        dualTextureAPath: dualTextureAPath || "",
+        dualTextureBPath: dualTextureBPath || "",
+        dualModelAPos,
+        dualModelBPos,
+        dualSelectedSlot,
+      });
+    }, 1000);
+
+    return () => {
+      if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
+    };
+  }, [
+    isBooting, showOnboarding, textureMode,
+    modelPath, texturePath, windowTexturePath, windowTemplateEnabled,
+    bodyColor, backgroundColor, liveryExteriorOnly, ytdPath,
+    dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
+    dualModelAPos, dualModelBPos, dualSelectedSlot,
+  ]);
 
   const scheduleReload = (kind) => {
     const key = kind === "window" ? "window" : "primary";
@@ -336,6 +402,7 @@ function App() {
 
     setCameraWASD(Boolean(merged.cameraWASD));
     setShowHints(Boolean(merged.showHints ?? true));
+    setHideRotText(Boolean(merged.hideRotText));
     setBodyColor(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
     setExperimentalSettings(Boolean(merged.experimentalSettings));
@@ -367,6 +434,37 @@ function App() {
     },
     [applyAndPersistDefaults],
   );
+
+  const restoreSession = useCallback((session) => {
+    if (!session) return;
+    // Restore texture mode
+    if (session.textureMode) setTextureMode(session.textureMode);
+    // Standard viewer
+    if (session.modelPath) loadModel(session.modelPath);
+    if (session.texturePath) setTexturePath(session.texturePath);
+    if (session.windowTexturePath) setWindowTexturePath(session.windowTexturePath);
+    if (typeof session.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(session.windowTemplateEnabled);
+    if (session.bodyColor) setBodyColor(session.bodyColor);
+    if (session.backgroundColor) setBackgroundColor(session.backgroundColor);
+    if (typeof session.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(session.liveryExteriorOnly);
+    // Multi-model
+    if (session.dualModelAPath) setDualModelAPath(session.dualModelAPath);
+    if (session.dualModelBPath) setDualModelBPath(session.dualModelBPath);
+    if (session.dualTextureAPath) setDualTextureAPath(session.dualTextureAPath);
+    if (session.dualTextureBPath) setDualTextureBPath(session.dualTextureBPath);
+    if (session.dualSelectedSlot) setDualSelectedSlot(session.dualSelectedSlot);
+    if (session.dualModelAPos) setDualModelAPos(session.dualModelAPos);
+    if (session.dualModelBPos) setDualModelBPos(session.dualModelBPos);
+    // Dismiss prompt
+    setSessionPromptDismissed(true);
+    setPendingSession(null);
+  }, [loadModel]);
+
+  const dismissSession = useCallback(() => {
+    setSessionPromptDismissed(true);
+    setPendingSession(null);
+    clearSession();
+  }, []);
 
   const selectModel = async () => {
     if (!isTauriRuntime) {
@@ -486,6 +584,30 @@ function App() {
     }
   };
 
+  // Decode specific YTD textures by name. Spins up a short-lived worker
+  // that re-parses the cached raw bytes but only decodes the requested names.
+  const decodeYtdTextures = useCallback(async (names) => {
+    const rawBytes = ytdBytesRef.current;
+    if (!rawBytes || names.length === 0) return {};
+
+    return new Promise((resolve, reject) => {
+      const worker = new YtdWorker();
+      worker.onmessage = (e) => {
+        worker.terminate();
+        if (e.data.error) reject(new Error(e.data.error));
+        else resolve(e.data.textures || {});
+      };
+      worker.onerror = (err) => {
+        worker.terminate();
+        reject(err);
+      };
+      // Send a copy of the bytes (slice) so the original stays available for
+      // future decode requests (e.g. when the user opens the YTD browser).
+      const copy = rawBytes.slice(0);
+      worker.postMessage({ type: "decode", bytes: copy, names }, [copy]);
+    });
+  }, []);
+
   const selectYtd = async () => {
     if (!isTauriRuntime) {
       setDialogError("Tauri runtime required for file dialog.");
@@ -500,11 +622,31 @@ function App() {
         setYtdLoading(true);
         try {
           const bytes = await readFile(selected);
-          const textures = parseYtd(bytes);
+          // Keep the raw bytes for on-demand texture decoding later
+          ytdBytesRef.current = bytes.buffer;
+
+          // Phase 1: metadata-only parse in a Web Worker (fast, no RGBA decoding)
+          const textures = await new Promise((resolve, reject) => {
+            const worker = new YtdWorker();
+            worker.onmessage = (e) => {
+              worker.terminate();
+              if (e.data.error) reject(new Error(e.data.error));
+              else resolve(e.data.textures);
+            };
+            worker.onerror = (err) => {
+              worker.terminate();
+              reject(err);
+            };
+            // Send a copy so the original ref stays usable for Phase 2
+            const copy = bytes.buffer.slice(0);
+            worker.postMessage({ type: "parse", bytes: copy }, [copy]);
+          });
           if (textures && Object.keys(textures).length > 0) {
             const categorized = categorizeTextures(textures);
             setYtdPath(selected);
             setYtdTextures(categorized);
+            setYtdRawTextures(textures);
+            setYtdOverrides({});
             console.log("[YTD] Loaded textures:", Object.keys(textures));
           } else {
             setDialogError("No textures found in YTD file.");
@@ -525,7 +667,33 @@ function App() {
   const clearYtd = () => {
     setYtdPath("");
     setYtdTextures(null);
+    setYtdRawTextures(null);
+    setYtdMappingMeta(null);
+    setYtdOverrides({});
+    ytdBytesRef.current = null;
   };
+
+  // YTD override handler — user changed a texture's material assignment in the browser
+  const handleYtdOverride = useCallback((textureName, materialName) => {
+    setYtdOverrides((prev) => {
+      const next = { ...prev };
+      if (materialName === null) {
+        // Unassign — store explicit null
+        next[textureName] = null;
+      } else {
+        next[textureName] = materialName;
+      }
+      return next;
+    });
+    // Update the local meta so the modal reflects it instantly
+    setYtdMappingMeta((prev) => {
+      if (!prev?.assignments) return prev;
+      const updated = prev.assignments.map((a) =>
+        a.textureName === textureName ? { ...a, materialName: materialName } : a
+      );
+      return { ...prev, assignments: updated };
+    });
+  }, []);
 
   // Dual-model file selectors
   const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
@@ -594,6 +762,8 @@ function App() {
           setTextureMode((prev) => {
             if (prev === "livery") return "everything";
             if (prev === "everything") return "eup";
+            if (prev === "eup") return experimentalSettings ? "multi" : "livery";
+            if (prev === "multi") return "livery";
             return "livery";
           });
           break;
@@ -609,6 +779,12 @@ function App() {
         case HOTKEY_ACTIONS.SELECT_GLASS:
           selectWindowTextureRef.current?.();
           break;
+        case HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO:
+          setDualGizmoVisible((prev) => !prev);
+          break;
+        case HOTKEY_ACTIONS.SWAP_DUAL_SLOT:
+          setDualSelectedSlot((prev) => (prev === "A" ? "B" : "A"));
+          break;
         default:
           break;
       }
@@ -616,7 +792,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hotkeys]);
+  }, [hotkeys, experimentalSettings]);
 
   const handleCenterCamera = () => {
     viewerApiRef.current?.reset?.();
@@ -904,11 +1080,21 @@ function App() {
               onClick={() => setTextureMode("livery")}
               aria-selected={textureMode === "livery"}
               aria-controls="mode-panel-livery"
-              whileTap={{ scale: 0.98 }}
+              whileTap={{ scale: 0.95 }}
             >
-              <Car className="mode-tab-icon" aria-hidden="true" />
-              <span>Livery</span>
+              <div className="mode-tab-content">
+                <Car className="mode-tab-icon" aria-hidden="true" />
+                <span>Livery</span>
+              </div>
+              {textureMode === "livery" && (
+                <motion.div
+                  layoutId="mode-tab-highlight"
+                  className="mode-tab-bg"
+                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                />
+              )}
             </motion.button>
+            
             <motion.button
               type="button"
               role="tab"
@@ -916,11 +1102,21 @@ function App() {
               onClick={() => setTextureMode("everything")}
               aria-selected={textureMode === "everything"}
               aria-controls="mode-panel-everything"
-              whileTap={{ scale: 0.98 }}
+              whileTap={{ scale: 0.95 }}
             >
-              <Layers className="mode-tab-icon" aria-hidden="true" />
-              <span>All</span>
+              <div className="mode-tab-content">
+                <Layers className="mode-tab-icon" aria-hidden="true" />
+                <span>All</span>
+              </div>
+              {textureMode === "everything" && (
+                <motion.div
+                  layoutId="mode-tab-highlight"
+                  className="mode-tab-bg"
+                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                />
+              )}
             </motion.button>
+            
             <motion.button
               type="button"
               role="tab"
@@ -928,11 +1124,21 @@ function App() {
               onClick={() => setTextureMode("eup")}
               aria-selected={textureMode === "eup"}
               aria-controls="mode-panel-eup"
-              whileTap={{ scale: 0.98 }}
+              whileTap={{ scale: 0.95 }}
             >
-              <Shirt className="mode-tab-icon" aria-hidden="true" />
-              <span>EUP</span>
+              <div className="mode-tab-content">
+                <Shirt className="mode-tab-icon" aria-hidden="true" />
+                <span>EUP</span>
+              </div>
+              {textureMode === "eup" && (
+                <motion.div
+                  layoutId="mode-tab-highlight"
+                  className="mode-tab-bg"
+                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                />
+              )}
             </motion.button>
+
             {experimentalSettings ? (
               <motion.button
                 type="button"
@@ -941,10 +1147,19 @@ function App() {
                 onClick={() => setTextureMode("multi")}
                 aria-selected={textureMode === "multi"}
                 aria-controls="mode-panel-multi"
-                whileTap={{ scale: 0.98 }}
+                whileTap={{ scale: 0.95 }}
               >
-                <Link2 className="mode-tab-icon" aria-hidden="true" />
-                <span>Multi</span>
+                <div className="mode-tab-content">
+                  <Link2 className="mode-tab-icon" aria-hidden="true" />
+                  <span>Multi</span>
+                </div>
+                {textureMode === "multi" && (
+                  <motion.div
+                    layoutId="mode-tab-highlight"
+                    className="mode-tab-bg"
+                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                  />
+                )}
               </motion.button>
             ) : null}
           </div>
@@ -964,7 +1179,7 @@ function App() {
               </Button>
               {modelLoading ? <div className="file-meta">Preparing model…</div> : null}
             </div>
-            {experimentalSettings ? (
+            {experimentalSettings && textureMode !== "multi" ? (
               <div className="control-group">
                 <Label>Texture Dictionary (YTD)</Label>
                 <div className="flex gap-2">
@@ -977,7 +1192,7 @@ function App() {
                     <FolderOpen className="h-4 w-4 mr-2" />
                     {ytdLoading ? "Loading..." : "Load YTD"}
                   </Button>
-                  {ytdPath && (
+                  {ytdPath ? (
                     <Button
                       variant="outline"
                       className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
@@ -986,17 +1201,24 @@ function App() {
                     >
                       <X className="h-4 w-4" />
                     </Button>
-                  )}
+                  ) : null}
                 </div>
-                {ytdPath && (
-                  <div className="file-meta mono">{ytdPath.split(/[\\/]/).pop()}</div>
-                )}
-                {ytdTextures && (
+                {ytdPath ? <div className="file-meta mono">{ytdPath.split(/[\\/]/).pop()}</div> : null}
+                {ytdTextures ? (
                   <div className="file-meta">
                     {Object.keys(ytdTextures.diffuse).length} diffuse, {Object.keys(ytdTextures.normal).length} normal, {Object.keys(ytdTextures.specular).length} specular
                   </div>
-                )}
+                ) : null}
                 <div className="file-meta mono">Auto-maps diffuse, normal, and specular textures to materials.</div>
+                {ytdRawTextures ? (
+                  <Button
+                    variant="outline"
+                    className="w-full border-white/12 text-white/70 hover:text-white/95 hover:bg-white/5"
+                    onClick={() => setYtdBrowserOpen(true)}
+                  >
+                    View Textures{ytdMappingMeta?.assignments?.length ? ` (${ytdMappingMeta.assignments.length})` : ""}
+                  </Button>
+                ) : null}
               </div>
             ) : null}
           </PanelSection>
@@ -1374,160 +1596,76 @@ function App() {
                 </button>
               </div>
 
-              {/* ── Slot A ── */}
+              {/* ── Selected Slot ── */}
               <PanelSection
-                title="Slot A — Model"
-                caption={getFileLabel(dualModelAPath, "No model")}
-                open={dualSelectedSlot === "A" || !dualModelBPath}
-                onToggle={() => setDualSelectedSlot("A")}
-                contentId="panel-dual-a-model"
-              >
-                <div className="control-group">
-                  <Label>Model A (e.g. Truck)</Label>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10"
-                      onClick={() => selectDualModel("A")}
-                    >
-                      Select Model A
-                    </Button>
-                    {dualModelAPath && (
-                      <Button
-                        variant="outline"
-                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
-                        onClick={() => { setDualModelAPath(""); setDualModelAError(""); }}
-                        title="Unload model A"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  {dualModelALoading ? <div className="file-meta">Loading model A...</div> : null}
-                  {dualModelAError ? <div className="file-meta text-red-400/80">{dualModelAError}</div> : null}
-                </div>
-                <div className="control-group">
-                  <Label>Template A</Label>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10"
-                      onClick={() => selectDualTexture("A")}
-                    >
-                      Select Livery A
-                    </Button>
-                    {dualTextureAPath && (
-                      <Button
-                        variant="outline"
-                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
-                        onClick={() => setDualTextureAPath("")}
-                        title="Unload texture A"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  {dualTextureAPath ? (
-                    <div className="file-meta mono">{getFileLabel(dualTextureAPath, "")}</div>
-                  ) : null}
-                </div>
-              </PanelSection>
-
-              {/* ── Slot B ── */}
-              <PanelSection
-                title="Slot B — Model"
-                caption={getFileLabel(dualModelBPath, "No model")}
-                open={dualSelectedSlot === "B" || !dualModelAPath}
-                onToggle={() => setDualSelectedSlot("B")}
-                contentId="panel-dual-b-model"
-              >
-                <div className="control-group">
-                  <Label>Model B (e.g. Trailer)</Label>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10"
-                      onClick={() => selectDualModel("B")}
-                    >
-                      Select Model B
-                    </Button>
-                    {dualModelBPath && (
-                      <Button
-                        variant="outline"
-                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
-                        onClick={() => { setDualModelBPath(""); setDualModelBError(""); }}
-                        title="Unload model B"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  {dualModelBLoading ? <div className="file-meta">Loading model B...</div> : null}
-                  {dualModelBError ? <div className="file-meta text-red-400/80">{dualModelBError}</div> : null}
-                </div>
-                <div className="control-group">
-                  <Label>Template B</Label>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10"
-                      onClick={() => selectDualTexture("B")}
-                    >
-                      Select Livery B
-                    </Button>
-                    {dualTextureBPath && (
-                      <Button
-                        variant="outline"
-                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
-                        onClick={() => setDualTextureBPath("")}
-                        title="Unload texture B"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  {dualTextureBPath ? (
-                    <div className="file-meta mono">{getFileLabel(dualTextureBPath, "")}</div>
-                  ) : null}
-                </div>
-              </PanelSection>
-
-              {/* ── Alignment Tools ── */}
-              <PanelSection
-                title="Alignment"
-                caption="Position & snap"
+                title={dualSelectedSlot === "A" ? "Slot A" : "Slot B"}
+                caption={dualSelectedSlot === "A" ? getFileLabel(dualModelAPath, "No model") : getFileLabel(dualModelBPath, "No model")}
                 open={true}
                 onToggle={() => {}}
-                contentId="panel-dual-alignment"
+                contentId="panel-dual-selected-slot"
               >
-                <div className="control-group">
-                  <Label>Selected</Label>
-                  <div className="dual-selected-indicator">
-                    <Move3d className="h-3.5 w-3.5" />
-                    <span>Drag the {dualSelectedSlot === "A" ? "orange" : "purple"} arrows in the viewport to move Slot {dualSelectedSlot}</span>
+                {dualSelectedSlot === "A" ? (
+                  <div className="control-group">
+                    <Label>Model A</Label>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10" onClick={() => selectDualModel("A")}>
+                        Select Model A
+                      </Button>
+                      {dualModelAPath ? (
+                        <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => { setDualModelAPath(""); setDualModelAError(""); }} title="Unload model A">
+                          <X className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                    {dualModelALoading ? <div className="file-meta">Loading...</div> : null}
+                    {dualModelAError ? <div className="file-meta text-red-400/80">{dualModelAError}</div> : null}
+                    <Label>Template A</Label>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10" onClick={() => selectDualTexture("A")}>
+                        Select Livery A
+                      </Button>
+                      {dualTextureAPath ? (
+                        <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => setDualTextureAPath("")} title="Unload texture A">
+                          <X className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                    {dualTextureAPath ? <div className="file-meta mono">{getFileLabel(dualTextureAPath, "")}</div> : null}
                   </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-white/10 text-white/60 hover:text-white/90 hover:bg-white/5"
-                      onClick={() => dualViewerApiRef.current?.snapTogether?.()}
-                      disabled={!dualModelAPath || !dualModelBPath}
-                    >
-                      <Link2 className="h-3.5 w-3.5 mr-1.5" />
-                      Snap Together
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-white/10 text-white/60 hover:text-white/90 hover:bg-white/5"
-                      onClick={() => dualViewerApiRef.current?.resetPositions?.()}
-                    >
-                      <Unlink className="h-3.5 w-3.5 mr-1.5" />
-                      Reset Positions
-                    </Button>
+                ) : (
+                  <div className="control-group">
+                    <Label>Model B</Label>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10" onClick={() => selectDualModel("B")}>
+                        Select Model B
+                      </Button>
+                      {dualModelBPath ? (
+                        <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => { setDualModelBPath(""); setDualModelBError(""); }} title="Unload model B">
+                          <X className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                    {dualModelBLoading ? <div className="file-meta">Loading...</div> : null}
+                    {dualModelBError ? <div className="file-meta text-red-400/80">{dualModelBError}</div> : null}
+                    <Label>Template B</Label>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10" onClick={() => selectDualTexture("B")}>
+                        Select Livery B
+                      </Button>
+                      {dualTextureBPath ? (
+                        <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => setDualTextureBPath("")} title="Unload texture B">
+                          <X className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                    {dualTextureBPath ? <div className="file-meta mono">{getFileLabel(dualTextureBPath, "")}</div> : null}
                   </div>
-                  <div className="file-meta mono">
-                    Load a truck/cab in Slot A and a trailer in Slot B. Use the gizmo arrows or Snap Together to align them.
-                  </div>
+                )}
+              </PanelSection>
+
+
+
+
                 </div>
               </PanelSection>
             </div>
@@ -1647,7 +1785,14 @@ function App() {
             bodyColor={bodyColor}
             backgroundColor={backgroundColor}
             selectedSlot={dualSelectedSlot}
+            gizmoVisible={dualGizmoVisible}
+            initialPosA={dualModelAPos}
+            initialPosB={dualModelBPos}
             onSelectSlot={setDualSelectedSlot}
+            onPositionChange={(posA, posB) => {
+              setDualModelAPos(posA);
+              setDualModelBPos(posB);
+            }}
             onReady={(api) => {
               dualViewerApiRef.current = api;
               if (!viewerReady) setViewerReady(true);
@@ -1672,6 +1817,8 @@ function App() {
             wasdEnabled={cameraWASD}
             liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
             ytdTextures={ytdTextures}
+            ytdOverrides={ytdOverrides}
+            decodeYtdTextures={decodeYtdTextures}
             onModelInfo={handleModelInfo}
             onModelError={handleModelError}
             onModelLoading={handleModelLoading}
@@ -1683,6 +1830,7 @@ function App() {
             onTextureError={handleTextureError}
             onWindowTextureError={handleWindowTextureError}
             onFormatWarning={handleFormatWarning}
+            onYtdMappingUpdate={setYtdMappingMeta}
           />
         )}
 
@@ -1719,7 +1867,7 @@ function App() {
                         className={`toolbar-btn ${dualSelectedSlot === "A" ? "toolbar-btn--slot-a" : ""}`}
                         onClick={() => setDualSelectedSlot("A")}
                       >
-                        <span className="dual-slot-dot dual-slot-dot--a inline-block mr-1" />Slot A
+                        <span className="toolbar-slot-letter toolbar-slot-letter--a">A</span>
                       </Button>
                       <Button
                         size="sm"
@@ -1727,16 +1875,16 @@ function App() {
                         className={`toolbar-btn ${dualSelectedSlot === "B" ? "toolbar-btn--slot-b" : ""}`}
                         onClick={() => setDualSelectedSlot("B")}
                       >
-                        <span className="dual-slot-dot dual-slot-dot--b inline-block mr-1" />Slot B
+                        <span className="toolbar-slot-letter toolbar-slot-letter--b">B</span>
                       </Button>
                     </motion.div>
                     <div className="toolbar-divider" />
                     <motion.div layout className="viewer-toolbar-group">
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
+                        {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                      </Button>
                       <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
                         <Link2 className="w-3 h-3 mr-1" />Snap
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.resetPositions?.()}>
-                        <Unlink className="w-3 h-3 mr-1" />Reset
                       </Button>
                       <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.reset?.()}>
                         Center
@@ -1748,6 +1896,9 @@ function App() {
                     <motion.div layout className="viewer-toolbar-group">
                       <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>
                         Front
+                      </Button>
+                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("back")}>
+                        Back
                       </Button>
                       <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("side")}>
                         Side
@@ -1766,13 +1917,13 @@ function App() {
                     <div className="toolbar-divider" />
                     <motion.div layout className="viewer-toolbar-group">
                       <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-                        <span className="mono mr-1 text-red-400">X</span>Rot
+                        <span className="mono mr-1 text-red-400">X</span>{!hideRotText && "Rot"}
                       </Button>
                       <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-                        <span className="mono mr-1 text-green-400">Y</span>Rot
+                        <span className="mono mr-1 text-green-400">Y</span>{!hideRotText && "Rot"}
                       </Button>
                       <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-                        <span className="mono mr-1 text-blue-400">Z</span>Rot
+                        <span className="mono mr-1 text-blue-400">Z</span>{!hideRotText && "Rot"}
                       </Button>
                     </motion.div>
                   </>
@@ -1914,6 +2065,69 @@ function App() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      {/* Session Restore Prompt */}
+      <AnimatePresence>
+        {!isBooting && !showOnboarding && pendingSession && !sessionPromptDismissed ? (
+          <motion.div
+            className="session-prompt-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <motion.div
+              className="session-prompt"
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <div className="session-prompt-icon-row">
+                <History className="session-prompt-icon" />
+              </div>
+              <div className="session-prompt-title">Previous Session Detected</div>
+              <div className="session-prompt-description">
+                {pendingSession.textureMode === "multi"
+                  ? `You were working in Multi-Model mode${pendingSession.dualModelAPath ? ` with ${pendingSession.dualModelAPath.split(/[\\/]/).pop()}` : ""}${pendingSession.dualModelBPath ? ` + ${pendingSession.dualModelBPath.split(/[\\/]/).pop()}` : ""}.`
+                  : `You had ${pendingSession.modelPath ? pendingSession.modelPath.split(/[\\/]/).pop() : "a model"} loaded${pendingSession.texturePath ? ` with a ${pendingSession.textureMode || "texture"} template` : ""}.`}
+              </div>
+              <div className="session-prompt-meta">
+                {pendingSession.savedAt
+                  ? `Saved ${new Date(pendingSession.savedAt).toLocaleString()}`
+                  : ""}
+              </div>
+              <div className="session-prompt-actions">
+                <button
+                  type="button"
+                  className="session-prompt-btn session-prompt-btn--dismiss"
+                  onClick={dismissSession}
+                >
+                  Start Fresh
+                </button>
+                <button
+                  type="button"
+                  className="session-prompt-btn session-prompt-btn--restore"
+                  onClick={() => restoreSession(pendingSession)}
+                >
+                  Continue Session
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      {/* YTD Texture Browser Modal */}
+      <YtdBrowser
+        open={ytdBrowserOpen}
+        onClose={() => setYtdBrowserOpen(false)}
+        rawTextures={ytdRawTextures}
+        categorizedTextures={ytdTextures}
+        mappingMeta={ytdMappingMeta}
+        materialNames={ytdMappingMeta?.materialNames || []}
+        onOverride={handleYtdOverride}
+      />
     </motion.div>
   );
 }

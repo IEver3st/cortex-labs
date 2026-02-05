@@ -148,6 +148,9 @@ function buildDrawableObject(drawable, options = {}) {
 
       const threeMesh = new THREE.Mesh(geometry, material);
       threeMesh.name = mesh.name || material.name || "mesh";
+      if (mesh.textureRefs && Object.keys(mesh.textureRefs).length > 0) {
+        threeMesh.userData.textureRefs = mesh.textureRefs;
+      }
       group.add(threeMesh);
     });
 
@@ -373,7 +376,11 @@ export default function DualModelViewer({
   bodyColor,
   backgroundColor,
   selectedSlot,
+  gizmoVisible = true,
+  initialPosA,
+  initialPosB,
   onSelectSlot,
+  onPositionChange,
   onReady,
   onModelAError,
   onModelBError,
@@ -408,12 +415,17 @@ export default function DualModelViewer({
   const onModelBLoadingRef = useRef(onModelBLoading);
   const selectedSlotRef = useRef(selectedSlot);
 
+  const onPositionChangeRef = useRef(onPositionChange);
+  const initialPosARef = useRef(initialPosA);
+  const initialPosBRef = useRef(initialPosB);
+
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   useEffect(() => { onModelAErrorRef.current = onModelAError; }, [onModelAError]);
   useEffect(() => { onModelBErrorRef.current = onModelBError; }, [onModelBError]);
   useEffect(() => { onModelALoadingRef.current = onModelALoading; }, [onModelALoading]);
   useEffect(() => { onModelBLoadingRef.current = onModelBLoading; }, [onModelBLoading]);
   useEffect(() => { selectedSlotRef.current = selectedSlot; }, [selectedSlot]);
+  useEffect(() => { onPositionChangeRef.current = onPositionChange; }, [onPositionChange]);
 
   const requestRender = useCallback(() => { requestRenderRef.current?.(); }, []);
 
@@ -465,6 +477,13 @@ export default function DualModelViewer({
     cameraRef.current = camera;
     controlsRef.current = controls;
 
+    // Report positions back to parent for session persistence
+    const reportPositions = () => {
+      const posA = modelARef.current ? [modelARef.current.position.x, modelARef.current.position.y, modelARef.current.position.z] : [0, 0, 0];
+      const posB = modelBRef.current ? [modelBRef.current.position.x, modelBRef.current.position.y, modelBRef.current.position.z] : [0, 0, 3];
+      onPositionChangeRef.current?.(posA, posB);
+    };
+
     // TransformControls for slot A
     const gizmoA = new TransformControls(camera, renderer.domElement);
     gizmoA.setMode("translate");
@@ -473,6 +492,7 @@ export default function DualModelViewer({
       controls.enabled = !event.value;
       requestRenderRef.current?.();
       if (event.value) onSelectSlot?.("A");
+      if (!event.value) reportPositions();
     });
     gizmoA.addEventListener("change", () => requestRenderRef.current?.());
     scene.add(gizmoA.getHelper());
@@ -486,6 +506,7 @@ export default function DualModelViewer({
       controls.enabled = !event.value;
       requestRenderRef.current?.();
       if (event.value) onSelectSlot?.("B");
+      if (!event.value) reportPositions();
     });
     gizmoB.addEventListener("change", () => requestRenderRef.current?.());
     scene.add(gizmoB.getHelper());
@@ -594,25 +615,84 @@ export default function DualModelViewer({
     requestRender();
   }, [backgroundColor]);
 
-  /* ─── Gizmo visibility sync based on selected slot ─── */
+  /* ─── WASD camera movement ─── */
+  const wasdStateRef = useRef({ forward: false, back: false, left: false, right: false, up: false, down: false, boost: false });
+  const wasdFrameRef = useRef(0);
+
+  useEffect(() => {
+    if (!sceneReady || !cameraRef.current || !controlsRef.current) return;
+    const state = wasdStateRef.current;
+    const controls = controlsRef.current;
+    const camera = cameraRef.current;
+    const up = new THREE.Vector3(0, 1, 0);
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
+
+    const shouldIgnore = (e) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return true;
+      const t = e.target;
+      if (t instanceof Element && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return true;
+      return false;
+    };
+    const isActive = () => state.forward || state.back || state.left || state.right || state.up || state.down;
+    const stopLoop = () => { if (wasdFrameRef.current) { cancelAnimationFrame(wasdFrameRef.current); wasdFrameRef.current = 0; } };
+    let lastTime = 0;
+    const tick = (time) => {
+      const delta = Math.min((time - lastTime) / 1000, 0.05);
+      lastTime = time;
+      if (!isActive()) { stopLoop(); return; }
+      const distance = fitRef.current?.distance || 4;
+      const speed = Math.max(distance * 0.6, 0.6) * (state.boost ? 2.0 : 1.0);
+      camera.getWorldDirection(forward); forward.y = 0;
+      if (forward.lengthSq() === 0) forward.set(0, 0, -1);
+      forward.normalize(); right.crossVectors(forward, up).normalize();
+      const move = new THREE.Vector3();
+      if (state.forward) move.add(forward);
+      if (state.back) move.addScaledVector(forward, -1);
+      if (state.right) move.add(right);
+      if (state.left) move.addScaledVector(right, -1);
+      if (state.up) move.add(up);
+      if (state.down) move.addScaledVector(up, -1);
+      if (move.lengthSq() > 0) { move.normalize().multiplyScalar(speed * delta); camera.position.add(move); controls.target.add(move); controls.update(); requestRenderRef.current?.(); }
+      wasdFrameRef.current = requestAnimationFrame(tick);
+    };
+    const startLoop = () => { if (wasdFrameRef.current) return; lastTime = performance.now(); wasdFrameRef.current = requestAnimationFrame(tick); };
+    const setKey = (key, pressed) => {
+      switch (key) {
+        case "KeyW": state.forward = pressed; return true;
+        case "KeyS": state.back = pressed; return true;
+        case "KeyA": state.left = pressed; return true;
+        case "KeyD": state.right = pressed; return true;
+        case "KeyQ": state.down = pressed; return true;
+        case "KeyE": state.up = pressed; return true;
+        case "ShiftLeft": case "ShiftRight": state.boost = pressed; return true;
+        default: return false;
+      }
+    };
+    const onDown = (e) => { if (shouldIgnore(e) || !e.code) return; const was = isActive(); if (setKey(e.code, true)) { e.preventDefault(); if (!was && isActive()) startLoop(); } };
+    const onUp = (e) => { if (!e.code) return; if (setKey(e.code, false) && !isActive()) stopLoop(); };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); stopLoop(); Object.assign(state, { forward: false, back: false, left: false, right: false, up: false, down: false, boost: false }); };
+  }, [sceneReady]);
+
+  /* ─── Gizmo visibility sync based on selected slot and toggle ─── */
   useEffect(() => {
     if (!sceneReady) return;
     const gA = gizmoARef.current;
     const gB = gizmoBRef.current;
-    // TransformControls uses _root (getHelper()) for visibility.
-    // attach() shows it, detach() hides it. We re-attach to toggle.
     if (gA) {
-      const showA = selectedSlot === "A" && Boolean(modelARef.current);
+      const showA = gizmoVisible && selectedSlot === "A" && Boolean(modelARef.current);
       if (showA && modelARef.current) gA.attach(modelARef.current);
       else gA.detach();
     }
     if (gB) {
-      const showB = selectedSlot === "B" && Boolean(modelBRef.current);
+      const showB = gizmoVisible && selectedSlot === "B" && Boolean(modelBRef.current);
       if (showB && modelBRef.current) gB.attach(modelBRef.current);
       else gB.detach();
     }
     requestRender();
-  }, [selectedSlot, sceneReady, modelAVersion, modelBVersion]);
+  }, [selectedSlot, gizmoVisible, sceneReady, modelAVersion, modelBVersion]);
 
   /* ─── Load model A ─── */
   useEffect(() => {
@@ -650,6 +730,12 @@ export default function DualModelViewer({
         box.getSize(size);
         if (object.userData.sourceFormat === "yft") {
           maybeAutoFixYftUpAxis(object, size);
+        }
+
+        // Apply initial position from session restore
+        const initA = initialPosARef.current;
+        if (initA && Array.isArray(initA) && initA.length === 3) {
+          object.position.set(initA[0], initA[1], initA[2]);
         }
 
         sceneRef.current.add(object);
@@ -704,8 +790,11 @@ export default function DualModelViewer({
           maybeAutoFixYftUpAxis(object, size);
         }
 
-        // Offset B behind A on Z axis so they don't overlap
-        if (modelARef.current) {
+        // Apply initial position from session restore, or offset behind A
+        const initB = initialPosBRef.current;
+        if (initB && Array.isArray(initB) && initB.length === 3) {
+          object.position.set(initB[0], initB[1], initB[2]);
+        } else if (modelARef.current) {
           const boxA = new THREE.Box3().setFromObject(modelARef.current);
           const sizeA = new THREE.Vector3();
           boxA.getSize(sizeA);

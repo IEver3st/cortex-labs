@@ -10,6 +10,8 @@ export const HOTKEY_ACTIONS = {
   SELECT_MODEL: "selectModel",
   SELECT_LIVERY: "selectLivery",
   SELECT_GLASS: "selectGlass",
+  TOGGLE_DUAL_GIZMO: "toggleDualGizmo",
+  SWAP_DUAL_SLOT: "swapDualSlot",
 };
 
 export const HOTKEY_LABELS = {
@@ -22,6 +24,8 @@ export const HOTKEY_LABELS = {
   [HOTKEY_ACTIONS.SELECT_MODEL]: "Select Model",
   [HOTKEY_ACTIONS.SELECT_LIVERY]: "Select Livery/Texture",
   [HOTKEY_ACTIONS.SELECT_GLASS]: "Select Glass/Window",
+  [HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO]: "Toggle Multi Gizmo",
+  [HOTKEY_ACTIONS.SWAP_DUAL_SLOT]: "Swap Selected Slot",
 };
 
 export const HOTKEY_CATEGORIES = {
@@ -39,6 +43,13 @@ export const HOTKEY_CATEGORIES = {
     actions: [
       HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY,
       HOTKEY_ACTIONS.TOGGLE_PANEL,
+    ],
+  },
+  multi: {
+    label: "Multi-Model",
+    actions: [
+      HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO,
+      HOTKEY_ACTIONS.SWAP_DUAL_SLOT,
     ],
   },
   files: {
@@ -61,6 +72,8 @@ export const DEFAULT_HOTKEYS = {
   [HOTKEY_ACTIONS.SELECT_MODEL]: { key: "O", ctrl: true, alt: false, shift: false },
   [HOTKEY_ACTIONS.SELECT_LIVERY]: { key: "L", ctrl: true, alt: false, shift: false },
   [HOTKEY_ACTIONS.SELECT_GLASS]: { key: "G", ctrl: true, alt: false, shift: false },
+  [HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO]: { key: "G", ctrl: false, alt: true, shift: false },
+  [HOTKEY_ACTIONS.SWAP_DUAL_SLOT]: { key: "Q", ctrl: false, alt: true, shift: false },
 };
 
 export function formatHotkey(hotkey) {
