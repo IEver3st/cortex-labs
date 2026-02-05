@@ -5,9 +5,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { AlertTriangle, Car, ChevronLeft, ChevronRight, Eye, EyeOff, FolderOpen, History, Layers, Link2, Minus, RotateCcw, Shirt, Square, Unlink, X } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Car, ChevronLeft, ChevronRight, Eye, EyeOff, FolderOpen, History, Layers, Link2, Minus, RotateCcw, Shirt, Square, Unlink, X } from "lucide-react";
 import { categorizeTextures } from "./lib/ytd";
 import YtdWorker from "./lib/ytd.worker.js?worker";
+import { useUpdateChecker } from "./lib/updater";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import appMeta from "../package.json";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
@@ -113,6 +116,9 @@ function App() {
     typeof window !== "undefined" &&
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
     typeof window.__TAURI_INTERNALS__?.invoke === "function";
+
+  // Auto-update checker — polls GitHub releases for newer versions
+  const update = useUpdateChecker(appMeta.version);
 
   const [defaults, setDefaults] = useState(() => getInitialDefaults());
   const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
@@ -1666,8 +1672,7 @@ function App() {
 
 
 
-                </div>
-              </PanelSection>
+
             </div>
           ) : null}
 
@@ -1962,6 +1967,51 @@ function App() {
             <span>Scroll: Zoom</span>
           </div>
         ) : null}
+
+        {/* Update notification toast */}
+        <AnimatePresence>
+          {update.available && !update.dismissed ? (
+            <motion.div
+              className="update-toast"
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.97 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <div className="update-toast-content">
+                <div className="update-toast-text">
+                  <span className="update-toast-label">Update available</span>
+                  <span className="update-toast-version">v{update.latest}</span>
+                </div>
+                <div className="update-toast-actions">
+                  <button
+                    type="button"
+                    className="update-toast-btn update-toast-btn--open"
+                    onClick={() => {
+                      if (update.url) {
+                        if (isTauriRuntime) {
+                          openUrl(update.url).catch(() => window.open(update.url, "_blank"));
+                        } else {
+                          window.open(update.url, "_blank");
+                        }
+                      }
+                    }}
+                  >
+                    Download
+                    <ArrowUpRight className="update-toast-icon" />
+                  </button>
+                  <button
+                    type="button"
+                    className="update-toast-btn update-toast-btn--dismiss"
+                    onClick={update.dismiss}
+                  >
+                    <X className="update-toast-icon" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </motion.section>
 
       <AnimatePresence>{isBooting ? <AppLoader /> : null}</AnimatePresence>

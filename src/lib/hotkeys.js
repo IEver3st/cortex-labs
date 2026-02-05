@@ -73,7 +73,7 @@ export const DEFAULT_HOTKEYS = {
   [HOTKEY_ACTIONS.SELECT_LIVERY]: { key: "L", ctrl: true, alt: false, shift: false },
   [HOTKEY_ACTIONS.SELECT_GLASS]: { key: "G", ctrl: true, alt: false, shift: false },
   [HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO]: { key: "G", ctrl: false, alt: true, shift: false },
-  [HOTKEY_ACTIONS.SWAP_DUAL_SLOT]: { key: "Q", ctrl: false, alt: true, shift: false },
+  [HOTKEY_ACTIONS.SWAP_DUAL_SLOT]: { key: "X", ctrl: false, alt: true, shift: false },
 };
 
 export function formatHotkey(hotkey) {

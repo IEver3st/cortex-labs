@@ -1793,6 +1793,93 @@ body {
   z-index: 10;
 }
 
+/* ── Update notification toast ── */
+.update-toast {
+  position: absolute;
+  bottom: calc(56px * var(--es-ui-scale));
+  right: calc(12px * var(--es-ui-scale));
+  z-index: 50;
+  pointer-events: auto;
+}
+
+.update-toast-content {
+  display: flex;
+  align-items: center;
+  gap: calc(10px * var(--es-ui-scale));
+  padding: calc(8px * var(--es-ui-scale)) calc(10px * var(--es-ui-scale)) calc(8px * var(--es-ui-scale)) calc(14px * var(--es-ui-scale));
+  border-radius: var(--es-radius-control);
+  background: rgba(12, 14, 18, 0.72);
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  font-family: var(--font-hud);
+  font-size: calc(10.5px * var(--es-ui-scale));
+  letter-spacing: 0.06em;
+  color: rgba(239, 244, 250, 0.88);
+}
+
+.update-toast-text {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--es-ui-scale));
+  white-space: nowrap;
+}
+
+.update-toast-label {
+  text-transform: uppercase;
+  color: rgba(239, 244, 250, 0.5);
+  font-size: calc(9.5px * var(--es-ui-scale));
+  letter-spacing: 0.1em;
+}
+
+.update-toast-version {
+  color: var(--es-info);
+  font-weight: 600;
+}
+
+.update-toast-actions {
+  display: flex;
+  align-items: center;
+  gap: calc(2px * var(--es-ui-scale));
+}
+
+.update-toast-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(4px * var(--es-ui-scale));
+  padding: calc(4px * var(--es-ui-scale)) calc(8px * var(--es-ui-scale));
+  border: none;
+  border-radius: calc(6px * var(--es-ui-scale));
+  background: transparent;
+  color: rgba(239, 244, 250, 0.7);
+  font-family: var(--font-hud);
+  font-size: calc(10px * var(--es-ui-scale));
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.update-toast-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(239, 244, 250, 0.95);
+}
+
+.update-toast-btn--open {
+  color: var(--es-info);
+}
+
+.update-toast-btn--open:hover {
+  background: rgba(125, 211, 252, 0.12);
+  color: #a5e4ff;
+}
+
+.update-toast-btn--dismiss {
+  padding: calc(4px * var(--es-ui-scale));
+}
+
+.update-toast-icon {
+  width: calc(12px * var(--es-ui-scale));
+  height: calc(12px * var(--es-ui-scale));
+}
+
 .status-strip {
   display: flex;
   align-items: center;
