@@ -1,33 +1,28 @@
-![Cortex Studio UI](https://cdn.discordapp.com/attachments/723540538627981362/1468705447883047124/image.png?ex=6984fe0a&is=6983ac8a&hm=c6a7be58b5cf6a7b3aa71b2d5655962cfd691762b8ca24b932b0d7dc7553075e&)
+## Updated Studio UI
+![Cortex Studio UI](https://cdn.discordapp.com/attachments/698747360536297524/1469447401285746709/image.png?ex=6987b109&is=69865f89&hm=e7216855c670021fe97740c186e65dd54fe9145c71b998bf66ccd559f7c2f3dd&)
 # Tauri + React
 
-This template should help get you started developing with Tauri and React in Vite.
+Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/releases/tag/v3.0.0)!
 
 ## Model Support
 
 - `.yft` (FiveM/GTA V): converted to RenderWare `.dff` via a bundled converter sidecar and parsed with `dff-loader`.
-- `.obj` is intentionally unsupported: out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported.
+- `.obj` is intentionally unsupported: out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations. OBJ files will never be supported.
 
 See:
-
-- `docs/yft-cli-contract.md`
 - `THIRD_PARTY_NOTICES.md`
-
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 
 # Cortex Studio
 
 Cortex Studio is a real-time livery previewer for GTA V / FiveM vehicle assets.
-Its purpose is simple: let livery creators see texture changes instantly on a 3D model while they work.
+Its purpose is simple: let livery creators see texture changes to a 3D model instantly while they work.
 It is free forever and fully open source under the MIT license.
 
 Built with Tauri v2, React, Vite, and Three.js.
 
 ## Why Cortex Studio
 
-Livery work is iterative. Exporting, loading, and reloading in-game is slow and breaks flow.
+Livery work is iterative. Exporting, loading, and reloading in-game is slow and breaks the flow.
 Cortex Studio keeps your livery work live so you can focus on design instead of tooling.
 
 ## Key Features
@@ -43,9 +38,8 @@ Cortex Studio keeps your livery work live so you can focus on design instead of 
 ## Supported Files
 
 Models:
-- `.yft` (GTA V/FiveM fragment)
-- `.clmesh` (mesh cache)
-- `.dff` (RenderWare)
+- `.yft` (GTA V/FiveM Vehicles)
+- `.ydd` (GTA V/Fivem Clothing)
 
 Textures:
 - `.png`, `.jpg`, `.jpeg`, `.tga`, `.dds`, `.bmp`, `.gif`, `.tiff`, `.webp`, `.psd`
