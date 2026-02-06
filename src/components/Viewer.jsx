@@ -157,6 +157,8 @@ export default function Viewer({
   ytdTextures = null,
   ytdOverrides = {},
   decodeYtdTextures = null,
+  lightIntensity = 1.0,
+  glossiness = 0.5,
   onReady,
   onModelInfo,
   onModelError,
@@ -176,6 +178,7 @@ export default function Viewer({
   const textureRef = useRef(null);
   const windowTextureRef = useRef(null);
   const ytdTextureMapRef = useRef(new Map());
+  const lightsRef = useRef({ ambient: null, key: null, rim: null });
   const fitRef = useRef({ center: new THREE.Vector3(), distance: 4 });
   const [sceneReady, setSceneReady] = useState(false);
   const [modelLoadedVersion, setModelLoadedVersion] = useState(0);
@@ -236,6 +239,7 @@ export default function Viewer({
     windowTextureTarget,
     liveryExteriorOnly,
     textureMode,
+    glossiness,
   });
 
   useEffect(() => {
@@ -245,8 +249,9 @@ export default function Viewer({
       windowTextureTarget,
       liveryExteriorOnly,
       textureMode,
+      glossiness,
     };
-  }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode]);
+  }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode, glossiness]);
 
   const requestRender = useCallback(() => {
     requestRenderRef.current?.();
@@ -291,12 +296,13 @@ export default function Viewer({
     // On touch, allow zoom + rotate together (instead of the default zoom + pan).
     controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-    const key = new THREE.DirectionalLight(0xffffff, 0.9);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.5 * lightIntensity);
+    const key = new THREE.DirectionalLight(0xffffff, 0.9 * lightIntensity);
     key.position.set(3.5, 4.5, 2.5);
-    const rim = new THREE.DirectionalLight(0xffffff, 0.35);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.35 * lightIntensity);
     rim.position.set(-3, 2, -2.2);
 
+    lightsRef.current = { ambient, key, rim };
     scene.add(ambient, key, rim);
 
     renderer.domElement.addEventListener("contextmenu", (event) => {
@@ -412,6 +418,32 @@ export default function Viewer({
       requestRenderRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const { ambient, key, rim } = lightsRef.current;
+    if (ambient) ambient.intensity = 0.5 * lightIntensity;
+    if (key) key.intensity = 0.9 * lightIntensity;
+    if (rim) rim.intensity = 0.35 * lightIntensity;
+    requestRenderRef.current?.();
+  }, [lightIntensity]);
+
+  useEffect(() => {
+    if (!modelRef.current) return;
+    // Glossiness 0.5 (default) -> Multiplier 1.0.
+    // Glossiness 1.0 (shiny) -> Multiplier 0.0 (roughness 0).
+    // Glossiness 0.0 (matte) -> Multiplier 2.0.
+    const factor = 2 - 2 * glossiness;
+
+    modelRef.current.traverse((child) => {
+      if (child.isMesh && child.material) {
+        const base = child.material.userData.baseRoughness;
+        if (typeof base === "number") {
+          child.material.roughness = Math.min(1.0, Math.max(0.0, base * factor));
+        }
+      }
+    });
+    requestRenderRef.current?.();
+  }, [glossiness]);
 
   useEffect(() => {
     if (!sceneReady) return;
@@ -697,6 +729,17 @@ export default function Viewer({
 
         modelRef.current = object;
         sceneRef.current.add(object);
+
+        // Apply current glossiness
+        const glossFactor = 2 - 2 * glossiness;
+        object.traverse((child) => {
+          if (child.isMesh && child.material) {
+            const base = child.material.userData.baseRoughness;
+            if (typeof base === "number") {
+              child.material.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
+            }
+          }
+        });
 
         const targets = collectTextureTargets(object);
         const liveryTarget = findLiveryTarget(object);
@@ -2735,6 +2778,7 @@ function buildDrawableObject(drawable, options = {}) {
         side: THREE.DoubleSide,
         vertexColors: hasVertexColors,
       });
+      material.userData.baseRoughness = roughness;
       material.name = mesh.materialName || "";
 
       const threeMesh = new THREE.Mesh(geometry, material);

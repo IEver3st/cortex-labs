@@ -1649,6 +1649,40 @@ body {
   font-family: "JetBrains Mono", var(--font-hud), monospace;
 }
 
+/* ── Range Slider ── */
+input[type="range"].range-sm {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: calc(4px * var(--es-ui-scale));
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: calc(2px * var(--es-ui-scale));
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"].range-sm::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: calc(14px * var(--es-ui-scale));
+  height: calc(14px * var(--es-ui-scale));
+  border-radius: 50%;
+  background: #e7ebf0;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.1s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  margin-top: 0;
+}
+
+input[type="range"].range-sm:hover::-webkit-slider-thumb {
+  background: #ffffff;
+  transform: scale(1.1);
+}
+
+input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.4);
+}
+
 .file-meta {
   font-size: calc(11px * var(--es-ui-scale));
   color: rgba(206, 213, 223, 0.62);

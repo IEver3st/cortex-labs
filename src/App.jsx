@@ -50,6 +50,8 @@ const BUILT_IN_DEFAULTS = {
   experimentalSettings: false,
   showHints: true,
   hideRotText: false,
+  lightIntensity: 1.0,
+  glossiness: 0.5,
 };
 
 const BUILT_IN_UI = {
@@ -133,6 +135,8 @@ function App() {
   const [windowTexturePath, setWindowTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
+  const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
+  const [glossiness, setGlossiness] = useState(() => getInitialDefaults().glossiness ?? 0.5);
   const [experimentalSettings, setExperimentalSettings] = useState(() => Boolean(getInitialDefaults().experimentalSettings));
   const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
   const [panelOpen, setPanelOpen] = useState(() => ({
@@ -1764,6 +1768,60 @@ function App() {
                 </Button>
               </div>
             </div>
+
+            <div className="control-divider" />
+
+            <div className="control-group">
+              <div className="flex items-center justify-between">
+                <Label>Light Intensity</Label>
+                <span className="text-[10px] text-white/40 font-mono">{lightIntensity.toFixed(1)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2.0"
+                  step="0.1"
+                  className="flex-1 accent-white h-1 bg-white/10 rounded-lg appearance-none cursor-pointer range-sm"
+                  value={lightIntensity}
+                  onChange={(e) => setLightIntensity(parseFloat(e.target.value))}
+                />
+                <Button
+                  variant="ghost"
+                  className="h-6 w-6 p-0 text-white/30 hover:text-white"
+                  onClick={() => setLightIntensity(1.0)}
+                  title="Reset Lighting"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="control-group">
+              <div className="flex items-center justify-between">
+                <Label>Glossiness</Label>
+                <span className="text-[10px] text-white/40 font-mono">{Math.round(glossiness * 100)}%</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="0.0"
+                  max="1.0"
+                  step="0.05"
+                  className="flex-1 accent-white h-1 bg-white/10 rounded-lg appearance-none cursor-pointer range-sm"
+                  value={glossiness}
+                  onChange={(e) => setGlossiness(parseFloat(e.target.value))}
+                />
+                <Button
+                  variant="ghost"
+                  className="h-6 w-6 p-0 text-white/30 hover:text-white"
+                  onClick={() => setGlossiness(0.5)}
+                  title="Reset Gloss"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
           </PanelSection>
 
         </div>
@@ -1848,6 +1906,8 @@ function App() {
             ytdTextures={ytdTextures}
             ytdOverrides={ytdOverrides}
             decodeYtdTextures={decodeYtdTextures}
+            lightIntensity={lightIntensity}
+            glossiness={glossiness}
             onModelInfo={handleModelInfo}
             onModelError={handleModelError}
             onModelLoading={handleModelLoading}
