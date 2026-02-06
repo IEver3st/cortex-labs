@@ -1,6 +1,6 @@
 [package]
 name = "cortex-labs"
-version = "1.9.9"
+version = "3.0.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
