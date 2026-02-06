@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "motion/react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";
 
-// Helper for class names if utils doesn't exist
 function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
 }

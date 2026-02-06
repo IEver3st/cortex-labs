@@ -1,5 +1,3 @@
-// Hotkey configuration and utilities
-
 export const HOTKEY_ACTIONS = {
   TOGGLE_EXTERIOR_ONLY: "toggleExteriorOnly",
   MODE_LIVERY: "modeLivery",
@@ -131,7 +129,6 @@ export function findMatchingAction(hotkeys, event) {
 export function isValidHotkey(hotkey) {
   if (!hotkey || !hotkey.key) return false;
   if (hotkey.key.length === 0) return false;
-  // Require at least one modifier for single character keys (except special keys)
   const specialKeys = ["Tab", "Escape", "Enter", "Backspace", "Delete", "\\", "/", "[", "]", ";", "'", ",", ".", "-", "=", "`"];
   if (hotkey.key.length === 1 && !specialKeys.includes(hotkey.key)) {
     if (!hotkey.ctrl && !hotkey.alt && !hotkey.shift) {

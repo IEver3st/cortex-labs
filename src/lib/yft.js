@@ -1,10 +1,4 @@
-/**
- * GTA V YFT (Fragment/Drawable) Parser
- * Based on RAGE engine format specifications from CodeWalker
- */
-
 import { inflate, inflateRaw } from "pako";
-import { parseTextureDictionary } from "./ytd";
 
 const RSC7_MAGIC = 0x37435352;
 const RSC85_MAGIC = 0x38355352;
@@ -16,8 +10,6 @@ const DEFAULT_SCAN_LIMIT = 0x10000;
 const DEFAULT_SCAN_STRIDE = 16;
 const DEFAULT_SCAN_MAX_CANDIDATES = 24;
 
-// Shader name list adapted from CodeWalker.Core/strings.txt (shader names for gen9).
-// Used to map ShaderFX.Name hashes to readable labels.
 const GTA_SHADER_NAMES_TEXT = `
 albedo_alpha
 alpha
@@ -475,10 +467,6 @@ export function parseYft(bytes, name = "model", options = {}) {
       return null;
     }
 
-    // console.log(
-    //   `[YFT] Decoded resource: ${resource.data.length} bytes, system=${resource.systemSize}, graphics=${resource.graphicsSize}`,
-    // );
-
     const reader = createReader(
       resource.data,
       resource.systemSize,
@@ -512,10 +500,6 @@ export function parseYft(bytes, name = "model", options = {}) {
       return null;
     }
 
-    // const totalVerts = countTotalVertices(drawable);
-    // console.log(
-    //   `[YFT] Successfully parsed: ${drawable.models?.length} models, ${totalVerts} total vertices`,
-    // );
     return drawable;
   } catch (error) {
     console.error("[YFT] Parse error:", error);
@@ -618,6 +602,10 @@ function createReader(bytes, systemSize, graphicsSize) {
       const offset = this.resolvePtr(ptr);
       return offset > 0 && offset < len;
     },
+    slice: function(offset, length) {
+      if (offset < 0 || offset + length > len) return null;
+      return bytes.subarray(offset, offset + length);
+    },
   };
 }
 
@@ -641,25 +629,20 @@ function resolvePointer(reader, ptr) {
 }
 
 function parseFragType(reader, name) {
-  // CodeWalker FragType: DrawablePointer is at 0x30 (after VFT+Unknown_4h+padding+BoundingSphere)
   const drawablePtrOffsets = [0x30, 0x28, 0x20, 0x18, 0x38, 0x10, 0x08];
 
   for (const ptrOffset of drawablePtrOffsets) {
     const drawablePtr = reader.u64(ptrOffset);
     if (reader.validPtr(drawablePtr)) {
       const drawableOffset = reader.resolvePtr(drawablePtr);
-      const drawable = parseDrawable(reader, drawableOffset, name);
-      if (drawable && hasGeometry(drawable)) {
-        // console.log(
-        //   `[YFT] Found drawable via FragType offset 0x${ptrOffset.toString(16)}`,
-        // );
-        return drawable;
-      }
+      const d = parseDrawable(reader, drawableOffset, name);
+      if (d && hasGeometry(d)) return d;
     }
   }
 
   return parseDrawable(reader, 0, name);
 }
+
 
 function parseYdrDrawable(reader, name) {
   const ptrOffsets = [0x10, 0x08, 0x18, 0x20, 0x00];
@@ -679,32 +662,24 @@ function parseDrawable(reader, offset, name) {
   const drawable = { name, models: [], shaders: [] };
   const baseOffset = offset;
 
-  // CodeWalker DrawableBase: ShaderGroupPointer is at 0x08 (after VFT+Unknown_4h)
-  const shaderPtrOffsets = [0x08, 0x10, 0x00, 0x18];
+  const shaderPtrOffsets = [0x10, 0x08, 0x18, 0x00];
   for (const ptrOffset of shaderPtrOffsets) {
     const shaderGroupPtr = reader.u64(baseOffset + ptrOffset);
     if (reader.validPtr(shaderGroupPtr)) {
       const shaderGroupOffset = reader.resolvePtr(shaderGroupPtr);
     const shaders = parseShaderGroup(reader, shaderGroupOffset);
       
-    // Extract embedded textures from the ShaderGroup's TextureDictionary
-    // Offset 0x08 in ShaderGroup is the pointer to TextureDictionary
-    const textureDictPtr = reader.u64(shaderGroupOffset + 0x08);
-    let embeddedTextures = null;
-    if (reader.validPtr(textureDictPtr)) {
-      const textureDictOffset = reader.resolvePtr(textureDictPtr);
-      // Parse using the YTD parser's logic, passing the explicit offset
-      embeddedTextures = parseTextureDictionary(reader, false, null, textureDictOffset);
-    }
-      
     if (shaders.length > 0) {
       drawable.shaders = shaders;
-      drawable.embeddedTextures = embeddedTextures;
       break;
     }
     }
   }
 
+  return parseDrawableModels(reader, baseOffset, name, drawable);
+}
+
+function parseDrawableModels(reader, baseOffset, name, drawable) {
   const lodOffsets = [
     { offset: 0x50, name: "high" },
     { offset: 0x58, name: "med" },
@@ -753,7 +728,6 @@ function parseDrawable(reader, offset, name) {
 }
 
 function parseShaderGroup(reader, offset) {
-  // CodeWalker ShaderGroup.BlockLength = 64
   if (!reader.valid(offset) || offset + 64 > reader.len) return [];
   const shaders = [];
   const shadersPtr = reader.u64(offset + 0x10);
@@ -776,27 +750,10 @@ function parseShaderGroup(reader, offset) {
 }
 
 function parseShader(reader, offset, index) {
-  // CodeWalker ShaderFX (BlockLength = 48, legacy):
-  //   0x00: ParametersPointer (u64) — pgPtr to ShaderParametersBlock
-  //   0x08: Name (u32) — shader type hash (joaat)
-  //   0x0C: Unknown_Ch (u32)
-  //   0x10: ParameterCount (u8)
-  //   0x11: RenderBucket (u8)
-  //   0x12: Unknown_12h (u16)
-  //   0x14: ParameterSize (u16)
-  //   0x16: ParameterDataSize (u16)
-  //   0x18: FileName (u32) — hash of .sps filename
-  //   0x1C: Unknown_1Ch (u32)
-  //   0x20: RenderBucketMask (u32)
-  //   0x24: Unknown_24h (u16)
-  //   0x26: Unknown_26h (u8)
-  //   0x27: TextureParametersCount (u8)
-  //   0x28: Unknown_28h (u64)
   if (!reader.valid(offset) || offset + 48 > reader.len) return null;
   const nameHash = reader.u32(offset + 0x08) >>> 0;
   const hashHex = nameHash.toString(16).padStart(8, "0");
 
-  // Extract texture references from shader parameters
   const shaderName = identifyMaterialName(nameHash, hashHex);
   const textureRefs = extractShaderTextureRefs(reader, offset, shaderName);
 
@@ -805,11 +762,10 @@ function parseShader(reader, offset, index) {
     nameHash,
     name: identifyMaterialName(nameHash, hashHex),
     hashHex,
-    textureRefs,   // { diffuse: "texturename", normal: "texturename_n", ... }
+    textureRefs,
   };
 }
 
-// Case-preserving joaat (does NOT lowercase — matches original-case hashes in binary)
 function joaatOrig(input) {
   if (!input) return 0;
   let hash = 0;
@@ -824,9 +780,6 @@ function joaatOrig(input) {
   return hash >>> 0;
 }
 
-// Well-known shader parameter name hashes for texture samplers.
-// GTA V files may store hashes from either lowercase or original-case joaat,
-// so we register both variants in the lookup map.
 const SAMPLER_NAMES = [
   ["DiffuseSampler", "diffuse"],
   ["DiffuseSampler2", "diffuse2"],
@@ -841,17 +794,14 @@ const SAMPLER_NAMES = [
 
 const SAMPLER_ROLE = new Map();
 for (const [name, role] of SAMPLER_NAMES) {
-  SAMPLER_ROLE.set(joaat(name), role);      // lowercase hash
-  SAMPLER_ROLE.set(joaatOrig(name), role);  // original-case hash
+  SAMPLER_ROLE.set(joaat(name), role);
+  SAMPLER_ROLE.set(joaatOrig(name), role);
 }
 
-// Named constants for diagnostic logging
 const PARAM_DIFFUSE_SAMPLER = joaat("DiffuseSampler");
 const PARAM_BUMP_SAMPLER    = joaat("BumpSampler");
 const PARAM_SPEC_SAMPLER    = joaat("SpecSampler");
 
-// Pre-compute a reverse lookup: texture name → known name (for matching YTD names)
-// We'll build this from the YTD texture names at match time.
 
 function readCString(reader, offset, maxLen = 256) {
   if (!reader.valid(offset)) return null;
@@ -859,36 +809,15 @@ function readCString(reader, offset, maxLen = 256) {
   for (let i = 0; i < maxLen; i++) {
     const ch = reader.u8(offset + i);
     if (ch === 0) break;
-    // Only printable ASCII — reject garbage
     if (ch < 0x20 || ch > 0x7e) return null;
     str += String.fromCharCode(ch);
   }
   return str || null;
 }
 
-/**
- * Extract texture name references from a ShaderFX's parameter list.
- *
- * CodeWalker ShaderParametersBlock (legacy) layout:
- *   1. Array of Count × ShaderParameter structs (each 16 bytes):
- *      { DataType(u8), Unknown_1h(u8), Unknown_2h(u16), Unknown_4h(u32), DataPointer(u64) }
- *      DataType=0 → texture (DataPointer → TextureBase)
- *      DataType≥1 → vector4 data (DataType = number of Vector4s)
- *   2. Inline vector4 data (size = sum of 16*DataType for each param where DataType≥1)
- *   3. Array of Count × u32 name hashes (joaat of parameter name, e.g. DiffuseSampler)
- *
- * The hashes at step 3 identify which sampler each parameter corresponds to.
- */
 function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
   const textureRefs = {};
 
-  // ── ShaderFX layout (CodeWalker, BlockLength=48) ──
-  // 0x00: ParametersPointer (u64)
-  // 0x08: Name hash (u32)
-  // 0x10: ParameterCount (u8)
-  // 0x14: ParameterSize (u16) — equals (Count*16 + sum(16*DataType))
-  // 0x16: ParameterDataSize (u16)
-  // 0x27: TextureParametersCount (u8)
   const paramsPtr = reader.u64(shaderOffset + 0x00);
   if (!reader.validPtr(paramsPtr)) return textureRefs;
   const paramsBase = reader.resolvePtr(paramsPtr);
@@ -898,13 +827,8 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
   if (paramCount === 0 || paramCount > 64) paramCount = texParamCount;
   if (paramCount === 0 || paramCount > 64) return textureRefs;
 
-  // ParameterSize from ShaderFX = (Count*16) + sum(16*DataType for each param)
-  // This is the exact offset from paramsBase to the hashes array.
-  // CodeWalker: ParametersSize { get => (Count*16) + sum(16*DataType) }
   const parameterSize = reader.u16(shaderOffset + 0x14);
 
-  // ── Step 1: Read ShaderParameter structs (each 16 bytes) ──
-  // Layout: { DataType(u8), Unknown_1h(u8), Unknown_2h(u16), Unknown_4h(u32), DataPointer(u64) }
   const params = [];
   let computedSize = 0;
   for (let i = 0; i < paramCount; i++) {
@@ -912,13 +836,10 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
     const dataType = reader.u8(off + 0x00);
     const dataPtr = reader.u64(off + 0x08);
     params.push({ dataType, dataPtr });
-    computedSize += 16; // struct itself
-    if (dataType >= 1) computedSize += 16 * dataType; // inline vector data
+    computedSize += 16;
+    if (dataType >= 1) computedSize += 16 * dataType;
   }
 
-  // ── Step 2: Locate the hashes array ──
-  // Use ParameterSize from ShaderFX as the primary offset (most reliable).
-  // Fall back to computed size if ParameterSize looks wrong.
   let hashesOffset;
   if (parameterSize > 0 && parameterSize >= paramCount * 16) {
     hashesOffset = paramsBase + parameterSize;
@@ -926,7 +847,6 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
     hashesOffset = paramsBase + computedSize;
   }
 
-  // Diagnostic: log first shader's layout
   if (!extractShaderTextureRefs._logged) {
     extractShaderTextureRefs._logged = true;
     const sampleHashes = [];
@@ -947,7 +867,6 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
                 "BumpSampler=0x" + PARAM_BUMP_SAMPLER.toString(16).padStart(8, "0"),
                 "SpecSampler=0x" + PARAM_SPEC_SAMPLER.toString(16).padStart(8, "0"));
 
-    // Also try reading textures without hashes to verify TextureBase parsing works
     let texFound = 0;
     for (let i = 0; i < paramCount; i++) {
       if (params[i].dataType !== 0) continue;
@@ -965,7 +884,6 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
     console.log(`[YFT] Found ${texFound} texture params out of ${paramCount} total`);
   }
 
-  // Diagnostic — log texture params for first 3 shaders + all paint shaders
   const isPaintShader = shaderName && (shaderName.toLowerCase().includes("paint") || shaderName.toLowerCase().includes("livery"));
   if (!extractShaderTextureRefs._diagCount) extractShaderTextureRefs._diagCount = 0;
   const shouldDiag = isPaintShader || extractShaderTextureRefs._diagCount < 3;
@@ -993,7 +911,6 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
     console.log(`[YFT] Shader "${shaderName}" [cnt=${paramCount}, pSize=${parameterSize}, cSize=${computedSize}] textures:`, JSON.stringify(texOnly));
   }
 
-  // ── Step 3: Collect all texture parameters with their names ──
   const texEntries = [];
   for (let p = 0; p < paramCount; p++) {
     const { dataType, dataPtr } = params[p];
@@ -1012,16 +929,12 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
     const texName = readCString(reader, texNameOffset);
     if (!texName || texName.length === 0) continue;
 
-    // Try hash-based role (may be unreliable if hash offset is wrong)
     const nameHash = reader.u32(hashesOffset + p * 4) >>> 0;
     const hashRole = SAMPLER_ROLE.get(nameHash) || null;
 
     texEntries.push({ texName, hashRole, paramIndex: p });
   }
 
-  // ── Step 4: Assign roles using texture name conventions (most reliable) ──
-  // GTA V texture naming: _n/_normal/_nrm = normal, _s/_spec = specular, else = diffuse
-  // First pass: assign by name convention
   for (const entry of texEntries) {
     const lower = entry.texName.toLowerCase();
     if (lower.endsWith("_n") || lower.endsWith("_norm") || lower.includes("_normal") || lower.includes("_nrm") || lower.includes("bump") || lower.endsWith("_bumpmap")) {
@@ -1031,7 +944,6 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
     } else if (lower.includes("emissive") || lower.includes("_emis")) {
       entry.role = "emissive";
     } else {
-      // Could be diffuse or something else — check hash if available
       if (entry.hashRole === "normal" || entry.hashRole === "normal2") {
         entry.role = entry.hashRole;
       } else if (entry.hashRole === "specular") {
@@ -1042,7 +954,6 @@ function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
     }
   }
 
-  // ── Step 5: Build textureRefs — first texture per role wins ──
   for (const entry of texEntries) {
     if (!textureRefs[entry.role]) {
       textureRefs[entry.role] = entry.texName;
@@ -1142,7 +1053,6 @@ function parseGeometry(reader, offset, name) {
   const vertexStride = reader.u16(offset + 0x70);
   const vertexDataPtr = reader.u64(offset + 0x78);
 
-  // Parse vertex declaration to get proper attribute offsets
   const vertexDecl = parseVertexDeclaration(reader, offset);
 
   let vertexData = null;
@@ -1195,7 +1105,6 @@ function parseGeometry(reader, offset, name) {
   };
 }
 
-// Parse the vertex declaration from geometry to get proper attribute offsets
 function parseVertexDeclaration(reader, geomOffset) {
   const stride = reader.u16(geomOffset + 0x70);
   const fallback = detectVertexFormat(stride);
@@ -1211,10 +1120,6 @@ function parseVertexDeclaration(reader, geomOffset) {
   const decl = parseLegacyVertexDeclaration(reader, infoPtr, stride);
 
   if (!decl) return fallback;
-
-  // console.log(
-  //   `[YFT] Vertex format: stride=${decl.stride ?? stride}, normalOffset=${decl.normalOffset}, colorOffset=${decl.colorOffset}, uv0Offset=${decl.uv0Offset}, uv1Offset=${decl.uv1Offset}`,
-  // );
 
   return decl;
 }
@@ -1401,13 +1306,11 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
   let hasNormals = false,
     hasColors = false;
 
-  // Use vertex declaration if available, otherwise fall back to stride-based detection
   const format = vertexDecl || detectVertexFormat(stride);
 
   for (let i = 0; i < safeCount; i++) {
     const vOffset = offset + i * stride;
 
-    // Position (always at offset 0, float3)
     const posOffset = format.positionOffset ?? 0;
     let px = reader.f32(vOffset + posOffset);
     let py = reader.f32(vOffset + posOffset + 4);
@@ -1428,7 +1331,6 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
 
-    // Normal
     const normalOffset = format.normalOffset;
     const normalType = format.normalType;
     const normalSize = getVertexComponentSize(normalType) || 4;
@@ -1446,7 +1348,6 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
       }
     }
 
-    // Color
     const colorOffset = format.colorOffset;
     const colorSize = getVertexComponentSize(format.colorType) || 4;
     if (colorOffset >= 0 && colorOffset + colorSize <= stride) {
@@ -1460,7 +1361,6 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
       }
     }
 
-    // UV0
     const texOffsets = format.texcoordOffsets || [];
     const texTypes = format.texcoordTypes || [];
     for (let t = 0; t < 4; t += 1) {
@@ -1497,9 +1397,6 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
 }
 
 function readTexcoord(reader, offset, type) {
-  // GTA V uses DirectX texture coordinates (V=0 at top)
-  // WebGL/Three.js uses OpenGL coordinates (V=0 at bottom)
-  // We need to flip the V coordinate: v = 1 - v
   const resolvedType = type ?? 1;
   let u, v;
   switch (resolvedType) {
@@ -1521,7 +1418,6 @@ function readTexcoord(reader, offset, type) {
       v = halfToFloat(reader.u16(offset + 2));
       break;
   }
-  // Flip V coordinate from DirectX to OpenGL format
   return [u, 1.0 - v];
 }
 
@@ -1540,7 +1436,6 @@ function readNormal(reader, offset, type) {
         reader.f32(offset + 8),
       ];
     case 10: {
-      // RGBA8SNorm
       const x = toSnorm8(reader.u8(offset));
       const y = toSnorm8(reader.u8(offset + 1));
       const z = toSnorm8(reader.u8(offset + 2));
@@ -1584,15 +1479,6 @@ function toUnormFromSnorm8(value) {
 }
 
 function detectVertexFormat(stride) {
-  // Common GTA V vertex layouts based on stride:
-  // 20: pos(12) + normal(4) + uv(4)
-  // 24: pos(12) + normal(4) + color(4) + uv(4)
-  // 28: pos(12) + normal(4) + color(4) + uv(4) + uv2(4)
-  // 32: pos(12) + blendw(4) + blendi(4) + normal(4) + uv(4) or pos(12) + normal(4) + color(4) + uv(4) + tangent(4) + ???
-  // 36: pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4)
-  // 40: pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4) + tangent(4)
-  // 44: pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4) + uv2(4) + tangent(4)
-
   const format = {
     positionOffset: 0,
     normalOffset: -1,
@@ -1617,14 +1503,12 @@ function detectVertexFormat(stride) {
 
   switch (stride) {
     case 20:
-      // pos(12) + normal(4) + uv(4)
       format.normalOffset = 12;
       format.uv0Offset = 16;
       format.texcoordOffsets[0] = 16;
       format.texcoordTypes[0] = format.uv0Type;
       break;
     case 24:
-      // pos(12) + normal(4) + color(4) + uv(4)
       format.normalOffset = 12;
       format.colorOffset = 16;
       format.uv0Offset = 20;
@@ -1632,7 +1516,6 @@ function detectVertexFormat(stride) {
       format.texcoordTypes[0] = format.uv0Type;
       break;
     case 28:
-      // pos(12) + normal(4) + color(4) + uv(4) + uv2(4)
       format.normalOffset = 12;
       format.colorOffset = 16;
       format.uv0Offset = 20;
@@ -1643,14 +1526,12 @@ function detectVertexFormat(stride) {
       format.texcoordTypes[1] = format.uv1Type;
       break;
     case 32:
-      // pos(12) + blendw(4) + blendi(4) + normal(4) + uv(4)
       format.normalOffset = 20;
       format.uv0Offset = 24;
       format.texcoordOffsets[0] = 24;
       format.texcoordTypes[0] = format.uv0Type;
       break;
     case 36:
-      // pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4)
       format.normalOffset = 20;
       format.colorOffset = 24;
       format.uv0Offset = 28;
@@ -1658,7 +1539,6 @@ function detectVertexFormat(stride) {
       format.texcoordTypes[0] = format.uv0Type;
       break;
     case 40:
-      // pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4) + tangent(4)
       format.normalOffset = 20;
       format.colorOffset = 24;
       format.uv0Offset = 28;
@@ -1666,7 +1546,6 @@ function detectVertexFormat(stride) {
       format.texcoordTypes[0] = format.uv0Type;
       break;
     case 44:
-      // pos(12) + blendw(4) + blendi(4) + normal(4) + color(4) + uv(4) + uv2(4) + tangent(4)
       format.normalOffset = 20;
       format.colorOffset = 24;
       format.uv0Offset = 28;
@@ -1677,7 +1556,6 @@ function detectVertexFormat(stride) {
       format.texcoordTypes[1] = format.uv1Type;
       break;
     default:
-      // Generic fallback: assume pos(12) + normal(4) + maybe color(4) + uv(4)
       if (stride >= 16) format.normalOffset = 12;
       if (stride >= 20) format.uv0Offset = 16;
       if (stride >= 24) {

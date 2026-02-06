@@ -1,27 +1,15 @@
-/**
- * Standalone DDS file parser — handles DXT1/3/5, BC4, BC5, BC7, and
- * uncompressed formats with full mipmap chain support.
- *
- * Three.js's built-in DDSLoader only supports DXT1/3/5.  This parser
- * decodes all formats to RGBA and returns a THREE.DataTexture with
- * pre-decoded mipmaps so Three.js can use them directly.
- */
-
 import * as THREE from "three";
 import { decodeBC7Block } from "./bc7";
 
-// ── DDS header constants ──
-const DDS_MAGIC = 0x20534444; // "DDS "
+const DDS_MAGIC = 0x20534444;
 const DDSD_MIPMAPCOUNT = 0x20000;
 const DDPF_FOURCC = 0x4;
 const DDPF_RGB = 0x40;
 const DDPF_LUMINANCE = 0x20000;
 const DDPF_ALPHA = 0x2;
 
-// DX10 header resource dimension
 const D3D10_RESOURCE_DIMENSION_TEXTURE2D = 3;
 
-// FourCC helpers
 function fourCC(str) {
   return str.charCodeAt(0) | (str.charCodeAt(1) << 8) |
          (str.charCodeAt(2) << 16) | (str.charCodeAt(3) << 24);
@@ -38,7 +26,6 @@ const FOURCC_BC5U = fourCC("BC5U");
 const FOURCC_BC5S = fourCC("BC5S");
 const FOURCC_DX10 = fourCC("DX10");
 
-// DXGI format enum values we care about
 const DXGI = {
   BC1_UNORM: 71, BC1_UNORM_SRGB: 72,
   BC2_UNORM: 74, BC2_UNORM_SRGB: 75,
@@ -50,8 +37,6 @@ const DXGI = {
   B8G8R8A8_UNORM: 87, B8G8R8A8_UNORM_SRGB: 91,
   R8_UNORM: 61,
 };
-
-// ── Block decoders (reused from ytd.js patterns) ──
 
 const _cp = new Uint8Array(16);
 const _ap = new Uint8Array(8);
@@ -225,10 +210,7 @@ function decodeL8(src, off, w, h, rgba) {
   }
 }
 
-// ── Format info ──
 function getFormatInfo(fmt) {
-  // Returns { blockBytes, blockSize, decode }
-  // blockSize: pixels per block edge (4 for compressed, 1 for uncompressed)
   switch (fmt) {
     case "DXT1": return { blockBytes: 8, blockSize: 4, decode: decodeDXT1 };
     case "DXT3": return { blockBytes: 16, blockSize: 4, decode: decodeDXT3 };
@@ -243,8 +225,6 @@ function getFormatInfo(fmt) {
   }
 }
 
-// Flip RGBA pixel rows vertically in-place (top-down → bottom-up)
-// This avoids Three.js canvas-based flipY which can cause quality loss
 function flipRows(rgba, w, h) {
   const stride = w * 4;
   const tmp = new Uint8Array(stride);
@@ -263,51 +243,31 @@ function getMipSize(w, h, info) {
   return w * h * info.blockBytes;
 }
 
-// ── Main parser ──
-
-/**
- * Parse a DDS file buffer and return a THREE.DataTexture with decoded RGBA
- * data and pre-decoded mipmaps.
- *
- * @param {ArrayBuffer} buffer - Raw DDS file data
- * @returns {THREE.DataTexture|null}
- */
 export function parseDDS(buffer) {
   const data = new Uint8Array(buffer);
   const view = new DataView(buffer);
 
   if (data.length < 128) return null;
 
-  // Validate magic
   const magic = view.getUint32(0, true);
   if (magic !== DDS_MAGIC) return null;
 
-  // Parse header (starts at byte 4)
   const headerSize = view.getUint32(4, true);
   if (headerSize !== 124) return null;
 
   const flags = view.getUint32(8, true);
   const height = view.getUint32(12, true);
   const width = view.getUint32(16, true);
-  // const pitchOrLinearSize = view.getUint32(20, true);
-  // const depth = view.getUint32(24, true);
   const mipMapCount = (flags & DDSD_MIPMAPCOUNT) ? view.getUint32(28, true) : 1;
 
-  // Pixel format at offset 76
   const pfFlags = view.getUint32(80, true);
   const pfFourCC = view.getUint32(84, true);
   const pfRGBBitCount = view.getUint32(88, true);
-  // const pfRMask = view.getUint32(92, true);
-  // const pfGMask = view.getUint32(96, true);
-  // const pfBMask = view.getUint32(100, true);
-  // const pfAMask = view.getUint32(104, true);
-
-  let dataOffset = 128; // After 4-byte magic + 124-byte header
+  let dataOffset = 128;
   let fmt = null;
 
   if (pfFlags & DDPF_FOURCC) {
     if (pfFourCC === FOURCC_DX10) {
-      // DX10 extended header (20 bytes after main header)
       if (data.length < 148) return null;
       const dxgiFormat = view.getUint32(128, true);
       dataOffset = 148;
@@ -327,7 +287,6 @@ export function parseDDS(buffer) {
           return null;
       }
     } else {
-      // Legacy FourCC
       switch (pfFourCC) {
         case FOURCC_DXT1: fmt = "DXT1"; break;
         case FOURCC_DXT3: fmt = "DXT3"; break;
@@ -341,7 +300,7 @@ export function parseDDS(buffer) {
     }
   } else if (pfFlags & DDPF_RGB) {
     if (pfRGBBitCount === 32) {
-      fmt = "BGRA"; // Most common uncompressed DDS format
+      fmt = "BGRA";
     } else {
       console.warn("[DDS] Unsupported RGB bit count:", pfRGBBitCount);
       return null;
@@ -349,7 +308,7 @@ export function parseDDS(buffer) {
   } else if (pfFlags & DDPF_LUMINANCE) {
     fmt = "L8";
   } else if (pfFlags & DDPF_ALPHA) {
-    fmt = "L8"; // Treat alpha-only as luminance
+    fmt = "L8";
   } else {
     console.warn("[DDS] Unsupported pixel format flags:", pfFlags.toString(16));
     return null;
@@ -360,7 +319,6 @@ export function parseDDS(buffer) {
 
   console.log(`[DDS] Parsing: ${width}x${height}, format=${fmt}, mips=${mipMapCount}`);
 
-  // Decode base level
   const baseSize = getMipSize(width, height, info);
   if (dataOffset + baseSize > data.length) {
     console.warn("[DDS] Not enough data for base mip level");
@@ -371,7 +329,6 @@ export function parseDDS(buffer) {
   info.decode(data, dataOffset, width, height, baseRgba);
   flipRows(baseRgba, width, height);
 
-  // Decode mip levels
   const mipmaps = [];
   let mipOffset = dataOffset + baseSize;
   let mw = width, mh = height;
@@ -393,7 +350,6 @@ export function parseDDS(buffer) {
     mipOffset += mipSize;
   }
 
-  // Create Three.js DataTexture — data is already flipped so flipY = false
   const texture = new THREE.DataTexture(baseRgba, width, height, THREE.RGBAFormat);
   texture.type = THREE.UnsignedByteType;
   texture.colorSpace = THREE.SRGBColorSpace;

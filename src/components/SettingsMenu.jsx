@@ -341,18 +341,6 @@ export default function SettingsMenu({
                                   </button>
                                 </div>
 
-                                <div className="settings-panel-title">Vehicle extras</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Extras enabled on load</div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.extrasDefaultEnabled !== false ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, extrasDefaultEnabled: !(p.extrasDefaultEnabled !== false) }))}
-                                    aria-pressed={draft.extrasDefaultEnabled !== false}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
                               </section>
                             ) : null}
 

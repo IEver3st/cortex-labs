@@ -775,6 +775,24 @@ pub fn run() {
             parse_yft,
             convert_yft
         ])
+        .setup(|app| {
+            // On Windows, "Open With" passes the file path as a CLI argument.
+            // Capture it and emit to the frontend so it can load the file.
+            let args: Vec<String> = std::env::args().collect();
+            if args.len() > 1 {
+                let file_path = args[1].clone();
+                let path = Path::new(&file_path);
+                if path.exists() {
+                    let handle = app.handle().clone();
+                    // Emit after a short delay so the frontend has time to set up listeners
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        let _ = handle.emit("file-open", file_path);
+                    });
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

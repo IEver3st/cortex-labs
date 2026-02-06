@@ -9,14 +9,11 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "../lib/yft";
 import { parseDDS } from "../lib/dds";
 
-/* ───────── Constants ───────── */
 const YDD_SCAN_SETTINGS = {
   scanLimit: Number.POSITIVE_INFINITY,
   scanMaxCandidates: 32,
   preferBestDrawable: true,
 };
-
-/* ───────── Helpers (shared with Viewer.jsx) ───────── */
 
 function getFileExtension(path) {
   if (!path) return "";
@@ -180,7 +177,6 @@ function disposeObject(object) {
   });
 }
 
-/* ───────── Texture loading (simplified from Viewer.jsx) ───────── */
 async function loadTextureFromPath(texturePath, textureLoader, renderer) {
   if (!texturePath) return null;
 
@@ -269,7 +265,6 @@ async function loadTextureFromPath(texturePath, textureLoader, renderer) {
   return texture;
 }
 
-/* ───────── Apply livery texture to all paint-like meshes ───────── */
 function applyLiveryToModel(object, bodyColor, texture) {
   if (!object) return;
   const color = new THREE.Color(bodyColor || "#e7ebf0");
@@ -283,7 +278,6 @@ function applyLiveryToModel(object, bodyColor, texture) {
       matName.includes("sign") || matName.includes("decal") || matName.includes("body") || matName.includes("wrap");
 
     if (isPaint && texture) {
-      // Prefer UV2 for livery (GTA V convention)
       if (child.geometry?.attributes?.uv2 && child.geometry.attributes.uv !== child.geometry.attributes.uv2) {
         child.geometry.setAttribute("uv", child.geometry.attributes.uv2);
         child.geometry.attributes.uv.needsUpdate = true;
@@ -307,7 +301,6 @@ function applyLiveryToModel(object, bodyColor, texture) {
       }
       if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
     } else if (isPaint) {
-      // No texture — just body color
       if (!child.userData.dualMaterial) {
         const mat = new THREE.MeshStandardMaterial({
           color, map: null, side: THREE.DoubleSide,
@@ -328,7 +321,6 @@ function applyLiveryToModel(object, bodyColor, texture) {
   });
 }
 
-/* ───────── Apply texture to ALL meshes (EUP / everything mode) ───────── */
 function applyTextureToAll(object, bodyColor, texture) {
   if (!object) return;
   const color = new THREE.Color(bodyColor || "#e7ebf0");
@@ -355,7 +347,6 @@ function applyTextureToAll(object, bodyColor, texture) {
       }
       if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
     } else {
-      // No texture — restore base material
       if (child.userData.baseMaterial && child.material !== child.userData.baseMaterial) {
         child.material = child.userData.baseMaterial;
       }
@@ -363,7 +354,6 @@ function applyTextureToAll(object, bodyColor, texture) {
   });
 }
 
-/* ───────── Load model file into THREE.Group ───────── */
 async function loadModelFile(modelPath) {
   if (!modelPath) return null;
 
@@ -396,7 +386,6 @@ async function loadModelFile(modelPath) {
   return null;
 }
 
-/* ───────── Grid floor helper ───────── */
 function createFloorGrid() {
   const grid = new THREE.GridHelper(40, 40, 0x333333, 0x222222);
   grid.position.y = -0.01;
@@ -406,9 +395,6 @@ function createFloorGrid() {
   return grid;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   DualModelViewer — Experimental multi-model alignment viewer
-   ═══════════════════════════════════════════════════════════════════ */
 
 export default function DualModelViewer({
   modelAPath,
@@ -478,7 +464,6 @@ export default function DualModelViewer({
 
   const requestRender = useCallback(() => { requestRenderRef.current?.(); }, []);
 
-  /* ─── Scene setup ─── */
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -498,7 +483,6 @@ export default function DualModelViewer({
     controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
     controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
 
-    // Wheel-while-dragging fix
     const wheelWhileDragging = (event) => {
       if (!controls.enabled || !controls.enableZoom) return;
       if (controls.state === -1) return;
@@ -515,8 +499,6 @@ export default function DualModelViewer({
     rim.position.set(-3, 2, -2.2);
     scene.add(ambient, key, rim);
 
-    // Floor grid (conditionally added via showGrid effect)
-
     renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
     containerRef.current.appendChild(renderer.domElement);
 
@@ -525,14 +507,12 @@ export default function DualModelViewer({
     cameraRef.current = camera;
     controlsRef.current = controls;
 
-    // Report positions back to parent for session persistence
     const reportPositions = () => {
       const posA = modelARef.current ? [modelARef.current.position.x, modelARef.current.position.y, modelARef.current.position.z] : [0, 0, 0];
       const posB = modelBRef.current ? [modelBRef.current.position.x, modelBRef.current.position.y, modelBRef.current.position.z] : [0, 0, 3];
       onPositionChangeRef.current?.(posA, posB);
     };
 
-    // TransformControls for slot A
     const gizmoA = new TransformControls(camera, renderer.domElement);
     gizmoA.setMode("translate");
     gizmoA.setSize(0.8);
@@ -546,7 +526,6 @@ export default function DualModelViewer({
     scene.add(gizmoA.getHelper());
     gizmoARef.current = gizmoA;
 
-    // TransformControls for slot B
     const gizmoB = new TransformControls(camera, renderer.domElement);
     gizmoB.setMode("translate");
     gizmoB.setSize(0.8);
@@ -620,7 +599,6 @@ export default function DualModelViewer({
       },
       snapTogether: () => {
         if (!modelARef.current || !modelBRef.current) return;
-        // Compute bounding box of model A to snap B right behind it
         const boxA = new THREE.Box3().setFromObject(modelARef.current);
         const sizeA = new THREE.Vector3();
         boxA.getSize(sizeA);
@@ -631,7 +609,6 @@ export default function DualModelViewer({
         const sizeB = new THREE.Vector3();
         boxB.getSize(sizeB);
 
-        // Place B behind A on the Z axis (GTA vehicles face -Z)
         const gap = 0.05;
         const newZ = modelARef.current.position.z + (sizeA.z / 2) + (sizeB.z / 2) + gap;
         modelBRef.current.position.set(modelARef.current.position.x, modelARef.current.position.y, newZ);
@@ -656,14 +633,12 @@ export default function DualModelViewer({
     };
   }, []);
 
-  /* ─── Background color ─── */
   useEffect(() => {
     if (!rendererRef.current) return;
     rendererRef.current.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     requestRender();
   }, [backgroundColor]);
 
-  /* ─── Floor grid toggle ─── */
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
     if (showGrid && !gridRef.current) {
@@ -680,7 +655,6 @@ export default function DualModelViewer({
     }
   }, [showGrid, sceneReady, requestRender]);
 
-  /* ─── WASD camera movement ─── */
   const wasdStateRef = useRef({ forward: false, back: false, left: false, right: false, up: false, down: false, boost: false });
   const wasdFrameRef = useRef(0);
 
@@ -741,7 +715,6 @@ export default function DualModelViewer({
     return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); stopLoop(); Object.assign(state, { forward: false, back: false, left: false, right: false, up: false, down: false, boost: false }); };
   }, [sceneReady]);
 
-  /* ─── Gizmo visibility sync based on selected slot and toggle ─── */
   useEffect(() => {
     if (!sceneReady) return;
     const gA = gizmoARef.current;
@@ -759,7 +732,6 @@ export default function DualModelViewer({
     requestRender();
   }, [selectedSlot, gizmoVisible, sceneReady, modelAVersion, modelBVersion]);
 
-  /* ─── Load model A ─── */
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
     if (!modelAPath) {
@@ -775,21 +747,18 @@ export default function DualModelViewer({
         if (cancelled) return;
         if (!object) { onModelAErrorRef.current?.("Failed to load model A."); return; }
 
-        // Normals
         object.traverse((c) => {
           if (!c.isMesh || !c.geometry) return;
           const n = c.geometry.attributes?.normal;
           if (!n || n.count === 0) { c.geometry.computeVertexNormals(); c.geometry.normalizeNormals?.(); }
         });
 
-        // Remove old model A
         if (modelARef.current) {
           gizmoARef.current?.detach();
           sceneRef.current.remove(modelARef.current);
           disposeObject(modelARef.current);
         }
 
-        // Auto-fix axis
         const box = new THREE.Box3().setFromObject(object);
         const size = new THREE.Vector3();
         box.getSize(size);
@@ -797,7 +766,6 @@ export default function DualModelViewer({
           maybeAutoFixYftUpAxis(object, size);
         }
 
-        // Apply initial position from session restore
         const initA = initialPosARef.current;
         if (initA && Array.isArray(initA) && initA.length === 3) {
           object.position.set(initA[0], initA[1], initA[2]);
@@ -808,7 +776,6 @@ export default function DualModelViewer({
         gizmoARef.current?.attach(object);
         setModelAVersion((v) => v + 1);
 
-        // Refit camera to encompass both models
         refitCamera();
       } catch (err) {
         if (!cancelled) onModelAErrorRef.current?.(`Model A load failed: ${err?.message || "Unknown error"}`);
@@ -820,7 +787,6 @@ export default function DualModelViewer({
     return () => { cancelled = true; };
   }, [modelAPath, sceneReady]);
 
-  /* ─── Load model B ─── */
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
     if (!modelBPath) {
@@ -855,7 +821,6 @@ export default function DualModelViewer({
           maybeAutoFixYftUpAxis(object, size);
         }
 
-        // Apply initial position from session restore, or offset behind A
         const initB = initialPosBRef.current;
         if (initB && Array.isArray(initB) && initB.length === 3) {
           object.position.set(initB[0], initB[1], initB[2]);
@@ -884,7 +849,6 @@ export default function DualModelViewer({
     return () => { cancelled = true; };
   }, [modelBPath, sceneReady]);
 
-  /* ─── Load & apply texture A ─── */
   useEffect(() => {
     if (!sceneReady) return;
     let cancelled = false;
@@ -906,7 +870,6 @@ export default function DualModelViewer({
     return () => { cancelled = true; };
   }, [textureAPath, textureAReloadToken, sceneReady, modelAVersion, textureMode]);
 
-  /* ─── Load & apply texture B ─── */
   useEffect(() => {
     if (!sceneReady) return;
     let cancelled = false;
@@ -928,7 +891,6 @@ export default function DualModelViewer({
     return () => { cancelled = true; };
   }, [textureBPath, textureBReloadToken, sceneReady, modelBVersion, textureMode]);
 
-  /* ─── Body color changes ─── */
   useEffect(() => {
     if (!sceneReady) return;
     const applyFn = textureMode === "eup" ? applyTextureToAll : applyLiveryToModel;
@@ -937,7 +899,6 @@ export default function DualModelViewer({
     requestRender();
   }, [bodyColor, sceneReady, textureMode]);
 
-  /* ─── Camera refit utility ─── */
   const refitCamera = useCallback(() => {
     const objects = [modelARef.current, modelBRef.current].filter(Boolean);
     if (objects.length === 0) return;

@@ -4,10 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readFile } from "@tauri-apps/plugin-fs";
-import { AlertTriangle, ArrowUpRight, Car, ChevronLeft, ChevronRight, Eye, EyeOff, FolderOpen, History, Layers, Link2, Minus, PanelLeft, PanelTop, RotateCcw, Shirt, Square, Unlink, X, Aperture, Disc, Zap } from "lucide-react";
-import { categorizeTextures } from "./lib/ytd";
-import YtdWorker from "./lib/ytd.worker.js?worker";
+import { AlertTriangle, ArrowUpRight, Car, ChevronLeft, ChevronRight, Eye, EyeOff, History, Layers, Link2, Minus, PanelLeft, PanelTop, RotateCcw, Shirt, Square, Unlink, X, Aperture, Disc, Zap } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import appMeta from "../package.json";
@@ -16,7 +13,6 @@ import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
 import Viewer from "./components/Viewer";
 import DualModelViewer from "./components/DualModelViewer";
-import YtdBrowser from "./components/YtdBrowser";
 import { loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession, loadSession, clearSession } from "./lib/prefs";
 import {
   DEFAULT_HOTKEYS,
@@ -67,7 +63,6 @@ const BUILT_IN_DEFAULTS = {
   showGrid: false,
   lightIntensity: 1.0,
   glossiness: 0.5,
-  extrasDefaultEnabled: true,
   windowControlsStyle: "windows",
   toolbarInTitlebar: false,
 };
@@ -110,7 +105,6 @@ function App() {
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
     typeof window.__TAURI_INTERNALS__?.invoke === "function";
 
-  // Auto-update checker — polls GitHub releases for newer versions
   const update = useUpdateChecker(appMeta.version);
 
   const [defaults, setDefaults] = useState(() => getInitialDefaults());
@@ -139,7 +133,6 @@ function App() {
     targeting: true,
     overlays: false,
     view: true,
-    extras: true,
   }));
   const [textureReloadToken, setTextureReloadToken] = useState(0);
   const [windowTextureReloadToken, setWindowTextureReloadToken] = useState(0);
@@ -163,31 +156,8 @@ function App() {
   const [dialogError, setDialogError] = useState("");
   const [textureError, setTextureError] = useState("");
   const [windowTextureError, setWindowTextureError] = useState("");
-  const [ytdPath, setYtdPath] = useState("");
-  const [ytdTextures, setYtdTextures] = useState(null);
-  const [ytdRawTextures, setYtdRawTextures] = useState(null);
-  const [ytdLoading, setYtdLoading] = useState(false);
-  const [ytdBrowserOpen, setYtdBrowserOpen] = useState(false);
-  const [ytdOverrides, setYtdOverrides] = useState({});
   const [isDragging, setIsDragging] = useState(false);
 
-  // Shared YTD textures (vehshare, vehshare_worn, etc.) — bundled with the app.
-  // These are loaded once and merged into the texture lookup at lowest priority.
-  const [sharedYtdTextures, setSharedYtdTextures] = useState(null);
-  const sharedYtdLoadedRef = useRef(false);
-  const sharedYtdLoadingRef = useRef(false);
-  const loadSharedYtdsRef = useRef(null);
-
-  // Holds the raw YTD file bytes so the worker can decode specific textures
-  // on demand without re-reading the file.
-  const ytdBytesRef = useRef(null);
-
-  // Persistent YTD decode worker — reused across decode calls to avoid
-  // the overhead of creating/destroying workers and to benefit from the
-  // worker's internal decompression cache.
-  const ytdDecodeWorkerRef = useRef(null);
-
-  // Dual-model (multi-model) state
   const dualViewerApiRef = useRef(null);
   const [dualModelAPath, setDualModelAPath] = useState("");
   const [dualModelBPath, setDualModelBPath] = useState("");
@@ -203,11 +173,6 @@ function App() {
   const [dualGizmoVisible, setDualGizmoVisible] = useState(true);
   const [dualTextureMode, setDualTextureMode] = useState("livery");
 
-  // YTD mapping results for the inline viewer
-  const [ytdMappingMeta, setYtdMappingMeta] = useState(null);
-
-  const [modelExtras, setModelExtras] = useState([]);
-  const [hiddenExtras, setHiddenExtras] = useState([]);
   const [modelLoading, setModelLoading] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
   const [booted, setBooted] = useState(false);
@@ -215,10 +180,8 @@ function App() {
   const bootStartRef = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
   const bootTimerRef = useRef(null);
 
-  // Session restore state
   const [pendingSession, setPendingSession] = useState(() => loadSession());
   const [sessionPromptDismissed, setSessionPromptDismissed] = useState(false);
-  // Track dual-model positions (updated by DualModelViewer via callback)
   const [dualModelAPos, setDualModelAPos] = useState([0, 0, 0]);
   const [dualModelBPos, setDualModelBPos] = useState([0, 0, 3]);
 
@@ -252,16 +215,9 @@ function App() {
       setWindowTextureTarget("none");
       setWindowLiveryTarget("");
       setWindowLiveryLabel("");
-      setModelExtras([]);
-      setHiddenExtras([]);
 
       setModelSourcePath(path);
       setModelLoading(true);
-
-      // Proactively load shared YTDs for any vehicle model (YFT/YDD)
-      if (experimentalSettings && (lower.endsWith(".yft") || lower.endsWith(".ydd"))) {
-        loadSharedYtdsRef.current?.();
-      }
 
       try {
         setModelPath(path);
@@ -283,7 +239,6 @@ function App() {
   );
 
   useEffect(() => {
-    // Ensure the loader gets time to display even when the viewer initializes instantly.
     if (!viewerReady) return;
 
     const now = typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -305,12 +260,9 @@ function App() {
     };
   }, [viewerReady]);
 
-  // ─── Auto-save session whenever meaningful state changes ───
   const sessionSaveTimerRef = useRef(null);
   useEffect(() => {
-    // Don't save during boot / before onboarding
     if (isBooting || showOnboarding) return;
-    // Don't save if nothing is loaded
     const hasContent = modelPath || dualModelAPath || dualModelBPath || texturePath || dualTextureAPath || dualTextureBPath;
     if (!hasContent) return;
 
@@ -318,7 +270,6 @@ function App() {
     sessionSaveTimerRef.current = setTimeout(() => {
       saveSession({
         textureMode,
-        // Standard viewer state
         modelPath: modelPath || "",
         texturePath: texturePath || "",
         windowTexturePath: windowTexturePath || "",
@@ -326,8 +277,6 @@ function App() {
         bodyColor,
         backgroundColor,
         liveryExteriorOnly,
-        ytdPath: ytdPath || "",
-        // Multi-model state
         dualModelAPath: dualModelAPath || "",
         dualModelBPath: dualModelBPath || "",
         dualTextureAPath: dualTextureAPath || "",
@@ -345,7 +294,7 @@ function App() {
   }, [
     isBooting, showOnboarding, textureMode,
     modelPath, texturePath, windowTexturePath, windowTemplateEnabled,
-    bodyColor, backgroundColor, liveryExteriorOnly, ytdPath,
+    bodyColor, backgroundColor, liveryExteriorOnly,
     dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
     dualModelAPos, dualModelBPos, dualSelectedSlot, dualTextureMode,
   ]);
@@ -376,15 +325,8 @@ function App() {
     setLiveryLabel(info?.liveryLabel || "");
     setWindowLiveryTarget(info?.windowTarget || "");
     setWindowLiveryLabel(info?.windowLabel || "");
-    // Extras
-    const extras = info?.extras ?? [];
-    setModelExtras(extras);
-    const extrasEnabled = getInitialDefaults().extrasDefaultEnabled ?? true;
-    setHiddenExtras(extrasEnabled ? [] : extras.map((e) => e.name));
-    // Reset manual glass override when a new model is loaded
     setLiveryWindowOverride((prev) => {
       if (!prev) return prev;
-      // Only reset if the previous override is not in the new targets
       return targets.some((target) => target.value === prev) ? prev : "";
     });
     setTextureTarget((prev) => {
@@ -481,9 +423,7 @@ function App() {
 
   const restoreSession = useCallback((session) => {
     if (!session) return;
-    // Restore texture mode
     if (session.textureMode) setTextureMode(session.textureMode);
-    // Standard viewer
     if (session.modelPath) loadModel(session.modelPath);
     if (session.texturePath) setTexturePath(session.texturePath);
     if (session.windowTexturePath) setWindowTexturePath(session.windowTexturePath);
@@ -491,7 +431,6 @@ function App() {
     if (session.bodyColor) setBodyColor(session.bodyColor);
     if (session.backgroundColor) setBackgroundColor(session.backgroundColor);
     if (typeof session.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(session.liveryExteriorOnly);
-    // Multi-model
     if (session.dualModelAPath) setDualModelAPath(session.dualModelAPath);
     if (session.dualModelBPath) setDualModelBPath(session.dualModelBPath);
     if (session.dualTextureAPath) setDualTextureAPath(session.dualTextureAPath);
@@ -500,7 +439,6 @@ function App() {
     if (session.dualTextureMode) setDualTextureMode(session.dualTextureMode);
     if (session.dualModelAPos) setDualModelAPos(session.dualModelAPos);
     if (session.dualModelBPos) setDualModelBPos(session.dualModelBPos);
-    // Dismiss prompt
     setSessionPromptDismissed(true);
     setPendingSession(null);
   }, [loadModel]);
@@ -637,262 +575,22 @@ function App() {
     }
   };
 
-  // Decode specific YTD textures by name. Reuses a persistent worker
-  // to avoid worker creation overhead and to benefit from the worker's
-  // internal decompression/metadata cache across successive decode calls.
-  const decodeYtdTextures = useCallback(async (names) => {
-    const rawBytes = ytdBytesRef.current;
-    if (!rawBytes || names.length === 0) return {};
-
-    // Lazily create the persistent decode worker
-    if (!ytdDecodeWorkerRef.current) {
-      ytdDecodeWorkerRef.current = new YtdWorker();
-    }
-    const worker = ytdDecodeWorkerRef.current;
-
-    return new Promise((resolve, reject) => {
-      // Temporarily override handlers for this request
-      const prevOnMessage = worker.onmessage;
-      const prevOnError = worker.onerror;
-
-      worker.onmessage = (e) => {
-        // Restore previous handlers
-        worker.onmessage = prevOnMessage;
-        worker.onerror = prevOnError;
-        if (e.data.error) reject(new Error(e.data.error));
-        else resolve(e.data.textures || {});
-      };
-      worker.onerror = (err) => {
-        worker.onmessage = prevOnMessage;
-        worker.onerror = prevOnError;
-        // Worker errored fatally — recreate it next time
-        ytdDecodeWorkerRef.current = null;
-        reject(err);
-      };
-      // Send a copy of the bytes (slice) so the original stays available
-      const copy = rawBytes.slice(0);
-      worker.postMessage({ type: "decode", bytes: copy, names }, [copy]);
-    });
-  }, []);
-
-  // ─── Load bundled shared YTD texture dictionaries (vehshare, etc.) ───
-  // Called once when the first model-specific YTD is loaded. These provide
-  // fallback textures that nearly all GTA V vehicles reference.
-  const loadSharedYtds = useCallback(async () => {
-    if (sharedYtdLoadedRef.current || sharedYtdLoadingRef.current) return;
-    sharedYtdLoadingRef.current = true;
-
-    try {
-      const manifestRes = await fetch("/shared-ytd/manifest.json");
-      if (!manifestRes.ok) {
-        console.warn("[SharedYTD] No manifest found — skipping shared textures");
-        return;
+  const loadModelRef = useRef(loadModel);
+  loadModelRef.current = loadModel;
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    let unlisten;
+    listen("file-open", (event) => {
+      const filePath = event.payload;
+      if (typeof filePath !== "string" || !filePath) return;
+      const lower = filePath.toLowerCase();
+      if (lower.endsWith(".yft") || lower.endsWith(".ydd") || lower.endsWith(".dff") || lower.endsWith(".clmesh")) {
+        loadModelRef.current(filePath);
       }
-      const filenames = await manifestRes.json();
-      if (!Array.isArray(filenames) || filenames.length === 0) return;
+    }).then((fn) => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
+  }, [isTauriRuntime]);
 
-      console.log("[SharedYTD] Loading", filenames.length, "shared YTD files...");
-      const merged = {};
-
-      for (const filename of filenames) {
-        try {
-          const res = await fetch(`/shared-ytd/${filename}`);
-          if (!res.ok) {
-            console.warn(`[SharedYTD] Failed to fetch ${filename}:`, res.status);
-            continue;
-          }
-          const arrayBuf = await res.arrayBuffer();
-          const bytes = new Uint8Array(arrayBuf);
-
-          // Parse metadata-only in a worker (same as regular YTD loading)
-          const textures = await new Promise((resolve, reject) => {
-            const worker = new YtdWorker();
-            worker.onmessage = (e) => {
-              worker.terminate();
-              if (e.data.error) reject(new Error(e.data.error));
-              else resolve(e.data.textures);
-            };
-            worker.onerror = (err) => {
-              worker.terminate();
-              reject(err);
-            };
-            const copy = arrayBuf.slice(0);
-            worker.postMessage({ type: "parse", bytes: copy }, [copy]);
-          });
-
-          if (textures && Object.keys(textures).length > 0) {
-            for (const [name, tex] of Object.entries(textures)) {
-              merged[name] = { ...tex, sourceYtd: filename };
-            }
-            console.log(`[SharedYTD] ${filename}: ${Object.keys(textures).length} textures`);
-          }
-        } catch (err) {
-          console.warn(`[SharedYTD] Error loading ${filename}:`, err);
-        }
-      }
-
-      if (Object.keys(merged).length > 0) {
-        setSharedYtdTextures(merged);
-        sharedYtdLoadedRef.current = true;
-        console.log("[SharedYTD] Total shared textures loaded:", Object.keys(merged).length);
-      }
-    } catch (err) {
-      console.warn("[SharedYTD] Failed to load shared textures:", err);
-    } finally {
-      sharedYtdLoadingRef.current = false;
-    }
-  }, []);
-  loadSharedYtdsRef.current = loadSharedYtds;
-
-  // Decode shared YTD textures by name — fetches the source .ytd file,
-  // decodes only the requested textures, and returns them.
-  const decodeSharedYtdTextures = useCallback(async (names) => {
-    if (!sharedYtdTextures || names.length === 0) return {};
-
-    // Build case-insensitive lookup for shared textures
-    const lowerLookup = {};
-    for (const [k, v] of Object.entries(sharedYtdTextures)) {
-      lowerLookup[k.toLowerCase()] = { ...v, originalKey: k };
-    }
-
-    // Group requested names by their source YTD file
-    const bySource = {};
-    for (const name of names) {
-      const entry = lowerLookup[name.toLowerCase()];
-      if (!entry?.sourceYtd) continue;
-      if (!bySource[entry.sourceYtd]) bySource[entry.sourceYtd] = [];
-      bySource[entry.sourceYtd].push(entry.originalKey || name);
-    }
-
-    const allDecoded = {};
-    for (const [filename, texNames] of Object.entries(bySource)) {
-      try {
-        const res = await fetch(`/shared-ytd/${filename}`);
-        if (!res.ok) continue;
-        const arrayBuf = await res.arrayBuffer();
-
-        const decoded = await new Promise((resolve, reject) => {
-          const worker = new YtdWorker();
-          worker.onmessage = (e) => {
-            worker.terminate();
-            if (e.data.error) reject(new Error(e.data.error));
-            else resolve(e.data.textures || {});
-          };
-          worker.onerror = (err) => {
-            worker.terminate();
-            reject(err);
-          };
-          const copy = arrayBuf.slice(0);
-          worker.postMessage({ type: "decode", bytes: copy, names: texNames }, [copy]);
-        });
-
-        Object.assign(allDecoded, decoded);
-      } catch (err) {
-        console.warn(`[SharedYTD] Decode error for ${filename}:`, err);
-      }
-    }
-    return allDecoded;
-  }, [sharedYtdTextures]);
-
-  const loadYtd = async (path) => {
-    setYtdLoading(true);
-    try {
-      const bytes = await readFile(path);
-      // Keep the raw bytes for on-demand texture decoding later
-      ytdBytesRef.current = bytes.buffer;
-
-      // Phase 1: metadata-only parse in a Web Worker (fast, no RGBA decoding)
-      const textures = await new Promise((resolve, reject) => {
-        const worker = new YtdWorker();
-        worker.onmessage = (e) => {
-          worker.terminate();
-          if (e.data.error) reject(new Error(e.data.error));
-          else resolve(e.data.textures);
-        };
-        worker.onerror = (err) => {
-          worker.terminate();
-          reject(err);
-        };
-        // Send a copy so the original ref stays usable for Phase 2
-        const copy = bytes.buffer.slice(0);
-        worker.postMessage({ type: "parse", bytes: copy }, [copy]);
-      });
-      if (textures && Object.keys(textures).length > 0) {
-        const categorized = categorizeTextures(textures);
-        setYtdPath(path);
-        setYtdTextures(categorized);
-        setYtdRawTextures(textures);
-        setYtdOverrides({});
-        console.log("[YTD] Loaded textures:", Object.keys(textures));
-        // Trigger shared YTD loading alongside the model-specific YTD
-        loadSharedYtds();
-      } else {
-        // Only show error dialog if explicit user action, but for auto-load just log
-        console.warn("No textures found in YTD file:", path);
-      }
-    } catch (err) {
-      console.error("[YTD] Load error:", err);
-    } finally {
-      setYtdLoading(false);
-    }
-  };
-
-  const selectYtd = async () => {
-    if (!isTauriRuntime) {
-      setDialogError("Tauri runtime required for file dialog.");
-      return;
-    }
-    try {
-      const selected = await open({
-        filters: [{ name: "Texture Dictionary", extensions: ["ytd"] }],
-      });
-      setDialogError("");
-      if (typeof selected === "string") {
-        await loadYtd(selected);
-      }
-    } catch (error) {
-      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
-      console.error(error);
-    }
-  };
-
-  const clearYtd = () => {
-    setYtdPath("");
-    setYtdTextures(null);
-    setYtdRawTextures(null);
-    setYtdMappingMeta(null);
-    setYtdOverrides({});
-    ytdBytesRef.current = null;
-    // Terminate the persistent decode worker to free memory
-    if (ytdDecodeWorkerRef.current) {
-      ytdDecodeWorkerRef.current.terminate();
-      ytdDecodeWorkerRef.current = null;
-    }
-  };
-
-  // YTD override handler — user changed a texture's material assignment in the browser
-  const handleYtdOverride = useCallback((textureName, materialName) => {
-    setYtdOverrides((prev) => {
-      const next = { ...prev };
-      if (materialName === null) {
-        // Unassign — store explicit null
-        next[textureName] = null;
-      } else {
-        next[textureName] = materialName;
-      }
-      return next;
-    });
-    // Update the local meta so the modal reflects it instantly
-    setYtdMappingMeta((prev) => {
-      if (!prev?.assignments) return prev;
-      const updated = prev.assignments.map((a) =>
-        a.textureName === textureName ? { ...a, materialName: materialName } : a
-      );
-      return { ...prev, assignments: updated };
-    });
-  }, []);
-
-  // Dual-model file selectors
   const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
   const textureExtsDual = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai"];
 
@@ -922,21 +620,17 @@ function App() {
     } catch { /* dialog blocked */ }
   };
 
-  // Keep refs updated for hotkey handler
   selectModelRef.current = selectModel;
   selectTextureRef.current = selectTexture;
   selectWindowTextureRef.current = selectWindowTexture;
 
-  // Hotkey event handler
   useEffect(() => {
     const handleKeyDown = (event) => {
-      // Ignore if typing in an input
       const target = event.target;
       if (target instanceof Element) {
         const tag = target.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
         if (target.isContentEditable) return;
-        // Ignore if a hotkey input is capturing
         if (target.classList.contains("hotkey-input")) return;
       }
 
@@ -1137,7 +831,6 @@ function App() {
     windowTextureTarget === "auto"
       ? windowLiveryTarget || "none"
       : windowTextureTarget || "none";
-  // In livery mode: prioritize manual override, then configured default, then none
   const resolvedWindowTextureTarget =
     textureMode === "livery"
       ? liveryWindowOverride || resolvedWindowBaseTarget
@@ -1174,20 +867,6 @@ function App() {
       : textureTargets.find((target) => target.value === textureTarget)?.label || "Custom target";
   const targetingLabel = textureMode === "livery" ? (liveryTarget ? "Auto" : "No target") : manualTargetLabel;
   const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
-  const extrasLabel = modelExtras.length === 0
-    ? "No extras"
-    : `${modelExtras.length - hiddenExtras.length}/${modelExtras.length} visible`;
-
-  const toggleExtra = useCallback((extraName) => {
-    setHiddenExtras((prev) =>
-      prev.includes(extraName)
-        ? prev.filter((n) => n !== extraName)
-        : [...prev, extraName]
-    );
-  }, []);
-
-  const showAllExtras = useCallback(() => setHiddenExtras([]), []);
-  const hideAllExtras = useCallback(() => setHiddenExtras(modelExtras.map((e) => e.name)), [modelExtras]);
 
   return (
     <motion.div
@@ -1393,53 +1072,6 @@ function App() {
               </div>
               {modelLoading ? <div className="text-[10px] text-[#7dd3fc] animate-pulse">Initializing construct...</div> : null}
             </div>
-            {experimentalSettings && textureMode !== "multi" ? (
-              <CyberCard className="mt-2">
-                <div className="flex items-center justify-between mb-2">
-                  <CyberLabel className="mb-0">YTD Textures</CyberLabel>
-                  {ytdTextures ? (
-                    <span className="text-[9px] font-mono text-[#a78bfa]">
-                      {Object.keys(ytdTextures.diffuse).length}D {Object.keys(ytdTextures.normal).length}N {Object.keys(ytdTextures.specular).length}S
-                    </span>
-                  ) : null}
-                </div>
-                <div className="flex gap-1.5 mb-2">
-                  <CyberButton
-                    variant="purple"
-                    className="flex-1 h-7 text-[9px]"
-                    onClick={selectYtd}
-                    disabled={ytdLoading}
-                  >
-                    <FolderOpen className="h-3 w-3 mr-1.5" />
-                    {ytdLoading ? "Loading…" : "Load YTD"}
-                  </CyberButton>
-                  {ytdPath ? (
-                    <CyberButton
-                      variant="ghost"
-                      className="h-7 px-2 text-[#a78bfa]/60 hover:text-[#a78bfa]"
-                      onClick={clearYtd}
-                      title="Unload YTD"
-                    >
-                      <X className="h-3 w-3" />
-                      Unload
-                    </CyberButton>
-                  ) : null}
-                  {ytdRawTextures ? (
-                    <CyberButton
-                      variant="ghost"
-                      className="h-7 px-2 text-[#a78bfa]/60 hover:text-[#a78bfa]"
-                      onClick={() => setYtdBrowserOpen(true)}
-                      title={`View Textures${ytdMappingMeta?.assignments?.length ? ` (${ytdMappingMeta.assignments.length})` : ""}`}
-                    >
-                      <Eye className="h-3 w-3" />
-                      Browse
-                    </CyberButton>
-                  ) : null}
-                </div>
-                {ytdPath ? <div className="px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{ytdPath.split(/[\\/]/).pop()}</div> : null}
-                {!ytdPath ? <div className="text-[9px] text-[#a78bfa]/50 mt-1">Auto-maps diffuse, normal &amp; specular.</div> : null}
-              </CyberCard>
-            ) : null}
           </CyberSection>
 
           {textureMode === "livery" ? (
@@ -1840,62 +1472,6 @@ function App() {
             </div>
           ) : null}
 
-          <CyberSection
-            title="Extras"
-            caption={extrasLabel}
-            open={panelOpen.extras}
-            onToggle={() => togglePanel("extras")}
-            contentId="panel-extras"
-          >
-            {modelExtras.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <CyberLabel>Vehicle Extras</CyberLabel>
-                  <div className="flex gap-1">
-                    <button
-                      type="button"
-                      className="text-[8px] text-[rgba(230,235,244,0.5)] hover:text-[rgba(230,235,244,0.9)] px-1.5 py-0.5 rounded border border-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.2)] transition-colors uppercase tracking-wider"
-                      style={{ fontFamily: "var(--font-hud)" }}
-                      onClick={showAllExtras}
-                    >
-                      All
-                    </button>
-                    <button
-                      type="button"
-                      className="text-[8px] text-[rgba(230,235,244,0.5)] hover:text-[rgba(230,235,244,0.9)] px-1.5 py-0.5 rounded border border-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.2)] transition-colors uppercase tracking-wider"
-                      style={{ fontFamily: "var(--font-hud)" }}
-                      onClick={hideAllExtras}
-                    >
-                      None
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  {modelExtras.map((extra) => {
-                    const isVisible = !hiddenExtras.includes(extra.name);
-                    return (
-                      <div key={extra.name} className="flex items-center justify-between py-0.5">
-                        <span className="text-[10px] text-[rgba(230,235,244,0.75)]" style={{ fontFamily: "var(--font-hud)" }}>{extra.label}</span>
-                        <button
-                          type="button"
-                          className={`w-7 h-3.5 rounded-full relative transition-colors ${isVisible ? "bg-[#7dd3fc]/25" : "bg-[rgba(255,255,255,0.08)]"}`}
-                          onClick={() => toggleExtra(extra.name)}
-                          aria-pressed={isVisible}
-                          aria-label={`Toggle ${extra.label}`}
-                        >
-                          <div className={`absolute top-[2px] w-2.5 h-2.5 rounded-full transition-all ${isVisible ? "left-[14px] bg-[#7dd3fc]" : "left-[2px] bg-[rgba(230,235,244,0.35)]"}`} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <div className="text-[10px] text-[rgba(230,235,244,0.35)]" style={{ fontFamily: "var(--font-hud)" }}>
-                No extras detected. Load a model with vehicle extras.
-              </div>
-            )}
-          </CyberSection>
 
           <CyberSection
             title="Colors"
@@ -2085,15 +1661,8 @@ function App() {
             textureMode={textureMode}
             wasdEnabled={cameraWASD}
             liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
-            ytdTextures={experimentalSettings ? ytdTextures : null}
-            ytdRawTextures={experimentalSettings ? ytdRawTextures : null}
-            ytdOverrides={experimentalSettings ? ytdOverrides : {}}
-            decodeYtdTextures={experimentalSettings ? decodeYtdTextures : null}
-            sharedYtdTextures={experimentalSettings ? sharedYtdTextures : null}
-            decodeSharedYtdTextures={experimentalSettings ? decodeSharedYtdTextures : null}
             lightIntensity={lightIntensity}
             glossiness={glossiness}
-            hiddenExtras={hiddenExtras}
             onModelInfo={handleModelInfo}
             onModelError={handleModelError}
             onModelLoading={handleModelLoading}
@@ -2105,8 +1674,6 @@ function App() {
             onTextureError={handleTextureError}
             onWindowTextureError={handleWindowTextureError}
             onFormatWarning={handleFormatWarning}
-            onYtdMappingUpdate={experimentalSettings ? setYtdMappingMeta : undefined}
-            onYtdFound={experimentalSettings ? loadYtd : undefined}
           />
         )}
 
@@ -2506,18 +2073,6 @@ function App() {
         ) : null}
       </AnimatePresence>
 
-      {/* YTD Texture Browser Modal */}
-      {experimentalSettings ? (
-        <YtdBrowser
-          open={ytdBrowserOpen}
-          onClose={() => setYtdBrowserOpen(false)}
-          rawTextures={ytdRawTextures}
-          categorizedTextures={ytdTextures}
-          mappingMeta={ytdMappingMeta}
-          materialNames={ytdMappingMeta?.materialNames || []}
-          onOverride={handleYtdOverride}
-        />
-      ) : null}
     </motion.div>
   );
 }

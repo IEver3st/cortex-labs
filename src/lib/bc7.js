@@ -1,21 +1,7 @@
-/**
- * BC7 (BPTC) Texture Block Decoder — spec-compliant implementation.
- *
- * Reference: richgel999/bc7enc  bc7decomp.cpp (MIT license)
- * https://github.com/richgel999/bc7enc/blob/master/bc7decomp.cpp
- *
- * BC7 encodes 4×4 pixel blocks in 128 bits (16 bytes).
- * There are 8 modes (0–7), each with different numbers of subsets,
- * endpoint precision, index precision, and optional alpha.
- */
-
-// ── Interpolation weight tables ──
 const W2 = [0, 21, 43, 64];
 const W3 = [0, 9, 18, 27, 37, 46, 55, 64];
 const W4 = [0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64];
 
-// ── Partition tables (flat per-pixel, from bc7decomp.cpp) ──
-// 2-subset: 64 partitions × 16 pixels, values 0 or 1
 /* eslint-disable */
 const P2 = new Uint8Array([
   0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1, 0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,
@@ -52,7 +38,6 @@ const P2 = new Uint8Array([
   0,0,1,0,0,0,1,0,1,1,1,0,1,1,1,0, 0,1,0,0,0,1,0,0,0,1,1,1,0,1,1,1,
 ]);
 
-// 3-subset: 64 partitions × 16 pixels, values 0, 1, or 2
 const P3 = new Uint8Array([
   0,0,1,1,0,0,1,1,0,2,2,1,2,2,2,2, 0,0,0,1,0,0,1,1,2,2,1,1,2,2,2,1,
   0,0,0,0,2,0,0,1,2,2,1,1,2,2,1,1, 0,2,2,2,0,0,2,2,0,0,1,1,0,1,1,1,
@@ -89,7 +74,6 @@ const P3 = new Uint8Array([
 ]);
 /* eslint-enable */
 
-// Anchor index tables
 const ANCHOR2 = new Uint8Array([
   15,15,15,15,15,15,15,15, 15,15,15,15,15,15,15,15,
   15, 2, 8, 2, 2, 8, 8,15,  2, 8, 2, 2, 8, 8, 2, 2,
@@ -111,9 +95,6 @@ const ANCHOR3B = new Uint8Array([
   15, 3,15,15,15,15,15,15, 15,15,15,15, 3,15,15, 8,
 ]);
 
-// ── Mode table ──
-// ns=subsets, pb=partBits, rb=rotBits, isb=idxSelBit, cb=colorBits, ab=alphaBits,
-// epb=endpointPBits, spb=sharedPBits, ib=indexBits, ib2=secondIndexBits
 const MODES = [
   { ns:3, pb:4, rb:0, isb:0, cb:4, ab:0, epb:1, spb:0, ib:3, ib2:0 },
   { ns:2, pb:6, rb:0, isb:0, cb:6, ab:0, epb:0, spb:1, ib:3, ib2:0 },
@@ -125,7 +106,6 @@ const MODES = [
   { ns:2, pb:6, rb:0, isb:0, cb:5, ab:5, epb:1, spb:0, ib:2, ib2:0 },
 ];
 
-// ── Bit reader ──
 function readBits(block, pos, count) {
   let val = 0;
   for (let i = 0; i < count; i++) {
@@ -136,7 +116,6 @@ function readBits(block, pos, count) {
 }
 
 function dequant(val, pbit, totalBits) {
-  // totalBits = endpoint bits + 1 (for p-bit)
   val = (val << 1) | pbit;
   val <<= (8 - totalBits);
   val |= (val >>> totalBits);
@@ -153,15 +132,10 @@ function interp(l, h, w) {
   return (l * (64 - w) + h * w + 32) >> 6;
 }
 
-/**
- * Decode a single BC7 block into the RGBA output buffer.
- */
 export function decodeBC7Block(block, bx, by, width, height, rgba) {
-  // Find mode
   let mode = 0;
   while (mode < 8 && ((block[0] >> mode) & 1) === 0) mode++;
   if (mode >= 8) {
-    // Reserved mode — fill black
     for (let py = 0; py < 4; py++) for (let px = 0; px < 4; px++) {
       const x = bx*4+px, y = by*4+py;
       if (x >= width || y >= height) continue;
@@ -172,14 +146,12 @@ export function decodeBC7Block(block, bx, by, width, height, rgba) {
   }
 
   const m = MODES[mode];
-  let bp = mode + 1; // bit position (skip mode bits)
+  let bp = mode + 1;
 
   const part = readBits(block, bp, m.pb); bp += m.pb;
   const rot = readBits(block, bp, m.rb); bp += m.rb;
   const idxSel = readBits(block, bp, m.isb); bp += m.isb;
 
-  // Read endpoints: [subset][endpoint][channel]
-  // Channels: R, G, B then A
   const numEP = m.ns * 2;
   const ep = new Array(numEP);
   for (let i = 0; i < numEP; i++) ep[i] = [0, 0, 0, 255];
@@ -193,14 +165,12 @@ export function decodeBC7Block(block, bx, by, width, height, rgba) {
       ep[e][3] = readBits(block, bp, m.ab); bp += m.ab;
     }
 
-  // Read p-bits
   const numPBits = m.epb ? numEP : (m.spb ? m.ns : 0);
   const pbits = new Uint8Array(numPBits);
   for (let i = 0; i < numPBits; i++) {
     pbits[i] = readBits(block, bp, 1); bp += 1;
   }
 
-  // Dequantize endpoints
   const hasPBit = m.epb > 0 || m.spb > 0;
   const cBits = m.cb + (hasPBit ? 1 : 0);
   const aBits = m.ab > 0 ? m.ab + (hasPBit ? 1 : 0) : 0;
@@ -215,7 +185,6 @@ export function decodeBC7Block(block, bx, by, width, height, rgba) {
     }
   }
 
-  // Read indices
   const wt1 = m.ib === 2 ? W2 : m.ib === 3 ? W3 : W4;
   const wt2 = m.ib2 === 0 ? null : m.ib2 === 2 ? W2 : W3;
 
@@ -237,11 +206,9 @@ export function decodeBC7Block(block, bx, by, width, height, rgba) {
     }
   }
 
-  // Partition table lookup
   const ptable = m.ns === 3 ? P3 : P2;
   const poff = part * 16;
 
-  // Write pixels
   for (let py = 0; py < 4; py++) for (let px = 0; px < 4; px++) {
     const x = bx*4+px, y = by*4+py;
     if (x >= width || y >= height) continue;
@@ -270,7 +237,6 @@ export function decodeBC7Block(block, bx, by, width, height, rgba) {
       }
     }
 
-    // Rotation
     if (rot === 1) { const t = a; a = r; r = t; }
     else if (rot === 2) { const t = a; a = g; g = t; }
     else if (rot === 3) { const t = a; a = b; b = t; }

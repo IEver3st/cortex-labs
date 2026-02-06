@@ -13,7 +13,6 @@ export default function HotkeyInput({ value, onChange, onClear }) {
       event.preventDefault();
       event.stopPropagation();
 
-      // Escape cancels capture
       if (event.key === "Escape") {
         setIsCapturing(false);
         setTempValue(null);
@@ -21,7 +20,6 @@ export default function HotkeyInput({ value, onChange, onClear }) {
         return;
       }
 
-      // Ignore lone modifier keys
       if (["Control", "Alt", "Shift", "Meta"].includes(event.key)) {
         return;
       }
@@ -34,7 +32,6 @@ export default function HotkeyInput({ value, onChange, onClear }) {
         setIsCapturing(false);
         inputRef.current?.blur();
       } else {
-        // Show temporary invalid state
         setTempValue({ ...parsed, invalid: true });
       }
     },
