@@ -1,8 +1,6 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChevronRight } from "lucide-react";
-import { cn } from "../lib/utils";
-
 function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
 }

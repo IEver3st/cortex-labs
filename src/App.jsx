@@ -580,6 +580,7 @@ function App() {
   useEffect(() => {
     if (!isTauriRuntime) return;
     let unlisten;
+    let cancelled = false;
     listen("file-open", (event) => {
       const filePath = event.payload;
       if (typeof filePath !== "string" || !filePath) return;
@@ -587,8 +588,14 @@ function App() {
       if (lower.endsWith(".yft") || lower.endsWith(".ydd") || lower.endsWith(".dff") || lower.endsWith(".clmesh")) {
         loadModelRef.current(filePath);
       }
-    }).then((fn) => { unlisten = fn; });
-    return () => { if (unlisten) unlisten(); };
+    }).then((fn) => {
+      if (cancelled) { fn(); }
+      else { unlisten = fn; }
+    });
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
   }, [isTauriRuntime]);
 
   const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
