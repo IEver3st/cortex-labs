@@ -4,6 +4,7 @@
  */
 
 import { inflate, inflateRaw } from "pako";
+import { parseTextureDictionary } from "./ytd";
 
 const RSC7_MAGIC = 0x37435352;
 const RSC85_MAGIC = 0x38355352;
@@ -682,11 +683,23 @@ function parseDrawable(reader, offset, name) {
     const shaderGroupPtr = reader.u64(baseOffset + ptrOffset);
     if (reader.validPtr(shaderGroupPtr)) {
       const shaderGroupOffset = reader.resolvePtr(shaderGroupPtr);
-      const shaders = parseShaderGroup(reader, shaderGroupOffset);
-      if (shaders.length > 0) {
-        drawable.shaders = shaders;
-        break;
-      }
+    const shaders = parseShaderGroup(reader, shaderGroupOffset);
+      
+    // Extract embedded textures from the ShaderGroup's TextureDictionary
+    // Offset 0x08 in ShaderGroup is the pointer to TextureDictionary
+    const textureDictPtr = reader.u64(shaderGroupOffset + 0x08);
+    let embeddedTextures = null;
+    if (reader.validPtr(textureDictPtr)) {
+      const textureDictOffset = reader.resolvePtr(textureDictPtr);
+      // Parse using the YTD parser's logic, passing the explicit offset
+      embeddedTextures = parseTextureDictionary(reader, false, null, textureDictOffset);
+    }
+      
+    if (shaders.length > 0) {
+      drawable.shaders = shaders;
+      drawable.embeddedTextures = embeddedTextures;
+      break;
+    }
     }
   }
 
@@ -749,12 +762,48 @@ function parseShaderGroup(reader, offset) {
   const shadersArrayOffset = reader.resolvePtr(shadersPtr);
   for (let i = 0; i < count; i++) {
     const shaderPtr = reader.u64(shadersArrayOffset + i * 8);
-    if (!reader.validPtr(shaderPtr)) continue;
+    if (!reader.validPtr(shaderPtr)) {
+      shaders[i] = null;
+      continue;
+    }
     const shaderOffset = reader.resolvePtr(shaderPtr);
     const shader = parseShader(reader, shaderOffset, i);
-    if (shader) shaders.push(shader);
+    shaders[i] = shader;  // index-aligned — shaderMapping[i] must match shaders[i]
   }
   return shaders;
+}
+
+function parseShader(reader, offset, index) {
+  // CodeWalker ShaderFX (BlockLength = 48, legacy):
+  //   0x00: ParametersPointer (u64) — pgPtr to ShaderParametersBlock
+  //   0x08: Name (u32) — shader type hash (joaat)
+  //   0x0C: Unknown_Ch (u32)
+  //   0x10: ParameterCount (u8)
+  //   0x11: RenderBucket (u8)
+  //   0x12: Unknown_12h (u16)
+  //   0x14: ParameterSize (u16)
+  //   0x16: ParameterDataSize (u16)
+  //   0x18: FileName (u32) — hash of .sps filename
+  //   0x1C: Unknown_1Ch (u32)
+  //   0x20: RenderBucketMask (u32)
+  //   0x24: Unknown_24h (u16)
+  //   0x26: Unknown_26h (u8)
+  //   0x27: TextureParametersCount (u8)
+  //   0x28: Unknown_28h (u64)
+  if (!reader.valid(offset) || offset + 48 > reader.len) return null;
+  const nameHash = reader.u32(offset + 0x08) >>> 0;
+  const hashHex = nameHash.toString(16).padStart(8, "0");
+
+  // Extract texture references from shader parameters
+  const textureRefs = extractShaderTextureRefs(reader, offset);
+
+  return {
+    index,
+    nameHash,
+    name: identifyMaterialName(nameHash, hashHex),
+    hashHex,
+    textureRefs,   // { diffuse: "texturename", normal: "texturename_n", ... }
+  };
 }
 
 // Well-known shader parameter name hashes (joaat) for texture samplers
@@ -797,79 +846,117 @@ function readCString(reader, offset, maxLen = 256) {
   return str || null;
 }
 
-function parseShader(reader, offset, index) {
-  // GTA V ShaderFX structure (from CodeWalker reverse-engineering):
-  //   0x00: VTablePtr (8 bytes)
-  //   0x08: NameHash (4 bytes) — shader type hash (joaat)
-  //   0x10: ParametersPtr (8 bytes) — pgPtr to array of parameter value pointers
-  //   0x18: (8 bytes) — varies
-  //   0x20: ParameterTypesPtr (8 bytes) — pointer to param type descriptors (optional)
-  //   0x28-0x2F: varies (RenderBucketMask, etc.)
-  //   0x30: ParameterCount (at different sub-offsets depending on version)
-  if (!reader.valid(offset) || offset + 48 > reader.len) return null;
-  const nameHash = reader.u32(offset + 0x08) >>> 0;
-  const hashHex = nameHash.toString(16).padStart(8, "0");
-
-  // Extract texture references from shader parameters
-  const textureRefs = extractShaderTextureRefs(reader, offset);
-
-  return {
-    index,
-    nameHash,
-    name: identifyMaterialName(nameHash, hashHex),
-    hashHex,
-    textureRefs,   // { diffuse: "texturename", normal: "texturename_n", ... }
-  };
-}
-
 /**
  * Extract texture name references from a ShaderFX's parameter list.
  *
- * The ShaderFX stores a pointer array where each entry points to either a
- * texture structure or a vector/scalar value. Texture entries are identified
- * by probing for a valid name string pointer at the texture struct's 0x28
- * offset (same layout as grcTexture).
+ * CodeWalker ShaderParametersBlock (legacy) layout:
+ *   1. Array of Count × ShaderParameter structs (each 16 bytes):
+ *      { DataType(u8), Unknown_1h(u8), Unknown_2h(u16), Unknown_4h(u32), DataPointer(u64) }
+ *      DataType=0 → texture (DataPointer → TextureBase)
+ *      DataType≥1 → vector4 data (DataType = number of Vector4s)
+ *   2. Inline vector4 data (size = sum of 16*DataType for each param where DataType≥1)
+ *   3. Array of Count × u32 name hashes (joaat of parameter name, e.g. DiffuseSampler)
  *
- * We also know the parameter name hashes from a separate type descriptor
- * array.  Combining both lets us map DiffuseSampler → "texture_name".
+ * The hashes at step 3 identify which sampler each parameter corresponds to.
  */
 function extractShaderTextureRefs(reader, shaderOffset) {
   const textureRefs = {};
 
-  // The parameter value pointers array
-  const paramsPtr = reader.u64(shaderOffset + 0x10);
+  // ── ShaderFX layout (CodeWalker, BlockLength=48) ──
+  // 0x00: ParametersPointer (u64)
+  // 0x08: Name hash (u32)
+  // 0x10: ParameterCount (u8)
+  // 0x14: ParameterSize (u16) — equals (Count*16 + sum(16*DataType))
+  // 0x16: ParameterDataSize (u16)
+  // 0x27: TextureParametersCount (u8)
+  const paramsPtr = reader.u64(shaderOffset + 0x00);
   if (!reader.validPtr(paramsPtr)) return textureRefs;
   const paramsBase = reader.resolvePtr(paramsPtr);
 
-  // Try to find parameter count at various offsets
-  let paramCount = 0;
-  for (const countOff of [0x38, 0x3A, 0x30, 0x28]) {
-    const c = reader.u8(shaderOffset + countOff);
-    if (c > 0 && c < 64) { paramCount = c; break; }
+  let paramCount = reader.u8(shaderOffset + 0x10);
+  const texParamCount = reader.u8(shaderOffset + 0x27);
+  if (paramCount === 0 || paramCount > 64) paramCount = texParamCount;
+  if (paramCount === 0 || paramCount > 64) return textureRefs;
+
+  // ParameterSize from ShaderFX = (Count*16) + sum(16*DataType for each param)
+  // This is the exact offset from paramsBase to the hashes array.
+  // CodeWalker: ParametersSize { get => (Count*16) + sum(16*DataType) }
+  const parameterSize = reader.u16(shaderOffset + 0x14);
+
+  // ── Step 1: Read ShaderParameter structs (each 16 bytes) ──
+  // Layout: { DataType(u8), Unknown_1h(u8), Unknown_2h(u16), Unknown_4h(u32), DataPointer(u64) }
+  const params = [];
+  let computedSize = 0;
+  for (let i = 0; i < paramCount; i++) {
+    const off = paramsBase + i * 16;
+    const dataType = reader.u8(off + 0x00);
+    const dataPtr = reader.u64(off + 0x08);
+    params.push({ dataType, dataPtr });
+    computedSize += 16; // struct itself
+    if (dataType >= 1) computedSize += 16 * dataType; // inline vector data
   }
-  if (paramCount === 0) {
-    // Try 16-bit count
-    for (const countOff of [0x38, 0x3A, 0x30]) {
-      const c = reader.u16(shaderOffset + countOff);
-      if (c > 0 && c < 64) { paramCount = c; break; }
+
+  // ── Step 2: Locate the hashes array ──
+  // Use ParameterSize from ShaderFX as the primary offset (most reliable).
+  // Fall back to computed size if ParameterSize looks wrong.
+  let hashesOffset;
+  if (parameterSize > 0 && parameterSize >= paramCount * 16) {
+    hashesOffset = paramsBase + parameterSize;
+  } else {
+    hashesOffset = paramsBase + computedSize;
+  }
+
+  // Diagnostic: log first shader's layout
+  if (!extractShaderTextureRefs._logged) {
+    extractShaderTextureRefs._logged = true;
+    const sampleHashes = [];
+    for (let i = 0; i < Math.min(paramCount, 8); i++) {
+      sampleHashes.push("0x" + (reader.u32(hashesOffset + i * 4) >>> 0).toString(16).padStart(8, "0"));
     }
+    console.log("[YFT] ShaderParams diagnostic:", {
+      paramCount,
+      texParamCount,
+      parameterSize,
+      computedSize,
+      hashesViaParamSize: "0x" + (paramsBase + parameterSize).toString(16),
+      hashesViaComputed: "0x" + (paramsBase + computedSize).toString(16),
+      dataTypes: params.map(p => p.dataType),
+    });
+    console.log("[YFT] Sample hashes:", sampleHashes);
+    console.log("[YFT] Expected DiffuseSampler=0x" + PARAM_DIFFUSE_SAMPLER.toString(16).padStart(8, "0"),
+                "BumpSampler=0x" + PARAM_BUMP_SAMPLER.toString(16).padStart(8, "0"),
+                "SpecSampler=0x" + PARAM_SPEC_SAMPLER.toString(16).padStart(8, "0"));
+
+    // Also try reading textures without hashes to verify TextureBase parsing works
+    let texFound = 0;
+    for (let i = 0; i < paramCount; i++) {
+      if (params[i].dataType !== 0) continue;
+      if (!reader.validPtr(params[i].dataPtr)) continue;
+      const voff = reader.resolvePtr(params[i].dataPtr);
+      const np = reader.u64(voff + 0x28);
+      if (!reader.validPtr(np)) continue;
+      const noff = reader.resolvePtr(np);
+      const name = readCString(reader, noff);
+      if (name) {
+        texFound++;
+        console.log(`[YFT] Param[${i}] DataType=0 → TextureBase name="${name}", hash=0x${(reader.u32(hashesOffset + i * 4) >>> 0).toString(16).padStart(8, "0")}`);
+      }
+    }
+    console.log(`[YFT] Found ${texFound} texture params out of ${paramCount} total`);
   }
-  if (paramCount === 0) return textureRefs;
 
-  // Try to read the parameter types/hashes array (identifies what each param is)
-  // This lives at a separate pointer, commonly at offset 0x20
-  const typesPtr = reader.u64(shaderOffset + 0x20);
-  const typesBase = reader.validPtr(typesPtr) ? reader.resolvePtr(typesPtr) : 0;
-
-  // Iterate parameter pointers: each is 8 bytes (a pgPtr to a value)
+  // ── Step 3: Read name hashes and match texture parameters ──
   for (let p = 0; p < paramCount; p++) {
-    const valuePtr = reader.u64(paramsBase + p * 8);
-    if (!reader.validPtr(valuePtr)) continue;
-    const valueOffset = reader.resolvePtr(valuePtr);
+    const { dataType, dataPtr } = params[p];
+
+    // Only process texture parameters (DataType === 0)
+    if (dataType !== 0) continue;
+    if (!reader.validPtr(dataPtr)) continue;
+
+    const valueOffset = reader.resolvePtr(dataPtr);
     if (valueOffset === 0) continue;
 
-    // Check if this value looks like a texture struct (grcTexture).
-    // Textures have a name string pointer at offset 0x28 and dimensions at 0x50.
+    // Read texture name from TextureBase.NamePointer at offset 0x28
     const texNamePtr = reader.u64(valueOffset + 0x28);
     if (!reader.validPtr(texNamePtr)) continue;
 
@@ -879,38 +966,13 @@ function extractShaderTextureRefs(reader, shaderOffset) {
     const texName = readCString(reader, texNameOffset);
     if (!texName || texName.length === 0) continue;
 
-    // Validate: texture structs also have dimensions at 0x50 — use as sanity check
-    const w = reader.u16(valueOffset + 0x50);
-    const h = reader.u16(valueOffset + 0x52);
-    if (w === 0 || h === 0 || w > 8192 || h > 8192) continue;
+    // Read the sampler name hash for this parameter
+    const nameHash = reader.u32(hashesOffset + p * 4) >>> 0;
 
-    // Determine the sampler role from the types array
-    let role = null;
-    if (typesBase > 0) {
-      // Each type descriptor is 16 bytes: { u8 type, u8 pad, u16 pad, u32 nameHash, ... }
-      // Or in some versions: 4-byte entries where each is just the nameHash
-      // Try 16-byte descriptors first
-      const paramNameHash16 = reader.u32(typesBase + p * 16 + 0x04) >>> 0;
-      role = SAMPLER_ROLE.get(paramNameHash16) || null;
+    // Determine the sampler role from the name hash
+    let role = SAMPLER_ROLE.get(nameHash) || null;
 
-      // Try 4-byte hash array
-      if (!role) {
-        const paramNameHash4 = reader.u32(typesBase + p * 4) >>> 0;
-        role = SAMPLER_ROLE.get(paramNameHash4) || null;
-      }
-
-      // Try 8-byte descriptors
-      if (!role) {
-        const paramNameHash8 = reader.u32(typesBase + p * 8 + 0x04) >>> 0;
-        role = SAMPLER_ROLE.get(paramNameHash8) || null;
-        if (!role) {
-          const paramNameHash8b = reader.u32(typesBase + p * 8) >>> 0;
-          role = SAMPLER_ROLE.get(paramNameHash8b) || null;
-        }
-      }
-    }
-
-    // If we couldn't identify the role from types, guess from the texture name itself
+    // If hash didn't match, guess from the texture name itself
     if (!role) {
       const lower = texName.toLowerCase();
       if (lower.endsWith("_n") || lower.includes("_normal") || lower.includes("_nrm") || lower.includes("bump")) {

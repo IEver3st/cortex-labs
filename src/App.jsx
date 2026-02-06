@@ -39,6 +39,19 @@ const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
 const MIN_LOADER_MS = 650;
 
+const SUPPORTED_TEXTURE_EXTS = ["png", "jpg", "jpeg", "psd"];
+
+function isTextureFormatSupported(filePath) {
+  if (!filePath) return true;
+  const ext = filePath.split(".").pop().toLowerCase();
+  return SUPPORTED_TEXTURE_EXTS.includes(ext);
+}
+
+function getFileExtension(filePath) {
+  if (!filePath) return "";
+  return filePath.split(".").pop().toLowerCase();
+}
+
 const BUILT_IN_DEFAULTS = {
   textureMode: "everything",
   liveryExteriorOnly: false,
@@ -50,6 +63,7 @@ const BUILT_IN_DEFAULTS = {
   experimentalSettings: false,
   showHints: true,
   hideRotText: false,
+  showGrid: false,
   lightIntensity: 1.0,
   glossiness: 0.5,
 };
@@ -83,7 +97,7 @@ function getFileLabel(path, emptyLabel) {
 
 function PanelSection({ title, caption, open, onToggle, contentId, children }) {
   return (
-    <div className={`panel-section ${open ? "is-open" : ""}`}>
+    <div className={`panel-section shrink-0 ${open ? "is-open" : ""}`}>
       <button
         type="button"
         className="panel-section-toggle"
@@ -101,7 +115,7 @@ function PanelSection({ title, caption, open, onToggle, contentId, children }) {
       </button>
       <div
         id={contentId}
-        className="panel-section-body"
+        className="panel-section-body shrink-0"
         hidden={!open}
         aria-hidden={!open}
       >
@@ -158,6 +172,7 @@ function App() {
   const [cameraWASD, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
   const [showHints, setShowHints] = useState(() => Boolean(getInitialDefaults().showHints ?? true));
   const [hideRotText, setHideRotText] = useState(() => Boolean(getInitialDefaults().hideRotText));
+  const [showGrid, setShowGrid] = useState(() => Boolean(getInitialDefaults().showGrid));
   const [windowLiveryTarget, setWindowLiveryTarget] = useState("");
   const [windowLiveryLabel, setWindowLiveryLabel] = useState("");
   const [liveryWindowOverride, setLiveryWindowOverride] = useState(""); // Manual override for glass material in livery mode
@@ -198,6 +213,7 @@ function App() {
   const [dualModelAError, setDualModelAError] = useState("");
   const [dualModelBError, setDualModelBError] = useState("");
   const [dualGizmoVisible, setDualGizmoVisible] = useState(true);
+  const [dualTextureMode, setDualTextureMode] = useState("livery");
 
   // YTD mapping results for the inline viewer
   const [ytdMappingMeta, setYtdMappingMeta] = useState(null);
@@ -322,6 +338,7 @@ function App() {
         dualModelAPos,
         dualModelBPos,
         dualSelectedSlot,
+        dualTextureMode,
       });
     }, 1000);
 
@@ -333,7 +350,7 @@ function App() {
     modelPath, texturePath, windowTexturePath, windowTemplateEnabled,
     bodyColor, backgroundColor, liveryExteriorOnly, ytdPath,
     dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
-    dualModelAPos, dualModelBPos, dualSelectedSlot,
+    dualModelAPos, dualModelBPos, dualSelectedSlot, dualTextureMode,
   ]);
 
   const scheduleReload = (kind) => {
@@ -424,6 +441,7 @@ function App() {
     setCameraWASD(Boolean(merged.cameraWASD));
     setShowHints(Boolean(merged.showHints ?? true));
     setHideRotText(Boolean(merged.hideRotText));
+    setShowGrid(Boolean(merged.showGrid));
     setBodyColor(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
     setExperimentalSettings(Boolean(merged.experimentalSettings));
@@ -474,6 +492,7 @@ function App() {
     if (session.dualTextureAPath) setDualTextureAPath(session.dualTextureAPath);
     if (session.dualTextureBPath) setDualTextureBPath(session.dualTextureBPath);
     if (session.dualSelectedSlot) setDualSelectedSlot(session.dualSelectedSlot);
+    if (session.dualTextureMode) setDualTextureMode(session.dualTextureMode);
     if (session.dualModelAPos) setDualModelAPos(session.dualModelAPos);
     if (session.dualModelBPos) setDualModelBPos(session.dualModelBPos);
     // Dismiss prompt
@@ -536,6 +555,10 @@ function App() {
       });
       setDialogError("");
       if (typeof selected === "string") {
+        if (!isTextureFormatSupported(selected)) {
+          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
         setTextureError("");
         setTexturePath(selected);
       }
@@ -596,6 +619,10 @@ function App() {
       });
       setDialogError("");
       if (typeof selected === "string") {
+        if (!isTextureFormatSupported(selected)) {
+          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
         setWindowTextureError("");
         setWindowTexturePath(selected);
       }
@@ -643,6 +670,47 @@ function App() {
     });
   }, []);
 
+  const loadYtd = async (path) => {
+    setYtdLoading(true);
+    try {
+      const bytes = await readFile(path);
+      // Keep the raw bytes for on-demand texture decoding later
+      ytdBytesRef.current = bytes.buffer;
+
+      // Phase 1: metadata-only parse in a Web Worker (fast, no RGBA decoding)
+      const textures = await new Promise((resolve, reject) => {
+        const worker = new YtdWorker();
+        worker.onmessage = (e) => {
+          worker.terminate();
+          if (e.data.error) reject(new Error(e.data.error));
+          else resolve(e.data.textures);
+        };
+        worker.onerror = (err) => {
+          worker.terminate();
+          reject(err);
+        };
+        // Send a copy so the original ref stays usable for Phase 2
+        const copy = bytes.buffer.slice(0);
+        worker.postMessage({ type: "parse", bytes: copy }, [copy]);
+      });
+      if (textures && Object.keys(textures).length > 0) {
+        const categorized = categorizeTextures(textures);
+        setYtdPath(path);
+        setYtdTextures(categorized);
+        setYtdRawTextures(textures);
+        setYtdOverrides({});
+        console.log("[YTD] Loaded textures:", Object.keys(textures));
+      } else {
+        // Only show error dialog if explicit user action, but for auto-load just log
+        console.warn("No textures found in YTD file:", path);
+      }
+    } catch (err) {
+      console.error("[YTD] Load error:", err);
+    } finally {
+      setYtdLoading(false);
+    }
+  };
+
   const selectYtd = async () => {
     if (!isTauriRuntime) {
       setDialogError("Tauri runtime required for file dialog.");
@@ -654,44 +722,7 @@ function App() {
       });
       setDialogError("");
       if (typeof selected === "string") {
-        setYtdLoading(true);
-        try {
-          const bytes = await readFile(selected);
-          // Keep the raw bytes for on-demand texture decoding later
-          ytdBytesRef.current = bytes.buffer;
-
-          // Phase 1: metadata-only parse in a Web Worker (fast, no RGBA decoding)
-          const textures = await new Promise((resolve, reject) => {
-            const worker = new YtdWorker();
-            worker.onmessage = (e) => {
-              worker.terminate();
-              if (e.data.error) reject(new Error(e.data.error));
-              else resolve(e.data.textures);
-            };
-            worker.onerror = (err) => {
-              worker.terminate();
-              reject(err);
-            };
-            // Send a copy so the original ref stays usable for Phase 2
-            const copy = bytes.buffer.slice(0);
-            worker.postMessage({ type: "parse", bytes: copy }, [copy]);
-          });
-          if (textures && Object.keys(textures).length > 0) {
-            const categorized = categorizeTextures(textures);
-            setYtdPath(selected);
-            setYtdTextures(categorized);
-            setYtdRawTextures(textures);
-            setYtdOverrides({});
-            console.log("[YTD] Loaded textures:", Object.keys(textures));
-          } else {
-            setDialogError("No textures found in YTD file.");
-          }
-        } catch (err) {
-          console.error("[YTD] Load error:", err);
-          setDialogError("Failed to parse YTD file.");
-        } finally {
-          setYtdLoading(false);
-        }
+        await loadYtd(selected);
       }
     } catch (error) {
       setDialogError("Dialog permission blocked. Check Tauri capabilities.");
@@ -755,6 +786,10 @@ function App() {
     try {
       const selected = await open({ filters: [{ name: "Texture", extensions: textureExtsDual }] });
       if (typeof selected === "string") {
+        if (!isTextureFormatSupported(selected)) {
+          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
         if (slot === "A") setDualTextureAPath(selected);
         else setDualTextureBPath(selected);
       }
@@ -1219,8 +1254,8 @@ function App() {
               </Button>
               {modelLoading ? <div className="file-meta">Preparing model…</div> : null}
             </div>
-            {experimentalSettings && textureMode !== "multi" ? (
-              <div className="control-group">
+            {textureMode !== "multi" ? (
+              <div className="control-group shrink-0 pb-1 min-h-0">
                 <Label>Texture Dictionary (YTD)</Label>
                 <div className="flex gap-2">
                   <Button
@@ -1616,6 +1651,26 @@ function App() {
 
           {textureMode === "multi" ? (
             <div className="mode-content" id="mode-panel-multi" role="tabpanel">
+              {/* ── Texture Mode Sub-Selector ── */}
+              <div className="dual-slot-tabs">
+                <button
+                  type="button"
+                  className={`dual-slot-tab ${dualTextureMode === "livery" ? "is-active" : ""}`}
+                  onClick={() => setDualTextureMode("livery")}
+                >
+                  <Car className="h-3 w-3" />
+                  <span>Livery</span>
+                </button>
+                <button
+                  type="button"
+                  className={`dual-slot-tab ${dualTextureMode === "eup" ? "is-active" : ""}`}
+                  onClick={() => setDualTextureMode("eup")}
+                >
+                  <Shirt className="h-3 w-3" />
+                  <span>EUP</span>
+                </button>
+              </div>
+
               {/* ── Slot Selector ── */}
               <div className="dual-slot-tabs">
                 <button
@@ -1659,10 +1714,10 @@ function App() {
                     </div>
                     {dualModelALoading ? <div className="file-meta">Loading...</div> : null}
                     {dualModelAError ? <div className="file-meta text-red-400/80">{dualModelAError}</div> : null}
-                    <Label>Template A</Label>
+                    <Label>{dualTextureMode === "eup" ? "Uniform A" : "Template A"}</Label>
                     <div className="flex gap-2">
                       <Button variant="outline" className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10" onClick={() => selectDualTexture("A")}>
-                        Select Livery A
+                        {dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
                       </Button>
                       {dualTextureAPath ? (
                         <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => setDualTextureAPath("")} title="Unload texture A">
@@ -1687,10 +1742,10 @@ function App() {
                     </div>
                     {dualModelBLoading ? <div className="file-meta">Loading...</div> : null}
                     {dualModelBError ? <div className="file-meta text-red-400/80">{dualModelBError}</div> : null}
-                    <Label>Template B</Label>
+                    <Label>{dualTextureMode === "eup" ? "Uniform B" : "Template B"}</Label>
                     <div className="flex gap-2">
                       <Button variant="outline" className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10" onClick={() => selectDualTexture("B")}>
-                        Select Livery B
+                        {dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
                       </Button>
                       {dualTextureBPath ? (
                         <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => setDualTextureBPath("")} title="Unload texture B">
@@ -1702,9 +1757,6 @@ function App() {
                   </div>
                 )}
               </PanelSection>
-
-
-
 
 
             </div>
@@ -1879,6 +1931,8 @@ function App() {
             backgroundColor={backgroundColor}
             selectedSlot={dualSelectedSlot}
             gizmoVisible={dualGizmoVisible}
+            showGrid={showGrid}
+            textureMode={dualTextureMode}
             initialPosA={dualModelAPos}
             initialPosB={dualModelBPos}
             onSelectSlot={setDualSelectedSlot}
@@ -1902,6 +1956,7 @@ function App() {
             windowTexturePath={windowTemplateEnabled ? windowTexturePath : ""}
             bodyColor={bodyColor}
             backgroundColor={backgroundColor}
+            showGrid={showGrid}
             textureReloadToken={textureReloadToken}
             windowTextureReloadToken={windowTextureReloadToken}
             textureTarget={resolvedTextureTarget}
@@ -1910,6 +1965,7 @@ function App() {
             wasdEnabled={cameraWASD}
             liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
             ytdTextures={ytdTextures}
+            ytdRawTextures={ytdRawTextures}
             ytdOverrides={ytdOverrides}
             decodeYtdTextures={decodeYtdTextures}
             lightIntensity={lightIntensity}
@@ -1926,6 +1982,7 @@ function App() {
             onWindowTextureError={handleWindowTextureError}
             onFormatWarning={handleFormatWarning}
             onYtdMappingUpdate={setYtdMappingMeta}
+            onYtdFound={loadYtd}
           />
         )}
 
@@ -2142,18 +2199,55 @@ function App() {
                   <div className="warning-modal-title">
                     {formatWarning.type === "non-hi-model"
                       ? "Standard Detail Model Detected"
-                      : `${formatWarning.bitDepth}-Bit PSD Not Supported`}
+                      : formatWarning.type === "unsupported-format"
+                        ? "Unsupported Image Format"
+                        : `${formatWarning.bitDepth}-Bit PSD Not Supported`}
                   </div>
                   <div className="warning-modal-subtitle">
                     {formatWarning.type === "non-hi-model"
                       ? "Recommendation: Use _hi.yft"
-                      : "High bit depth format detected"}
+                      : formatWarning.type === "unsupported-format"
+                        ? `Cannot load .${formatWarning.ext} files`
+                        : "High bit depth format detected"}
                   </div>
                 </div>
               </div>
 
               <div className="warning-modal-body">
-                {formatWarning.type === "non-hi-model" ? (
+                {formatWarning.type === "unsupported-format" ? (
+                  <div className="warning-modal-content">
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-text">
+                        The file <strong>{formatWarning.path}</strong> uses the <strong>.{formatWarning.ext}</strong> format, which is not supported and cannot be loaded.
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">Supported Formats</div>
+                      <div className="warning-modal-steps">
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">1</span>
+                          <span className="warning-modal-step-text"><strong>PNG</strong> — Recommended for lossless textures</span>
+                        </div>
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">2</span>
+                          <span className="warning-modal-step-text"><strong>JPG / JPEG</strong> — Smaller file size, lossy compression</span>
+                        </div>
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">3</span>
+                          <span className="warning-modal-step-text"><strong>PSD</strong> — Photoshop files (8-bit only)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">How to Fix</div>
+                      <div className="warning-modal-text">
+                        Open your <strong>.{formatWarning.ext}</strong> file in an image editor and export it as <strong>PNG</strong> or <strong>JPEG</strong> before loading it here.
+                      </div>
+                    </div>
+                  </div>
+                ) : formatWarning.type === "non-hi-model" ? (
                   <div className="warning-modal-content">
                     <div className="warning-modal-section">
                       <div className="warning-modal-text">
@@ -2219,7 +2313,7 @@ function App() {
                   type="button"
                   className="warning-modal-btn warning-modal-btn-primary"
                   onClick={() => {
-                    if (formatWarning.type !== "non-hi-model") {
+                    if (formatWarning.type !== "non-hi-model" && formatWarning.type !== "unsupported-format") {
                       setTexturePath("");
                       setTextureError("");
                     }

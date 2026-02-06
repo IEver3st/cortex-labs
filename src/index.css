@@ -10,10 +10,10 @@
   --es-radius-surface: calc(var(--es-radius) * var(--es-ui-scale));
   --es-radius-control: calc((var(--es-radius) - 4px) * var(--es-ui-scale));
   --titlebar-height: calc(32px * var(--es-ui-scale));
-  --panel-width: clamp(240px, 22vw, 320px);
-  --panel-pad: calc(20px * var(--es-ui-scale));
-  --panel-gap: calc(14px * var(--es-ui-scale));
-  --panel-control-gap: calc(10px * var(--es-ui-scale));
+  --panel-width: clamp(280px, 26vw, 380px);
+  --panel-pad: calc(16px * var(--es-ui-scale));
+  --panel-gap: calc(10px * var(--es-ui-scale));
+  --panel-control-gap: calc(8px * var(--es-ui-scale));
   --viewer-pad: calc(18px * var(--es-ui-scale));
   --panel-surface: rgba(12, 14, 18, 0.28);
   --panel-surface-strong: rgba(12, 14, 18, 0.34);
@@ -174,8 +174,8 @@ body {
   bottom: 0;
   width: var(--panel-width);
   overflow: visible;
-  background: linear-gradient(180deg, rgba(10, 11, 13, 0.96), rgba(8, 9, 11, 0.96));
-  border-right: 1px solid var(--panel-stroke);
+  background: rgba(10, 11, 13, 0.98);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 0;
   padding: 0;
   display: flex;
@@ -194,71 +194,75 @@ body {
   flex-direction: column;
   gap: 0;
   padding: 0;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) rgba(12, 14, 18, 0.2);
 }
 
-.control-panel-scroll::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* ── Global Custom Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-.control-panel-scroll::-webkit-scrollbar-track {
-  background: rgba(12, 14, 18, 0.2);
-  border-radius: 999px;
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.control-panel-scroll::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.12));
-  border-radius: 999px;
-  border: 2px solid rgba(12, 14, 18, 0.4);
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 99px;
+  border: 1px solid transparent;
+  background-clip: content-box;
 }
 
-.control-panel-scroll::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.2));
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.25);
+  border: 0;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .control-panel label {
   font-family: "JetBrains Mono", var(--font-hud), monospace;
-  font-size: calc(10px * var(--es-ui-scale));
-  letter-spacing: 0.24em;
+  font-size: calc(9.5px * var(--es-ui-scale));
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: rgba(230, 235, 244, 0.78);
+  color: rgba(230, 235, 244, 0.5);
 }
 
 .panel-header {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: calc(12px * var(--es-ui-scale));
-  padding: calc(14px * var(--es-ui-scale)) calc(18px * var(--es-ui-scale)) calc(12px * var(--es-ui-scale));
+  gap: calc(10px * var(--es-ui-scale));
+  padding: calc(10px * var(--es-ui-scale)) calc(16px * var(--es-ui-scale));
   background: transparent;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
 }
 
 .panel-header-top {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: calc(12px * var(--es-ui-scale));
+  gap: calc(10px * var(--es-ui-scale));
   margin-bottom: 0;
 }
 
 .panel-header-left {
   display: inline-flex;
   align-items: center;
-  gap: calc(10px * var(--es-ui-scale));
+  gap: calc(8px * var(--es-ui-scale));
   min-width: 0;
 }
 
 .panel-collapse {
-  width: calc(28px * var(--es-ui-scale));
-  height: calc(28px * var(--es-ui-scale));
+  width: calc(24px * var(--es-ui-scale));
+  height: calc(24px * var(--es-ui-scale));
   border-radius: 999px;
   border: none;
   background: transparent;
-  color: rgba(230, 235, 244, 0.55);
+  color: rgba(230, 235, 244, 0.4);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -330,7 +334,7 @@ body {
 .panel-title-stack {
   display: flex;
   flex-direction: column;
-  gap: calc(4px * var(--es-ui-scale));
+  gap: calc(2px * var(--es-ui-scale));
 }
 
 /* Mode Tabs Navigation */
@@ -635,22 +639,6 @@ body {
   padding-right: calc(6px * var(--es-ui-scale));
   min-height: 0;
   flex: 1;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) rgba(12, 14, 18, 0.2);
-}
-
-.settings-nav-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.settings-nav-list::-webkit-scrollbar-track {
-  background: rgba(12, 14, 18, 0.25);
-  border-radius: 999px;
-}
-
-.settings-nav-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
 }
 
 .settings-nav-item {
@@ -784,22 +772,6 @@ body {
   padding-top: calc(6px * var(--es-ui-scale));
   padding-bottom: calc(8px * var(--es-ui-scale));
   padding-right: calc(6px * var(--es-ui-scale));
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) rgba(12, 14, 18, 0.2);
-}
-
-.settings-content-body::-webkit-scrollbar {
-  width: 8px;
-}
-
-.settings-content-body::-webkit-scrollbar-track {
-  background: rgba(12, 14, 18, 0.2);
-  border-radius: 999px;
-}
-
-.settings-content-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
 }
 
 .settings-footer {
@@ -951,8 +923,8 @@ body {
 .panel-section-body {
   display: flex;
   flex-direction: column;
-  gap: calc(10px * var(--es-ui-scale));
-  padding: calc(2px * var(--es-ui-scale)) calc(18px * var(--es-ui-scale)) calc(14px * var(--es-ui-scale));
+  gap: calc(8px * var(--es-ui-scale));
+  padding: calc(2px * var(--es-ui-scale)) calc(16px * var(--es-ui-scale)) calc(12px * var(--es-ui-scale));
   border-top: none;
   background: transparent;
   overflow: hidden;
@@ -1395,10 +1367,10 @@ body {
 
 .panel-title {
   font-family: "JetBrains Mono", var(--font-hud), monospace;
-  font-size: calc(18px * var(--es-ui-scale));
-  letter-spacing: 0.18em;
+  font-size: calc(14px * var(--es-ui-scale));
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--es-success);
+  color: rgba(239, 244, 250, 0.88);
   font-weight: 600;
 }
 
@@ -1413,19 +1385,19 @@ body {
 .control-group {
   display: flex;
   flex-direction: column;
-  gap: calc(8px * var(--es-ui-scale));
+  gap: calc(6px * var(--es-ui-scale));
   padding: 0;
 }
 
 .panel-section {
   border: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   background: transparent;
   overflow: hidden;
 }
 
 .panel-section.is-open {
-  border-bottom-color: rgba(255, 255, 255, 0.12);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
 .panel-section-toggle {
@@ -1433,8 +1405,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: calc(10px * var(--es-ui-scale));
-  padding: calc(12px * var(--es-ui-scale)) calc(18px * var(--es-ui-scale));
+  gap: calc(8px * var(--es-ui-scale));
+  padding: calc(10px * var(--es-ui-scale)) calc(16px * var(--es-ui-scale));
   border: none;
   background: transparent;
   cursor: pointer;
@@ -1460,7 +1432,7 @@ body {
 .panel-section-text {
   display: flex;
   flex-direction: column;
-  gap: calc(4px * var(--es-ui-scale));
+  gap: calc(2px * var(--es-ui-scale));
   min-width: 0;
 }
 
@@ -1472,10 +1444,10 @@ body {
 }
 
 .panel-section-caption {
-  font-size: calc(11px * var(--es-ui-scale));
-  color: rgba(199, 206, 216, 0.62);
+  font-size: calc(10px * var(--es-ui-scale));
+  color: rgba(199, 206, 216, 0.5);
   text-transform: none;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1684,11 +1656,11 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
 }
 
 .file-meta {
-  font-size: calc(11px * var(--es-ui-scale));
-  color: rgba(206, 213, 223, 0.62);
-  letter-spacing: 0.04em;
+  font-size: calc(10px * var(--es-ui-scale));
+  color: rgba(206, 213, 223, 0.5);
+  letter-spacing: 0.03em;
   word-break: break-all;
-  line-height: 1.2;
+  line-height: 1.3;
 }
 
 .viewer-shell {
@@ -1935,9 +1907,9 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  font-size: calc(11px * var(--es-ui-scale));
-  color: rgba(214, 221, 231, 0.7);
+  gap: 10px;
+  font-size: calc(10px * var(--es-ui-scale));
+  color: rgba(214, 221, 231, 0.55);
   padding: 0;
   border-radius: 0;
   border: none;
@@ -1945,20 +1917,20 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: var(--es-success);
   box-shadow: none;
 }
 
 .control-panel-status {
-  padding: calc(12px * var(--es-ui-scale)) calc(18px * var(--es-ui-scale));
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: calc(8px * var(--es-ui-scale)) calc(16px * var(--es-ui-scale));
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   background: transparent;
   display: flex;
   flex-direction: column;
-  gap: calc(6px * var(--es-ui-scale));
+  gap: calc(4px * var(--es-ui-scale));
 }
 
 .color-input {
@@ -2307,7 +2279,7 @@ label {
 .dual-slot-tabs {
   display: flex;
   gap: calc(3px * var(--es-ui-scale));
-  padding: calc(4px * var(--es-ui-scale)) calc(18px * var(--es-ui-scale)) calc(8px * var(--es-ui-scale));
+  padding: calc(4px * var(--es-ui-scale)) calc(16px * var(--es-ui-scale)) calc(8px * var(--es-ui-scale));
 }
 
 .dual-slot-tab {
@@ -2746,13 +2718,7 @@ label {
   min-height: 0;
   overflow-y: auto;
   padding: calc(16px * var(--es-ui-scale));
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) rgba(12, 14, 18, 0.2);
 }
-
-.ytd-modal-body::-webkit-scrollbar { width: 8px; }
-.ytd-modal-body::-webkit-scrollbar-track { background: rgba(12, 14, 18, 0.2); border-radius: 999px; }
-.ytd-modal-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 999px; }
 
 .ytd-modal-empty {
   padding: calc(40px * var(--es-ui-scale));
@@ -3081,8 +3047,8 @@ label {
   z-index: 2; /* Above bg */
   display: flex;
   align-items: center;
-  gap: calc(6px * var(--es-ui-scale));
-  padding: calc(6px * var(--es-ui-scale)) calc(4px * var(--es-ui-scale));
+  gap: calc(5px * var(--es-ui-scale));
+  padding: calc(5px * var(--es-ui-scale)) calc(4px * var(--es-ui-scale));
 }
 
 /* Icons */

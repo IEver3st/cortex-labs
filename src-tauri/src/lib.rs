@@ -501,6 +501,32 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
     let out_mesh = out_dir.join("model.clmesh");
     let out_meta = out_dir.join("meta.json");
 
+    // Check for sibling YTD file (auto-discovery)
+    let path_buf = PathBuf::from(&path);
+    let file_stem = path_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let parent = path_buf
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    // Try exact match first: model.yft -> model.ytd
+    let mut ytd_path_buf = parent.join(format!("{}.ytd", file_stem));
+
+    // If not found, try stripping _hi / +hi suffix: model_hi.yft -> model.ytd
+    if !ytd_path_buf.exists() {
+        if let Some(stripped) = file_stem
+            .strip_suffix("_hi")
+            .or_else(|| file_stem.strip_suffix("+hi"))
+        {
+            ytd_path_buf = parent.join(format!("{}.ytd", stripped));
+        }
+    }
+
+    let found_ytd = if ytd_path_buf.exists() {
+        Some(ytd_path_buf.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
     if out_mesh.exists() {
         let meta_json = if out_meta.exists() {
             std::fs::read_to_string(&out_meta)
@@ -514,7 +540,8 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
             "meshPath": out_mesh.to_string_lossy().to_string(),
             "cacheKey": key,
             "cached": true,
-            "meta": meta_json
+            "meta": meta_json,
+            "ytdPath": found_ytd
         }));
     }
 
@@ -549,7 +576,8 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
         "meshPath": out_mesh.to_string_lossy().to_string(),
         "cacheKey": key,
         "cached": false,
-        "meta": meta_json
+        "meta": meta_json,
+        "ytdPath": found_ytd
     }))
 }
 

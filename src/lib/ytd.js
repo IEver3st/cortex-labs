@@ -13,6 +13,8 @@ const TEXTURE_FORMAT = {
   DXT1: 0,      // BC1 - RGB with 1-bit alpha
   DXT3: 1,      // BC2 - RGB with explicit alpha
   DXT5: 2,      // BC3 - RGB with interpolated alpha
+  BC4: 8,       // BC4 - Single channel (Red), often used for Height/Gloss
+  BC5: 9,       // BC5 - Two channels (RG), used for Normal Maps
   BC7: 3,       // BC7 - High quality RGB(A)
   A8R8G8B8: 4,  // Uncompressed ARGB
   A1R5G5B5: 5,  // 16-bit with 1-bit alpha
@@ -21,19 +23,39 @@ const TEXTURE_FORMAT = {
 };
 
 // D3DFORMAT / DXGI_FORMAT codes found in GTA V textures
+// Sourced from CodeWalker TextureFormat enum & DXGI_FORMAT spec
 const FORMAT_MAP = {
+  // D3DFMT legacy codes (used in gen7/gen8 resources)
+  0x14: TEXTURE_FORMAT.A8R8G8B8,  // D3DFMT_A8B8G8R8
   0x15: TEXTURE_FORMAT.A8R8G8B8,  // D3DFMT_A8R8G8B8
+  0x19: TEXTURE_FORMAT.A1R5G5B5,  // D3DFMT_A1R5G5B5
+  0x1A: TEXTURE_FORMAT.A8,        // D3DFMT_A8
   0x1C: TEXTURE_FORMAT.DXT1,      // D3DFMT_DXT1
   0x1D: TEXTURE_FORMAT.DXT3,      // D3DFMT_DXT3
   0x1E: TEXTURE_FORMAT.DXT5,      // D3DFMT_DXT5
-  0x53: TEXTURE_FORMAT.DXT1,      // BC1_UNORM
-  0x54: TEXTURE_FORMAT.DXT1,      // BC1_UNORM_SRGB
-  0x55: TEXTURE_FORMAT.DXT3,      // BC2_UNORM
-  0x56: TEXTURE_FORMAT.DXT3,      // BC2_UNORM_SRGB
-  0x57: TEXTURE_FORMAT.DXT5,      // BC3_UNORM
-  0x58: TEXTURE_FORMAT.DXT5,      // BC3_UNORM_SRGB
-  0x62: TEXTURE_FORMAT.BC7,       // BC7_UNORM
-  0x63: TEXTURE_FORMAT.BC7,       // BC7_UNORM_SRGB
+  0x32: TEXTURE_FORMAT.L8,        // D3DFMT_L8
+  // FourCC codes (ATI1/ATI2 stored as uint32 little-endian ASCII)
+  0x31495441: TEXTURE_FORMAT.BC4, // "ATI1"
+  0x32495441: TEXTURE_FORMAT.BC5, // "ATI2"
+  // DXGI_FORMAT codes (used in gen9 / newer resources)
+  // BC1: DXGI 71-72
+  71: TEXTURE_FORMAT.DXT1,        // DXGI_FORMAT_BC1_UNORM
+  72: TEXTURE_FORMAT.DXT1,        // DXGI_FORMAT_BC1_UNORM_SRGB
+  // BC2: DXGI 74-75
+  74: TEXTURE_FORMAT.DXT3,        // DXGI_FORMAT_BC2_UNORM
+  75: TEXTURE_FORMAT.DXT3,        // DXGI_FORMAT_BC2_UNORM_SRGB
+  // BC3: DXGI 77-78
+  77: TEXTURE_FORMAT.DXT5,        // DXGI_FORMAT_BC3_UNORM
+  78: TEXTURE_FORMAT.DXT5,        // DXGI_FORMAT_BC3_UNORM_SRGB
+  // BC4: DXGI 80-81
+  80: TEXTURE_FORMAT.BC4,         // DXGI_FORMAT_BC4_UNORM
+  81: TEXTURE_FORMAT.BC4,         // DXGI_FORMAT_BC4_SNORM
+  // BC5: DXGI 83-84
+  83: TEXTURE_FORMAT.BC5,         // DXGI_FORMAT_BC5_UNORM
+  84: TEXTURE_FORMAT.BC5,         // DXGI_FORMAT_BC5_SNORM
+  // BC7: DXGI 98-99
+  98: TEXTURE_FORMAT.BC7,         // DXGI_FORMAT_BC7_UNORM
+  99: TEXTURE_FORMAT.BC7,         // DXGI_FORMAT_BC7_UNORM_SRGB
 };
 
 /**
@@ -196,34 +218,37 @@ function resolvePointer(reader, ptr) {
   return offset >= 0 && offset < reader.len ? offset : 0;
 }
 
-function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) {
+export function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null, explicitOffset = null) {
   const textures = {};
 
-  // Try different structure offsets for TextureDictionary
-  const dictOffsets = [0x00, 0x08, 0x10, 0x18, 0x20];
+  // CodeWalker TextureDictionary (BlockLength = 64):
+  //   0x00-0x0F: ResourceFileBase (VFT, Unknown_4h, PagesInfo ptr, ...)
+  //   0x10: Unknown_10h (u32)
+  //   0x14: Unknown_14h (u32)
+  //   0x18: Unknown_18h (u32) = 1
+  //   0x1C: Unknown_1Ch (u32)
+  //   0x20: TextureNameHashes — ResourceSimpleList64_uint (ptr @ 0x20, count @ 0x28)
+  //   0x30: Textures — ResourcePointerList64<Texture> (ptr @ 0x30, count @ 0x38)
+  //
+  // When embedded inside a ShaderGroup, the dictionary base is at an explicit offset.
+  const dictOffsets = explicitOffset !== null ? [explicitOffset] : [0x00];
 
   for (const baseOffset of dictOffsets) {
-    // TextureDictionary has a pgDictionary structure
-    // Offset 0x00: VTable pointer
-    // Offset 0x08: pgDictionary.ParentDictionary
-    // Offset 0x10: UsageCount (uint32)
-    // Offset 0x18: Hashes array pointer
-    // Offset 0x20: Hash count
-    // Offset 0x28: Textures array pointer
-    // Offset 0x30: Texture count
+    // Primary layout (CodeWalker-verified)
+    const hashesPtr = reader.u64(baseOffset + 0x20);
+    const texturesPtr = reader.u64(baseOffset + 0x30);
 
-    const hashesPtr = reader.u64(baseOffset + 0x18);
-    const texturesPtr = reader.u64(baseOffset + 0x28);
+    // ResourceSimpleList64 / ResourcePointerList64 store count as u16 at ptr+8
+    // but the list header itself is { pointer(8), count(2), capacity(2) }
+    let hashCount = reader.u16(baseOffset + 0x28);
+    let textureCount = reader.u16(baseOffset + 0x38);
 
-    let hashCount = reader.u16(baseOffset + 0x20);
-    let textureCount = reader.u16(baseOffset + 0x30);
-
-    // Alternative layout check
+    // Fallback: try capacity field
     if (textureCount === 0 || textureCount > 512) {
-      textureCount = reader.u16(baseOffset + 0x32);
+      textureCount = reader.u16(baseOffset + 0x3A);
     }
     if (hashCount === 0 || hashCount > 512) {
-      hashCount = reader.u16(baseOffset + 0x22);
+      hashCount = reader.u16(baseOffset + 0x2A);
     }
 
     if (textureCount === 0 || textureCount > 512) continue;
@@ -234,7 +259,6 @@ function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) 
 
     let parsedCount = 0;
     let failedCount = 0;
-
 
     for (let i = 0; i < textureCount; i++) {
       const texturePtr = reader.u64(texturesArrayOffset + i * 8);
@@ -254,7 +278,6 @@ function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) 
       const texture = parseTexture(reader, textureOffset, i, metadataOnly, decodeSet);
 
       if (texture) {
-        // Get name from hash or generate one
         let name = texture.name;
         if (!name && hashesArrayOffset > 0) {
           const hash = reader.u32(hashesArrayOffset + i * 4);
@@ -271,9 +294,6 @@ function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) 
       }
     }
 
-    // Parsing complete: parsedCount / textureCount
-
-
     if (Object.keys(textures).length > 0) break;
   }
 
@@ -281,48 +301,64 @@ function parseTextureDictionary(reader, metadataOnly = false, decodeSet = null) 
 }
 
 function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, decodeSet = null) {
-  if (!reader.valid(offset) || offset + 160 > reader.len) return null;
+  // Texture (extends TextureBase) total BlockLength = 144 (legacy)
+  if (!reader.valid(offset) || offset + 144 > reader.len) return null;
 
+  // CodeWalker TextureBase layout (legacy, BlockLength = 80):
+  //   0x00: VFT (u32)
+  //   0x04: Unknown_4h (u32) = 1
+  //   0x08-0x27: Unknown fields
+  //   0x28: NamePointer (u64)
+  //   0x30-0x4F: Unknown fields + UsageData @ 0x40
+  //
+  // Texture subclass fields (starting at 0x50):
+  //   0x50: Width (u16)
+  //   0x52: Height (u16)
+  //   0x54: Depth (u16)
+  //   0x56: Stride (u16)
+  //   0x58: Format (u32) — D3DFMT / DXGI_FORMAT enum value
+  //   0x5C: Unknown_5Ch (u8)
+  //   0x5D: Levels / MipCount (u8)
+  //   0x5E: Unknown_5Eh (u16)
+  //   0x60-0x6F: Unknown fields
+  //   0x70: DataPointer (u64)
 
-  // GTA V texture structure based on observed data:
-  // 0x00: VTable/hash (4 bytes)
-  // 0x28: Name pointer (8 bytes)
-  // 0x50: Width (2 bytes)
-  // 0x52: Height (2 bytes)
-  // 0x54: Mip count (1 byte)
-  // 0x58: Format string (4 bytes ASCII like "BC7 " or "DXT5")
-  // 0x70: Data offset/pointer (varies)
-
-  // Read dimensions at the known offset
   const width = reader.u16(offset + 0x50);
   const height = reader.u16(offset + 0x52);
-  const mipCount = reader.u8(offset + 0x54);
+  const mipCount = reader.u8(offset + 0x5D);
+  const stride = reader.u16(offset + 0x56);
 
-  // Read format string
-  const fmtBytes = [
-    reader.u8(offset + 0x58),
-    reader.u8(offset + 0x59),
-    reader.u8(offset + 0x5A),
-    reader.u8(offset + 0x5B),
-  ];
-  const formatStr = String.fromCharCode(...fmtBytes).trim();
+  // Format is a D3DFMT enum (uint32), not an ASCII string
+  const formatCode = reader.u32(offset + 0x58);
+  let format = FORMAT_MAP[formatCode];
 
-  // Map format string to format enum
-  let format = TEXTURE_FORMAT.DXT5;
-  if (formatStr === "DXT1" || formatStr === "BC1") format = TEXTURE_FORMAT.DXT1;
-  else if (formatStr === "DXT3" || formatStr === "BC2") format = TEXTURE_FORMAT.DXT3;
-  else if (formatStr === "DXT5" || formatStr === "BC3") format = TEXTURE_FORMAT.DXT5;
-  else if (formatStr === "BC7" || formatStr.startsWith("BC7")) format = TEXTURE_FORMAT.BC7;
+  // If the numeric code didn't match, try interpreting as ASCII FourCC
+  // (some modded/custom YTDs may store "DXT5" etc. as ASCII)
+  if (format === undefined) {
+    const fmtBytes = [
+      reader.u8(offset + 0x58),
+      reader.u8(offset + 0x59),
+      reader.u8(offset + 0x5A),
+      reader.u8(offset + 0x5B),
+    ];
+    const formatStr = String.fromCharCode(...fmtBytes).trim();
+    if (formatStr === "DXT1" || formatStr === "BC1") format = TEXTURE_FORMAT.DXT1;
+    else if (formatStr === "DXT3" || formatStr === "BC2") format = TEXTURE_FORMAT.DXT3;
+    else if (formatStr === "DXT5" || formatStr === "BC3") format = TEXTURE_FORMAT.DXT5;
+    else if (formatStr === "ATI1" || formatStr === "BC4") format = TEXTURE_FORMAT.BC4;
+    else if (formatStr === "ATI2" || formatStr === "BC5") format = TEXTURE_FORMAT.BC5;
+    else if (formatStr === "BC7" || formatStr.startsWith("BC7")) format = TEXTURE_FORMAT.BC7;
+    else format = TEXTURE_FORMAT.DXT5; // fallback
+  }
 
   // Validate dimensions
   const isValidDim = (d) => d > 0 && d <= 8192;
-  const isPow2 = (d) => d > 0 && (d & (d - 1)) === 0;
-
-  if (!isValidDim(width) || !isValidDim(height) || !isPow2(width) || !isPow2(height)) {
+  // Allow non-power-of-2 textures (some modded assets use them)
+  if (!isValidDim(width) || !isValidDim(height)) {
     return null;
   }
 
-  // Read name pointer
+  // Read name from NamePointer at 0x28
   let name = null;
   const namePtr = reader.u64(offset + 0x28);
   if (namePtr && namePtr !== 0n) {
@@ -332,51 +368,17 @@ function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, dec
     }
   }
 
-  // Find data - check several potential data pointer locations
-  // The data could be an absolute offset stored at various positions
-  const dataPointerOffsets = [0x70, 0x68, 0x78, 0x60];
+  // Read UsageData at 0x40 to extract texture usage hint
+  const usageData = reader.u32(offset + 0x40);
+  const usage = usageData & 0x1F; // TextureUsage enum (lower 5 bits)
+
+  // DataPointer at 0x70 (primary, CodeWalker-verified)
   let dataOffset = 0;
-
-  for (const ptrOff of dataPointerOffsets) {
-    // Try as 64-bit pointer first (GTA V uses segment-based pointers)
-    const ptr64 = reader.u64(offset + ptrOff);
-    if (ptr64 && ptr64 !== 0n) {
-      const resolved = reader.resolvePtr(ptr64);
-      if (resolved > 0 && resolved < reader.len) {
-        dataOffset = resolved;
-        break;
-      }
-    }
-
-    // Try as a raw 32-bit offset (for some resource formats)
-    const rawOffset32 = reader.u32(offset + ptrOff);
-    if (rawOffset32 > 0 && rawOffset32 < reader.len) {
-      dataOffset = rawOffset32;
-      break;
-    }
-  }
-
-  // If no pointer found, try calculating from structure end
-  // Many YTD files store texture data sequentially after headers
-  if (dataOffset === 0) {
-    // Look for a reasonable data offset based on expected compressed size
-    const blockSize = format === TEXTURE_FORMAT.DXT1 ? 8 : 16;
-    const expectedSize = Math.ceil(width / 4) * Math.ceil(height / 4) * blockSize;
-
-    // Scan for data start marker (often follows the header structure)
-    for (let scanOff = 0x80; scanOff < 0x200 && scanOff + expectedSize <= reader.len; scanOff += 16) {
-      const testOffset = offset + scanOff;
-      if (testOffset + expectedSize <= reader.len) {
-        // Check if this looks like compressed texture data (not all zeros)
-        let nonZero = 0;
-        for (let i = 0; i < 64; i++) {
-          if (reader.u8(testOffset + i) !== 0) nonZero++;
-        }
-        if (nonZero > 16) {
-          dataOffset = testOffset;
-          break;
-        }
-      }
+  const dataPtr = reader.u64(offset + 0x70);
+  if (dataPtr && dataPtr !== 0n) {
+    const resolved = reader.resolvePtr(dataPtr);
+    if (resolved > 0 && resolved < reader.len) {
+      dataOffset = resolved;
     }
   }
 
@@ -392,7 +394,7 @@ function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, dec
 
   let rgba = null;
   if (shouldDecode) {
-    rgba = decodeTexture(reader, dataOffset, width, height, format, 0);
+    rgba = decodeTexture(reader, dataOffset, width, height, format, stride);
 
     if (!rgba) {
       return null;
@@ -405,7 +407,10 @@ function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, dec
     width,
     height,
     format,
+    formatCode,
     mipCount,
+    stride,
+    usage,
     rgba,
   };
 }
@@ -434,11 +439,26 @@ function decodeTexture(reader, offset, width, height, format, stride) {
     case TEXTURE_FORMAT.DXT5:
       decodeDXT5(reader, offset, width, height, rgba);
       break;
+    case TEXTURE_FORMAT.BC4:
+      decodeBC4(reader, offset, width, height, rgba);
+      break;
+    case TEXTURE_FORMAT.BC5:
+      decodeBC5(reader, offset, width, height, rgba);
+      break;
     case TEXTURE_FORMAT.BC7:
       decodeBC7(reader, offset, width, height, rgba);
       break;
     case TEXTURE_FORMAT.A8R8G8B8:
       decodeARGB8(reader, offset, width, height, rgba, stride);
+      break;
+    case TEXTURE_FORMAT.A1R5G5B5:
+      decodeA1R5G5B5(reader, offset, width, height, rgba, stride);
+      break;
+    case TEXTURE_FORMAT.A8:
+      decodeA8(reader, offset, width, height, rgba, stride);
+      break;
+    case TEXTURE_FORMAT.L8:
+      decodeL8(reader, offset, width, height, rgba, stride);
       break;
     default:
       // Fallback: try DXT5
@@ -660,11 +680,136 @@ function decodeDXT5(reader, offset, width, height, rgba) {
   }
 }
 
+// BC4 Decoder (Single channel Red)
+function decodeBC4(reader, offset, width, height, rgba) {
+  const blocksX = Math.ceil(width / 4);
+  const blocksY = Math.ceil(height / 4);
+  const w4 = width << 2;
+
+  let blockOffset = offset;
+
+  for (let by = 0; by < blocksY; by++) {
+    const baseY = by << 2;
+    for (let bx = 0; bx < blocksX; bx++) {
+      const baseX = bx << 2;
+      
+      const r0 = reader.u8(blockOffset);
+      const r1 = reader.u8(blockOffset + 1);
+      const rBitsLo = reader.u8(blockOffset + 2) | (reader.u8(blockOffset + 3) << 8) | (reader.u8(blockOffset + 4) << 16);
+      const rBitsHi = reader.u8(blockOffset + 5) | (reader.u8(blockOffset + 6) << 8) | (reader.u8(blockOffset + 7) << 16);
+      blockOffset += 8;
+
+      buildAlphaPalette(r0, r1); // Reusing alpha palette builder for Red channel
+      const redPalette = new Uint8Array(_alphaPalette); // Copy it
+
+      for (let py = 0; py < 4; py++) {
+        const y = baseY + py;
+        if (y >= height) break;
+        const rowBase = y * w4;
+        for (let px = 0; px < 4; px++) {
+          const x = baseX + px;
+          if (x >= width) continue;
+
+          const pIdx = py * 4 + px;
+          const bits = pIdx < 8 ? rBitsLo : rBitsHi;
+          const shift = pIdx < 8 ? pIdx * 3 : (pIdx - 8) * 3;
+          const idx = (bits >> shift) & 0x7;
+
+          const r = redPalette[idx];
+
+          const pixelOffset = rowBase + (x << 2);
+          rgba[pixelOffset]     = r;
+          rgba[pixelOffset + 1] = r;
+          rgba[pixelOffset + 2] = r;
+          rgba[pixelOffset + 3] = 255;
+        }
+      }
+    }
+  }
+}
+
+// BC5 Decoder (Two channels RG - typically Normal Map)
+function decodeBC5(reader, offset, width, height, rgba) {
+  const blocksX = Math.ceil(width / 4);
+  const blocksY = Math.ceil(height / 4);
+  const w4 = width << 2;
+
+  let blockOffset = offset;
+
+  for (let by = 0; by < blocksY; by++) {
+    const baseY = by << 2;
+    for (let bx = 0; bx < blocksX; bx++) {
+      const baseX = bx << 2;
+
+      // Block 0: Red (X)
+      const r0 = reader.u8(blockOffset);
+      const r1 = reader.u8(blockOffset + 1);
+      const rBitsLo = reader.u8(blockOffset + 2) | (reader.u8(blockOffset + 3) << 8) | (reader.u8(blockOffset + 4) << 16);
+      const rBitsHi = reader.u8(blockOffset + 5) | (reader.u8(blockOffset + 6) << 8) | (reader.u8(blockOffset + 7) << 16);
+      blockOffset += 8;
+
+      buildAlphaPalette(r0, r1);
+      const redPalette = new Uint8Array(_alphaPalette);
+
+      // Block 1: Green (Y)
+      const g0 = reader.u8(blockOffset);
+      const g1 = reader.u8(blockOffset + 1);
+      const gBitsLo = reader.u8(blockOffset + 2) | (reader.u8(blockOffset + 3) << 8) | (reader.u8(blockOffset + 4) << 16);
+      const gBitsHi = reader.u8(blockOffset + 5) | (reader.u8(blockOffset + 6) << 8) | (reader.u8(blockOffset + 7) << 16);
+      blockOffset += 8;
+
+      buildAlphaPalette(g0, g1);
+      const greenPalette = new Uint8Array(_alphaPalette);
+
+      for (let py = 0; py < 4; py++) {
+        const y = baseY + py;
+        if (y >= height) break;
+        const rowBase = y * w4;
+        for (let px = 0; px < 4; px++) {
+          const x = baseX + px;
+          if (x >= width) continue;
+
+          const pIdx = py * 4 + px;
+          
+          // Red lookup
+          const rShift = pIdx < 8 ? pIdx * 3 : (pIdx - 8) * 3;
+          const rIdx = ((pIdx < 8 ? rBitsLo : rBitsHi) >> rShift) & 0x7;
+          const r = redPalette[rIdx];
+
+          // Green lookup
+          const gShift = pIdx < 8 ? pIdx * 3 : (pIdx - 8) * 3;
+          const gIdx = ((pIdx < 8 ? gBitsLo : gBitsHi) >> gShift) & 0x7;
+          const g = greenPalette[gIdx];
+
+          // Reconstruct Blue (Z) for normal map: Z = sqrt(1 - x*x - y*y)
+          // Map 0..255 to -1..1
+          const nx = (r / 255.0) * 2.0 - 1.0;
+          const ny = (g / 255.0) * 2.0 - 1.0;
+          const nz = Math.sqrt(Math.max(0, 1.0 - nx * nx - ny * ny));
+          const b = Math.floor((nz * 0.5 + 0.5) * 255);
+
+          const pixelOffset = rowBase + (x << 2);
+          rgba[pixelOffset]     = r;
+          rgba[pixelOffset + 1] = g;
+          rgba[pixelOffset + 2] = b; // Reconstructed Z
+          rgba[pixelOffset + 3] = 255;
+        }
+      }
+    }
+  }
+}
+
 // BC7 Decoder (simplified - handles most common modes)
 function decodeBC7(reader, offset, width, height, rgba) {
   const blocksX = Math.ceil(width / 4);
   const blocksY = Math.ceil(height / 4);
-
+  
+  // BC7 has 8 modes (0-7), each with different subset counts and bit layouts.
+  // Implementing a full BC7 decoder is complex. 
+  // For now, we'll continue using an approximation that handles the basic 
+  // endpoint extraction, but we'll try to support mode 1 and 6 more robustly
+  // as these are the most common for diffuse and normal maps respectively.
+  
   let blockOffset = offset;
 
   for (let by = 0; by < blocksY; by++) {
@@ -690,9 +835,20 @@ function decodeBC7Block(block, bx, by, width, height, rgba) {
     fillBlock(bx, by, width, height, rgba, [255, 0, 255, 255]);
     return;
   }
-
-  // Simplified BC7 decoding - for complex modes, use approximation
-  // This handles modes 0-5 reasonably well for preview purposes
+  
+  // Very simplified: just grab endpoints and interpolate
+  // This is technically incorrect for many modes but provides a "glimpse"
+  // of the texture rather than garbage.
+  // A full implementation requires:
+  // 1. Partition table lookup (64 sets)
+  // 2. Per-mode bit unpacking (very messy bit stream manipulation)
+  // 3. P-bit handling
+  // 4. Index interpolation
+  
+  // We'll stick to the "approximate visual" approach for now because
+  // a full BC7 decoder is 1000+ lines of code.
+  // For production quality, we should use a WASM decoder or WebGL BPTC extension.
+  
   try {
     const colors = extractBC7Colors(block, mode);
 
@@ -778,6 +934,77 @@ function decodeARGB8(reader, offset, width, height, rgba, stride) {
   }
 }
 
+// A1R5G5B5 (16-bit with 1-bit alpha) Decoder
+function decodeA1R5G5B5(reader, offset, width, height, rgba, stride) {
+  const rowStride = stride > 0 ? stride : width * 2;
+  const bytes = reader.bytes;
+  const len = reader.len;
+  const rowPixels = width << 2;
+
+  for (let y = 0; y < height; y++) {
+    const srcRowBase = offset + y * rowStride;
+    const dstRowBase = y * rowPixels;
+    if (srcRowBase + width * 2 > len) break;
+
+    for (let x = 0; x < width; x++) {
+      const srcOff = srcRowBase + x * 2;
+      const pixel = bytes[srcOff] | (bytes[srcOff + 1] << 8);
+      const dstOff = dstRowBase + (x << 2);
+
+      rgba[dstOff]     = ((pixel >> 10) & 0x1F) * 255 / 31 + 0.5 | 0; // R
+      rgba[dstOff + 1] = ((pixel >> 5) & 0x1F) * 255 / 31 + 0.5 | 0;  // G
+      rgba[dstOff + 2] = (pixel & 0x1F) * 255 / 31 + 0.5 | 0;         // B
+      rgba[dstOff + 3] = (pixel >> 15) ? 255 : 0;                      // A
+    }
+  }
+}
+
+// A8 (8-bit alpha only) Decoder — renders as grayscale
+function decodeA8(reader, offset, width, height, rgba, stride) {
+  const rowStride = stride > 0 ? stride : width;
+  const bytes = reader.bytes;
+  const len = reader.len;
+  const rowPixels = width << 2;
+
+  for (let y = 0; y < height; y++) {
+    const srcRowBase = offset + y * rowStride;
+    const dstRowBase = y * rowPixels;
+    if (srcRowBase + width > len) break;
+
+    for (let x = 0; x < width; x++) {
+      const a = bytes[srcRowBase + x];
+      const dstOff = dstRowBase + (x << 2);
+      rgba[dstOff]     = 255;
+      rgba[dstOff + 1] = 255;
+      rgba[dstOff + 2] = 255;
+      rgba[dstOff + 3] = a;
+    }
+  }
+}
+
+// L8 (8-bit luminance) Decoder
+function decodeL8(reader, offset, width, height, rgba, stride) {
+  const rowStride = stride > 0 ? stride : width;
+  const bytes = reader.bytes;
+  const len = reader.len;
+  const rowPixels = width << 2;
+
+  for (let y = 0; y < height; y++) {
+    const srcRowBase = offset + y * rowStride;
+    const dstRowBase = y * rowPixels;
+    if (srcRowBase + width > len) break;
+
+    for (let x = 0; x < width; x++) {
+      const l = bytes[srcRowBase + x];
+      const dstOff = dstRowBase + (x << 2);
+      rgba[dstOff]     = l;
+      rgba[dstOff + 1] = l;
+      rgba[dstOff + 2] = l;
+      rgba[dstOff + 3] = 255;
+    }
+  }
+}
+
 // Legacy helpers kept for BC7 extractBC7Colors which still uses array-based colors
 function decodeColors565(c0, c1, hasAlpha) {
   const r0 = ((c0 >> 11) & 0x1F) * 255 / 31 + 0.5 | 0;
@@ -800,10 +1027,38 @@ function decodeColors565(c0, c1, hasAlpha) {
   return colors;
 }
 
+// CodeWalker TextureUsage enum values (lower 5 bits of UsageData)
+const TEXTURE_USAGE = {
+  UNKNOWN: 0,
+  DEFAULT: 1,
+  TERRAIN: 2,
+  CLOUDDENSITY: 3,
+  CLOUDNORMAL: 4,
+  CABLE: 5,
+  FENCE: 6,
+  SCRIPT: 8,
+  WATERFLOW: 9,
+  WATERFOAM: 10,
+  WATERFOG: 11,
+  WATEROCEAN: 12,
+  FOAMOPACITY: 14,
+  DIFFUSEMIPSHARPEN: 16,
+  DIFFUSEDARK: 18,
+  DIFFUSEALPHAOPAQUE: 19,
+  DIFFUSE: 20,
+  DETAIL: 21,
+  NORMAL: 22,
+  SPECULAR: 23,
+  EMISSIVE: 24,
+  TINTPALETTE: 25,
+  SKIPPROCESSING: 26,
+};
+
 /**
- * Categorize textures by type based on naming conventions
+ * Categorize textures by type using CodeWalker's TextureUsage metadata
+ * when available, falling back to naming conventions.
  * @param {Object} textures - Dictionary of parsed textures
- * @returns {Object} - Categorized textures { diffuse: [], normal: [], specular: [], ... }
+ * @returns {Object} - Categorized textures { diffuse: {}, normal: {}, specular: {}, detail: {}, other: {} }
  */
 export function categorizeTextures(textures) {
   const categories = {
@@ -817,16 +1072,38 @@ export function categorizeTextures(textures) {
   for (const [name, texture] of Object.entries(textures)) {
     const lowerName = name.toLowerCase();
     const baseName = getTextureBaseName(lowerName);
+    const entry = { ...texture, originalName: name };
 
+    // Strategy 1: Use TextureUsage metadata from the file (most reliable)
+    const usage = texture.usage;
+    if (usage === TEXTURE_USAGE.NORMAL || usage === TEXTURE_USAGE.CLOUDNORMAL) {
+      categories.normal[baseName] = entry;
+      continue;
+    }
+    if (usage === TEXTURE_USAGE.SPECULAR) {
+      categories.specular[baseName] = entry;
+      continue;
+    }
+    if (usage === TEXTURE_USAGE.DETAIL) {
+      categories.detail[baseName] = entry;
+      continue;
+    }
+    if (usage === TEXTURE_USAGE.DIFFUSE || usage === TEXTURE_USAGE.DIFFUSEMIPSHARPEN ||
+        usage === TEXTURE_USAGE.DIFFUSEDARK || usage === TEXTURE_USAGE.DIFFUSEALPHAOPAQUE) {
+      categories.diffuse[baseName] = entry;
+      continue;
+    }
+
+    // Strategy 2: Fall back to naming conventions
     if (lowerName.endsWith("_n") || lowerName.includes("_normal") || lowerName.includes("_nrm")) {
-      categories.normal[baseName] = { ...texture, originalName: name };
+      categories.normal[baseName] = entry;
     } else if (lowerName.endsWith("_s") || lowerName.includes("_spec") || lowerName.includes("_specular")) {
-      categories.specular[baseName] = { ...texture, originalName: name };
+      categories.specular[baseName] = entry;
     } else if (lowerName.includes("_detail") || lowerName.endsWith("_d2")) {
-      categories.detail[baseName] = { ...texture, originalName: name };
+      categories.detail[baseName] = entry;
     } else if (lowerName.endsWith("_d") || !lowerName.match(/_[a-z]$/)) {
       // Diffuse textures end with _d or have no suffix
-      categories.diffuse[baseName] = { ...texture, originalName: name };
+      categories.diffuse[baseName] = entry;
     } else {
       categories.other[name] = texture;
     }

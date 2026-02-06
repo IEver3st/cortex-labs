@@ -397,6 +397,18 @@ export default function SettingsMenu({
                                   </div>
 
                                   <div className="settings-row">
+                                    <div className="settings-row-label">Grid background</div>
+                                    <button
+                                      type="button"
+                                      className={`settings-toggle ${draft.showGrid ? "is-on" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
+                                      aria-pressed={draft.showGrid}
+                                    >
+                                      <span className="settings-toggle-dot" />
+                                    </button>
+                                  </div>
+
+                                  <div className="settings-row">
                                     <div className="settings-row-label">Show hints</div>
                                     <button
                                       type="button"

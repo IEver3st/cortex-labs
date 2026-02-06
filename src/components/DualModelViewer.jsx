@@ -319,6 +319,41 @@ function applyLiveryToModel(object, bodyColor, texture) {
   });
 }
 
+/* ───────── Apply texture to ALL meshes (EUP / everything mode) ───────── */
+function applyTextureToAll(object, bodyColor, texture) {
+  if (!object) return;
+  const color = new THREE.Color(bodyColor || "#e7ebf0");
+
+  object.traverse((child) => {
+    if (!child.isMesh) return;
+    if (!child.userData.baseMaterial) child.userData.baseMaterial = child.material;
+
+    if (texture) {
+      if (!child.userData.dualMaterial) {
+        const mat = new THREE.MeshStandardMaterial({
+          color, map: texture, side: THREE.DoubleSide,
+          metalness: child.userData.baseMaterial?.metalness ?? 0.2,
+          roughness: child.userData.baseMaterial?.roughness ?? 0.6,
+        });
+        mat.name = child.userData.baseMaterial?.name || "";
+        child.userData.dualMaterial = mat;
+      } else {
+        child.userData.dualMaterial.color.copy(color);
+        if (child.userData.dualMaterial.map !== texture) {
+          child.userData.dualMaterial.map = texture;
+          child.userData.dualMaterial.needsUpdate = true;
+        }
+      }
+      if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
+    } else {
+      // No texture — restore base material
+      if (child.userData.baseMaterial && child.material !== child.userData.baseMaterial) {
+        child.material = child.userData.baseMaterial;
+      }
+    }
+  });
+}
+
 /* ───────── Load model file into THREE.Group ───────── */
 async function loadModelFile(modelPath) {
   if (!modelPath) return null;
@@ -377,6 +412,8 @@ export default function DualModelViewer({
   backgroundColor,
   selectedSlot,
   gizmoVisible = true,
+  showGrid = true,
+  textureMode = "livery",
   initialPosA,
   initialPosB,
   onSelectSlot,
@@ -400,6 +437,7 @@ export default function DualModelViewer({
   const textureBRef = useRef(null);
   const gizmoARef = useRef(null);
   const gizmoBRef = useRef(null);
+  const gridRef = useRef(null);
   const fitRef = useRef({ center: new THREE.Vector3(), distance: 6 });
 
   const [sceneReady, setSceneReady] = useState(false);
@@ -416,6 +454,7 @@ export default function DualModelViewer({
   const selectedSlotRef = useRef(selectedSlot);
 
   const onPositionChangeRef = useRef(onPositionChange);
+  const textureModeRef = useRef(textureMode);
   const initialPosARef = useRef(initialPosA);
   const initialPosBRef = useRef(initialPosB);
 
@@ -426,6 +465,7 @@ export default function DualModelViewer({
   useEffect(() => { onModelBLoadingRef.current = onModelBLoading; }, [onModelBLoading]);
   useEffect(() => { selectedSlotRef.current = selectedSlot; }, [selectedSlot]);
   useEffect(() => { onPositionChangeRef.current = onPositionChange; }, [onPositionChange]);
+  useEffect(() => { textureModeRef.current = textureMode; }, [textureMode]);
 
   const requestRender = useCallback(() => { requestRenderRef.current?.(); }, []);
 
@@ -466,8 +506,7 @@ export default function DualModelViewer({
     rim.position.set(-3, 2, -2.2);
     scene.add(ambient, key, rim);
 
-    // Floor grid
-    scene.add(createFloorGrid());
+    // Floor grid (conditionally added via showGrid effect)
 
     renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
     containerRef.current.appendChild(renderer.domElement);
@@ -614,6 +653,23 @@ export default function DualModelViewer({
     rendererRef.current.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     requestRender();
   }, [backgroundColor]);
+
+  /* ─── Floor grid toggle ─── */
+  useEffect(() => {
+    if (!sceneReady || !sceneRef.current) return;
+    if (showGrid && !gridRef.current) {
+      const grid = createFloorGrid();
+      sceneRef.current.add(grid);
+      gridRef.current = grid;
+      requestRender();
+    } else if (!showGrid && gridRef.current) {
+      sceneRef.current.remove(gridRef.current);
+      gridRef.current.geometry?.dispose?.();
+      gridRef.current.material?.dispose?.();
+      gridRef.current = null;
+      requestRender();
+    }
+  }, [showGrid, sceneReady, requestRender]);
 
   /* ─── WASD camera movement ─── */
   const wasdStateRef = useRef({ forward: false, back: false, left: false, right: false, up: false, down: false, boost: false });
@@ -823,51 +879,54 @@ export default function DualModelViewer({
   useEffect(() => {
     if (!sceneReady) return;
     let cancelled = false;
+    const applyFn = textureMode === "eup" ? applyTextureToAll : applyLiveryToModel;
 
     (async () => {
       if (!textureAPath) {
         if (textureARef.current) { textureARef.current.dispose?.(); textureARef.current = null; }
-        if (modelARef.current) { applyLiveryToModel(modelARef.current, bodyColor, null); requestRender(); }
+        if (modelARef.current) { applyFn(modelARef.current, bodyColor, null); requestRender(); }
         return;
       }
       const tex = await loadTextureFromPath(textureAPath, textureLoader, rendererRef.current);
       if (cancelled) return;
       if (textureARef.current && textureARef.current !== tex) textureARef.current.dispose?.();
       textureARef.current = tex;
-      if (modelARef.current) { applyLiveryToModel(modelARef.current, bodyColor, tex); requestRender(); }
+      if (modelARef.current) { applyFn(modelARef.current, bodyColor, tex); requestRender(); }
     })();
 
     return () => { cancelled = true; };
-  }, [textureAPath, textureAReloadToken, sceneReady, modelAVersion]);
+  }, [textureAPath, textureAReloadToken, sceneReady, modelAVersion, textureMode]);
 
   /* ─── Load & apply texture B ─── */
   useEffect(() => {
     if (!sceneReady) return;
     let cancelled = false;
+    const applyFn = textureMode === "eup" ? applyTextureToAll : applyLiveryToModel;
 
     (async () => {
       if (!textureBPath) {
         if (textureBRef.current) { textureBRef.current.dispose?.(); textureBRef.current = null; }
-        if (modelBRef.current) { applyLiveryToModel(modelBRef.current, bodyColor, null); requestRender(); }
+        if (modelBRef.current) { applyFn(modelBRef.current, bodyColor, null); requestRender(); }
         return;
       }
       const tex = await loadTextureFromPath(textureBPath, textureLoader, rendererRef.current);
       if (cancelled) return;
       if (textureBRef.current && textureBRef.current !== tex) textureBRef.current.dispose?.();
       textureBRef.current = tex;
-      if (modelBRef.current) { applyLiveryToModel(modelBRef.current, bodyColor, tex); requestRender(); }
+      if (modelBRef.current) { applyFn(modelBRef.current, bodyColor, tex); requestRender(); }
     })();
 
     return () => { cancelled = true; };
-  }, [textureBPath, textureBReloadToken, sceneReady, modelBVersion]);
+  }, [textureBPath, textureBReloadToken, sceneReady, modelBVersion, textureMode]);
 
   /* ─── Body color changes ─── */
   useEffect(() => {
     if (!sceneReady) return;
-    if (modelARef.current) applyLiveryToModel(modelARef.current, bodyColor, textureARef.current);
-    if (modelBRef.current) applyLiveryToModel(modelBRef.current, bodyColor, textureBRef.current);
+    const applyFn = textureMode === "eup" ? applyTextureToAll : applyLiveryToModel;
+    if (modelARef.current) applyFn(modelARef.current, bodyColor, textureARef.current);
+    if (modelBRef.current) applyFn(modelBRef.current, bodyColor, textureBRef.current);
     requestRender();
-  }, [bodyColor, sceneReady]);
+  }, [bodyColor, sceneReady, textureMode]);
 
   /* ─── Camera refit utility ─── */
   const refitCamera = useCallback(() => {
