@@ -4,58 +4,82 @@
  */
 
 import { inflate, inflateRaw } from "pako";
+import { decodeBC7Block as _decodeBC7Block } from "./bc7";
 
 const RSC7_MAGIC = 0x37435352;
 const RSC85_MAGIC = 0x38355352;
 
 // Texture formats used in GTA V
 const TEXTURE_FORMAT = {
-  DXT1: 0,      // BC1 - RGB with 1-bit alpha
-  DXT3: 1,      // BC2 - RGB with explicit alpha
-  DXT5: 2,      // BC3 - RGB with interpolated alpha
-  BC4: 8,       // BC4 - Single channel (Red), often used for Height/Gloss
-  BC5: 9,       // BC5 - Two channels (RG), used for Normal Maps
-  BC7: 3,       // BC7 - High quality RGB(A)
-  A8R8G8B8: 4,  // Uncompressed ARGB
-  A1R5G5B5: 5,  // 16-bit with 1-bit alpha
-  A8: 6,        // 8-bit alpha only
-  L8: 7,        // 8-bit luminance
+  DXT1: 0,       // BC1 - RGB with 1-bit alpha
+  DXT3: 1,       // BC2 - RGB with explicit alpha
+  DXT5: 2,       // BC3 - RGB with interpolated alpha
+  BC4: 8,        // BC4 - Single channel (Red), often used for Height/Gloss
+  BC5: 9,        // BC5 - Two channels (RG), used for Normal Maps
+  BC7: 3,        // BC7 - High quality RGB(A)
+  A8R8G8B8: 4,   // Uncompressed BGRA in memory (D3DFMT_A8R8G8B8)
+  A1R5G5B5: 5,   // 16-bit with 1-bit alpha
+  A8: 6,         // 8-bit alpha only
+  L8: 7,         // 8-bit luminance
+  A8B8G8R8: 10,  // Uncompressed RGBA in memory (D3DFMT_A8B8G8R8)
+  X8R8G8B8: 11,  // Uncompressed BGRX in memory (alpha forced to 0xFF)
 };
 
 // D3DFORMAT / DXGI_FORMAT codes found in GTA V textures
 // Sourced from CodeWalker TextureFormat enum & DXGI_FORMAT spec
 const FORMAT_MAP = {
-  // D3DFMT legacy codes (used in gen7/gen8 resources)
-  0x14: TEXTURE_FORMAT.A8R8G8B8,  // D3DFMT_A8B8G8R8
-  0x15: TEXTURE_FORMAT.A8R8G8B8,  // D3DFMT_A8R8G8B8
-  0x19: TEXTURE_FORMAT.A1R5G5B5,  // D3DFMT_A1R5G5B5
-  0x1A: TEXTURE_FORMAT.A8,        // D3DFMT_A8
-  0x1C: TEXTURE_FORMAT.DXT1,      // D3DFMT_DXT1
-  0x1D: TEXTURE_FORMAT.DXT3,      // D3DFMT_DXT3
-  0x1E: TEXTURE_FORMAT.DXT5,      // D3DFMT_DXT5
-  0x32: TEXTURE_FORMAT.L8,        // D3DFMT_L8
-  // FourCC codes (ATI1/ATI2 stored as uint32 little-endian ASCII)
-  0x31495441: TEXTURE_FORMAT.BC4, // "ATI1"
-  0x32495441: TEXTURE_FORMAT.BC5, // "ATI2"
-  // DXGI_FORMAT codes (used in gen9 / newer resources)
-  // BC1: DXGI 71-72
-  71: TEXTURE_FORMAT.DXT1,        // DXGI_FORMAT_BC1_UNORM
-  72: TEXTURE_FORMAT.DXT1,        // DXGI_FORMAT_BC1_UNORM_SRGB
-  // BC2: DXGI 74-75
-  74: TEXTURE_FORMAT.DXT3,        // DXGI_FORMAT_BC2_UNORM
-  75: TEXTURE_FORMAT.DXT3,        // DXGI_FORMAT_BC2_UNORM_SRGB
-  // BC3: DXGI 77-78
-  77: TEXTURE_FORMAT.DXT5,        // DXGI_FORMAT_BC3_UNORM
-  78: TEXTURE_FORMAT.DXT5,        // DXGI_FORMAT_BC3_UNORM_SRGB
-  // BC4: DXGI 80-81
-  80: TEXTURE_FORMAT.BC4,         // DXGI_FORMAT_BC4_UNORM
-  81: TEXTURE_FORMAT.BC4,         // DXGI_FORMAT_BC4_SNORM
-  // BC5: DXGI 83-84
-  83: TEXTURE_FORMAT.BC5,         // DXGI_FORMAT_BC5_UNORM
-  84: TEXTURE_FORMAT.BC5,         // DXGI_FORMAT_BC5_SNORM
-  // BC7: DXGI 98-99
-  98: TEXTURE_FORMAT.BC7,         // DXGI_FORMAT_BC7_UNORM
-  99: TEXTURE_FORMAT.BC7,         // DXGI_FORMAT_BC7_UNORM_SRGB
+  // ── D3DFMT legacy integer codes (used in gen7/gen8 resources) ──
+  // Values match the D3D9 D3DFORMAT enum exactly.
+  21: TEXTURE_FORMAT.A8R8G8B8,    // D3DFMT_A8R8G8B8 — BGRA in memory
+  22: TEXTURE_FORMAT.X8R8G8B8,    // D3DFMT_X8R8G8B8 — BGRX in memory (alpha = 0xFF)
+  25: TEXTURE_FORMAT.A1R5G5B5,    // D3DFMT_A1R5G5B5
+  28: TEXTURE_FORMAT.A8,          // D3DFMT_A8
+  32: TEXTURE_FORMAT.A8B8G8R8,    // D3DFMT_A8B8G8R8 — RGBA in memory
+  50: TEXTURE_FORMAT.L8,          // D3DFMT_L8
+
+  // ── FourCC codes (MAKEFOURCC, stored as uint32 little-endian ASCII) ──
+  0x31545844: TEXTURE_FORMAT.DXT1, // "DXT1" = MAKEFOURCC('D','X','T','1')
+  0x33545844: TEXTURE_FORMAT.DXT3, // "DXT3" = MAKEFOURCC('D','X','T','3')
+  0x35545844: TEXTURE_FORMAT.DXT5, // "DXT5" = MAKEFOURCC('D','X','T','5')
+  0x31495441: TEXTURE_FORMAT.BC4,  // "ATI1" = MAKEFOURCC('A','T','I','1')
+  0x32495441: TEXTURE_FORMAT.BC5,  // "ATI2" = MAKEFOURCC('A','T','I','2')
+  0x20374342: TEXTURE_FORMAT.BC7,  // "BC7 " = MAKEFOURCC('B','C','7',' ')
+
+  // ── DXGI_FORMAT codes (used in gen9 / newer resources) ──
+  // Values match CodeWalker TextureFormatG9 enum.
+  // BC1 (DXT1): DXGI 0x46-0x48
+  0x46: TEXTURE_FORMAT.DXT1,       // DXGI_FORMAT_BC1_TYPELESS
+  0x47: TEXTURE_FORMAT.DXT1,       // DXGI_FORMAT_BC1_UNORM
+  0x48: TEXTURE_FORMAT.DXT1,       // DXGI_FORMAT_BC1_UNORM_SRGB
+  // BC2 (DXT3): DXGI 0x49-0x4B
+  0x49: TEXTURE_FORMAT.DXT3,       // DXGI_FORMAT_BC2_TYPELESS
+  0x4A: TEXTURE_FORMAT.DXT3,       // DXGI_FORMAT_BC2_UNORM
+  0x4B: TEXTURE_FORMAT.DXT3,       // DXGI_FORMAT_BC2_UNORM_SRGB
+  // BC3 (DXT5): DXGI 0x4C-0x4E
+  0x4C: TEXTURE_FORMAT.DXT5,       // DXGI_FORMAT_BC3_TYPELESS
+  0x4D: TEXTURE_FORMAT.DXT5,       // DXGI_FORMAT_BC3_UNORM
+  0x4E: TEXTURE_FORMAT.DXT5,       // DXGI_FORMAT_BC3_UNORM_SRGB
+  // BC4 (ATI1): DXGI 0x4F-0x51
+  0x4F: TEXTURE_FORMAT.BC4,        // DXGI_FORMAT_BC4_TYPELESS
+  0x50: TEXTURE_FORMAT.BC4,        // DXGI_FORMAT_BC4_UNORM
+  0x51: TEXTURE_FORMAT.BC4,        // DXGI_FORMAT_BC4_SNORM
+  // BC5 (ATI2): DXGI 0x52-0x54
+  0x52: TEXTURE_FORMAT.BC5,        // DXGI_FORMAT_BC5_TYPELESS
+  0x53: TEXTURE_FORMAT.BC5,        // DXGI_FORMAT_BC5_UNORM
+  0x54: TEXTURE_FORMAT.BC5,        // DXGI_FORMAT_BC5_SNORM
+  // BC7: DXGI 0x61-0x63
+  0x61: TEXTURE_FORMAT.BC7,        // DXGI_FORMAT_BC7_TYPELESS
+  0x62: TEXTURE_FORMAT.BC7,        // DXGI_FORMAT_BC7_UNORM
+  0x63: TEXTURE_FORMAT.BC7,        // DXGI_FORMAT_BC7_UNORM_SRGB
+  // Uncompressed DXGI formats (gen9) — only codes that don't collide with D3DFMT
+  // NOTE: 0x1B-0x1D (R8G8B8A8) collide with D3DFMT_A8 (28=0x1C) so are excluded;
+  //       legacy parser reads D3DFMT at offset 0x58, gen9 uses a different struct.
+  0x3D: TEXTURE_FORMAT.L8,         // DXGI_FORMAT_R8_UNORM
+  0x41: TEXTURE_FORMAT.A8,         // DXGI_FORMAT_A8_UNORM
+  0x56: TEXTURE_FORMAT.A1R5G5B5,   // DXGI_FORMAT_B5G5R5A1_UNORM
+  0x57: TEXTURE_FORMAT.A8R8G8B8,   // DXGI_FORMAT_B8G8R8A8_UNORM
+  0x5A: TEXTURE_FORMAT.A8R8G8B8,   // DXGI_FORMAT_B8G8R8A8_TYPELESS
+  0x5B: TEXTURE_FORMAT.A8R8G8B8,   // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
 };
 
 /**
@@ -393,12 +417,14 @@ function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, dec
     (!decodeSet || (name && decodeSet.has(name.toLowerCase())));
 
   let rgba = null;
+  let mipmaps = null;
   if (shouldDecode) {
-    rgba = decodeTexture(reader, dataOffset, width, height, format, stride);
-
-    if (!rgba) {
+    const result = decodeTextureWithMips(reader, dataOffset, width, height, format, stride, mipCount);
+    if (!result) {
       return null;
     }
+    rgba = result.rgba;
+    mipmaps = result.mipmaps;
   }
 
   return {
@@ -412,6 +438,7 @@ function parseTexture(reader, offset, debugIndex = -1, metadataOnly = false, dec
     stride,
     usage,
     rgba,
+    mipmaps,
   };
 }
 
@@ -426,7 +453,29 @@ function readCString(reader, offset, maxLength = 256) {
   return str || null;
 }
 
-function decodeTexture(reader, offset, width, height, format, stride) {
+// Calculate the byte size of a single mip level for a given format
+function getMipDataSize(w, h, format, stride) {
+  const bw = Math.ceil(w / 4);
+  const bh = Math.ceil(h / 4);
+  switch (format) {
+    case TEXTURE_FORMAT.DXT1:    return bw * bh * 8;   // 8 bytes per 4x4 block
+    case TEXTURE_FORMAT.DXT3:    return bw * bh * 16;  // 16 bytes per 4x4 block
+    case TEXTURE_FORMAT.DXT5:    return bw * bh * 16;
+    case TEXTURE_FORMAT.BC4:     return bw * bh * 8;
+    case TEXTURE_FORMAT.BC5:     return bw * bh * 16;
+    case TEXTURE_FORMAT.BC7:     return bw * bh * 16;
+    case TEXTURE_FORMAT.A8R8G8B8: return (stride > 0 ? stride : w * 4) * h;
+    case TEXTURE_FORMAT.A8B8G8R8: return (stride > 0 ? stride : w * 4) * h;
+    case TEXTURE_FORMAT.X8R8G8B8: return (stride > 0 ? stride : w * 4) * h;
+    case TEXTURE_FORMAT.A1R5G5B5: return (stride > 0 ? stride : w * 2) * h;
+    case TEXTURE_FORMAT.A8:      return (stride > 0 ? stride : w) * h;
+    case TEXTURE_FORMAT.L8:      return (stride > 0 ? stride : w) * h;
+    default:                     return bw * bh * 16; // assume BC3-like
+  }
+}
+
+// Decode a single mip level at the given offset
+function decodeSingleMip(reader, offset, width, height, format, stride) {
   const rgba = new Uint8Array(width * height * 4);
 
   switch (format) {
@@ -451,6 +500,12 @@ function decodeTexture(reader, offset, width, height, format, stride) {
     case TEXTURE_FORMAT.A8R8G8B8:
       decodeARGB8(reader, offset, width, height, rgba, stride);
       break;
+    case TEXTURE_FORMAT.A8B8G8R8:
+      decodeABGR8(reader, offset, width, height, rgba, stride);
+      break;
+    case TEXTURE_FORMAT.X8R8G8B8:
+      decodeXRGB8(reader, offset, width, height, rgba, stride);
+      break;
     case TEXTURE_FORMAT.A1R5G5B5:
       decodeA1R5G5B5(reader, offset, width, height, rgba, stride);
       break;
@@ -461,12 +516,58 @@ function decodeTexture(reader, offset, width, height, format, stride) {
       decodeL8(reader, offset, width, height, rgba, stride);
       break;
     default:
-      // Fallback: try DXT5
       decodeDXT5(reader, offset, width, height, rgba);
       break;
   }
 
   return rgba;
+}
+
+// Decode texture with all mip levels
+function decodeTextureWithMips(reader, offset, width, height, format, stride, mipCount) {
+  if (!decodeTextureWithMips._formatStats) decodeTextureWithMips._formatStats = {};
+  const fmtName = Object.entries(TEXTURE_FORMAT).find(([,v]) => v === format)?.[0] || `unknown(${format})`;
+  decodeTextureWithMips._formatStats[fmtName] = (decodeTextureWithMips._formatStats[fmtName] || 0) + 1;
+  if (!decodeTextureWithMips._logged) {
+    decodeTextureWithMips._logged = true;
+    setTimeout(() => {
+      console.log("[YTD] Texture format stats:", decodeTextureWithMips._formatStats);
+    }, 2000);
+  }
+
+  // Decode base level (mip 0)
+  const rgba = decodeSingleMip(reader, offset, width, height, format, stride);
+  if (!rgba) return null;
+
+  // Decode additional mip levels if available
+  const mipmaps = [];
+  if (mipCount > 1) {
+    let mipOffset = offset + getMipDataSize(width, height, format, stride);
+    let mw = width;
+    let mh = height;
+
+    for (let level = 1; level < mipCount; level++) {
+      mw = Math.max(1, mw >> 1);
+      mh = Math.max(1, mh >> 1);
+
+      // Safety: check we have enough data
+      const mipSize = getMipDataSize(mw, mh, format, stride);
+      if (mipOffset + mipSize > reader.len) break;
+
+      try {
+        const mipRgba = decodeSingleMip(reader, mipOffset, mw, mh, format, 0);
+        if (mipRgba) {
+          mipmaps.push({ data: mipRgba, width: mw, height: mh });
+        }
+      } catch {
+        break; // Stop on decode errors
+      }
+
+      mipOffset += mipSize;
+    }
+  }
+
+  return { rgba, mipmaps: mipmaps.length > 0 ? mipmaps : null };
 }
 
 // Pre-allocated scratch buffers for block decoders — avoids per-block allocations
@@ -799,17 +900,11 @@ function decodeBC5(reader, offset, width, height, rgba) {
   }
 }
 
-// BC7 Decoder (simplified - handles most common modes)
+// BC7 Decoder — full spec-compliant implementation in bc7.js
 function decodeBC7(reader, offset, width, height, rgba) {
   const blocksX = Math.ceil(width / 4);
   const blocksY = Math.ceil(height / 4);
-  
-  // BC7 has 8 modes (0-7), each with different subset counts and bit layouts.
-  // Implementing a full BC7 decoder is complex. 
-  // For now, we'll continue using an approximation that handles the basic 
-  // endpoint extraction, but we'll try to support mode 1 and 6 more robustly
-  // as these are the most common for diffuse and normal maps respectively.
-  
+
   let blockOffset = offset;
 
   for (let by = 0; by < blocksY; by++) {
@@ -819,92 +914,7 @@ function decodeBC7(reader, offset, width, height, rgba) {
 
       if (!block) continue;
 
-      // Decode BC7 block
-      decodeBC7Block(block, bx, by, width, height, rgba);
-    }
-  }
-}
-
-function decodeBC7Block(block, bx, by, width, height, rgba) {
-  // Find mode (first set bit)
-  let mode = 0;
-  while (mode < 8 && ((block[0] >> mode) & 1) === 0) mode++;
-
-  if (mode >= 8) {
-    // Invalid block, fill with magenta
-    fillBlock(bx, by, width, height, rgba, [255, 0, 255, 255]);
-    return;
-  }
-  
-  // Very simplified: just grab endpoints and interpolate
-  // This is technically incorrect for many modes but provides a "glimpse"
-  // of the texture rather than garbage.
-  // A full implementation requires:
-  // 1. Partition table lookup (64 sets)
-  // 2. Per-mode bit unpacking (very messy bit stream manipulation)
-  // 3. P-bit handling
-  // 4. Index interpolation
-  
-  // We'll stick to the "approximate visual" approach for now because
-  // a full BC7 decoder is 1000+ lines of code.
-  // For production quality, we should use a WASM decoder or WebGL BPTC extension.
-  
-  try {
-    const colors = extractBC7Colors(block, mode);
-
-    for (let py = 0; py < 4; py++) {
-      for (let px = 0; px < 4; px++) {
-        const x = bx * 4 + px;
-        const y = by * 4 + py;
-        if (x >= width || y >= height) continue;
-
-        // Simple color selection based on position
-        const idx = (py * 4 + px) % colors.length;
-        const color = colors[idx] || [128, 128, 128, 255];
-
-        const pixelOffset = (y * width + x) * 4;
-        rgba[pixelOffset] = color[0];
-        rgba[pixelOffset + 1] = color[1];
-        rgba[pixelOffset + 2] = color[2];
-        rgba[pixelOffset + 3] = color[3];
-      }
-    }
-  } catch {
-    // Fallback
-    fillBlock(bx, by, width, height, rgba, [128, 128, 128, 255]);
-  }
-}
-
-function extractBC7Colors(block, mode) {
-  // Simplified color extraction - gets approximate endpoint colors
-  // For full BC7 support, would need complete mode-specific parsing
-  const r0 = block[1] || 128;
-  const g0 = block[2] || 128;
-  const b0 = block[3] || 128;
-  const r1 = block[4] || 128;
-  const g1 = block[5] || 128;
-  const b1 = block[6] || 128;
-
-  return [
-    [r0, g0, b0, 255],
-    [r1, g1, b1, 255],
-    [Math.floor((r0 + r1) / 2), Math.floor((g0 + g1) / 2), Math.floor((b0 + b1) / 2), 255],
-    [Math.floor((r0 * 2 + r1) / 3), Math.floor((g0 * 2 + g1) / 3), Math.floor((b0 * 2 + b1) / 3), 255],
-  ];
-}
-
-function fillBlock(bx, by, width, height, rgba, color) {
-  for (let py = 0; py < 4; py++) {
-    for (let px = 0; px < 4; px++) {
-      const x = bx * 4 + px;
-      const y = by * 4 + py;
-      if (x >= width || y >= height) continue;
-
-      const pixelOffset = (y * width + x) * 4;
-      rgba[pixelOffset] = color[0];
-      rgba[pixelOffset + 1] = color[1];
-      rgba[pixelOffset + 2] = color[2];
-      rgba[pixelOffset + 3] = color[3];
+      _decodeBC7Block(block, bx, by, width, height, rgba);
     }
   }
 }
@@ -930,6 +940,56 @@ function decodeARGB8(reader, offset, width, height, rgba, stride) {
       rgba[dstOff + 1] = bytes[srcOff + 1]; // G
       rgba[dstOff + 2] = bytes[srcOff];     // B
       rgba[dstOff + 3] = bytes[srcOff + 3]; // A
+    }
+  }
+}
+
+// Decode A8B8G8R8 format — data is RGBA in memory, direct copy
+function decodeABGR8(reader, offset, width, height, rgba, stride) {
+  const rowStride = stride > 0 ? stride : width * 4;
+  const bytes = reader.bytes;
+  const len = reader.len;
+  const rowPixels = width << 2;
+
+  for (let y = 0; y < height; y++) {
+    const srcRowBase = offset + y * rowStride;
+    const dstRowBase = y * rowPixels;
+    if (srcRowBase + rowPixels > len) break;
+
+    for (let x = 0; x < width; x++) {
+      const srcOff = srcRowBase + (x << 2);
+      const dstOff = dstRowBase + (x << 2);
+
+      // RGBA — no swizzle needed
+      rgba[dstOff]     = bytes[srcOff];     // R
+      rgba[dstOff + 1] = bytes[srcOff + 1]; // G
+      rgba[dstOff + 2] = bytes[srcOff + 2]; // B
+      rgba[dstOff + 3] = bytes[srcOff + 3]; // A
+    }
+  }
+}
+
+// Decode X8R8G8B8 format — BGRA in memory with alpha forced to 0xFF
+function decodeXRGB8(reader, offset, width, height, rgba, stride) {
+  const rowStride = stride > 0 ? stride : width * 4;
+  const bytes = reader.bytes;
+  const len = reader.len;
+  const rowPixels = width << 2;
+
+  for (let y = 0; y < height; y++) {
+    const srcRowBase = offset + y * rowStride;
+    const dstRowBase = y * rowPixels;
+    if (srcRowBase + rowPixels > len) break;
+
+    for (let x = 0; x < width; x++) {
+      const srcOff = srcRowBase + (x << 2);
+      const dstOff = dstRowBase + (x << 2);
+
+      // BGRA -> RGBA swizzle, alpha forced to 0xFF (X channel ignored)
+      rgba[dstOff]     = bytes[srcOff + 2]; // R
+      rgba[dstOff + 1] = bytes[srcOff + 1]; // G
+      rgba[dstOff + 2] = bytes[srcOff];     // B
+      rgba[dstOff + 3] = 255;               // A (forced opaque)
     }
   }
 }
@@ -1005,27 +1065,6 @@ function decodeL8(reader, offset, width, height, rgba, stride) {
   }
 }
 
-// Legacy helpers kept for BC7 extractBC7Colors which still uses array-based colors
-function decodeColors565(c0, c1, hasAlpha) {
-  const r0 = ((c0 >> 11) & 0x1F) * 255 / 31 + 0.5 | 0;
-  const g0 = ((c0 >> 5) & 0x3F) * 255 / 63 + 0.5 | 0;
-  const b0 = (c0 & 0x1F) * 255 / 31 + 0.5 | 0;
-  const r1 = ((c1 >> 11) & 0x1F) * 255 / 31 + 0.5 | 0;
-  const g1 = ((c1 >> 5) & 0x3F) * 255 / 63 + 0.5 | 0;
-  const b1 = (c1 & 0x1F) * 255 / 31 + 0.5 | 0;
-
-  const colors = [[r0, g0, b0, 255], [r1, g1, b1, 255], null, null];
-
-  if (c0 > c1 || hasAlpha) {
-    colors[2] = [((r0 * 2 + r1) / 3) | 0, ((g0 * 2 + g1) / 3) | 0, ((b0 * 2 + b1) / 3) | 0, 255];
-    colors[3] = [((r0 + r1 * 2) / 3) | 0, ((g0 + g1 * 2) / 3) | 0, ((b0 + b1 * 2) / 3) | 0, 255];
-  } else {
-    colors[2] = [((r0 + r1) >> 1), ((g0 + g1) >> 1), ((b0 + b1) >> 1), 255];
-    colors[3] = [0, 0, 0, 0];
-  }
-
-  return colors;
-}
 
 // CodeWalker TextureUsage enum values (lower 5 bits of UsageData)
 const TEXTURE_USAGE = {

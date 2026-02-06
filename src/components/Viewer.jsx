@@ -7,6 +7,7 @@ import { DFFLoader } from "dff-loader";
 import { readFile, exists } from "@tauri-apps/plugin-fs";
 import { parseYft } from "../lib/yft";
 import { matchTexturesToMaterials, categorizeTextures } from "../lib/ytd";
+import { parseDDS } from "../lib/dds";
 
 const presets = {
   // Most GTA/FiveM vehicle assets treat -Z as "forward".
@@ -158,9 +159,12 @@ export default function Viewer({
   ytdRawTextures = null,
   ytdOverrides = {},
   decodeYtdTextures = null,
+  sharedYtdTextures = null,
+  decodeSharedYtdTextures = null,
   showGrid = false,
   lightIntensity = 1.0,
   glossiness = 0.5,
+  hiddenExtras = [],
   onReady,
   onModelInfo,
   onModelError,
@@ -441,6 +445,20 @@ export default function Viewer({
   }, [glossiness]);
 
   useEffect(() => {
+    if (!modelRef.current) return;
+    const extraPattern = /_high_(\d+)$/i;
+    const hiddenSet = new Set(hiddenExtras);
+    for (const child of modelRef.current.children) {
+      if (!child.isGroup) continue;
+      const match = child.name.match(extraPattern);
+      if (match && parseInt(match[1], 10) > 0) {
+        child.visible = !hiddenSet.has(child.name);
+      }
+    }
+    requestRenderRef.current?.();
+  }, [hiddenExtras, modelLoadedVersion]);
+
+  useEffect(() => {
     if (!sceneReady) return;
     if (!wasdEnabled) return;
     if (!cameraRef.current || !controlsRef.current) return;
@@ -670,7 +688,10 @@ export default function Viewer({
           for (const model of drawable.models) {
             for (const mesh of model.meshes) {
               if (mesh.textureRefs && Object.keys(mesh.textureRefs).length > 0) {
-                console.log(`[YFT] Shader refs for "${mesh.materialName}":`, mesh.textureRefs);
+                const matLower = (mesh.materialName || "").toLowerCase();
+                if (matLower.includes("paint") || matLower.includes("livery")) {
+                  console.log(`[YFT] PAINT shader refs for "${mesh.materialName}":`, JSON.stringify(mesh.textureRefs));
+                }
               }
             }
           }
@@ -816,12 +837,14 @@ export default function Viewer({
         const targets = collectTextureTargets(object);
         const liveryTarget = findLiveryTarget(object);
         const windowTarget = findWindowTemplateTarget(object);
+        const extras = collectExtras(object);
         onModelInfoRef.current?.({
           targets,
           liveryTarget: liveryTarget?.value || "",
           liveryLabel: liveryTarget?.label || "",
           windowTarget: windowTarget?.value || "",
           windowLabel: windowTarget?.label || "",
+          extras,
         });
 
         const box = new THREE.Box3().setFromObject(object);
@@ -1000,7 +1023,10 @@ export default function Viewer({
       const applyTextureSettings = (texture) => {
         texture.colorSpace = THREE.SRGBColorSpace;
         if (!texture.isCompressedTexture) {
-          texture.flipY = flipTextureY;
+          // Don't override flipY for custom-decoded DDS textures (stored top-down)
+          if (!texture.userData?.ddsDecoded) {
+            texture.flipY = flipTextureY;
+          }
         }
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
@@ -1009,7 +1035,10 @@ export default function Viewer({
         if (texture.isDataTexture) {
           texture.magFilter = THREE.LinearFilter;
           texture.minFilter = THREE.LinearMipmapLinearFilter;
-          texture.generateMipmaps = true;
+          // Don't override generateMipmaps if pre-decoded mipmaps exist
+          if (!texture.mipmaps || texture.mipmaps.length === 0) {
+            texture.generateMipmaps = true;
+          }
         }
       };
 
@@ -1027,7 +1056,13 @@ export default function Viewer({
         }
       };
 
-      const loadDds = async () => {
+      const loadDdsCustom = async () => {
+        const tex = parseDDS(buffer);
+        if (!tex) throw new Error("Custom DDS parser returned null");
+        return tex;
+      };
+
+      const loadDdsFallback = async () => {
         const loader = new DDSLoader();
         if (typeof loader.parse === "function") {
           return loader.parse(buffer, true);
@@ -1106,7 +1141,7 @@ export default function Viewer({
       const isDds = kind === "dds" || sigKind === "dds";
       const isAi = kind === "ai" || sigKind === "ai" || sigKind === "ai-ps";
 
-      if (isDds) attempts.push(loadDds);
+      if (isDds) { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
       if (kind === "tga") attempts.push(loadTga);
       if (isPsd) attempts.push(loadPsd);
       if (isTiff) attempts.push(loadTiff);
@@ -1271,7 +1306,10 @@ export default function Viewer({
       const applyTextureSettings = (texture) => {
         texture.colorSpace = THREE.SRGBColorSpace;
         if (!texture.isCompressedTexture) {
-          texture.flipY = flipTextureY;
+          // Don't override flipY for custom-decoded DDS textures (stored top-down)
+          if (!texture.userData?.ddsDecoded) {
+            texture.flipY = flipTextureY;
+          }
         }
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
@@ -1280,7 +1318,10 @@ export default function Viewer({
         if (texture.isDataTexture) {
           texture.magFilter = THREE.LinearFilter;
           texture.minFilter = THREE.LinearMipmapLinearFilter;
-          texture.generateMipmaps = true;
+          // Don't override generateMipmaps if pre-decoded mipmaps exist
+          if (!texture.mipmaps || texture.mipmaps.length === 0) {
+            texture.generateMipmaps = true;
+          }
         }
       };
 
@@ -1298,7 +1339,13 @@ export default function Viewer({
         }
       };
 
-      const loadDds = async () => {
+      const loadDdsCustom = async () => {
+        const tex = parseDDS(buffer);
+        if (!tex) throw new Error("Custom DDS parser returned null");
+        return tex;
+      };
+
+      const loadDdsFallback = async () => {
         const loader = new DDSLoader();
         if (typeof loader.parse === "function") {
           return loader.parse(buffer, true);
@@ -1377,7 +1424,7 @@ export default function Viewer({
       const isDds = kind === "dds" || sigKind === "dds";
       const isAi = kind === "ai" || sigKind === "ai" || sigKind === "ai-ps";
 
-      if (isDds) attempts.push(loadDds);
+      if (isDds) { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
       if (kind === "tga") attempts.push(loadTga);
       if (isPsd) attempts.push(loadPsd);
       if (isTiff) attempts.push(loadTiff);
@@ -1483,6 +1530,17 @@ export default function Viewer({
       }
     }
 
+    // Add shared YTD textures (vehshare, vehshare_worn, etc.) at LOWEST priority.
+    // These only fill in textures not already provided by the model's own YTD or embedded textures.
+    if (sharedYtdTextures) {
+      for (const [name, tex] of Object.entries(sharedYtdTextures)) {
+        const key = name.toLowerCase();
+        if (!textureLookup[key]) {
+          textureLookup[key] = { ...tex, originalName: name, isShared: true };
+        }
+      }
+    }
+
     const hasTextures = Object.keys(textureLookup).length > 0;
 
     if (!modelRef.current || !hasTextures) {
@@ -1513,11 +1571,13 @@ export default function Viewer({
     // This is CodeWalker's approach: shader param texture name → YTD lookup.
     const meshes = getMeshList(modelRef.current);
     const meshAssignments = [];  // [{ mesh, diffuse, normal, specular }]
-    const namesToDecode = new Set();
+    const namesToDecode = new Set();      // textures from model-specific YTD
+    const sharedNamesToDecode = new Set(); // textures from shared YTDs
     const assignments = [];  // for UI metadata
 
     console.log("[YTD] Available textures:", Object.keys(textureLookup));
 
+    const unmatchedRefs = [];
     for (const mesh of meshes) {
       const refs = mesh.userData.textureRefs;  // { diffuse: "texName", normal: "texName_n", specular: "texName_s" }
       if (!refs || Object.keys(refs).length === 0) continue;
@@ -1532,11 +1592,19 @@ export default function Viewer({
           : "diffuse";
 
         const entry = textureLookup[texName.toLowerCase()];
+        if (!entry) {
+          unmatchedRefs.push({ material: mesh.material?.name, role, texName });
+        }
         if (entry) {
           assignment[channel] = entry;
           hasAny = true;
           if (!entry.rgba) {
-            namesToDecode.add(entry.originalName || entry.name || texName);
+            const decodeName = entry.originalName || entry.name || texName;
+            if (entry.isShared) {
+              sharedNamesToDecode.add(decodeName);
+            } else {
+              namesToDecode.add(decodeName);
+            }
           }
           assignments.push({
             textureName: entry.originalName || entry.name || texName,
@@ -1604,6 +1672,24 @@ export default function Viewer({
       }
     }
 
+    if (unmatchedRefs.length > 0) {
+      console.log("[YTD] Unmatched texture refs:", unmatchedRefs);
+    }
+
+    // Log paint material assignments specifically
+    const paintAssignments = meshAssignments.filter(a => {
+      const n = (a.mesh.material?.name || "").toLowerCase();
+      return n.includes("paint") || n.includes("livery");
+    });
+    if (paintAssignments.length > 0) {
+      console.log("[YTD] Paint mesh assignments:", paintAssignments.map(a => ({
+        name: a.mesh.material?.name,
+        diffuse: a.diffuse?.name || a.diffuse?.originalName || null,
+        normal: a.normal?.name || a.normal?.originalName || null,
+        specular: a.specular?.name || a.specular?.originalName || null,
+      })));
+    }
+
     // Report mapping metadata to the UI
     if (onYtdMappingUpdateRef.current) {
       onYtdMappingUpdateRef.current({
@@ -1637,11 +1723,22 @@ export default function Viewer({
       texture.wrapT = THREE.RepeatWrapping;
       texture.magFilter = THREE.LinearFilter;
       texture.minFilter = THREE.LinearMipmapLinearFilter;
-      texture.generateMipmaps = true;
-      texture.flipY = true;
-      texture.needsUpdate = true;
       texture.anisotropy = rendererRef.current?.capabilities.getMaxAnisotropy() || 1;
+      texture.flipY = true;
 
+      // Use pre-decoded mipmaps if available for better quality
+      if (entry.mipmaps && entry.mipmaps.length > 0) {
+        texture.mipmaps = entry.mipmaps.map(mip => ({
+          data: new Uint8Array(mip.data),
+          width: mip.width,
+          height: mip.height,
+        }));
+        texture.generateMipmaps = false;
+      } else {
+        texture.generateMipmaps = true;
+      }
+
+      texture.needsUpdate = true;
       ytdTextureMapRef.current.set(cacheKey, texture);
       return texture;
     };
@@ -1664,7 +1761,7 @@ export default function Viewer({
 
         const ytdMaterial = new THREE.MeshStandardMaterial({
           color: isPaintMat ? 0xffffff : (baseMaterial.color?.getHex?.() ?? 0xffffff),
-          side: THREE.DoubleSide,
+          side: THREE.FrontSide,
           metalness: baseMaterial.metalness ?? (isPaintMat ? 0.4 : 0.2),
           roughness: baseMaterial.roughness ?? (isPaintMat ? 0.3 : 0.6),
           transparent: isGlassMat ? true : (baseMaterial.transparent ?? false),
@@ -1711,23 +1808,39 @@ export default function Viewer({
 
     // ── Phase 2: Decode textures that need RGBA data, then apply ──
     const decodeAndApply = async () => {
-      if (namesToDecode.size === 0) {
+      const totalToDecode = namesToDecode.size + sharedNamesToDecode.size;
+      if (totalToDecode === 0) {
         // All textures already have RGBA data (e.g. embedded) — apply directly
         applyToMeshes();
         return;
       }
 
-      if (!decodeYtdTextures) {
-        console.warn("[YTD] No decodeYtdTextures function — cannot decode textures");
-        // Still try to apply any that already have rgba
-        applyToMeshes();
-        return;
-      }
-
       try {
-        console.log("[YTD] Decoding", namesToDecode.size, "textures:", [...namesToDecode]);
-        const decoded = await decodeYtdTextures([...namesToDecode]);
+        // Decode model-specific YTD textures and shared YTD textures in parallel
+        const decodePromises = [];
+
+        if (namesToDecode.size > 0 && decodeYtdTextures) {
+          console.log("[YTD] Decoding", namesToDecode.size, "model textures:", [...namesToDecode]);
+          decodePromises.push(decodeYtdTextures([...namesToDecode]));
+        } else {
+          decodePromises.push(Promise.resolve({}));
+          if (namesToDecode.size > 0) {
+            console.warn("[YTD] No decodeYtdTextures function — cannot decode model textures");
+          }
+        }
+
+        if (sharedNamesToDecode.size > 0 && decodeSharedYtdTextures) {
+          console.log("[YTD] Decoding", sharedNamesToDecode.size, "shared textures:", [...sharedNamesToDecode]);
+          decodePromises.push(decodeSharedYtdTextures([...sharedNamesToDecode]));
+        } else {
+          decodePromises.push(Promise.resolve({}));
+        }
+
+        const [decoded, sharedDecoded] = await Promise.all(decodePromises);
         if (cancelled) return;
+
+        // Merge all decoded results into one lookup
+        const allDecoded = { ...decoded, ...sharedDecoded };
 
         // Merge decoded RGBA data back into the assignments
         for (const assignment of meshAssignments) {
@@ -1735,7 +1848,7 @@ export default function Viewer({
             const tex = assignment[channel];
             if (!tex || tex.rgba) continue;
             const texName = (tex.originalName || tex.name || "").toLowerCase();
-            const decodedEntry = Object.entries(decoded).find(
+            const decodedEntry = Object.entries(allDecoded).find(
               ([k]) => k.toLowerCase() === texName
             );
             if (decodedEntry) {
@@ -1755,7 +1868,7 @@ export default function Viewer({
     return () => {
       cancelled = true;
     };
-  }, [ytdTextures, ytdRawTextures, embeddedTextures, ytdOverrides, modelLoadedVersion, requestRender, decodeYtdTextures]);
+  }, [ytdTextures, ytdRawTextures, embeddedTextures, ytdOverrides, modelLoadedVersion, requestRender, decodeYtdTextures, sharedYtdTextures, decodeSharedYtdTextures]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 }
@@ -1781,7 +1894,7 @@ function buildClmeshObject(meshes) {
       color: 0xffffff,
       metalness: 0.2,
       roughness: 0.6,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
     });
     material.name = mesh.materialName || "";
 
@@ -1941,7 +2054,7 @@ function getOrCreateAppliedMaterial(mesh, color) {
   const material = new THREE.MeshStandardMaterial({
     color,
     map: null,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
     metalness,
     roughness: baseRoughness,
   });
@@ -2019,7 +2132,8 @@ function applyMaterials(
       child.visible = true;
     }
 
-    if (shouldApply) {
+    // If a livery/window texture is actively being applied, it takes precedence
+    if (shouldApply && activeTexture) {
       const appliedMaterial = getOrCreateAppliedMaterial(child, color);
       updateAppliedMaterial(appliedMaterial, color, activeTexture);
       if (child.material !== appliedMaterial) {
@@ -2033,6 +2147,28 @@ function applyMaterials(
       continue;
     }
 
+    // If this mesh has a YTD-applied material, preserve it — just update color & glossiness
+    if (child.userData.ytdMaterial) {
+      // Ensure the YTD material is active
+      if (child.material !== child.userData.ytdMaterial) {
+        child.material = child.userData.ytdMaterial;
+      }
+      // Update body color on paint materials
+      const matName = (child.userData.ytdMaterial.name || "").toLowerCase();
+      const isPaint = matName.includes("paint") || matName.includes("livery");
+      if (isPaint) {
+        child.userData.ytdMaterial.color.set(color);
+        child.userData.ytdMaterial.needsUpdate = true;
+      }
+      // Apply glossiness
+      const base = child.userData.ytdMaterial.userData.baseRoughness;
+      if (typeof base === "number") {
+        child.userData.ytdMaterial.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
+      }
+      continue;
+    }
+
+    // No YTD material and no active livery — restore base material
     if (child.material !== child.userData.baseMaterial) {
       if (child.material !== child.userData.appliedMaterial) {
         disposeMaterial(child.material);
@@ -2922,7 +3058,7 @@ function buildDrawableObject(drawable, options = {}) {
         roughness,
         opacity,
         transparent,
-        side: THREE.DoubleSide,
+        side: THREE.FrontSide,
         vertexColors: hasVertexColors,
       });
       material.userData.baseRoughness = roughness;
@@ -2945,6 +3081,33 @@ function buildDrawableObject(drawable, options = {}) {
   });
 
   return root;
+}
+
+function collectExtras(object) {
+  if (!object) return [];
+  const extras = [];
+  const children = object.children || [];
+  // In buildDrawableObject, each model becomes a Group child of root.
+  // Model index 0 is the base body; indices 1+ are extras.
+  // Model groups are named like "{name}_high_0", "{name}_high_1", etc.
+  const extraPattern = /_high_(\d+)$/i;
+  for (const child of children) {
+    if (!child.isGroup) continue;
+    const match = child.name.match(extraPattern);
+    if (match) {
+      const idx = parseInt(match[1], 10);
+      if (idx > 0) {
+        extras.push({
+          index: idx,
+          name: child.name,
+          label: `Extra ${idx}`,
+          groupUuid: child.uuid,
+        });
+      }
+    }
+  }
+  extras.sort((a, b) => a.index - b.index);
+  return extras;
 }
 
 function hasRenderableMeshes(object) {

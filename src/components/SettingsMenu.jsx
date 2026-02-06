@@ -114,11 +114,12 @@ export default function SettingsMenu({
       },
       {
         id: "colors",
-        label: "Colors",
-        description: "Body and background hues for new sessions.",
+        label: "Appearance",
+        description: "Window style and interface colors.",
       },
       {
         id: "experimental",
+
         label: "Experimental",
         description: "Bleeding edge features and debug tools.",
       },
@@ -339,6 +340,19 @@ export default function SettingsMenu({
                                     <span className="settings-toggle-dot" />
                                   </button>
                                 </div>
+
+                                <div className="settings-panel-title">Vehicle extras</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Extras enabled on load</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.extrasDefaultEnabled !== false ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, extrasDefaultEnabled: !(p.extrasDefaultEnabled !== false) }))}
+                                    aria-pressed={draft.extrasDefaultEnabled !== false}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
                               </section>
                             ) : null}
 
@@ -423,8 +437,29 @@ export default function SettingsMenu({
                             ) : null}
 
                             {activeSection === "colors" ? (
-                              <section className="settings-panel" id="settings-panel-colors" aria-label="Colors">
-                                <div className="settings-panel-title">Color defaults</div>
+                              <section className="settings-panel" id="settings-panel-colors" aria-label="Appearance">
+                                <div className="settings-panel-title">Interface Style</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Window Controls</div>
+                                  <div className="style-pill-toggle">
+                                    <button
+                                      type="button"
+                                      className={`style-pill-option ${draft.windowControlsStyle !== "mac" ? "is-active" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "windows" }))}
+                                    >
+                                      Standard
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`style-pill-option ${draft.windowControlsStyle === "mac" ? "is-active" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "mac" }))}
+                                    >
+                                      Elegant
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="settings-panel-title" style={{ marginTop: 16 }}>Colors</div>
                                 <div className="settings-panel-grid">
                                   <ColorField
                                     label="Body"
@@ -441,6 +476,7 @@ export default function SettingsMenu({
                                 </div>
                               </section>
                             ) : null}
+
 
                             {activeSection === "experimental" ? (
                               <section className="settings-panel" id="settings-panel-experimental" aria-label="Experimental">

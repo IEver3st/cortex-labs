@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { AlertTriangle, ArrowUpRight, Car, ChevronLeft, ChevronRight, Eye, EyeOff, FolderOpen, History, Layers, Link2, Minus, RotateCcw, Shirt, Square, Unlink, X } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Car, ChevronLeft, ChevronRight, Eye, EyeOff, FolderOpen, History, Layers, Link2, Minus, PanelLeft, PanelTop, RotateCcw, Shirt, Square, Unlink, X, Aperture, Disc, Zap } from "lucide-react";
 import { categorizeTextures } from "./lib/ytd";
 import YtdWorker from "./lib/ytd.worker.js?worker";
 import { useUpdateChecker } from "./lib/updater";
@@ -34,12 +34,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/select";
+import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel } from "./components/CyberUI";
 
 const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
 const MIN_LOADER_MS = 650;
 
-const SUPPORTED_TEXTURE_EXTS = ["png", "jpg", "jpeg", "psd"];
+const SUPPORTED_TEXTURE_EXTS = ["png", "jpg", "jpeg", "psd", "dds"];
 
 function isTextureFormatSupported(filePath) {
   if (!filePath) return true;
@@ -66,9 +67,13 @@ const BUILT_IN_DEFAULTS = {
   showGrid: false,
   lightIntensity: 1.0,
   glossiness: 0.5,
+  extrasDefaultEnabled: true,
+  windowControlsStyle: "windows",
+  toolbarInTitlebar: false,
 };
 
 const BUILT_IN_UI = {
+
   colorsOpen: true,
 };
 
@@ -95,35 +100,7 @@ function getFileLabel(path, emptyLabel) {
   return path.split(/[\\/]/).pop();
 }
 
-function PanelSection({ title, caption, open, onToggle, contentId, children }) {
-  return (
-    <div className={`panel-section shrink-0 ${open ? "is-open" : ""}`}>
-      <button
-        type="button"
-        className="panel-section-toggle"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-controls={contentId}
-      >
-        <span className="panel-section-text">
-          <span className="panel-section-title">{title}</span>
-          {caption ? <span className="panel-section-caption">{caption}</span> : null}
-        </span>
-        <span className="panel-section-chevron" aria-hidden="true">
-          <ChevronRight className="panel-section-chevron-svg" aria-hidden="true" />
-        </span>
-      </button>
-      <div
-        id={contentId}
-        className="panel-section-body shrink-0"
-        hidden={!open}
-        aria-hidden={!open}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
+
 
 function App() {
   const viewerApiRef = useRef(null);
@@ -152,13 +129,17 @@ function App() {
   const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
   const [glossiness, setGlossiness] = useState(() => getInitialDefaults().glossiness ?? 0.5);
   const [experimentalSettings, setExperimentalSettings] = useState(() => Boolean(getInitialDefaults().experimentalSettings));
+  const [windowControlsStyle, setWindowControlsStyle] = useState(() => getInitialDefaults().windowControlsStyle || "windows");
+  const [toolbarInTitlebar, setToolbarInTitlebar] = useState(() => Boolean(getInitialDefaults().toolbarInTitlebar));
   const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
+
   const [panelOpen, setPanelOpen] = useState(() => ({
     model: true,
     templates: true,
     targeting: true,
     overlays: false,
     view: true,
+    extras: true,
   }));
   const [textureReloadToken, setTextureReloadToken] = useState(0);
   const [windowTextureReloadToken, setWindowTextureReloadToken] = useState(0);
@@ -190,6 +171,13 @@ function App() {
   const [ytdOverrides, setYtdOverrides] = useState({});
   const [isDragging, setIsDragging] = useState(false);
 
+  // Shared YTD textures (vehshare, vehshare_worn, etc.) — bundled with the app.
+  // These are loaded once and merged into the texture lookup at lowest priority.
+  const [sharedYtdTextures, setSharedYtdTextures] = useState(null);
+  const sharedYtdLoadedRef = useRef(false);
+  const sharedYtdLoadingRef = useRef(false);
+  const loadSharedYtdsRef = useRef(null);
+
   // Holds the raw YTD file bytes so the worker can decode specific textures
   // on demand without re-reading the file.
   const ytdBytesRef = useRef(null);
@@ -218,6 +206,8 @@ function App() {
   // YTD mapping results for the inline viewer
   const [ytdMappingMeta, setYtdMappingMeta] = useState(null);
 
+  const [modelExtras, setModelExtras] = useState([]);
+  const [hiddenExtras, setHiddenExtras] = useState([]);
   const [modelLoading, setModelLoading] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
   const [booted, setBooted] = useState(false);
@@ -262,9 +252,16 @@ function App() {
       setWindowTextureTarget("none");
       setWindowLiveryTarget("");
       setWindowLiveryLabel("");
+      setModelExtras([]);
+      setHiddenExtras([]);
 
       setModelSourcePath(path);
       setModelLoading(true);
+
+      // Proactively load shared YTDs for any vehicle model (YFT/YDD)
+      if (experimentalSettings && (lower.endsWith(".yft") || lower.endsWith(".ydd"))) {
+        loadSharedYtdsRef.current?.();
+      }
 
       try {
         setModelPath(path);
@@ -379,6 +376,11 @@ function App() {
     setLiveryLabel(info?.liveryLabel || "");
     setWindowLiveryTarget(info?.windowTarget || "");
     setWindowLiveryLabel(info?.windowLabel || "");
+    // Extras
+    const extras = info?.extras ?? [];
+    setModelExtras(extras);
+    const extrasEnabled = getInitialDefaults().extrasDefaultEnabled ?? true;
+    setHiddenExtras(extrasEnabled ? [] : extras.map((e) => e.name));
     // Reset manual glass override when a new model is loaded
     setLiveryWindowOverride((prev) => {
       if (!prev) return prev;
@@ -445,7 +447,10 @@ function App() {
     setBodyColor(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
     setExperimentalSettings(Boolean(merged.experimentalSettings));
+    setWindowControlsStyle(merged.windowControlsStyle || "windows");
+    setToolbarInTitlebar(Boolean(merged.toolbarInTitlebar));
     const prefs = loadPrefs() || {};
+
     savePrefs({ ...prefs, defaults: merged });
   }, []);
 
@@ -670,6 +675,125 @@ function App() {
     });
   }, []);
 
+  // ─── Load bundled shared YTD texture dictionaries (vehshare, etc.) ───
+  // Called once when the first model-specific YTD is loaded. These provide
+  // fallback textures that nearly all GTA V vehicles reference.
+  const loadSharedYtds = useCallback(async () => {
+    if (sharedYtdLoadedRef.current || sharedYtdLoadingRef.current) return;
+    sharedYtdLoadingRef.current = true;
+
+    try {
+      const manifestRes = await fetch("/shared-ytd/manifest.json");
+      if (!manifestRes.ok) {
+        console.warn("[SharedYTD] No manifest found — skipping shared textures");
+        return;
+      }
+      const filenames = await manifestRes.json();
+      if (!Array.isArray(filenames) || filenames.length === 0) return;
+
+      console.log("[SharedYTD] Loading", filenames.length, "shared YTD files...");
+      const merged = {};
+
+      for (const filename of filenames) {
+        try {
+          const res = await fetch(`/shared-ytd/${filename}`);
+          if (!res.ok) {
+            console.warn(`[SharedYTD] Failed to fetch ${filename}:`, res.status);
+            continue;
+          }
+          const arrayBuf = await res.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuf);
+
+          // Parse metadata-only in a worker (same as regular YTD loading)
+          const textures = await new Promise((resolve, reject) => {
+            const worker = new YtdWorker();
+            worker.onmessage = (e) => {
+              worker.terminate();
+              if (e.data.error) reject(new Error(e.data.error));
+              else resolve(e.data.textures);
+            };
+            worker.onerror = (err) => {
+              worker.terminate();
+              reject(err);
+            };
+            const copy = arrayBuf.slice(0);
+            worker.postMessage({ type: "parse", bytes: copy }, [copy]);
+          });
+
+          if (textures && Object.keys(textures).length > 0) {
+            for (const [name, tex] of Object.entries(textures)) {
+              merged[name] = { ...tex, sourceYtd: filename };
+            }
+            console.log(`[SharedYTD] ${filename}: ${Object.keys(textures).length} textures`);
+          }
+        } catch (err) {
+          console.warn(`[SharedYTD] Error loading ${filename}:`, err);
+        }
+      }
+
+      if (Object.keys(merged).length > 0) {
+        setSharedYtdTextures(merged);
+        sharedYtdLoadedRef.current = true;
+        console.log("[SharedYTD] Total shared textures loaded:", Object.keys(merged).length);
+      }
+    } catch (err) {
+      console.warn("[SharedYTD] Failed to load shared textures:", err);
+    } finally {
+      sharedYtdLoadingRef.current = false;
+    }
+  }, []);
+  loadSharedYtdsRef.current = loadSharedYtds;
+
+  // Decode shared YTD textures by name — fetches the source .ytd file,
+  // decodes only the requested textures, and returns them.
+  const decodeSharedYtdTextures = useCallback(async (names) => {
+    if (!sharedYtdTextures || names.length === 0) return {};
+
+    // Build case-insensitive lookup for shared textures
+    const lowerLookup = {};
+    for (const [k, v] of Object.entries(sharedYtdTextures)) {
+      lowerLookup[k.toLowerCase()] = { ...v, originalKey: k };
+    }
+
+    // Group requested names by their source YTD file
+    const bySource = {};
+    for (const name of names) {
+      const entry = lowerLookup[name.toLowerCase()];
+      if (!entry?.sourceYtd) continue;
+      if (!bySource[entry.sourceYtd]) bySource[entry.sourceYtd] = [];
+      bySource[entry.sourceYtd].push(entry.originalKey || name);
+    }
+
+    const allDecoded = {};
+    for (const [filename, texNames] of Object.entries(bySource)) {
+      try {
+        const res = await fetch(`/shared-ytd/${filename}`);
+        if (!res.ok) continue;
+        const arrayBuf = await res.arrayBuffer();
+
+        const decoded = await new Promise((resolve, reject) => {
+          const worker = new YtdWorker();
+          worker.onmessage = (e) => {
+            worker.terminate();
+            if (e.data.error) reject(new Error(e.data.error));
+            else resolve(e.data.textures || {});
+          };
+          worker.onerror = (err) => {
+            worker.terminate();
+            reject(err);
+          };
+          const copy = arrayBuf.slice(0);
+          worker.postMessage({ type: "decode", bytes: copy, names: texNames }, [copy]);
+        });
+
+        Object.assign(allDecoded, decoded);
+      } catch (err) {
+        console.warn(`[SharedYTD] Decode error for ${filename}:`, err);
+      }
+    }
+    return allDecoded;
+  }, [sharedYtdTextures]);
+
   const loadYtd = async (path) => {
     setYtdLoading(true);
     try {
@@ -700,6 +824,8 @@ function App() {
         setYtdRawTextures(textures);
         setYtdOverrides({});
         console.log("[YTD] Loaded textures:", Object.keys(textures));
+        // Trigger shared YTD loading alongside the model-specific YTD
+        loadSharedYtds();
       } else {
         // Only show error dialog if explicit user action, but for auto-load just log
         console.warn("No textures found in YTD file:", path);
@@ -833,11 +959,14 @@ function App() {
         case HOTKEY_ACTIONS.MODE_EUP:
           setTextureMode("eup");
           break;
+        case HOTKEY_ACTIONS.MODE_MULTI:
+          setTextureMode("multi");
+          break;
         case HOTKEY_ACTIONS.CYCLE_MODE:
           setTextureMode((prev) => {
             if (prev === "livery") return "everything";
             if (prev === "everything") return "eup";
-            if (prev === "eup") return experimentalSettings ? "multi" : "livery";
+            if (prev === "eup") return "multi";
             if (prev === "multi") return "livery";
             return "livery";
           });
@@ -1045,6 +1174,20 @@ function App() {
       : textureTargets.find((target) => target.value === textureTarget)?.label || "Custom target";
   const targetingLabel = textureMode === "livery" ? (liveryTarget ? "Auto" : "No target") : manualTargetLabel;
   const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
+  const extrasLabel = modelExtras.length === 0
+    ? "No extras"
+    : `${modelExtras.length - hiddenExtras.length}/${modelExtras.length} visible`;
+
+  const toggleExtra = useCallback((extraName) => {
+    setHiddenExtras((prev) =>
+      prev.includes(extraName)
+        ? prev.filter((n) => n !== extraName)
+        : [...prev, extraName]
+    );
+  }, []);
+
+  const showAllExtras = useCallback(() => setHiddenExtras([]), []);
+  const hideAllExtras = useCallback(() => setHiddenExtras(modelExtras.map((e) => e.name)), [modelExtras]);
 
   return (
     <motion.div
@@ -1056,443 +1199,414 @@ function App() {
     >
         <div className="titlebar">
           <div className="titlebar-brand" data-tauri-drag-region>
-            <LoadingGlyph kind="cube" className="titlebar-logo" aria-hidden="true" />
-
+            <img src="/app-icon.svg" alt="" className="titlebar-logo" aria-hidden="true" />
+            <span className="titlebar-title">Cortex Studio</span>
           </div>
-        <div className="titlebar-spacer" data-tauri-drag-region />
-        <div className="titlebar-controls">
-          <button
-            type="button"
-            className="titlebar-btn titlebar-min"
-            onClick={handleMinimize}
-            aria-label="Minimize"
-            data-tauri-drag-region="false"
-          >
-            <Minus className="titlebar-icon titlebar-icon--min" />
-          </button>
-          <button
-            type="button"
-            className="titlebar-btn titlebar-max"
-            onClick={handleMaximize}
-            aria-label="Maximize"
-            data-tauri-drag-region="false"
-          >
-            <Square className="titlebar-icon titlebar-icon--max" />
-          </button>
-          <button
-            type="button"
-            className="titlebar-btn titlebar-close"
-            onClick={handleClose}
-            aria-label="Close"
-            data-tauri-drag-region="false"
-          >
-            <X className="titlebar-icon titlebar-icon--close" />
-          </button>
-        </div>
-      </div>
 
-      {panelCollapsed ? (
-        <motion.button
-          type="button"
-          className="panel-peek"
-          onClick={() => setPanelCollapsed(false)}
-          aria-label="Expand control panel"
-          initial={{ opacity: 0, x: -6 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-        >
-          <motion.span
-            className="panel-peek-icon"
-            animate={{ x: [0, 3, 0] }}
-            transition={{ duration: 1.4, repeat: Infinity, ease: [0.45, 0, 0.55, 1] }}
-          >
-            <ChevronRight aria-hidden="true" />
-          </motion.span>
-        </motion.button>
-      ) : null}
-      <motion.aside
-        className="control-panel"
-        initial={{ opacity: 0, x: -12 }}
-        animate={
-          isBooting
-            ? { opacity: 0, x: -12 }
-            : panelCollapsed
-              ? { opacity: 0, x: "-100%" }
-              : { opacity: 1, x: 0 }
-        }
-        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-        style={{ pointerEvents: panelCollapsed ? "none" : "auto", willChange: "transform, opacity" }}
-      >
-        <div className="panel-header">
-          <div className="panel-header-top">
-            <div className="panel-header-left">
-              <button
-                type="button"
-                className="panel-collapse"
-                onClick={() => setPanelCollapsed(true)}
-                aria-label="Collapse control panel"
-              >
-                <ChevronLeft className="panel-collapse-icon" aria-hidden="true" />
-              </button>
-              <div className="panel-title-stack">
-                <div className="panel-title">Cortex Studio</div>
-
-              </div>
-            </div>
-            <SettingsMenu
-              defaults={defaults}
-              builtInDefaults={BUILT_IN_DEFAULTS}
-              onSave={applyAndPersistDefaults}
-              hotkeys={hotkeys}
-              onSaveHotkeys={saveHotkeys}
-            />
-          </div>
-          <div className="mode-tabs" role="tablist" aria-label="Editor mode">
-            <motion.button
+          <div className="titlebar-mode-tabs" role="tablist" aria-label="Editor mode">
+            <button
               type="button"
               role="tab"
-              className={`mode-tab ${textureMode === "livery" ? "is-active" : ""}`}
+              className={`titlebar-mode-tab ${textureMode === "livery" ? "is-active" : ""}`}
               onClick={() => setTextureMode("livery")}
               aria-selected={textureMode === "livery"}
-              aria-controls="mode-panel-livery"
-              whileTap={{ scale: 0.95 }}
             >
-              <div className="mode-tab-content">
-                <Car className="mode-tab-icon" aria-hidden="true" />
-                <span>Livery</span>
-              </div>
-              {textureMode === "livery" && (
-                <motion.div
-                  layoutId="mode-tab-highlight"
-                  className="mode-tab-bg"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                />
-              )}
-            </motion.button>
-            
-            <motion.button
+              <Car className="titlebar-mode-tab-icon" aria-hidden="true" />
+              <span>Livery</span>
+            </button>
+            <button
               type="button"
               role="tab"
-              className={`mode-tab ${textureMode === "everything" ? "is-active" : ""}`}
+              className={`titlebar-mode-tab ${textureMode === "everything" ? "is-active" : ""}`}
               onClick={() => setTextureMode("everything")}
               aria-selected={textureMode === "everything"}
-              aria-controls="mode-panel-everything"
-              whileTap={{ scale: 0.95 }}
             >
-              <div className="mode-tab-content">
-                <Layers className="mode-tab-icon" aria-hidden="true" />
-                <span>All</span>
-              </div>
-              {textureMode === "everything" && (
-                <motion.div
-                  layoutId="mode-tab-highlight"
-                  className="mode-tab-bg"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                />
-              )}
-            </motion.button>
-            
-            <motion.button
+              <Layers className="titlebar-mode-tab-icon" aria-hidden="true" />
+              <span>All</span>
+            </button>
+            <button
               type="button"
               role="tab"
-              className={`mode-tab ${textureMode === "eup" ? "is-active" : ""}`}
+              className={`titlebar-mode-tab ${textureMode === "eup" ? "is-active" : ""}`}
               onClick={() => setTextureMode("eup")}
               aria-selected={textureMode === "eup"}
-              aria-controls="mode-panel-eup"
-              whileTap={{ scale: 0.95 }}
             >
-              <div className="mode-tab-content">
-                <Shirt className="mode-tab-icon" aria-hidden="true" />
-                <span>EUP</span>
-              </div>
-              {textureMode === "eup" && (
-                <motion.div
-                  layoutId="mode-tab-highlight"
-                  className="mode-tab-bg"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                />
-              )}
-            </motion.button>
-
-            {experimentalSettings ? (
-              <motion.button
-                type="button"
-                role="tab"
-                className={`mode-tab ${textureMode === "multi" ? "is-active" : ""}`}
-                onClick={() => setTextureMode("multi")}
-                aria-selected={textureMode === "multi"}
-                aria-controls="mode-panel-multi"
-                whileTap={{ scale: 0.95 }}
-              >
-                <div className="mode-tab-content">
-                  <Link2 className="mode-tab-icon" aria-hidden="true" />
-                  <span>Multi</span>
-                </div>
-                {textureMode === "multi" && (
-                  <motion.div
-                    layoutId="mode-tab-highlight"
-                    className="mode-tab-bg"
-                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                  />
-                )}
-              </motion.button>
-            ) : null}
+              <Shirt className="titlebar-mode-tab-icon" aria-hidden="true" />
+              <span>EUP</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`titlebar-mode-tab ${textureMode === "multi" ? "is-active" : ""}`}
+              onClick={() => setTextureMode("multi")}
+              aria-selected={textureMode === "multi"}
+            >
+              <Link2 className="titlebar-mode-tab-icon" aria-hidden="true" />
+              <span>Multi</span>
+            </button>
           </div>
+
+          <div className="titlebar-spacer" data-tauri-drag-region />
+
+          {toolbarInTitlebar && textureMode !== "multi" ? (
+            <div className="titlebar-inline-controls">
+              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>Front</button>
+              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("back")}>Back</button>
+              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("side")}>Side</button>
+              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("angle")}>3/4</button>
+              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("top")}>Top</button>
+              <div className="titlebar-inline-divider" />
+              <button type="button" className="titlebar-inline-btn" onClick={handleCenterCamera} disabled={!viewerReady}>Center</button>
+              <div className="titlebar-inline-divider" />
+              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
+                <span className="mono text-red-400">X</span>{!hideRotText && "Rot"}
+              </button>
+              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
+                <span className="mono text-green-400">Y</span>{!hideRotText && "Rot"}
+              </button>
+              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
+                <span className="mono text-blue-400">Z</span>{!hideRotText && "Rot"}
+              </button>
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            className={`titlebar-btn titlebar-dock-toggle ${toolbarInTitlebar ? "is-docked" : ""}`}
+            onClick={() => {
+              const next = !toolbarInTitlebar;
+              setToolbarInTitlebar(next);
+              const prefs = loadPrefs() || {};
+              const d = { ...(prefs.defaults || {}), toolbarInTitlebar: next };
+              savePrefs({ ...prefs, defaults: d });
+            }}
+            aria-label={toolbarInTitlebar ? "Undock controls from titlebar" : "Dock controls to titlebar"}
+            data-tauri-drag-region="false"
+            title={toolbarInTitlebar ? "Undock controls from titlebar" : "Dock controls to titlebar"}
+          >
+            <PanelTop className="titlebar-icon" />
+          </button>
+
+          <button
+            type="button"
+            className="titlebar-btn titlebar-panel-toggle"
+            onClick={() => setPanelCollapsed((prev) => !prev)}
+            aria-label={panelCollapsed ? "Show control panel" : "Hide control panel"}
+            data-tauri-drag-region="false"
+          >
+            <PanelLeft className="titlebar-icon" />
+          </button>
+          <SettingsMenu
+            defaults={defaults}
+            builtInDefaults={BUILT_IN_DEFAULTS}
+            onSave={applyAndPersistDefaults}
+            hotkeys={hotkeys}
+            onSaveHotkeys={saveHotkeys}
+          />
+          {windowControlsStyle === "mac" ? (
+            <div className="titlebar-controls titlebar-controls--mac">
+              <button
+                type="button"
+                className="mac-btn mac-close"
+                onClick={handleClose}
+                aria-label="Close"
+                data-tauri-drag-region="false"
+              />
+              <button
+                type="button"
+                className="mac-btn mac-min"
+                onClick={handleMinimize}
+                aria-label="Minimize"
+                data-tauri-drag-region="false"
+              />
+              <button
+                type="button"
+                className="mac-btn mac-max"
+                onClick={handleMaximize}
+                aria-label="Maximize"
+                data-tauri-drag-region="false"
+              />
+            </div>
+          ) : (
+            <div className="titlebar-controls">
+              <button
+                type="button"
+                className="titlebar-btn titlebar-min"
+                onClick={handleMinimize}
+                aria-label="Minimize"
+                data-tauri-drag-region="false"
+              >
+                <Minus className="titlebar-icon titlebar-icon--min" />
+              </button>
+              <button
+                type="button"
+                className="titlebar-btn titlebar-max"
+                onClick={handleMaximize}
+                aria-label="Maximize"
+                data-tauri-drag-region="false"
+              >
+                <Square className="titlebar-icon titlebar-icon--max" />
+              </button>
+              <button
+                type="button"
+                className="titlebar-btn titlebar-close"
+                onClick={handleClose}
+                aria-label="Close"
+                data-tauri-drag-region="false"
+              >
+                <X className="titlebar-icon titlebar-icon--close" />
+              </button>
+            </div>
+          )}
+
         </div>
-        <div className="control-panel-scroll">
-          <PanelSection
+
+      <CyberPanel collapsed={panelCollapsed} isBooting={isBooting} statusBar={
+        <div style={{ fontFamily: "var(--font-hud)", flexShrink: 0, borderTop: "1px solid rgba(255,255,255,0.06)", padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "10px", color: "rgba(214, 221, 231, 0.55)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span className={watchStatus === "watching" ? "status-dot" : ""} style={watchStatus !== "watching" ? { width: 6, height: 6, borderRadius: 999, background: watchStatus === "error" ? "#ef4444" : "rgba(255,255,255,0.2)" } : {}} />
+            <span>
+              {watchStatus === "watching"
+                ? "Watching for saves"
+                : watchStatus === "error"
+                  ? "Watcher error"
+                  : "Idle"}
+            </span>
+          </div>
+          <span>Last update: {lastUpdate}</span>
+        </div>
+      }>
+          <CyberSection
             title="Model"
             caption={modelLabel}
             open={panelOpen.model}
             onToggle={() => togglePanel("model")}
             contentId="panel-model"
+            icon={Car}
+            color="blue"
           >
-            <div className="control-group">
-              <Label>Select Model</Label>
-              <Button variant="outline" className="border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10" onClick={selectModel}>
-                Select Model
-              </Button>
-              {modelLoading ? <div className="file-meta">Preparing model…</div> : null}
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <CyberButton onClick={selectModel} variant="blue">
+                  Select Model
+                </CyberButton>
+              </div>
+              {modelLoading ? <div className="text-[10px] text-[#7dd3fc] animate-pulse">Initializing construct...</div> : null}
             </div>
-            {textureMode !== "multi" ? (
-              <div className="control-group shrink-0 pb-1 min-h-0">
-                <Label>Texture Dictionary (YTD)</Label>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10"
+            {experimentalSettings && textureMode !== "multi" ? (
+              <CyberCard className="mt-2">
+                <div className="flex items-center justify-between mb-2">
+                  <CyberLabel className="mb-0">YTD Textures</CyberLabel>
+                  {ytdTextures ? (
+                    <span className="text-[9px] font-mono text-[#a78bfa]">
+                      {Object.keys(ytdTextures.diffuse).length}D {Object.keys(ytdTextures.normal).length}N {Object.keys(ytdTextures.specular).length}S
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex gap-1.5 mb-2">
+                  <CyberButton
+                    variant="purple"
+                    className="flex-1 h-7 text-[9px]"
                     onClick={selectYtd}
                     disabled={ytdLoading}
                   >
-                    <FolderOpen className="h-4 w-4 mr-2" />
-                    {ytdLoading ? "Loading..." : "Load YTD"}
-                  </Button>
+                    <FolderOpen className="h-3 w-3 mr-1.5" />
+                    {ytdLoading ? "Loading…" : "Load YTD"}
+                  </CyberButton>
                   {ytdPath ? (
-                    <Button
-                      variant="outline"
-                      className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                    <CyberButton
+                      variant="ghost"
+                      className="h-7 px-2 text-[#a78bfa]/60 hover:text-[#a78bfa]"
                       onClick={clearYtd}
                       title="Unload YTD"
                     >
-                      <X className="h-4 w-4" />
-                    </Button>
+                      <X className="h-3 w-3" />
+                      Unload
+                    </CyberButton>
+                  ) : null}
+                  {ytdRawTextures ? (
+                    <CyberButton
+                      variant="ghost"
+                      className="h-7 px-2 text-[#a78bfa]/60 hover:text-[#a78bfa]"
+                      onClick={() => setYtdBrowserOpen(true)}
+                      title={`View Textures${ytdMappingMeta?.assignments?.length ? ` (${ytdMappingMeta.assignments.length})` : ""}`}
+                    >
+                      <Eye className="h-3 w-3" />
+                      Browse
+                    </CyberButton>
                   ) : null}
                 </div>
-                {ytdPath ? <div className="file-meta mono">{ytdPath.split(/[\\/]/).pop()}</div> : null}
-                {ytdTextures ? (
-                  <div className="file-meta">
-                    {Object.keys(ytdTextures.diffuse).length} diffuse, {Object.keys(ytdTextures.normal).length} normal, {Object.keys(ytdTextures.specular).length} specular
-                  </div>
-                ) : null}
-                <div className="file-meta mono">Auto-maps diffuse, normal, and specular textures to materials.</div>
-                {ytdRawTextures ? (
-                  <Button
-                    variant="outline"
-                    className="w-full border-white/12 text-white/70 hover:text-white/95 hover:bg-white/5"
-                    onClick={() => setYtdBrowserOpen(true)}
-                  >
-                    View Textures{ytdMappingMeta?.assignments?.length ? ` (${ytdMappingMeta.assignments.length})` : ""}
-                  </Button>
-                ) : null}
-              </div>
+                {ytdPath ? <div className="px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{ytdPath.split(/[\\/]/).pop()}</div> : null}
+                {!ytdPath ? <div className="text-[9px] text-[#a78bfa]/50 mt-1">Auto-maps diffuse, normal &amp; specular.</div> : null}
+              </CyberCard>
             ) : null}
-          </PanelSection>
+          </CyberSection>
 
           {textureMode === "livery" ? (
-            <div className="mode-content" id="mode-panel-livery" role="tabpanel">
-              <PanelSection
-                title="Templates"
+            <div className="space-y-4" id="mode-panel-livery" role="tabpanel">
+              <CyberSection
+                title="Livery"
                 caption={primaryTemplateLabel}
                 open={panelOpen.templates}
                 onToggle={() => togglePanel("templates")}
                 contentId="panel-templates"
+                icon={Layers}
+                color="blue"
               >
-                <div className="control-group">
-                  <Label>Vehicle Template</Label>
+                <div className="flex flex-col gap-2">
                   <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
-                        onClick={selectTexture}
-                      >
-                        Select Livery
-                      </Button>
-                    {texturePath && (
-                      <Button
-                        variant="outline"
-                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                    <CyberButton onClick={selectTexture} variant="blue">
+                      Select Livery
+                    </CyberButton>
+                    {texturePath ? (
+                      <CyberButton
+                        variant="ghost"
+                        className="w-8 p-0"
                         onClick={() => setTexturePath("")}
                         title="Unload texture"
                       >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
+                        <X className="h-3 w-3" />
+                      </CyberButton>
+                    ) : null}
                   </div>
-
                 </div>
-              </PanelSection>
-
-              <PanelSection
-                title="Targeting"
-                caption={targetingLabel}
-                open={panelOpen.targeting}
-                onToggle={() => togglePanel("targeting")}
-                contentId="panel-targeting"
-              >
-                <div className="control-group">
-                  <Label>Apply Livery To</Label>
-                  <div className="texture-auto-target">
-                    <span className="texture-auto-badge">Auto</span>
-                    <span className="texture-auto-value">{liveryStatusLabel}</span>
+                <CyberCard className="mt-2">
+                  <div className="flex justify-between items-center">
+                    <span className="font-mono text-[9px] uppercase text-[#7dd3fc]">Target</span>
+                    <span className="font-mono text-[10px] text-[#C5C6C7] text-right truncate max-w-[120px]">
+                      <span className="px-1 py-0.5 bg-[#7dd3fc]/20 text-[#7dd3fc] rounded text-[8px] mr-1">AUTO</span>
+                      {liveryStatusLabel}
+                    </span>
                   </div>
-                  <div className="file-meta mono">{liveryHint}</div>
-                </div>
-              </PanelSection>
+                  <div className="text-[9px] text-[#7dd3fc]/50 mt-1 leading-tight">{liveryHint}</div>
+                </CyberCard>
+              </CyberSection>
 
-              <PanelSection
+              <CyberSection
                 title="Glass Overlay"
                 caption={overlayLabel}
                 open={panelOpen.overlays}
                 onToggle={() => togglePanel("overlays")}
                 contentId="panel-overlays"
+                icon={Disc}
+                color="blue"
               >
-                <div className="control-group">
-                  <Label>Vehicle Glass</Label>
-                  <div className="toggle-row">
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <CyberLabel className="mb-0">Enabled</CyberLabel>
                     <button
                       type="button"
-                      className={`settings-toggle ${windowTemplateEnabled ? "is-on" : ""}`}
+                      className={`w-8 h-4 rounded-[2px] border border-[#1F2937] relative transition-colors ${windowTemplateEnabled ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
                       onClick={() => setWindowTemplateEnabled((prev) => !prev)}
-                      aria-pressed={windowTemplateEnabled}
-                      aria-label="Toggle window template"
                     >
-                      <span className="settings-toggle-dot" aria-hidden="true" />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-[2px] bg-[#C5C6C7] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
                     </button>
-                    <span className="toggle-switch-label">{windowTemplateEnabled ? "On" : "Off"}</span>
                   </div>
                   {windowTemplateEnabled ? (
                     <>
                       <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
-                          onClick={selectWindowTexture}
-                        >
+                        <CyberButton onClick={selectWindowTexture} variant="blue">
                           Select Glass
-                        </Button>
-                        {windowTexturePath && (
-                          <Button
-                            variant="outline"
-                            className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                        </CyberButton>
+                        {windowTexturePath ? (
+                          <CyberButton
+                            variant="ghost"
+                            className="w-8 p-0"
                             onClick={() => setWindowTexturePath("")}
                             title="Unload window template"
                           >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
+                            <X className="h-3 w-3" />
+                          </CyberButton>
+                        ) : null}
                       </div>
-
-                      <Label>Apply Glass To</Label>
-                      <Select value={liveryWindowOverride || "auto"} onValueChange={(val) => setLiveryWindowOverride(val === "auto" ? "" : val)}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select target" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="auto">
-                            {windowLiveryTarget
-                              ? `Auto (${windowStatusLabel})`
-                              : "Auto (no material detected)"}
-                          </SelectItem>
-                          {textureTargets.map((target) => (
-                            <SelectItem key={target.value} value={target.value}>
-                              {target.label}
+                      <div className="mt-1">
+                        <CyberLabel>Override Target</CyberLabel>
+                        <Select value={liveryWindowOverride || "auto"} onValueChange={(val) => setLiveryWindowOverride(val === "auto" ? "" : val)}>
+                          <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                            <SelectValue placeholder="Select target" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                            <SelectItem value="auto">
+                              {windowLiveryTarget
+                                ? `Auto (${windowStatusLabel})`
+                                : "Auto (no material detected)"}
                             </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <div className="file-meta mono">{windowHint}</div>
+                            {textureTargets.map((target) => (
+                              <SelectItem key={target.value} value={target.value}>
+                                {target.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </>
                   ) : (
-                    <div className="file-meta mono">Enable to apply a window/glass texture overlay.</div>
+                    <div className="text-[9px] text-[#7dd3fc]/50">Enable to apply a glass texture overlay.</div>
                   )}
                 </div>
-              </PanelSection>
+              </CyberSection>
 
-              <PanelSection
+              <CyberSection
                 title="Visibility"
                 caption={viewLabel}
                 open={panelOpen.view}
                 onToggle={() => togglePanel("view")}
                 contentId="panel-visibility"
+                icon={Eye}
+                color="blue"
               >
-                <div className="control-group">
-                  <Label>Exterior Only</Label>
-                  <div className="toggle-row">
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <CyberLabel className="mb-0">Exterior Only</CyberLabel>
                     <button
                       type="button"
-                      className={`settings-toggle ${liveryExteriorOnly ? "is-on" : ""}`}
+                      className={`w-8 h-4 rounded-[2px] border border-[#1F2937] relative transition-colors ${liveryExteriorOnly ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
                       onClick={() => setLiveryExteriorOnly((prev) => !prev)}
-                      aria-pressed={liveryExteriorOnly}
-                      aria-label="Toggle exterior only"
                     >
-                      <span className="settings-toggle-dot" aria-hidden="true" />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-[2px] bg-[#C5C6C7] transition-transform ${liveryExteriorOnly ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
                     </button>
-                    <span className="toggle-switch-label">{liveryExteriorOnly ? "On" : "Off"}</span>
                   </div>
-                  <div className="file-meta mono">Hides interior, glass, and wheel meshes in livery view.</div>
+                  <div className="text-[9px] text-[#7dd3fc]/50">Hides interior, glass, and wheel meshes.</div>
                 </div>
-              </PanelSection>
+              </CyberSection>
             </div>
           ) : null}
 
           {textureMode === "everything" ? (
-            <div className="mode-content" id="mode-panel-everything" role="tabpanel">
-              <PanelSection
-                title="Templates"
+            <div className="space-y-4" id="mode-panel-everything" role="tabpanel">
+              <CyberSection
+                title="Texture"
                 caption={primaryTemplateLabel}
                 open={panelOpen.templates}
                 onToggle={() => togglePanel("templates")}
                 contentId="panel-templates"
+                icon={Layers}
+                color="blue"
               >
-                <div className="control-group">
-                  <Label>Texture Template</Label>
+                <div className="flex flex-col gap-2">
                   <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
-                      onClick={selectTexture}
-                    >
+                    <CyberButton onClick={selectTexture} variant="blue">
                       Select Texture
-                    </Button>
-                    {texturePath && (
-                      <Button
-                        variant="outline"
-                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                    </CyberButton>
+                    {texturePath ? (
+                      <CyberButton
+                        variant="ghost"
+                        className="w-8 p-0"
                         onClick={() => setTexturePath("")}
                         title="Unload texture"
                       >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
+                        <X className="h-3 w-3" />
+                      </CyberButton>
+                    ) : null}
                   </div>
-
                 </div>
-              </PanelSection>
-
-              <PanelSection
-                title="Targeting"
-                caption={manualTargetLabel}
-                open={panelOpen.targeting}
-                onToggle={() => togglePanel("targeting")}
-                contentId="panel-targeting"
-              >
-                <div className="control-group">
-                  <Label>Apply Texture To</Label>
+                <CyberCard className="mt-2">
+                  <CyberLabel>Apply To</CyberLabel>
                   <Select value={textureTarget} onValueChange={setTextureTarget}>
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
                       <SelectValue placeholder="Select target" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
                       <SelectItem value="all">All meshes</SelectItem>
                       {textureTargets.map((target) => (
                         <SelectItem key={target.value} value={target.value}>
@@ -1501,64 +1615,52 @@ function App() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <div className="file-meta mono">
-                    {textureTargets.length
-                      ? "Targets come from model material or mesh names."
-                      : "Load a model to list material targets."}
-                  </div>
-                </div>
-              </PanelSection>
+                </CyberCard>
+              </CyberSection>
 
-              <PanelSection
-                title="Overlays"
+              <CyberSection
+                title="Overlay"
                 caption={overlayLabel}
                 open={panelOpen.overlays}
                 onToggle={() => togglePanel("overlays")}
                 contentId="panel-overlays"
+                icon={Disc}
+                color="blue"
               >
-                <div className="control-group">
-                  <Label>Secondary Texture</Label>
-                  <div className="toggle-row">
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <CyberLabel className="mb-0">Secondary Texture</CyberLabel>
                     <button
                       type="button"
-                      className={`settings-toggle ${windowTemplateEnabled ? "is-on" : ""}`}
+                      className={`w-8 h-4 rounded-[2px] border border-[#1F2937] relative transition-colors ${windowTemplateEnabled ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
                       onClick={() => setWindowTemplateEnabled((prev) => !prev)}
-                      aria-pressed={windowTemplateEnabled}
-                      aria-label="Toggle secondary texture"
                     >
-                      <span className="settings-toggle-dot" aria-hidden="true" />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-[2px] bg-[#C5C6C7] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
                     </button>
-                    <span className="toggle-switch-label">{windowTemplateEnabled ? "On" : "Off"}</span>
                   </div>
                   {windowTemplateEnabled ? (
                     <>
                       <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
-                          onClick={selectWindowTexture}
-                        >
+                        <CyberButton onClick={selectWindowTexture} variant="blue">
                           Select Secondary
-                        </Button>
-                        {windowTexturePath && (
-                          <Button
-                            variant="outline"
-                            className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                        </CyberButton>
+                        {windowTexturePath ? (
+                          <CyberButton
+                            variant="ghost"
+                            className="w-8 p-0"
                             onClick={() => setWindowTexturePath("")}
                             title="Unload secondary texture"
                           >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
+                            <X className="h-3 w-3" />
+                          </CyberButton>
+                        ) : null}
                       </div>
-                      <div className="file-meta mono">
-                        {windowTexturePath ? windowTexturePath.split(/[\\/]/).pop() : "No secondary texture selected"}
-                      </div>
+                      {windowTexturePath ? <div className="px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{windowTexturePath.split(/[\\/]/).pop()}</div> : null}
                       <Select value={windowTextureTarget} onValueChange={setWindowTextureTarget}>
-                        <SelectTrigger className="w-full">
+                        <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
                           <SelectValue placeholder="Select target" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
                           <SelectItem value="auto">Auto (window materials)</SelectItem>
                           <SelectItem value="none">None</SelectItem>
                           <SelectItem value="all">All meshes</SelectItem>
@@ -1569,68 +1671,50 @@ function App() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <div className="file-meta mono">
-                        {textureTargets.length
-                          ? "Applied on top of the primary texture."
-                          : "Load a model to list material targets."}
-                      </div>
                     </>
                   ) : (
-                    <div className="file-meta mono">Enable to overlay a secondary texture on specific targets.</div>
+                    <div className="text-[9px] text-[#7dd3fc]/50">Enable to overlay a secondary texture.</div>
                   )}
                 </div>
-              </PanelSection>
+              </CyberSection>
             </div>
           ) : null}
 
           {textureMode === "eup" ? (
-            <div className="mode-content" id="mode-panel-eup" role="tabpanel">
-              <PanelSection
-                title="Uniform Template"
+            <div className="space-y-4" id="mode-panel-eup" role="tabpanel">
+              <CyberSection
+                title="Uniform"
                 caption={primaryTemplateLabel}
                 open={panelOpen.templates}
                 onToggle={() => togglePanel("templates")}
                 contentId="panel-templates"
+                icon={Layers}
+                color="blue"
               >
-                <div className="control-group">
-                  <Label>Uniform Texture</Label>
+                <div className="flex flex-col gap-2">
                   <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-[#7dd3fc]/50 bg-[#7dd3fc]/5 text-[#7dd3fc] hover:bg-[#7dd3fc]/10"
-                      onClick={selectTexture}
-                    >
+                    <CyberButton onClick={selectTexture} variant="blue">
                       Select Uniform
-                    </Button>
-                    {texturePath && (
-                      <Button
-                        variant="outline"
-                        className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80"
+                    </CyberButton>
+                    {texturePath ? (
+                      <CyberButton
+                        variant="ghost"
+                        className="w-8 p-0"
                         onClick={() => setTexturePath("")}
                         title="Unload texture"
                       >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
+                        <X className="h-3 w-3" />
+                      </CyberButton>
+                    ) : null}
                   </div>
-                  <div className="file-meta mono">{primaryTemplateLabel}</div>
                 </div>
-              </PanelSection>
-
-              <PanelSection
-                title="Targeting"
-                caption={manualTargetLabel}
-                open={panelOpen.targeting}
-                onToggle={() => togglePanel("targeting")}
-                contentId="panel-targeting"
-              >
-                <div className="control-group">
-                  <Label>Apply Uniform To</Label>
+                <CyberCard className="mt-2">
+                  <CyberLabel>Apply To</CyberLabel>
                   <Select value={textureTarget} onValueChange={setTextureTarget}>
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
                       <SelectValue placeholder="Select target" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
                       <SelectItem value="all">All meshes</SelectItem>
                       {textureTargets.map((target) => (
                         <SelectItem key={target.value} value={target.value}>
@@ -1639,23 +1723,17 @@ function App() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <div className="file-meta mono">
-                    {textureTargets.length
-                      ? "Select the clothing material to apply the uniform to."
-                      : "Load a .ydd EUP model to list material targets."}
-                  </div>
-                </div>
-              </PanelSection>
+                </CyberCard>
+              </CyberSection>
             </div>
           ) : null}
 
           {textureMode === "multi" ? (
-            <div className="mode-content" id="mode-panel-multi" role="tabpanel">
-              {/* ── Texture Mode Sub-Selector ── */}
-              <div className="dual-slot-tabs">
+            <div className="space-y-4" id="mode-panel-multi" role="tabpanel">
+              <div className="flex bg-[#0B0C10] p-1 border border-[#1F2937] rounded-sm">
                 <button
                   type="button"
-                  className={`dual-slot-tab ${dualTextureMode === "livery" ? "is-active" : ""}`}
+                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-sm transition-colors ${dualTextureMode === "livery" ? "bg-[#1F2833] text-[#7dd3fc]" : "text-[#7dd3fc]/50 hover:text-[#7dd3fc]"}`}
                   onClick={() => setDualTextureMode("livery")}
                 >
                   <Car className="h-3 w-3" />
@@ -1663,7 +1741,7 @@ function App() {
                 </button>
                 <button
                   type="button"
-                  className={`dual-slot-tab ${dualTextureMode === "eup" ? "is-active" : ""}`}
+                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-sm transition-colors ${dualTextureMode === "eup" ? "bg-[#1F2833] text-[#7dd3fc]" : "text-[#7dd3fc]/50 hover:text-[#7dd3fc]"}`}
                   onClick={() => setDualTextureMode("eup")}
                 >
                   <Shirt className="h-3 w-3" />
@@ -1671,238 +1749,283 @@ function App() {
                 </button>
               </div>
 
-              {/* ── Slot Selector ── */}
-              <div className="dual-slot-tabs">
-                <button
-                  type="button"
-                  className={`dual-slot-tab dual-slot-tab--a ${dualSelectedSlot === "A" ? "is-active" : ""}`}
-                  onClick={() => setDualSelectedSlot("A")}
-                >
-                  <span className="dual-slot-dot dual-slot-dot--a" />
-                  <span>Slot A</span>
-                </button>
-                <button
-                  type="button"
-                  className={`dual-slot-tab dual-slot-tab--b ${dualSelectedSlot === "B" ? "is-active" : ""}`}
-                  onClick={() => setDualSelectedSlot("B")}
-                >
-                  <span className="dual-slot-dot dual-slot-dot--b" />
-                  <span>Slot B</span>
-                </button>
+              <div className="flex gap-2">
+                 <CyberButton 
+                    variant={dualSelectedSlot === "A" ? "orange" : "secondary"}
+                    onClick={() => setDualSelectedSlot("A")}
+                 >
+                    Slot A
+                 </CyberButton>
+                 <CyberButton 
+                    variant={dualSelectedSlot === "B" ? "purple" : "secondary"}
+                    onClick={() => setDualSelectedSlot("B")}
+                 >
+                    Slot B
+                 </CyberButton>
               </div>
 
-              {/* ── Selected Slot ── */}
-              <PanelSection
+              <CyberSection
                 title={dualSelectedSlot === "A" ? "Slot A" : "Slot B"}
                 caption={dualSelectedSlot === "A" ? getFileLabel(dualModelAPath, "No model") : getFileLabel(dualModelBPath, "No model")}
                 open={true}
                 onToggle={() => {}}
                 contentId="panel-dual-selected-slot"
+                icon={Aperture}
+                color={dualSelectedSlot === "A" ? "orange" : "purple"}
               >
                 {dualSelectedSlot === "A" ? (
-                  <div className="control-group">
-                    <Label>Model A</Label>
-                    <div className="flex gap-2">
-                      <Button variant="outline" className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10" onClick={() => selectDualModel("A")}>
-                        Select Model A
-                      </Button>
-                      {dualModelAPath ? (
-                        <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => { setDualModelAPath(""); setDualModelAError(""); }} title="Unload model A">
-                          <X className="h-4 w-4" />
-                        </Button>
-                      ) : null}
-                    </div>
-                    {dualModelALoading ? <div className="file-meta">Loading...</div> : null}
-                    {dualModelAError ? <div className="file-meta text-red-400/80">{dualModelAError}</div> : null}
-                    <Label>{dualTextureMode === "eup" ? "Uniform A" : "Template A"}</Label>
-                    <div className="flex gap-2">
-                      <Button variant="outline" className="flex-1 border-[#f97316]/50 bg-[#f97316]/5 text-[#f97316] hover:bg-[#f97316]/10" onClick={() => selectDualTexture("A")}>
-                        {dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
-                      </Button>
-                      {dualTextureAPath ? (
-                        <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => setDualTextureAPath("")} title="Unload texture A">
-                          <X className="h-4 w-4" />
-                        </Button>
-                      ) : null}
-                    </div>
-                    {dualTextureAPath ? <div className="file-meta mono">{getFileLabel(dualTextureAPath, "")}</div> : null}
+                  <div className="flex flex-col gap-3">
+                    <CyberCard>
+                      <CyberLabel>Model</CyberLabel>
+                      <div className="flex gap-1.5">
+                        <CyberButton variant="secondary" className="flex-1" onClick={() => selectDualModel("A")}>
+                          Select Model A
+                        </CyberButton>
+                        {dualModelAPath ? (
+                          <CyberButton variant="ghost" className="w-8 p-0" onClick={() => { setDualModelAPath(""); setDualModelAError(""); }} title="Unload model A">
+                            <X className="h-3 w-3" />
+                          </CyberButton>
+                        ) : null}
+                      </div>
+                      {dualModelALoading ? <div className="text-[9px] text-[#f97316] animate-pulse mt-1">Loading...</div> : null}
+                      {dualModelAError ? <div className="text-[9px] text-red-400 mt-1">{dualModelAError}</div> : null}
+                    </CyberCard>
+                    <CyberCard>
+                      <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
+                      <div className="flex gap-1.5">
+                        <CyberButton variant="secondary" className="flex-1" onClick={() => selectDualTexture("A")}>
+                          {dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
+                        </CyberButton>
+                        {dualTextureAPath ? (
+                          <CyberButton variant="ghost" className="w-8 p-0" onClick={() => setDualTextureAPath("")} title="Unload texture A">
+                            <X className="h-3 w-3" />
+                          </CyberButton>
+                        ) : null}
+                      </div>
+                      {dualTextureAPath ? <div className="mt-1 px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{getFileLabel(dualTextureAPath, "")}</div> : null}
+                    </CyberCard>
                   </div>
                 ) : (
-                  <div className="control-group">
-                    <Label>Model B</Label>
-                    <div className="flex gap-2">
-                      <Button variant="outline" className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10" onClick={() => selectDualModel("B")}>
-                        Select Model B
-                      </Button>
-                      {dualModelBPath ? (
-                        <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => { setDualModelBPath(""); setDualModelBError(""); }} title="Unload model B">
-                          <X className="h-4 w-4" />
-                        </Button>
-                      ) : null}
-                    </div>
-                    {dualModelBLoading ? <div className="file-meta">Loading...</div> : null}
-                    {dualModelBError ? <div className="file-meta text-red-400/80">{dualModelBError}</div> : null}
-                    <Label>{dualTextureMode === "eup" ? "Uniform B" : "Template B"}</Label>
-                    <div className="flex gap-2">
-                      <Button variant="outline" className="flex-1 border-[#a78bfa]/50 bg-[#a78bfa]/5 text-[#a78bfa] hover:bg-[#a78bfa]/10" onClick={() => selectDualTexture("B")}>
-                        {dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
-                      </Button>
-                      {dualTextureBPath ? (
-                        <Button variant="outline" className="w-9 p-0 border-white/10 text-white/40 hover:text-white/80" onClick={() => setDualTextureBPath("")} title="Unload texture B">
-                          <X className="h-4 w-4" />
-                        </Button>
-                      ) : null}
-                    </div>
-                    {dualTextureBPath ? <div className="file-meta mono">{getFileLabel(dualTextureBPath, "")}</div> : null}
+                  <div className="flex flex-col gap-3">
+                    <CyberCard>
+                      <CyberLabel>Model</CyberLabel>
+                      <div className="flex gap-1.5">
+                        <CyberButton variant="secondary" className="flex-1" onClick={() => selectDualModel("B")}>
+                          Select Model B
+                        </CyberButton>
+                        {dualModelBPath ? (
+                          <CyberButton variant="ghost" className="w-8 p-0" onClick={() => { setDualModelBPath(""); setDualModelBError(""); }} title="Unload model B">
+                            <X className="h-3 w-3" />
+                          </CyberButton>
+                        ) : null}
+                      </div>
+                      {dualModelBLoading ? <div className="text-[9px] text-[#a78bfa] animate-pulse mt-1">Loading...</div> : null}
+                      {dualModelBError ? <div className="text-[9px] text-red-400 mt-1">{dualModelBError}</div> : null}
+                    </CyberCard>
+                    <CyberCard>
+                      <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
+                      <div className="flex gap-1.5">
+                        <CyberButton variant="secondary" className="flex-1" onClick={() => selectDualTexture("B")}>
+                          {dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
+                        </CyberButton>
+                        {dualTextureBPath ? (
+                          <CyberButton variant="ghost" className="w-8 p-0" onClick={() => setDualTextureBPath("")} title="Unload texture B">
+                            <X className="h-3 w-3" />
+                          </CyberButton>
+                        ) : null}
+                      </div>
+                      {dualTextureBPath ? <div className="mt-1 px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{getFileLabel(dualTextureBPath, "")}</div> : null}
+                    </CyberCard>
                   </div>
                 )}
-              </PanelSection>
-
-
+              </CyberSection>
             </div>
           ) : null}
 
-          <PanelSection
+          <CyberSection
+            title="Extras"
+            caption={extrasLabel}
+            open={panelOpen.extras}
+            onToggle={() => togglePanel("extras")}
+            contentId="panel-extras"
+          >
+            {modelExtras.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <CyberLabel>Vehicle Extras</CyberLabel>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      className="text-[8px] text-[rgba(230,235,244,0.5)] hover:text-[rgba(230,235,244,0.9)] px-1.5 py-0.5 rounded border border-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.2)] transition-colors uppercase tracking-wider"
+                      style={{ fontFamily: "var(--font-hud)" }}
+                      onClick={showAllExtras}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[8px] text-[rgba(230,235,244,0.5)] hover:text-[rgba(230,235,244,0.9)] px-1.5 py-0.5 rounded border border-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.2)] transition-colors uppercase tracking-wider"
+                      style={{ fontFamily: "var(--font-hud)" }}
+                      onClick={hideAllExtras}
+                    >
+                      None
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  {modelExtras.map((extra) => {
+                    const isVisible = !hiddenExtras.includes(extra.name);
+                    return (
+                      <div key={extra.name} className="flex items-center justify-between py-0.5">
+                        <span className="text-[10px] text-[rgba(230,235,244,0.75)]" style={{ fontFamily: "var(--font-hud)" }}>{extra.label}</span>
+                        <button
+                          type="button"
+                          className={`w-7 h-3.5 rounded-full relative transition-colors ${isVisible ? "bg-[#7dd3fc]/25" : "bg-[rgba(255,255,255,0.08)]"}`}
+                          onClick={() => toggleExtra(extra.name)}
+                          aria-pressed={isVisible}
+                          aria-label={`Toggle ${extra.label}`}
+                        >
+                          <div className={`absolute top-[2px] w-2.5 h-2.5 rounded-full transition-all ${isVisible ? "left-[14px] bg-[#7dd3fc]" : "left-[2px] bg-[rgba(230,235,244,0.35)]"}`} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="text-[10px] text-[rgba(230,235,244,0.35)]" style={{ fontFamily: "var(--font-hud)" }}>
+                No extras detected. Load a model with vehicle extras.
+              </div>
+            )}
+          </CyberSection>
+
+          <CyberSection
             title="Colors"
             caption="Body + background"
             open={colorsOpen}
             onToggle={() => setColorsOpen((prev) => !prev)}
             contentId="panel-colors"
+            icon={Zap}
+            color="blue"
           >
-            <div className="control-group">
-              <Label>Body Color</Label>
-              <div className="color-input">
-                <div className="color-swatch-wrapper">
-                  <div className="color-swatch" style={{ background: bodyColor }} />
-                  <input
-                    type="color"
+            <div className="space-y-4">
+              <div>
+                <CyberLabel>Body Color</CyberLabel>
+                <div className="flex items-center gap-2">
+                  <div className="color-swatch-wrapper">
+                    <div className="color-swatch" style={{ background: bodyColor }} />
+                    <input
+                      type="color"
+                      value={bodyColor}
+                      onChange={(event) => setBodyColor(event.currentTarget.value)}
+                      className="color-picker-native"
+                      aria-label="Body color picker"
+                    />
+                  </div>
+                  <Input
+                    className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
+                    style={{ fontFamily: "var(--font-hud)" }}
                     value={bodyColor}
                     onChange={(event) => setBodyColor(event.currentTarget.value)}
-                    className="color-picker-native"
-                    aria-label="Body color picker"
                   />
+                  <button
+                    type="button"
+                    className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                    onClick={() => setBodyColor(DEFAULT_BODY)}
+                    title="Revert to default"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
                 </div>
-                <Input
-                  className="mono h-8 px-2"
-                  value={bodyColor}
-                  onChange={(event) => setBodyColor(event.currentTarget.value)}
-                />
-                <Button
-                  variant="ghost"
-                  className="h-8 w-8 p-0 text-white/30 hover:text-white"
-                  onClick={() => setBodyColor(DEFAULT_BODY)}
-                  title="Revert to default"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                </Button>
               </div>
-            </div>
 
-            <div className="control-group">
-              <Label>Background Color</Label>
-              <div className="color-input">
-                <div className="color-swatch-wrapper">
-                  <div className="color-swatch" style={{ background: backgroundColor }} />
-                  <input
-                    type="color"
+              <div>
+                <CyberLabel>Background Color</CyberLabel>
+                <div className="flex items-center gap-2">
+                  <div className="color-swatch-wrapper">
+                    <div className="color-swatch" style={{ background: backgroundColor }} />
+                    <input
+                      type="color"
+                      value={backgroundColor}
+                      onChange={(event) => setBackgroundColor(event.currentTarget.value)}
+                      className="color-picker-native"
+                      aria-label="Background color picker"
+                    />
+                  </div>
+                  <Input
+                    className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
+                    style={{ fontFamily: "var(--font-hud)" }}
                     value={backgroundColor}
                     onChange={(event) => setBackgroundColor(event.currentTarget.value)}
-                    className="color-picker-native"
-                    aria-label="Background color picker"
                   />
+                  <button
+                    type="button"
+                    className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                    onClick={() => setBackgroundColor(DEFAULT_BG)}
+                    title="Revert to default"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
                 </div>
-                <Input
-                  className="mono h-8 px-2"
-                  value={backgroundColor}
-                  onChange={(event) => setBackgroundColor(event.currentTarget.value)}
-                />
-                <Button
-                  variant="ghost"
-                  className="h-8 w-8 p-0 text-white/30 hover:text-white"
-                  onClick={() => setBackgroundColor(DEFAULT_BG)}
-                  title="Revert to default"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                </Button>
+              </div>
+
+              <div className="border-t border-[rgba(255,255,255,0.06)] pt-3 space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <CyberLabel className="mb-0">Light Intensity</CyberLabel>
+                    <span className="text-[10px] text-[rgba(230,235,244,0.5)]" style={{ fontFamily: "var(--font-hud)" }}>{lightIntensity.toFixed(1)}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="2.0"
+                      step="0.1"
+                      className="flex-1 accent-[#7dd3fc] h-1 bg-[rgba(255,255,255,0.1)] rounded-lg appearance-none cursor-pointer"
+                      value={lightIntensity}
+                      onChange={(e) => setLightIntensity(parseFloat(e.target.value))}
+                    />
+                    <button
+                      type="button"
+                      className="w-6 h-6 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                      onClick={() => setLightIntensity(1.0)}
+                      title="Reset Lighting"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <CyberLabel className="mb-0">Glossiness</CyberLabel>
+                    <span className="text-[10px] text-[rgba(230,235,244,0.5)]" style={{ fontFamily: "var(--font-hud)" }}>{Math.round(glossiness * 100)}%</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="1.0"
+                      step="0.05"
+                      className="flex-1 accent-[#7dd3fc] h-1 bg-[rgba(255,255,255,0.1)] rounded-lg appearance-none cursor-pointer"
+                      value={glossiness}
+                      onChange={(e) => setGlossiness(parseFloat(e.target.value))}
+                    />
+                    <button
+                      type="button"
+                      className="w-6 h-6 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                      onClick={() => setGlossiness(0.5)}
+                      title="Reset Gloss"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
+          </CyberSection>
 
-            <div className="control-divider" />
-
-            <div className="control-group">
-              <div className="flex items-center justify-between">
-                <Label>Light Intensity</Label>
-                <span className="text-[10px] text-white/40 font-mono">{lightIntensity.toFixed(1)}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0.5"
-                  max="2.0"
-                  step="0.1"
-                  className="flex-1 accent-white h-1 bg-white/10 rounded-lg appearance-none cursor-pointer range-sm"
-                  value={lightIntensity}
-                  onChange={(e) => setLightIntensity(parseFloat(e.target.value))}
-                />
-                <Button
-                  variant="ghost"
-                  className="h-6 w-6 p-0 text-white/30 hover:text-white"
-                  onClick={() => setLightIntensity(1.0)}
-                  title="Reset Lighting"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
-
-            <div className="control-group">
-              <div className="flex items-center justify-between">
-                <Label>Glossiness</Label>
-                <span className="text-[10px] text-white/40 font-mono">{Math.round(glossiness * 100)}%</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0.0"
-                  max="1.0"
-                  step="0.05"
-                  className="flex-1 accent-white h-1 bg-white/10 rounded-lg appearance-none cursor-pointer range-sm"
-                  value={glossiness}
-                  onChange={(e) => setGlossiness(parseFloat(e.target.value))}
-                />
-                <Button
-                  variant="ghost"
-                  className="h-6 w-6 p-0 text-white/30 hover:text-white"
-                  onClick={() => setGlossiness(0.5)}
-                  title="Reset Gloss"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
-          </PanelSection>
-
-        </div>
-
-        <div className="control-panel-status" aria-label="Status">
-          <div className="status-strip">
-            <div className="flex items-center gap-2">
-              <span className={watchStatus === "watching" ? "status-dot" : "h-2 w-2 rounded-full bg-white/20"} />
-              <span>
-                {watchStatus === "watching"
-                  ? "Watching for saves"
-                  : watchStatus === "error"
-                    ? "Watcher error"
-                    : "Idle"}
-              </span>
-            </div>
-            <span>Last update: {lastUpdate}</span>
-          </div>
-          {dialogError ? <div className="file-meta">{dialogError}</div> : null}
-          {textureError ? <div className="file-meta">{textureError}</div> : null}
-          {windowTextureError ? <div className="file-meta">{windowTextureError}</div> : null}
-        </div>
-      </motion.aside>
+      </CyberPanel>
 
       <motion.section
         className={`viewer-shell ${isDragging ? "is-dragging" : ""}`}
@@ -1964,12 +2087,15 @@ function App() {
             textureMode={textureMode}
             wasdEnabled={cameraWASD}
             liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
-            ytdTextures={ytdTextures}
-            ytdRawTextures={ytdRawTextures}
-            ytdOverrides={ytdOverrides}
-            decodeYtdTextures={decodeYtdTextures}
+            ytdTextures={experimentalSettings ? ytdTextures : null}
+            ytdRawTextures={experimentalSettings ? ytdRawTextures : null}
+            ytdOverrides={experimentalSettings ? ytdOverrides : {}}
+            decodeYtdTextures={experimentalSettings ? decodeYtdTextures : null}
+            sharedYtdTextures={experimentalSettings ? sharedYtdTextures : null}
+            decodeSharedYtdTextures={experimentalSettings ? decodeSharedYtdTextures : null}
             lightIntensity={lightIntensity}
             glossiness={glossiness}
+            hiddenExtras={hiddenExtras}
             onModelInfo={handleModelInfo}
             onModelError={handleModelError}
             onModelLoading={handleModelLoading}
@@ -1981,8 +2107,8 @@ function App() {
             onTextureError={handleTextureError}
             onWindowTextureError={handleWindowTextureError}
             onFormatWarning={handleFormatWarning}
-            onYtdMappingUpdate={setYtdMappingMeta}
-            onYtdFound={loadYtd}
+            onYtdMappingUpdate={experimentalSettings ? setYtdMappingMeta : undefined}
+            onYtdFound={experimentalSettings ? loadYtd : undefined}
           />
         )}
 
@@ -1990,122 +2116,124 @@ function App() {
           {(modelLoading || (textureMode === "multi" && (dualModelALoading || dualModelBLoading))) ? <AppLoader variant="background" /> : null}
         </AnimatePresence>
 
-        <motion.div 
-          layout
-          className="viewer-toolbar"
-          transition={{ 
-            type: "spring",
-            stiffness: 2000,
-            damping: 60
-          }}
-        >
-          <AnimatePresence mode="wait" initial={false}>
-            {!toolbarCollapsed ? (
-              <motion.div
-                key="expanded"
-                layout
-                className="flex items-center"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.01 }}
-              >
-                {textureMode === "multi" ? (
-                  <>
-                    <motion.div layout className="viewer-toolbar-group">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className={`toolbar-btn ${dualSelectedSlot === "A" ? "toolbar-btn--slot-a" : ""}`}
-                        onClick={() => setDualSelectedSlot("A")}
-                      >
-                        <span className="toolbar-slot-letter toolbar-slot-letter--a">A</span>
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className={`toolbar-btn ${dualSelectedSlot === "B" ? "toolbar-btn--slot-b" : ""}`}
-                        onClick={() => setDualSelectedSlot("B")}
-                      >
-                        <span className="toolbar-slot-letter toolbar-slot-letter--b">B</span>
-                      </Button>
-                    </motion.div>
-                    <div className="toolbar-divider" />
-                    <motion.div layout className="viewer-toolbar-group">
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
-                        {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
-                        <Link2 className="w-3 h-3 mr-1" />Snap
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.reset?.()}>
-                        Center
-                      </Button>
-                    </motion.div>
-                  </>
-                ) : (
-                  <>
-                    <motion.div layout className="viewer-toolbar-group">
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>
-                        Front
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("back")}>
-                        Back
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("side")}>
-                        Side
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")}>
-                        3/4
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("top")}>
-                        Top
-                      </Button>
-                      <div className="toolbar-divider" />
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={handleCenterCamera} disabled={!viewerReady}>
-                        Center
-                      </Button>
-                    </motion.div>
-                    <div className="toolbar-divider" />
-                    <motion.div layout className="viewer-toolbar-group">
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-                        <span className="mono mr-1 text-red-400">X</span>{!hideRotText && "Rot"}
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-                        <span className="mono mr-1 text-green-400">Y</span>{!hideRotText && "Rot"}
-                      </Button>
-                      <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-                        <span className="mono mr-1 text-blue-400">Z</span>{!hideRotText && "Rot"}
-                      </Button>
-                    </motion.div>
-                  </>
-                )}
-                <div className="toolbar-divider" />
-                <motion.button 
+        {!(toolbarInTitlebar && textureMode !== "multi") ? (
+          <motion.div 
+            layout
+            className="viewer-toolbar"
+            transition={{ 
+              type: "spring",
+              stiffness: 2000,
+              damping: 60
+            }}
+          >
+            <AnimatePresence mode="wait" initial={false}>
+              {!toolbarCollapsed ? (
+                <motion.div
+                  key="expanded"
                   layout
-                  className="toolbar-toggle-btn" 
-                  onClick={() => setToolbarCollapsed(true)}
-                  title="Collapse Toolbar"
+                  className="flex items-center"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.01 }}
                 >
-                  <ChevronRight className="w-3.5 h-3.5" />
+                  {textureMode === "multi" ? (
+                    <>
+                      <motion.div layout className="viewer-toolbar-group">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className={`toolbar-btn ${dualSelectedSlot === "A" ? "toolbar-btn--slot-a" : ""}`}
+                          onClick={() => setDualSelectedSlot("A")}
+                        >
+                          <span className="toolbar-slot-letter toolbar-slot-letter--a">A</span>
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className={`toolbar-btn ${dualSelectedSlot === "B" ? "toolbar-btn--slot-b" : ""}`}
+                          onClick={() => setDualSelectedSlot("B")}
+                        >
+                          <span className="toolbar-slot-letter toolbar-slot-letter--b">B</span>
+                        </Button>
+                      </motion.div>
+                      <div className="toolbar-divider" />
+                      <motion.div layout className="viewer-toolbar-group">
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
+                          {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
+                          <Link2 className="w-3 h-3 mr-1" />Snap
+                        </Button>
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.reset?.()}>
+                          Center
+                        </Button>
+                      </motion.div>
+                    </>
+                  ) : (
+                    <>
+                      <motion.div layout className="viewer-toolbar-group">
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>
+                          Front
+                        </Button>
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("back")}>
+                          Back
+                        </Button>
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("side")}>
+                          Side
+                        </Button>
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")}>
+                          3/4
+                        </Button>
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("top")}>
+                          Top
+                        </Button>
+                        <div className="toolbar-divider" />
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={handleCenterCamera} disabled={!viewerReady}>
+                          Center
+                        </Button>
+                      </motion.div>
+                      <div className="toolbar-divider" />
+                      <motion.div layout className="viewer-toolbar-group">
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
+                          <span className="mono mr-1 text-red-400">X</span>{!hideRotText && "Rot"}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
+                          <span className="mono mr-1 text-green-400">Y</span>{!hideRotText && "Rot"}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
+                          <span className="mono mr-1 text-blue-400">Z</span>{!hideRotText && "Rot"}
+                        </Button>
+                      </motion.div>
+                    </>
+                  )}
+                  <div className="toolbar-divider" />
+                  <motion.button 
+                    layout
+                    className="toolbar-toggle-btn" 
+                    onClick={() => setToolbarCollapsed(true)}
+                    title="Collapse Toolbar"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </motion.button>
+                </motion.div>
+              ) : (
+                <motion.button
+                  key="collapsed"
+                  layout
+                  className="toolbar-toggle-btn is-collapsed"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setToolbarCollapsed(false)}
+                    title="Expand Toolbar"
+                >
+                  <ChevronLeft className="w-4 h-4" />
                 </motion.button>
-              </motion.div>
-            ) : (
-              <motion.button
-                key="collapsed"
-                layout
-                className="toolbar-toggle-btn is-collapsed"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setToolbarCollapsed(false)}
-                  title="Expand Toolbar"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </motion.button>
-            )}
-          </AnimatePresence>
-        </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        ) : null}
 
         {showHints ? (
           <div className="viewer-hints">
@@ -2381,15 +2509,17 @@ function App() {
       </AnimatePresence>
 
       {/* YTD Texture Browser Modal */}
-      <YtdBrowser
-        open={ytdBrowserOpen}
-        onClose={() => setYtdBrowserOpen(false)}
-        rawTextures={ytdRawTextures}
-        categorizedTextures={ytdTextures}
-        mappingMeta={ytdMappingMeta}
-        materialNames={ytdMappingMeta?.materialNames || []}
-        onOverride={handleYtdOverride}
-      />
+      {experimentalSettings ? (
+        <YtdBrowser
+          open={ytdBrowserOpen}
+          onClose={() => setYtdBrowserOpen(false)}
+          rawTextures={ytdRawTextures}
+          categorizedTextures={ytdTextures}
+          mappingMeta={ytdMappingMeta}
+          materialNames={ytdMappingMeta?.materialNames || []}
+          onOverride={handleYtdOverride}
+        />
+      ) : null}
     </motion.div>
   );
 }

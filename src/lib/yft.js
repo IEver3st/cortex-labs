@@ -641,7 +641,8 @@ function resolvePointer(reader, ptr) {
 }
 
 function parseFragType(reader, name) {
-  const drawablePtrOffsets = [0x28, 0x20, 0x30, 0x18, 0x38, 0x10, 0x08];
+  // CodeWalker FragType: DrawablePointer is at 0x30 (after VFT+Unknown_4h+padding+BoundingSphere)
+  const drawablePtrOffsets = [0x30, 0x28, 0x20, 0x18, 0x38, 0x10, 0x08];
 
   for (const ptrOffset of drawablePtrOffsets) {
     const drawablePtr = reader.u64(ptrOffset);
@@ -678,7 +679,8 @@ function parseDrawable(reader, offset, name) {
   const drawable = { name, models: [], shaders: [] };
   const baseOffset = offset;
 
-  const shaderPtrOffsets = [0x10, 0x08, 0x00, 0x18];
+  // CodeWalker DrawableBase: ShaderGroupPointer is at 0x08 (after VFT+Unknown_4h)
+  const shaderPtrOffsets = [0x08, 0x10, 0x00, 0x18];
   for (const ptrOffset of shaderPtrOffsets) {
     const shaderGroupPtr = reader.u64(baseOffset + ptrOffset);
     if (reader.validPtr(shaderGroupPtr)) {
@@ -795,7 +797,8 @@ function parseShader(reader, offset, index) {
   const hashHex = nameHash.toString(16).padStart(8, "0");
 
   // Extract texture references from shader parameters
-  const textureRefs = extractShaderTextureRefs(reader, offset);
+  const shaderName = identifyMaterialName(nameHash, hashHex);
+  const textureRefs = extractShaderTextureRefs(reader, offset, shaderName);
 
   return {
     index,
@@ -806,29 +809,46 @@ function parseShader(reader, offset, index) {
   };
 }
 
-// Well-known shader parameter name hashes (joaat) for texture samplers
-const PARAM_DIFFUSE_SAMPLER   = joaat("DiffuseSampler");    // primary diffuse/albedo
-const PARAM_DIFFUSE2_SAMPLER  = joaat("DiffuseSampler2");   // secondary diffuse (detail)
-const PARAM_DIFFUSE3_SAMPLER  = joaat("DiffuseSampler3");
-const PARAM_BUMP_SAMPLER      = joaat("BumpSampler");       // normal map
-const PARAM_BUMP2_SAMPLER     = joaat("BumpSampler2");
-const PARAM_SPEC_SAMPLER      = joaat("SpecSampler");       // specular map
-const PARAM_DETAIL_SAMPLER    = joaat("DetailSampler");
-const PARAM_TEXTURE_SAMPLER   = joaat("TextureSampler");    // generic tex (sign/decal)
-const PARAM_TEXTURE_SAMPLER_DIFF = joaat("textureSamplerDiffuse"); // alt name
+// Case-preserving joaat (does NOT lowercase — matches original-case hashes in binary)
+function joaatOrig(input) {
+  if (!input) return 0;
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash += input.charCodeAt(i);
+    hash = (hash + (hash << 10)) >>> 0;
+    hash ^= hash >>> 6;
+  }
+  hash = (hash + (hash << 3)) >>> 0;
+  hash ^= hash >>> 11;
+  hash = (hash + (hash << 15)) >>> 0;
+  return hash >>> 0;
+}
 
-// Map parameter name hash → semantic role
-const SAMPLER_ROLE = new Map([
-  [PARAM_DIFFUSE_SAMPLER, "diffuse"],
-  [PARAM_DIFFUSE2_SAMPLER, "diffuse2"],
-  [PARAM_DIFFUSE3_SAMPLER, "diffuse3"],
-  [PARAM_BUMP_SAMPLER, "normal"],
-  [PARAM_BUMP2_SAMPLER, "normal2"],
-  [PARAM_SPEC_SAMPLER, "specular"],
-  [PARAM_DETAIL_SAMPLER, "detail"],
-  [PARAM_TEXTURE_SAMPLER, "diffuse"],
-  [PARAM_TEXTURE_SAMPLER_DIFF, "diffuse"],
-]);
+// Well-known shader parameter name hashes for texture samplers.
+// GTA V files may store hashes from either lowercase or original-case joaat,
+// so we register both variants in the lookup map.
+const SAMPLER_NAMES = [
+  ["DiffuseSampler", "diffuse"],
+  ["DiffuseSampler2", "diffuse2"],
+  ["DiffuseSampler3", "diffuse3"],
+  ["BumpSampler", "normal"],
+  ["BumpSampler2", "normal2"],
+  ["SpecSampler", "specular"],
+  ["DetailSampler", "detail"],
+  ["TextureSampler", "diffuse"],
+  ["textureSamplerDiffuse", "diffuse"],
+];
+
+const SAMPLER_ROLE = new Map();
+for (const [name, role] of SAMPLER_NAMES) {
+  SAMPLER_ROLE.set(joaat(name), role);      // lowercase hash
+  SAMPLER_ROLE.set(joaatOrig(name), role);  // original-case hash
+}
+
+// Named constants for diagnostic logging
+const PARAM_DIFFUSE_SAMPLER = joaat("DiffuseSampler");
+const PARAM_BUMP_SAMPLER    = joaat("BumpSampler");
+const PARAM_SPEC_SAMPLER    = joaat("SpecSampler");
 
 // Pre-compute a reverse lookup: texture name → known name (for matching YTD names)
 // We'll build this from the YTD texture names at match time.
@@ -859,7 +879,7 @@ function readCString(reader, offset, maxLen = 256) {
  *
  * The hashes at step 3 identify which sampler each parameter corresponds to.
  */
-function extractShaderTextureRefs(reader, shaderOffset) {
+function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
   const textureRefs = {};
 
   // ── ShaderFX layout (CodeWalker, BlockLength=48) ──
@@ -945,18 +965,44 @@ function extractShaderTextureRefs(reader, shaderOffset) {
     console.log(`[YFT] Found ${texFound} texture params out of ${paramCount} total`);
   }
 
-  // ── Step 3: Read name hashes and match texture parameters ──
+  // Diagnostic — log texture params for first 3 shaders + all paint shaders
+  const isPaintShader = shaderName && (shaderName.toLowerCase().includes("paint") || shaderName.toLowerCase().includes("livery"));
+  if (!extractShaderTextureRefs._diagCount) extractShaderTextureRefs._diagCount = 0;
+  const shouldDiag = isPaintShader || extractShaderTextureRefs._diagCount < 3;
+  if (shouldDiag) {
+    extractShaderTextureRefs._diagCount++;
+    const texParams = [];
+    for (let i = 0; i < paramCount; i++) {
+      const hash = reader.u32(hashesOffset + i * 4) >>> 0;
+      const role = SAMPLER_ROLE.get(hash) || "unknown";
+      const hashStr = "0x" + hash.toString(16).padStart(8, "0");
+      if (params[i].dataType === 0 && reader.validPtr(params[i].dataPtr)) {
+        const voff = reader.resolvePtr(params[i].dataPtr);
+        const np = reader.u64(voff + 0x28);
+        let texName = "(unreadable)";
+        if (reader.validPtr(np)) {
+          const noff = reader.resolvePtr(np);
+          texName = readCString(reader, noff) || "(empty)";
+        }
+        texParams.push({ i, hash: hashStr, role, dataType: 0, texName });
+      } else {
+        texParams.push({ i, hash: hashStr, role, dataType: params[i].dataType });
+      }
+    }
+    const texOnly = texParams.filter(p => p.dataType === 0);
+    console.log(`[YFT] Shader "${shaderName}" [cnt=${paramCount}, pSize=${parameterSize}, cSize=${computedSize}] textures:`, JSON.stringify(texOnly));
+  }
+
+  // ── Step 3: Collect all texture parameters with their names ──
+  const texEntries = [];
   for (let p = 0; p < paramCount; p++) {
     const { dataType, dataPtr } = params[p];
-
-    // Only process texture parameters (DataType === 0)
     if (dataType !== 0) continue;
     if (!reader.validPtr(dataPtr)) continue;
 
     const valueOffset = reader.resolvePtr(dataPtr);
     if (valueOffset === 0) continue;
 
-    // Read texture name from TextureBase.NamePointer at offset 0x28
     const texNamePtr = reader.u64(valueOffset + 0x28);
     if (!reader.validPtr(texNamePtr)) continue;
 
@@ -966,27 +1012,40 @@ function extractShaderTextureRefs(reader, shaderOffset) {
     const texName = readCString(reader, texNameOffset);
     if (!texName || texName.length === 0) continue;
 
-    // Read the sampler name hash for this parameter
+    // Try hash-based role (may be unreliable if hash offset is wrong)
     const nameHash = reader.u32(hashesOffset + p * 4) >>> 0;
+    const hashRole = SAMPLER_ROLE.get(nameHash) || null;
 
-    // Determine the sampler role from the name hash
-    let role = SAMPLER_ROLE.get(nameHash) || null;
+    texEntries.push({ texName, hashRole, paramIndex: p });
+  }
 
-    // If hash didn't match, guess from the texture name itself
-    if (!role) {
-      const lower = texName.toLowerCase();
-      if (lower.endsWith("_n") || lower.includes("_normal") || lower.includes("_nrm") || lower.includes("bump")) {
-        role = "normal";
-      } else if (lower.endsWith("_s") || lower.includes("_spec")) {
-        role = "specular";
+  // ── Step 4: Assign roles using texture name conventions (most reliable) ──
+  // GTA V texture naming: _n/_normal/_nrm = normal, _s/_spec = specular, else = diffuse
+  // First pass: assign by name convention
+  for (const entry of texEntries) {
+    const lower = entry.texName.toLowerCase();
+    if (lower.endsWith("_n") || lower.endsWith("_norm") || lower.includes("_normal") || lower.includes("_nrm") || lower.includes("bump") || lower.endsWith("_bumpmap")) {
+      entry.role = "normal";
+    } else if (lower.endsWith("_s") || lower.endsWith("_spec") || lower.includes("specmap") || lower.includes("_spec_") || lower.includes("spec2")) {
+      entry.role = "specular";
+    } else if (lower.includes("emissive") || lower.includes("_emis")) {
+      entry.role = "emissive";
+    } else {
+      // Could be diffuse or something else — check hash if available
+      if (entry.hashRole === "normal" || entry.hashRole === "normal2") {
+        entry.role = entry.hashRole;
+      } else if (entry.hashRole === "specular") {
+        entry.role = "specular";
       } else {
-        role = "diffuse";
+        entry.role = "diffuse";
       }
     }
+  }
 
-    // First texture per role wins
-    if (!textureRefs[role]) {
-      textureRefs[role] = texName;
+  // ── Step 5: Build textureRefs — first texture per role wins ──
+  for (const entry of texEntries) {
+    if (!textureRefs[entry.role]) {
+      textureRefs[entry.role] = entry.texName;
     }
   }
 

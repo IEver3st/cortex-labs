@@ -7,6 +7,7 @@ import { TGALoader } from "three/examples/jsm/loaders/TGALoader";
 import { DFFLoader } from "dff-loader";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "../lib/yft";
+import { parseDDS } from "../lib/dds";
 
 /* ───────── Constants ───────── */
 const YDD_SCAN_SETTINGS = {
@@ -192,7 +193,9 @@ async function loadTextureFromPath(texturePath, textureLoader, renderer) {
 
   const applySettings = (texture) => {
     texture.colorSpace = THREE.SRGBColorSpace;
-    if (!texture.isCompressedTexture) texture.flipY = true;
+    if (!texture.isCompressedTexture) {
+      if (!texture.userData?.ddsDecoded) texture.flipY = true;
+    }
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.needsUpdate = true;
@@ -200,7 +203,9 @@ async function loadTextureFromPath(texturePath, textureLoader, renderer) {
     if (texture.isDataTexture) {
       texture.magFilter = THREE.LinearFilter;
       texture.minFilter = THREE.LinearMipmapLinearFilter;
-      texture.generateMipmaps = true;
+      if (!texture.mipmaps || texture.mipmaps.length === 0) {
+        texture.generateMipmaps = true;
+      }
     }
   };
 
@@ -213,7 +218,13 @@ async function loadTextureFromPath(texturePath, textureLoader, renderer) {
     } finally { URL.revokeObjectURL(url); }
   };
 
-  const loadDds = async () => {
+  const loadDdsCustom = async () => {
+    const tex = parseDDS(buffer);
+    if (!tex) throw new Error("Custom DDS parser returned null");
+    return tex;
+  };
+
+  const loadDdsFallback = async () => {
     const loader = new DDSLoader();
     if (typeof loader.parse === "function") return loader.parse(buffer, true);
     const blob = new Blob([bytes], { type: "application/octet-stream" });
@@ -246,7 +257,7 @@ async function loadTextureFromPath(texturePath, textureLoader, renderer) {
   const attempts = [];
   const kind = (extension || "").toLowerCase();
   const sigKind = (signature.kind || "").toLowerCase();
-  if (kind === "dds" || sigKind === "dds") attempts.push(loadDds);
+  if (kind === "dds" || sigKind === "dds") { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
   if (kind === "tga") attempts.push(loadTga);
   if (kind === "tif" || kind === "tiff" || sigKind === "tif" || sigKind === "tiff") attempts.push(loadTiff);
   attempts.push(loadNative);

@@ -59,6 +59,11 @@ self.onmessage = (e) => {
               if (tex.rgba) {
                 decoded[name] = tex;
                 transferable.push(tex.rgba.buffer);
+                if (tex.mipmaps) {
+                  for (const mip of tex.mipmaps) {
+                    if (mip.data?.buffer) transferable.push(mip.data.buffer);
+                  }
+                }
               }
             }
             self.postMessage({ type: "decoded", textures: decoded }, transferable);
@@ -95,6 +100,11 @@ self.onmessage = (e) => {
         if (tex.rgba) {
           decoded[name] = tex;
           transferable.push(tex.rgba.buffer);
+          if (tex.mipmaps) {
+            for (const mip of tex.mipmaps) {
+              if (mip.data?.buffer) transferable.push(mip.data.buffer);
+            }
+          }
         }
       }
 
