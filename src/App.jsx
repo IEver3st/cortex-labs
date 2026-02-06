@@ -224,12 +224,18 @@ function App() {
     async (path) => {
       if (!path) return;
 
+      setFormatWarning(null);
+
       const lower = path.toString().toLowerCase();
       if (lower.endsWith(".obj")) {
         setDialogError(
           "out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported.",
         );
         return;
+      }
+
+      if (lower.endsWith(".yft") && !lower.endsWith("_hi.yft")) {
+        setFormatWarning({ type: "non-hi-model", path: path.split(/[\\/]/).pop() });
       }
 
       setDialogError("");
@@ -2134,58 +2140,78 @@ function App() {
                 <AlertTriangle className="warning-modal-icon" />
                 <div className="warning-modal-title-group">
                   <div className="warning-modal-title">
-                    {formatWarning.bitDepth}-Bit PSD Not Supported
+                    {formatWarning.type === "non-hi-model"
+                      ? "Standard Detail Model Detected"
+                      : `${formatWarning.bitDepth}-Bit PSD Not Supported`}
                   </div>
                   <div className="warning-modal-subtitle">
-                    High bit depth format detected
+                    {formatWarning.type === "non-hi-model"
+                      ? "Recommendation: Use _hi.yft"
+                      : "High bit depth format detected"}
                   </div>
                 </div>
               </div>
 
               <div className="warning-modal-body">
-                <div className="warning-modal-content">
-                  <div className="warning-modal-section">
-                    <div className="warning-modal-text">
-                      This PSD file uses <strong>{formatWarning.bitDepth}-bit</strong> color depth (high dynamic range), 
-                      which cannot be loaded directly.
+                {formatWarning.type === "non-hi-model" ? (
+                  <div className="warning-modal-content">
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-text">
+                        You have loaded <strong>{formatWarning.path}</strong>. It is strongly recommended to use the high-detail version (ending in <strong>_hi.yft</strong>) whenever available.
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="warning-modal-section">
-                    <div className="warning-modal-section-title">How to Convert</div>
-                    <div className="warning-modal-steps">
-                      <div className="warning-modal-step">
-                        <span className="warning-modal-step-num">1</span>
-                        <span className="warning-modal-step-text">Open the file in <strong>Photoshop</strong></span>
-                      </div>
-                      <div className="warning-modal-step">
-                        <span className="warning-modal-step-num">2</span>
-                        <span className="warning-modal-step-text">
-                          Go to <span className="warning-modal-code">Image → Mode → 8 Bits/Channel</span>
-                        </span>
-                      </div>
-                      <div className="warning-modal-step">
-                        <span className="warning-modal-step-num">3</span>
-                        <span className="warning-modal-step-text">Save the file and reload it here</span>
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">Missing Features</div>
+                      <div className="warning-modal-text">
+                        Standard models often lack critical features such as <strong>window templates</strong>, high-quality material slots, and detailed geometry. Depending on the developer, this may affect what you see in the viewer.
                       </div>
                     </div>
                   </div>
+                ) : (
+                  <div className="warning-modal-content">
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-text">
+                        This PSD file uses <strong>{formatWarning.bitDepth}-bit</strong> color depth (high dynamic range), 
+                        which cannot be loaded directly.
+                      </div>
+                    </div>
 
-                  <div className="warning-modal-section">
-                    <div className="warning-modal-section-title">Trade-offs</div>
-                    <div className="warning-modal-note">
-                      8-bit has 256 color levels per channel vs {formatWarning.bitDepth === 16 ? "65,536" : "billions"} in {formatWarning.bitDepth}-bit. 
-                      For game textures, 8-bit is typically sufficient and more widely compatible.
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">How to Convert</div>
+                      <div className="warning-modal-steps">
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">1</span>
+                          <span className="warning-modal-step-text">Open the file in <strong>Photoshop</strong></span>
+                        </div>
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">2</span>
+                          <span className="warning-modal-step-text">
+                            Go to <span className="warning-modal-code">Image → Mode → 8 Bits/Channel</span>
+                          </span>
+                        </div>
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">3</span>
+                          <span className="warning-modal-step-text">Save the file and reload it here</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">Trade-offs</div>
+                      <div className="warning-modal-note">
+                        8-bit has 256 color levels per channel vs {formatWarning.bitDepth === 16 ? "65,536" : "billions"} in {formatWarning.bitDepth}-bit. 
+                        For game textures, 8-bit is typically sufficient and more widely compatible.
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">Alternative</div>
+                      <div className="warning-modal-text">
+                        Export as <strong>PNG</strong> or <strong>JPEG</strong> which automatically converts to 8-bit.
+                      </div>
                     </div>
                   </div>
-
-                  <div className="warning-modal-section">
-                    <div className="warning-modal-section-title">Alternative</div>
-                    <div className="warning-modal-text">
-                      Export as <strong>PNG</strong> or <strong>JPEG</strong> which automatically converts to 8-bit.
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
 
               <div className="warning-modal-footer">
@@ -2193,9 +2219,11 @@ function App() {
                   type="button"
                   className="warning-modal-btn warning-modal-btn-primary"
                   onClick={() => {
+                    if (formatWarning.type !== "non-hi-model") {
+                      setTexturePath("");
+                      setTextureError("");
+                    }
                     setFormatWarning(null);
-                    setTexturePath("");
-                    setTextureError("");
                   }}
                 >
                   GOT IT

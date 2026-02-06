@@ -845,6 +845,7 @@ export default function Viewer({
       windowTextureTarget,
       liveryExteriorOnly,
       textureMode,
+      materialStateRef.current.glossiness,
     );
     requestRender();
   }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode]);
@@ -868,6 +869,7 @@ export default function Viewer({
           materialState.windowTextureTarget,
           materialState.liveryExteriorOnly,
           materialState.textureMode,
+          materialState.glossiness,
         );
       }
       onTextureErrorRef.current?.("");
@@ -899,6 +901,7 @@ export default function Viewer({
             materialState.windowTextureTarget,
             materialState.liveryExteriorOnly,
             materialState.textureMode,
+            materialState.glossiness,
           );
           requestRender();
         }
@@ -1091,6 +1094,7 @@ export default function Viewer({
           materialState.windowTextureTarget,
           materialState.liveryExteriorOnly,
           materialState.textureMode,
+          materialState.glossiness,
         );
         requestRender();
       }
@@ -1131,6 +1135,7 @@ export default function Viewer({
           materialState.windowTextureTarget,
           materialState.liveryExteriorOnly,
           materialState.textureMode,
+          materialState.glossiness,
         );
         requestRender();
       }
@@ -1167,6 +1172,7 @@ export default function Viewer({
             materialState.windowTextureTarget,
             materialState.liveryExteriorOnly,
             materialState.textureMode,
+            materialState.glossiness,
           );
           requestRender();
         }
@@ -1348,6 +1354,7 @@ export default function Viewer({
           materialState.windowTextureTarget,
           materialState.liveryExteriorOnly,
           materialState.textureMode,
+          materialState.glossiness,
         );
       }
 
@@ -1587,6 +1594,7 @@ export default function Viewer({
             transparent: isGlassMat ? true : (baseMaterial.transparent ?? false),
             opacity: isGlassMat ? 0.6 : (baseMaterial.opacity ?? 1.0),
           });
+          ytdMaterial.userData.baseRoughness = ytdMaterial.roughness;
 
           if (isPaintMat) setupLiveryShader(ytdMaterial);
 
@@ -1805,13 +1813,19 @@ function setupLiveryShader(material) {
 
 function getOrCreateAppliedMaterial(mesh, color) {
   if (mesh.userData.appliedMaterial) return mesh.userData.appliedMaterial;
+  
+  const baseMat = mesh.userData.baseMaterial || mesh.material;
+  const baseRoughness = baseMat.userData?.baseRoughness ?? baseMat.roughness ?? 0.6;
+  const metalness = baseMat.metalness ?? 0.2;
+
   const material = new THREE.MeshStandardMaterial({
     color,
     map: null,
     side: THREE.DoubleSide,
-    metalness: 0.2,
-    roughness: 0.6,
+    metalness,
+    roughness: baseRoughness,
   });
+  material.userData.baseRoughness = baseRoughness;
   setupLiveryShader(material);
   mesh.userData.appliedMaterial = material;
   return material;
@@ -1834,6 +1848,7 @@ function applyMaterials(
   windowTextureTarget,
   liveryExteriorOnly,
   textureMode,
+  glossiness = 0.5,
 ) {
   const color = new THREE.Color(bodyColor);
   const vehicleTarget = textureTarget || ALL_TARGET;
@@ -1841,6 +1856,8 @@ function applyMaterials(
   const exteriorOnly = Boolean(liveryExteriorOnly);
   const preferUv2 = textureMode === "livery";
   const meshes = getMeshList(object);
+
+  const glossFactor = 2 - 2 * glossiness;
 
   for (const child of meshes) {
     if (!child.userData.baseMaterial) {
@@ -1888,6 +1905,11 @@ function applyMaterials(
       if (child.material !== appliedMaterial) {
         child.material = appliedMaterial;
       }
+      
+      const base = appliedMaterial.userData.baseRoughness;
+      if (typeof base === "number") {
+        appliedMaterial.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
+      }
       continue;
     }
 
@@ -1896,6 +1918,11 @@ function applyMaterials(
         disposeMaterial(child.material);
       }
       child.material = child.userData.baseMaterial;
+    }
+
+    const base = child.material.userData.baseRoughness;
+    if (typeof base === "number") {
+      child.material.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
     }
   }
 }
