@@ -1022,11 +1022,8 @@ export default function Viewer({
 
       const applyTextureSettings = (texture) => {
         texture.colorSpace = THREE.SRGBColorSpace;
-        if (!texture.isCompressedTexture) {
-          // Don't override flipY for custom-decoded DDS textures (stored top-down)
-          if (!texture.userData?.ddsDecoded) {
-            texture.flipY = flipTextureY;
-          }
+        if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded) {
+          texture.flipY = flipTextureY;
         }
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
@@ -1035,7 +1032,6 @@ export default function Viewer({
         if (texture.isDataTexture) {
           texture.magFilter = THREE.LinearFilter;
           texture.minFilter = THREE.LinearMipmapLinearFilter;
-          // Don't override generateMipmaps if pre-decoded mipmaps exist
           if (!texture.mipmaps || texture.mipmaps.length === 0) {
             texture.generateMipmaps = true;
           }
@@ -1305,11 +1301,8 @@ export default function Viewer({
 
       const applyTextureSettings = (texture) => {
         texture.colorSpace = THREE.SRGBColorSpace;
-        if (!texture.isCompressedTexture) {
-          // Don't override flipY for custom-decoded DDS textures (stored top-down)
-          if (!texture.userData?.ddsDecoded) {
-            texture.flipY = flipTextureY;
-          }
+        if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded) {
+          texture.flipY = flipTextureY;
         }
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
@@ -1318,7 +1311,6 @@ export default function Viewer({
         if (texture.isDataTexture) {
           texture.magFilter = THREE.LinearFilter;
           texture.minFilter = THREE.LinearMipmapLinearFilter;
-          // Don't override generateMipmaps if pre-decoded mipmaps exist
           if (!texture.mipmaps || texture.mipmaps.length === 0) {
             texture.generateMipmaps = true;
           }

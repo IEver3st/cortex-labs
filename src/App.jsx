@@ -1471,12 +1471,10 @@ function App() {
                   </div>
                 </div>
                 <CyberCard className="mt-2">
-                  <div className="flex justify-between items-center">
-                    <span className="font-mono text-[9px] uppercase text-[#7dd3fc]">Target</span>
-                    <span className="font-mono text-[10px] text-[#C5C6C7] text-right truncate max-w-[120px]">
-                      <span className="px-1 py-0.5 bg-[#7dd3fc]/20 text-[#7dd3fc] rounded text-[8px] mr-1">AUTO</span>
-                      {liveryStatusLabel}
-                    </span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[9px] uppercase text-[#7dd3fc] shrink-0">Target</span>
+                    <span className="px-1 py-0.5 bg-[#7dd3fc]/20 text-[#7dd3fc] rounded text-[8px] shrink-0">AUTO</span>
+                    <span className="font-mono text-[10px] text-[#C5C6C7] truncate min-w-0">{liveryStatusLabel}</span>
                   </div>
                   <div className="text-[9px] text-[#7dd3fc]/50 mt-1 leading-tight">{liveryHint}</div>
                 </CyberCard>

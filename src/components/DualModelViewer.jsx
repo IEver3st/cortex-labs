@@ -193,9 +193,7 @@ async function loadTextureFromPath(texturePath, textureLoader, renderer) {
 
   const applySettings = (texture) => {
     texture.colorSpace = THREE.SRGBColorSpace;
-    if (!texture.isCompressedTexture) {
-      if (!texture.userData?.ddsDecoded) texture.flipY = true;
-    }
+    if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded) texture.flipY = true;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.needsUpdate = true;

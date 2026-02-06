@@ -243,6 +243,19 @@ function getFormatInfo(fmt) {
   }
 }
 
+// Flip RGBA pixel rows vertically in-place (top-down → bottom-up)
+// This avoids Three.js canvas-based flipY which can cause quality loss
+function flipRows(rgba, w, h) {
+  const stride = w * 4;
+  const tmp = new Uint8Array(stride);
+  for (let top = 0, bot = h - 1; top < bot; top++, bot--) {
+    const tOff = top * stride, bOff = bot * stride;
+    tmp.set(rgba.subarray(tOff, tOff + stride));
+    rgba.copyWithin(tOff, bOff, bOff + stride);
+    rgba.set(tmp, bOff);
+  }
+}
+
 function getMipSize(w, h, info) {
   if (info.blockSize > 1) {
     return Math.ceil(w / info.blockSize) * Math.ceil(h / info.blockSize) * info.blockBytes;
@@ -356,6 +369,7 @@ export function parseDDS(buffer) {
 
   const baseRgba = new Uint8Array(width * height * 4);
   info.decode(data, dataOffset, width, height, baseRgba);
+  flipRows(baseRgba, width, height);
 
   // Decode mip levels
   const mipmaps = [];
@@ -371,6 +385,7 @@ export function parseDDS(buffer) {
     try {
       const mipRgba = new Uint8Array(mw * mh * 4);
       info.decode(data, mipOffset, mw, mh, mipRgba);
+      flipRows(mipRgba, mw, mh);
       mipmaps.push({ data: mipRgba, width: mw, height: mh });
     } catch {
       break;
@@ -378,15 +393,16 @@ export function parseDDS(buffer) {
     mipOffset += mipSize;
   }
 
-  // Create Three.js DataTexture
+  // Create Three.js DataTexture — data is already flipped so flipY = false
   const texture = new THREE.DataTexture(baseRgba, width, height, THREE.RGBAFormat);
   texture.type = THREE.UnsignedByteType;
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.flipY = false; // DDS is stored top-down
+  texture.flipY = false;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.userData = { ddsDecoded: true };
 
   if (mipmaps.length > 0) {
     texture.mipmaps = mipmaps;
@@ -395,7 +411,6 @@ export function parseDDS(buffer) {
     texture.generateMipmaps = true;
   }
 
-  texture.userData = { ddsDecoded: true };
   texture.needsUpdate = true;
   return texture;
 }
