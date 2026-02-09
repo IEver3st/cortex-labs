@@ -1,8 +1,6 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChevronRight } from "lucide-react";
-import { cn } from "../lib/utils";
-
 function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
 }
@@ -12,8 +10,8 @@ const safeCn = (...args) => classNames(...args);
 export function CyberPanel({ children, collapsed, isBooting, statusBar }) {
   return (
     <motion.aside
-      className="fixed top-[var(--titlebar-height)] left-0 bottom-0 z-10 flex flex-col border-r border-[rgba(255,255,255,0.06)]"
-      style={{ width: "var(--panel-width)", background: "rgba(10, 11, 13, 0.98)", fontFamily: "var(--font-hud)", pointerEvents: collapsed ? "none" : "auto", willChange: "transform, opacity" }}
+      className="cyber-panel"
+      data-collapsed={collapsed || undefined}
       initial={{ opacity: 0, x: -12 }}
       animate={
         isBooting
@@ -24,7 +22,7 @@ export function CyberPanel({ children, collapsed, isBooting, statusBar }) {
       }
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
     >
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3" style={{ minHeight: 0 }}>
+      <div className="cyber-panel-scroll">
         {children}
       </div>
       {statusBar}
@@ -33,31 +31,29 @@ export function CyberPanel({ children, collapsed, isBooting, statusBar }) {
 }
 
 export function CyberSection({ title, caption, open, onToggle, contentId, children, icon, color }) {
+  const Icon = icon;
   return (
-    <div className="relative overflow-hidden">
+    <div className="cyber-section">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
         aria-controls={contentId}
-        className="w-full flex items-center justify-between py-2 px-1 hover:bg-[rgba(255,255,255,0.02)] transition-colors"
+        className="cyber-section-header"
       >
-        <div className="flex flex-col items-start min-w-0">
-          <span className="text-xs uppercase tracking-[0.18em] text-[rgba(230,235,244,0.92)] font-bold" style={{ fontFamily: "var(--font-hud)" }}>
-            {title}
-          </span>
-          {caption && (
-            <span className="text-[9px] truncate w-full text-[rgba(230,235,244,0.4)]" style={{ fontFamily: "var(--font-hud)" }}>
-              {caption}
-            </span>
-          )}
+        <div className="cyber-section-left">
+          {Icon && <Icon className="cyber-section-icon" />}
+          <div className="cyber-section-meta">
+            <span className="cyber-section-title">{title}</span>
+            {caption && <span className="cyber-section-caption">{caption}</span>}
+          </div>
         </div>
         <motion.div
           animate={{ rotate: open ? 90 : 0 }}
           transition={{ duration: 0.2 }}
-          className="text-[rgba(230,235,244,0.35)]"
+          className="cyber-section-chevron"
         >
-          <ChevronRight size={14} />
+          <ChevronRight size={12} />
         </motion.div>
       </button>
 
@@ -68,9 +64,10 @@ export function CyberSection({ title, caption, open, onToggle, contentId, childr
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: "easeInOut" }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            style={{ overflow: "hidden" }}
           >
-            <div className="px-1 pb-2 space-y-3">
+            <div className="cyber-section-content">
               {children}
             </div>
           </motion.div>

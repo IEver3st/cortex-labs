@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Cortex Labs",
-  "version": "3.0.1",
-  "identifier": "com.cortexlabs.app",
+  "productName": "Cortex Studio",
+  "version": "3.0.2",
+  "identifier": "com.cortexstudio.app",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Cortex Labs",
+        "title": "Cortex Studio",
         "width": 1280,
         "height": 720,
         "minWidth": 1024,
@@ -38,6 +38,20 @@
       "nsis": {
         "installerIcon": "icons/icon.ico"
       }
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": ["yft"],
+        "name": "GTA V Fragment Type",
+        "mimeType": "application/x-yft",
+        "description": "GTA V Vehicle Model File"
+      },
+      {
+        "ext": ["ydd"],
+        "name": "GTA V Drawable Dictionary",
+        "mimeType": "application/x-ydd",
+        "description": "GTA V Drawable Dictionary File"
+      }
+    ]
   }
 }

@@ -1,16 +1,50 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, Layers, Shirt, FlaskConical, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Settings, Car, Layers, Shirt, FlaskConical, AlertTriangle, FolderOpen, Monitor } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
 import {
   DEFAULT_HOTKEYS,
-  HOTKEY_ACTIONS,
   HOTKEY_CATEGORIES,
   HOTKEY_LABELS,
   mergeHotkeys,
 } from "../lib/hotkeys";
+import { loadPrefs, savePrefs } from "../lib/prefs";
+
+/* ─── Built-in defaults (canonical source) ─── */
+const BUILT_IN_DEFAULTS = {
+  textureMode: "everything",
+  liveryExteriorOnly: false,
+  windowTemplateEnabled: false,
+  windowTextureTarget: "auto",
+  cameraWASD: false,
+  bodyColor: "#e7ebf0",
+  backgroundColor: "#141414",
+  experimentalSettings: false,
+  showHints: true,
+  hideRotText: false,
+  showGrid: false,
+  lightIntensity: 1.0,
+  glossiness: 0.5,
+  windowControlsStyle: "windows",
+  toolbarInTitlebar: false,
+  uiScale: 1.0,
+  previewFolder: "",
+};
+
+function getStoredDefaults() {
+  const prefs = loadPrefs();
+  const stored = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
+  return { ...BUILT_IN_DEFAULTS, ...stored };
+}
+
+function getStoredHotkeys() {
+  const prefs = loadPrefs();
+  const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
+  return mergeHotkeys(stored, DEFAULT_HOTKEYS);
+}
 
 function ColorField({ label, value, onChange, onReset }) {
   return (
@@ -40,54 +74,47 @@ function ColorField({ label, value, onChange, onReset }) {
   );
 }
 
-export default function SettingsMenu({
-  defaults,
-  builtInDefaults,
-  onSave,
-  hotkeys,
-  onSaveHotkeys,
-}) {
+/**
+ * SettingsMenu — self-contained settings panel.
+ * Reads/writes prefs directly via loadPrefs()/savePrefs().
+ * Shell renders this in the chrome bar; it emits onSettingsSaved when prefs are persisted.
+ */
+export default function SettingsMenu({ onSettingsSaved }) {
   const [open, setOpen] = useState(false);
   const [hoveringIcon, setHoveringIcon] = useState(false);
   const [activeSection, setActiveSection] = useState("defaults");
   const [portalNode, setPortalNode] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
+  const [draft, setDraft] = useState(() => getStoredDefaults());
+  const [hotkeysDraft, setHotkeysDraft] = useState(() => getStoredHotkeys());
+
+  const isTauriRuntime =
+    typeof window !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__ !== "undefined";
+
+  // Refresh draft from storage when the dialog opens
+  useEffect(() => {
+    if (open) {
+      setDraft(getStoredDefaults());
+      setHotkeysDraft(getStoredHotkeys());
+      setConfirmReset(false);
+    }
+  }, [open]);
+
   const performReset = () => {
-    setDraft({ ...builtInDefaults });
+    setDraft({ ...BUILT_IN_DEFAULTS });
     setHotkeysDraft({ ...DEFAULT_HOTKEYS });
     setConfirmReset(false);
   };
 
-  const initialDraft = useMemo(() => ({ ...defaults }), [defaults]);
-  const [draft, setDraft] = useState(initialDraft);
-
-  const initialHotkeysDraft = useMemo(
-    () => mergeHotkeys(hotkeys, DEFAULT_HOTKEYS),
-    [hotkeys]
-  );
-  const [hotkeysDraft, setHotkeysDraft] = useState(initialHotkeysDraft);
-
-  useEffect(() => {
-    setDraft({ ...defaults });
-  }, [defaults]);
-
-  useEffect(() => {
-    setHotkeysDraft(mergeHotkeys(hotkeys, DEFAULT_HOTKEYS));
-  }, [hotkeys]);
-
   useEffect(() => {
     if (!open) return;
-
     const handleKeyDown = (event) => {
       if (event.key === "Escape") setOpen(false);
     };
-
     document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open]);
 
   useEffect(() => {
@@ -97,49 +124,30 @@ export default function SettingsMenu({
 
   const sections = useMemo(
     () => [
-      {
-        id: "defaults",
-        label: "Defaults",
-        description: "Baseline texture behavior and viewing rules.",
-      },
-      {
-        id: "hotkeys",
-        label: "Hotkeys",
-        description: "Keyboard shortcuts for quick actions.",
-      },
-      {
-        id: "camera",
-        label: "Camera",
-        description: "Keyboard movement and camera controls.",
-      },
-      {
-        id: "colors",
-        label: "Appearance",
-        description: "Window style and interface colors.",
-      },
-      {
-        id: "experimental",
-
-        label: "Experimental",
-        description: "Bleeding edge features and debug tools.",
-      },
+      { id: "defaults", label: "Defaults", description: "Baseline texture behavior and viewing rules." },
+      { id: "display", label: "Display", description: "UI scaling and layout preferences." },
+      { id: "hotkeys", label: "Hotkeys", description: "Keyboard shortcuts for quick actions." },
+      { id: "camera", label: "Camera", description: "Keyboard movement and camera controls." },
+      { id: "colors", label: "Appearance", description: "Window style and interface colors." },
+      { id: "export", label: "Export", description: "Preview and export output settings." },
+      { id: "experimental", label: "Experimental", description: "Bleeding edge features and debug tools." },
     ],
     [],
   );
 
   const activeMeta = sections.find((section) => section.id === activeSection) ?? sections[0];
 
-  const save = () => {
-    onSave?.(draft);
-    onSaveHotkeys?.(hotkeysDraft);
+  const save = useCallback(() => {
+    const prefs = loadPrefs() || {};
+    savePrefs({ ...prefs, defaults: draft, hotkeys: hotkeysDraft });
+    // Apply UI scale immediately
+    document.documentElement.style.setProperty("--es-ui-scale", String(draft.uiScale ?? 1.0));
     setOpen(false);
-  };
+    onSettingsSaved?.();
+  }, [draft, hotkeysDraft, onSettingsSaved]);
 
   const updateHotkey = (action, hotkey) => {
-    setHotkeysDraft((prev) => ({
-      ...prev,
-      [action]: hotkey,
-    }));
+    setHotkeysDraft((prev) => ({ ...prev, [action]: hotkey }));
   };
 
   const clearHotkey = (action) => {
@@ -157,6 +165,16 @@ export default function SettingsMenu({
     setOpen((prev) => !prev);
   };
 
+  const handleSelectPreviewFolder = useCallback(async () => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await openDialog({ directory: true, title: "Select Preview Export Folder" });
+      if (typeof selected === "string") {
+        setDraft((p) => ({ ...p, previewFolder: selected }));
+      }
+    } catch {}
+  }, [isTauriRuntime]);
+
   return (
     <div className="settings-anchor">
       <motion.button
@@ -169,11 +187,7 @@ export default function SettingsMenu({
       >
         <motion.span
           className="settings-cog-icon"
-          animate={
-            hoveringIcon
-              ? { rotate: 360 }
-              : { rotate: 0 }
-          }
+          animate={hoveringIcon ? { rotate: 360 } : { rotate: 0 }}
           transition={
             hoveringIcon
               ? { repeat: Infinity, duration: 0.8, ease: "linear" }
@@ -254,68 +268,69 @@ export default function SettingsMenu({
                             exit={{ opacity: 0, y: -8 }}
                             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                           >
+                            {/* ─── Defaults ─── */}
                             {activeSection === "defaults" ? (
                               <section className="settings-panel" id="settings-panel-defaults" aria-label="Defaults">
                                 <div className="settings-panel-title">Texture defaults</div>
                                 <div className="settings-row">
-                                <div className="settings-row-label">Default mode</div>
-                                <div className="mode-tabs">
-                                  <motion.button
-                                    type="button"
-                                    className={`mode-tab ${draft.textureMode === "livery" ? "is-active" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, textureMode: "livery" }))}
-                                    whileTap={{ scale: 0.95 }}
-                                  >
-                                    <div className="mode-tab-content">
-                                      <Car className="mode-tab-icon" aria-hidden="true" />
-                                      <span>Livery</span>
-                                    </div>
-                                    {draft.textureMode === "livery" && (
-                                      <motion.div
-                                        layoutId="settings-mode-highlight"
-                                        className="mode-tab-bg"
-                                        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                      />
-                                    )}
-                                  </motion.button>
-                                  <motion.button
-                                    type="button"
-                                    className={`mode-tab ${draft.textureMode === "everything" ? "is-active" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
-                                    whileTap={{ scale: 0.95 }}
-                                  >
-                                    <div className="mode-tab-content">
-                                      <Layers className="mode-tab-icon" aria-hidden="true" />
-                                      <span>All</span>
-                                    </div>
-                                    {draft.textureMode === "everything" && (
-                                      <motion.div
-                                        layoutId="settings-mode-highlight"
-                                        className="mode-tab-bg"
-                                        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                      />
-                                    )}
-                                  </motion.button>
-                                  <motion.button
-                                    type="button"
-                                    className={`mode-tab ${draft.textureMode === "eup" ? "is-active" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, textureMode: "eup" }))}
-                                    whileTap={{ scale: 0.95 }}
-                                  >
-                                    <div className="mode-tab-content">
-                                      <Shirt className="mode-tab-icon" aria-hidden="true" />
-                                      <span>EUP</span>
-                                    </div>
-                                    {draft.textureMode === "eup" && (
-                                      <motion.div
-                                        layoutId="settings-mode-highlight"
-                                        className="mode-tab-bg"
-                                        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                      />
-                                    )}
-                                  </motion.button>
+                                  <div className="settings-row-label">Default mode</div>
+                                  <div className="mode-tabs">
+                                    <motion.button
+                                      type="button"
+                                      className={`mode-tab ${draft.textureMode === "livery" ? "is-active" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, textureMode: "livery" }))}
+                                      whileTap={{ scale: 0.95 }}
+                                    >
+                                      <div className="mode-tab-content">
+                                        <Car className="mode-tab-icon" aria-hidden="true" />
+                                        <span>Livery</span>
+                                      </div>
+                                      {draft.textureMode === "livery" && (
+                                        <motion.div
+                                          layoutId="settings-mode-highlight"
+                                          className="mode-tab-bg"
+                                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                        />
+                                      )}
+                                    </motion.button>
+                                    <motion.button
+                                      type="button"
+                                      className={`mode-tab ${draft.textureMode === "everything" ? "is-active" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
+                                      whileTap={{ scale: 0.95 }}
+                                    >
+                                      <div className="mode-tab-content">
+                                        <Layers className="mode-tab-icon" aria-hidden="true" />
+                                        <span>All</span>
+                                      </div>
+                                      {draft.textureMode === "everything" && (
+                                        <motion.div
+                                          layoutId="settings-mode-highlight"
+                                          className="mode-tab-bg"
+                                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                        />
+                                      )}
+                                    </motion.button>
+                                    <motion.button
+                                      type="button"
+                                      className={`mode-tab ${draft.textureMode === "eup" ? "is-active" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, textureMode: "eup" }))}
+                                      whileTap={{ scale: 0.95 }}
+                                    >
+                                      <div className="mode-tab-content">
+                                        <Shirt className="mode-tab-icon" aria-hidden="true" />
+                                        <span>EUP</span>
+                                      </div>
+                                      {draft.textureMode === "eup" && (
+                                        <motion.div
+                                          layoutId="settings-mode-highlight"
+                                          className="mode-tab-bg"
+                                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                        />
+                                      )}
+                                    </motion.button>
+                                  </div>
                                 </div>
-                              </div>
 
                                 <div className="settings-row">
                                   <div className="settings-row-label">Exterior only</div>
@@ -340,10 +355,50 @@ export default function SettingsMenu({
                                     <span className="settings-toggle-dot" />
                                   </button>
                                 </div>
-
                               </section>
                             ) : null}
 
+                            {/* ─── Display (UI Scale) ─── */}
+                            {activeSection === "display" ? (
+                              <section className="settings-panel" id="settings-panel-display" aria-label="Display">
+                                <div className="settings-panel-title">Interface scaling</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">
+                                    <div className="flex items-center gap-2">
+                                      <Monitor className="h-3 w-3 opacity-60" />
+                                      <span>UI Scale</span>
+                                    </div>
+                                  </div>
+                                  <div className="settings-scale-control">
+                                    <input
+                                      type="range"
+                                      className="settings-slider"
+                                      min={0.8}
+                                      max={1.4}
+                                      step={0.05}
+                                      value={draft.uiScale ?? 1.0}
+                                      onChange={(e) => setDraft((p) => ({ ...p, uiScale: parseFloat(e.target.value) }))}
+                                    />
+                                    <span className="settings-scale-value">{Math.round((draft.uiScale ?? 1.0) * 100)}%</span>
+                                  </div>
+                                </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-note">
+                                    Adjusts the overall UI text and element sizes. Default is 100%.
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="settings-mini"
+                                  style={{ marginTop: 4 }}
+                                  onClick={() => setDraft((p) => ({ ...p, uiScale: 1.0 }))}
+                                >
+                                  Reset to 100%
+                                </button>
+                              </section>
+                            ) : null}
+
+                            {/* ─── Hotkeys ─── */}
                             {activeSection === "hotkeys" ? (
                               <section className="settings-panel" id="settings-panel-hotkeys" aria-label="Hotkeys">
                                 {Object.entries(HOTKEY_CATEGORIES).map(([categoryId, category]) => (
@@ -367,22 +422,19 @@ export default function SettingsMenu({
                                   </div>
                                 </div>
                                 <div className="settings-hotkey-reset">
-                                  <button
-                                    type="button"
-                                    className="settings-mini"
-                                    onClick={resetAllHotkeys}
-                                  >
+                                  <button type="button" className="settings-mini" onClick={resetAllHotkeys}>
                                     Reset all hotkeys
                                   </button>
                                 </div>
                               </section>
                             ) : null}
 
+                            {/* ─── Camera ─── */}
                             {activeSection === "camera" ? (
                               <section className="settings-panel" id="settings-panel-camera" aria-label="Camera">
                                 <div className="settings-panel-title">Camera controls</div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">WASD mode</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">WASD mode</div>
                                   <button
                                     type="button"
                                     className={`settings-toggle ${draft.cameraWASD ? "is-on" : ""}`}
@@ -392,38 +444,39 @@ export default function SettingsMenu({
                                     <span className="settings-toggle-dot" />
                                   </button>
                                 </div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-note">
-                                      W/A/S/D pan, Q/E rise, Shift to boost.
-                                    </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-note">
+                                    W/A/S/D pan, Q/E rise, Shift to boost.
                                   </div>
+                                </div>
 
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">Grid background</div>
-                                    <button
-                                      type="button"
-                                      className={`settings-toggle ${draft.showGrid ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
-                                      aria-pressed={draft.showGrid}
-                                    >
-                                      <span className="settings-toggle-dot" />
-                                    </button>
-                                  </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Grid background</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.showGrid ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
+                                    aria-pressed={draft.showGrid}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
 
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">Show hints</div>
-                                    <button
-                                      type="button"
-                                      className={`settings-toggle ${draft.showHints ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, showHints: !p.showHints }))}
-                                      aria-pressed={draft.showHints}
-                                    >
-                                      <span className="settings-toggle-dot" />
-                                    </button>
-                                  </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Show hints</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.showHints ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, showHints: !p.showHints }))}
+                                    aria-pressed={draft.showHints}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
                               </section>
                             ) : null}
 
+                            {/* ─── Appearance ─── */}
                             {activeSection === "colors" ? (
                               <section className="settings-panel" id="settings-panel-colors" aria-label="Appearance">
                                 <div className="settings-panel-title">Interface Style</div>
@@ -453,19 +506,66 @@ export default function SettingsMenu({
                                     label="Body"
                                     value={draft.bodyColor}
                                     onChange={(value) => setDraft((p) => ({ ...p, bodyColor: value }))}
-                                    onReset={() => setDraft((p) => ({ ...p, bodyColor: builtInDefaults.bodyColor }))}
+                                    onReset={() => setDraft((p) => ({ ...p, bodyColor: BUILT_IN_DEFAULTS.bodyColor }))}
                                   />
                                   <ColorField
                                     label="Background"
                                     value={draft.backgroundColor}
                                     onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
-                                    onReset={() => setDraft((p) => ({ ...p, backgroundColor: builtInDefaults.backgroundColor }))}
+                                    onReset={() => setDraft((p) => ({ ...p, backgroundColor: BUILT_IN_DEFAULTS.backgroundColor }))}
                                   />
                                 </div>
                               </section>
                             ) : null}
 
+                            {/* ─── Export ─── */}
+                            {activeSection === "export" ? (
+                              <section className="settings-panel" id="settings-panel-export" aria-label="Export">
+                                <div className="settings-panel-title">Preview export</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">
+                                    <div className="flex items-center gap-2">
+                                      <FolderOpen className="h-3 w-3 opacity-60" />
+                                      <span>Preview Folder</span>
+                                    </div>
+                                  </div>
+                                  <div className="settings-folder-control">
+                                    <button
+                                      type="button"
+                                      className="settings-folder-btn"
+                                      onClick={handleSelectPreviewFolder}
+                                    >
+                                      {draft.previewFolder
+                                        ? draft.previewFolder.split(/[\\/]/).pop()
+                                        : "Select folder..."}
+                                    </button>
+                                    {draft.previewFolder && (
+                                      <button
+                                        type="button"
+                                        className="settings-mini"
+                                        onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                      >
+                                        Clear
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-note">
+                                    Where generated preview images will be saved. You can also set this during onboarding.
+                                  </div>
+                                </div>
+                                {draft.previewFolder && (
+                                  <div className="settings-row">
+                                    <div className="settings-row-note mono" style={{ fontSize: 10, opacity: 0.5 }}>
+                                      {draft.previewFolder}
+                                    </div>
+                                  </div>
+                                )}
+                              </section>
+                            ) : null}
 
+                            {/* ─── Experimental ─── */}
                             {activeSection === "experimental" ? (
                               <section className="settings-panel" id="settings-panel-experimental" aria-label="Experimental">
                                 <div className="settings-panel-title">Experimental features</div>
@@ -503,29 +603,17 @@ export default function SettingsMenu({
                                 <span>Are you sure? This cannot be undone.</span>
                               </div>
                               <div className="settings-confirm-actions">
-                                <button
-                                  type="button"
-                                  className="settings-mini"
-                                  onClick={() => setConfirmReset(false)}
-                                >
+                                <button type="button" className="settings-mini" onClick={() => setConfirmReset(false)}>
                                   Cancel
                                 </button>
-                                <button
-                                  type="button"
-                                  className="settings-danger-btn"
-                                  onClick={performReset}
-                                >
+                                <button type="button" className="settings-danger-btn" onClick={performReset}>
                                   Yes, Reset All
                                 </button>
                               </div>
                             </div>
                           ) : (
                             <div className="settings-actions">
-                              <button
-                                type="button"
-                                className="settings-secondary"
-                                onClick={() => setConfirmReset(true)}
-                              >
+                              <button type="button" className="settings-secondary" onClick={() => setConfirmReset(true)}>
                                 Reset all
                               </button>
                               <button type="button" className="settings-primary" onClick={save}>

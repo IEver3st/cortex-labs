@@ -17,7 +17,8 @@ export function loadPrefs() {
 export function savePrefs(prefs) {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
-  } catch {
+  } catch (err) {
+    console.error("[Prefs] Failed to save preferences:", err);
   }
 }
 
@@ -32,7 +33,8 @@ export function loadOnboarded() {
 export function setOnboarded() {
   try {
     localStorage.setItem(ONBOARDED_KEY, "1");
-  } catch {
+  } catch (err) {
+    console.error("[Prefs] Failed to set onboarded flag:", err);
   }
 }
 
@@ -41,7 +43,8 @@ export function saveSession(session) {
     if (!session || typeof session !== "object") return;
     const payload = { ...session, savedAt: Date.now() };
     localStorage.setItem(SESSION_KEY, JSON.stringify(payload));
-  } catch {
+  } catch (err) {
+    console.error("[Prefs] Failed to save session:", err);
   }
 }
 
@@ -64,6 +67,7 @@ export function loadSession() {
 export function clearSession() {
   try {
     localStorage.removeItem(SESSION_KEY);
-  } catch {
+  } catch (err) {
+    console.error("[Prefs] Failed to clear session:", err);
   }
 }
