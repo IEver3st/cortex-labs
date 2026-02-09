@@ -9,13 +9,16 @@
     "core:window:allow-minimize",
     "core:window:allow-maximize",
     "core:window:allow-unmaximize",
+    "core:window:allow-is-maximized",
     "core:window:allow-close",
     "dialog:allow-open",
+    "dialog:allow-save",
     "fs:allow-read-text-file",
     "fs:allow-read-file",
+    "fs:allow-write-file",
     {
       "identifier": "fs:scope",
-      "allow": [{ "path": "$HOME/**" }]
+      "allow": [{ "path": "$HOME/**" }, { "path": "$DESKTOP/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DOWNLOAD/**" }]
     },
     "opener:default"
   ]

@@ -1,0 +1,410 @@
+import { useCallback, useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  Car, Layers, Shirt, Link2, Clock, Trash2, FolderOpen,
+  Plus, ChevronRight, Palette, Eye,
+} from "lucide-react";
+import { loadWorkspaces, loadRecent, deleteWorkspace, createWorkspace } from "../lib/workspace";
+import appMeta from "../../package.json";
+import * as Ctx from "./ContextMenu";
+
+const MODES = [
+  {
+    id: "livery",
+    label: "Livery",
+    desc: "Auto-target vehicle livery materials",
+    icon: Car,
+    accent: "#7dd3fc",
+    shortcut: "Alt + 1",
+  },
+  {
+    id: "everything",
+    label: "All",
+    desc: "Apply textures to all meshes",
+    icon: Layers,
+    accent: "#20c997",
+    shortcut: "Alt + 2",
+  },
+  {
+    id: "eup",
+    label: "EUP",
+    desc: "Emergency uniform textures + YDD",
+    icon: Shirt,
+    accent: "#c084fc",
+    shortcut: "Alt + 3",
+  },
+  {
+    id: "multi",
+    label: "Multi",
+    desc: "Dual model side-by-side viewer",
+    icon: Link2,
+    accent: "#fb923c",
+    shortcut: "Alt + 4",
+  },
+];
+
+export default function HomePage({ onNavigate, onOpenWorkspace }) {
+  const [recent, setRecent] = useState([]);
+  const [workspaces, setWorkspaces] = useState({});
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [selectedMode, setSelectedMode] = useState("livery");
+
+  useEffect(() => {
+    setRecent(loadRecent());
+    setWorkspaces(loadWorkspaces());
+  }, []);
+
+  const handleLaunchMode = useCallback((mode) => {
+    const modeNames = {
+      livery: "Livery",
+      everything: "All Textures",
+      eup: "EUP",
+      multi: "Multi-Model",
+    };
+    const id = createWorkspace(modeNames[mode] || "New Session", "viewer", { textureMode: mode });
+    onNavigate("viewer", id, mode);
+  }, [onNavigate]);
+
+  const handleLaunchVariants = useCallback(() => {
+    const id = createWorkspace("Variant Build", "variants");
+    onNavigate("variants", id);
+  }, [onNavigate]);
+
+  const handleCreateProject = useCallback(() => {
+    const name = projectName.trim() || "Untitled Project";
+    const id = createWorkspace(name, "viewer", { textureMode: selectedMode });
+    onNavigate("viewer", id, selectedMode);
+    setShowNewProject(false);
+    setProjectName("");
+  }, [projectName, selectedMode, onNavigate]);
+
+  const handleDeleteWorkspace = useCallback((e, wsId) => {
+    e.stopPropagation();
+    deleteWorkspace(wsId);
+    setWorkspaces(loadWorkspaces());
+    setRecent(loadRecent());
+  }, []);
+
+  const handleOpenRecent = useCallback((entry) => {
+    const ws = workspaces[entry.workspaceId];
+    if (ws) {
+      onOpenWorkspace(ws);
+    }
+  }, [workspaces, onOpenWorkspace]);
+
+  const modeIconForEntry = (entry) => {
+    const ws = workspaces[entry.workspaceId];
+    const mode = ws?.state?.textureMode || "livery";
+    if (entry.page === "variants") return Palette;
+    if (mode === "everything") return Layers;
+    if (mode === "eup") return Shirt;
+    if (mode === "multi") return Link2;
+    return Car;
+  };
+
+  const modeColorForEntry = (entry) => {
+    const ws = workspaces[entry.workspaceId];
+    const mode = ws?.state?.textureMode || "livery";
+    if (entry.page === "variants") return "#f0abfc";
+    if (mode === "everything") return "#20c997";
+    if (mode === "eup") return "#c084fc";
+    if (mode === "multi") return "#fb923c";
+    return "#7dd3fc";
+  };
+
+  const modeLabelForEntry = (entry) => {
+    const ws = workspaces[entry.workspaceId];
+    const mode = ws?.state?.textureMode || "livery";
+    if (entry.page === "variants") return "Variant Builder";
+    if (mode === "everything") return "All";
+    if (mode === "eup") return "EUP";
+    if (mode === "multi") return "Multi";
+    return "Livery";
+  };
+
+  /** Build a descriptive name for a recent entry based on its state/content. */
+  const descriptiveNameForEntry = (entry) => {
+    const ws = workspaces[entry.workspaceId];
+    if (!ws) return entry.name || "Untitled";
+    const state = ws.state || {};
+
+    // Variant builder — show PSD name if present
+    if (entry.page === "variants") {
+      const psd = state.psdPath;
+      if (psd) {
+        const name = psd.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "";
+        return name ? `${name} Variants` : ws.name;
+      }
+      return ws.name;
+    }
+
+    // Viewer — show model name + mode
+    const modelPath = state.modelPath || "";
+    if (modelPath) {
+      const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "";
+      if (modelName) return `${modelName} Preview`;
+    }
+
+    return ws.name;
+  };
+
+  /** Format relative time for recent entries. */
+  const relativeTime = (timestamp) => {
+    if (!timestamp) return "";
+    const now = Date.now();
+    const diff = now - timestamp;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "Just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return `${days}d ago`;
+    return new Date(timestamp).toLocaleDateString();
+  };
+
+  return (
+    <div className="home-page">
+      {/* Atmospheric background */}
+      <div className="home-bg">
+        <div className="home-bg-grain" />
+        <div className="home-bg-gradient" />
+        <div className="home-bg-grid" />
+      </div>
+
+      <div className="home-content-split">
+        {/* Hero — centered at top */}
+        <motion.div
+          className="home-hero"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <h1 className="home-title">Cortex Studio</h1>
+          <span className="home-version">v{appMeta.version}</span>
+        </motion.div>
+
+        {/* Body: two columns with divider */}
+        <div className="home-body">
+          {/* Left — Launch options */}
+          <motion.div
+            className="home-left"
+            initial={{ opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="home-section-label">
+              <span>Launch</span>
+            </div>
+
+            <div className="home-mode-grid">
+              {MODES.map((mode, idx) => {
+                const Icon = mode.icon;
+                return (
+                  <motion.button
+                    key={mode.id}
+                    type="button"
+                    className="home-mode-card"
+                    style={{ "--mode-accent": mode.accent }}
+                    onClick={() => handleLaunchMode(mode.id)}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.45, delay: 0.18 + idx * 0.06, ease: [0.22, 1, 0.36, 1] }}
+                    whileHover={{ y: -2, scale: 1.015 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <div className="home-mode-card-top">
+                      <div className="home-mode-card-icon">
+                        <Icon />
+                      </div>
+                      <span className="home-mode-card-shortcut">{mode.shortcut}</span>
+                    </div>
+                    <div className="home-mode-card-label">{mode.label}</div>
+                    <div className="home-mode-card-desc">{mode.desc}</div>
+                  </motion.button>
+                );
+              })}
+            </div>
+
+            {/* Variant Builder */}
+            <motion.button
+              type="button"
+              className="home-variant-card"
+              onClick={handleLaunchVariants}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.45, delay: 0.42, ease: [0.22, 1, 0.36, 1] }}
+              whileHover={{ x: 3 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <div className="home-variant-card-icon">
+                <Palette />
+              </div>
+              <div className="home-variant-card-text">
+                <span className="home-variant-card-label">Variant Builder</span>
+                <span className="home-variant-card-desc">Import PSD files, configure layer variants, batch export</span>
+              </div>
+              <ChevronRight className="home-variant-card-arrow" />
+            </motion.button>
+
+            {/* Named Project */}
+            <motion.button
+              type="button"
+              className="home-named-project-btn"
+              onClick={() => setShowNewProject(true)}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5 }}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <FolderOpen className="w-4 h-4" />
+              <span>New Named Project...</span>
+            </motion.button>
+          </motion.div>
+
+          {/* Vertical Divider */}
+          <div className="home-divider" />
+
+          {/* Right — Recents */}
+          <motion.div
+            className="home-right"
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6, delay: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="home-section-label">
+              <Clock className="home-section-label-icon" />
+              <span>Recent</span>
+            </div>
+
+            {recent.length > 0 ? (
+              <div className="home-recent-list">
+                {recent.map((entry, i) => {
+                  const ws = workspaces[entry.workspaceId];
+                  if (!ws) return null;
+                  const Icon = modeIconForEntry(entry);
+                  const color = modeColorForEntry(entry);
+                  const modeLabel = modeLabelForEntry(entry);
+                  return (
+                    <Ctx.Root key={entry.workspaceId}>
+                      <Ctx.Trigger>
+                        <motion.div
+                          className="home-recent-item"
+                          onClick={() => handleOpenRecent(entry)}
+                          initial={{ opacity: 0, x: -6 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.3, delay: 0.24 + i * 0.04 }}
+                          whileHover={{ x: 3 }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <div className="home-recent-item-icon" style={{ borderColor: `${color}30`, background: `${color}0a` }}>
+                            <Icon className="w-3.5 h-3.5" style={{ color }} />
+                          </div>
+                          <div className="home-recent-item-text">
+                            <span className="home-recent-item-name">{descriptiveNameForEntry(entry)}</span>
+                            <span className="home-recent-item-meta">
+                              {modeLabel}
+                              {ws.updatedAt ? ` \u2014 ${relativeTime(ws.updatedAt)}` : ""}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="home-recent-item-delete"
+                            onClick={(e) => handleDeleteWorkspace(e, entry.workspaceId)}
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </motion.div>
+                      </Ctx.Trigger>
+                      <Ctx.Content>
+                        <Ctx.Item onSelect={() => handleOpenRecent(entry)}>
+                          <ChevronRight className="w-3 h-3" /> Open
+                        </Ctx.Item>
+                        <Ctx.Separator />
+                        <Ctx.Item onSelect={(e) => handleDeleteWorkspace(e, entry.workspaceId)} destructive>
+                          <Trash2 className="w-3 h-3" /> Delete
+                        </Ctx.Item>
+                      </Ctx.Content>
+                    </Ctx.Root>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="home-empty-recent">
+                <Clock className="home-empty-recent-icon" />
+                <span>No recent sessions</span>
+                <span className="home-empty-recent-hint">Launch a mode to get started</span>
+              </div>
+            )}
+          </motion.div>
+        </div>
+      </div>
+
+      {/* New Project Form */}
+      <AnimatePresence>
+        {showNewProject && (
+          <motion.div
+            className="home-new-project-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowNewProject(false)}
+          >
+            <motion.div
+              className="home-new-project"
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="home-new-project-title">New Project</h2>
+              <div className="home-new-project-field">
+                <label className="home-new-project-label">Project Name</label>
+                <input
+                  type="text"
+                  className="home-new-project-input"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="My Livery"
+                  autoFocus
+                  onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
+                />
+              </div>
+              <div className="home-new-project-field">
+                <label className="home-new-project-label">Mode</label>
+                <div className="home-new-project-types">
+                  {MODES.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className={`home-new-project-type ${selectedMode === m.id ? "is-selected" : ""}`}
+                      style={{ "--type-accent": m.accent }}
+                      onClick={() => setSelectedMode(m.id)}
+                    >
+                      <m.icon className="w-4 h-4" />
+                      <span>{m.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="home-new-project-actions">
+                <button type="button" className="home-new-project-cancel" onClick={() => setShowNewProject(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="home-new-project-create" onClick={handleCreateProject}>
+                  <Plus className="w-3.5 h-3.5" />
+                  Create
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

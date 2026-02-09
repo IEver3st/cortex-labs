@@ -517,8 +517,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "cortex-labs"
-version = "3.0.1"
+name = "cortex-studio"
+version = "3.0.2"
 dependencies = [
  "notify",
  "serde",

@@ -3,14 +3,15 @@ import { AnimatePresence, motion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AlertTriangle, ArrowUpRight, Car, ChevronLeft, ChevronRight, Eye, EyeOff, History, Layers, Link2, Minus, PanelLeft, PanelTop, RotateCcw, Shirt, Square, Unlink, X, Aperture, Disc, Zap } from "lucide-react";
+import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
+// Window controls handled by Shell
+import { AlertTriangle, ArrowUpRight, Car, Camera, ChevronRight, Eye, EyeOff, History, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import appMeta from "../package.json";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
-import SettingsMenu from "./components/SettingsMenu";
+// SettingsMenu now rendered by Shell
 import Viewer from "./components/Viewer";
 import DualModelViewer from "./components/DualModelViewer";
 import { loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession, loadSession, clearSession } from "./lib/prefs";
@@ -97,7 +98,7 @@ function getFileLabel(path, emptyLabel) {
 
 
 
-function App() {
+function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery" }) {
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef({ primary: null, window: null });
   const isTauriRuntime =
@@ -111,7 +112,6 @@ function App() {
   const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
   const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
 
   const [modelPath, setModelPath] = useState("");
   const [modelSourcePath, setModelSourcePath] = useState("");
@@ -123,8 +123,7 @@ function App() {
   const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
   const [glossiness, setGlossiness] = useState(() => getInitialDefaults().glossiness ?? 0.5);
   const [experimentalSettings, setExperimentalSettings] = useState(() => Boolean(getInitialDefaults().experimentalSettings));
-  const [windowControlsStyle, setWindowControlsStyle] = useState(() => getInitialDefaults().windowControlsStyle || "windows");
-  const [toolbarInTitlebar, setToolbarInTitlebar] = useState(() => Boolean(getInitialDefaults().toolbarInTitlebar));
+  // windowControlsStyle now handled by Shell
   const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
 
   const [panelOpen, setPanelOpen] = useState(() => ({
@@ -137,7 +136,7 @@ function App() {
   const [textureReloadToken, setTextureReloadToken] = useState(0);
   const [windowTextureReloadToken, setWindowTextureReloadToken] = useState(0);
   const [textureTargets, setTextureTargets] = useState([]);
-  const [textureMode, setTextureMode] = useState(() => getInitialDefaults().textureMode);
+  const [textureMode, setTextureMode] = useState(() => defaultTextureMode);
   const [textureTarget, setTextureTarget] = useState("all");
   const [liveryTarget, setLiveryTarget] = useState("");
   const [liveryLabel, setLiveryLabel] = useState("");
@@ -182,8 +181,38 @@ function App() {
 
   const [pendingSession, setPendingSession] = useState(() => loadSession());
   const [sessionPromptDismissed, setSessionPromptDismissed] = useState(false);
+
+  // Generate Preview state
+  const [generatingPreview, setGeneratingPreview] = useState(false);
+  const [previewProgress, setPreviewProgress] = useState({ current: 0, total: 0, preset: "" });
+  const [previewComplete, setPreviewComplete] = useState(false);
+  const [previewOutputPath, setPreviewOutputPath] = useState("");
+  const [previewPromptOpen, setPreviewPromptOpen] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewZoomDraft, setPreviewZoomDraft] = useState(1);
+  const [previewZoomPreview, setPreviewZoomPreview] = useState("");
+  const [previewZoomLoading, setPreviewZoomLoading] = useState(false);
   const [dualModelAPos, setDualModelAPos] = useState([0, 0, 0]);
   const [dualModelBPos, setDualModelBPos] = useState([0, 0, 3]);
+
+  // Re-read prefs when settings are saved from the Shell-level SettingsMenu
+  useEffect(() => {
+    if (!settingsVersion) return;
+    const merged = getInitialDefaults();
+    setDefaults(merged);
+    setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
+    setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
+    setWindowTextureTarget(merged.windowTextureTarget || "auto");
+    setCameraWASD(Boolean(merged.cameraWASD));
+    setShowHints(Boolean(merged.showHints ?? true));
+    setHideRotText(Boolean(merged.hideRotText));
+    setShowGrid(Boolean(merged.showGrid));
+    setBodyColor(merged.bodyColor);
+    setBackgroundColor(merged.backgroundColor);
+    setExperimentalSettings(Boolean(merged.experimentalSettings));
+    const hk = getInitialHotkeys();
+    setHotkeys(hk);
+  }, [settingsVersion]);
 
   const isBooting = !booted;
   const modelExtensions = textureMode === "eup" ? ["yft", "clmesh", "dff", "ydd"] : ["yft", "clmesh", "dff"];
@@ -221,6 +250,9 @@ function App() {
 
       try {
         setModelPath(path);
+        // Auto-rename the tab to the loaded filename
+        const fileName = path.split(/[\\/]/).pop();
+        if (fileName && onRenameTab) onRenameTab(fileName);
       } catch (error) {
         const message =
           typeof error === "string"
@@ -355,10 +387,14 @@ function App() {
 
   const handleTextureError = useCallback((message) => {
     setTextureError(message || "");
+    // If texture failed to load, clear the stale path
+    if (message) setTexturePath("");
   }, []);
 
   const handleWindowTextureError = useCallback((message) => {
     setWindowTextureError(message || "");
+    // If window texture failed to load, clear the stale path
+    if (message) setWindowTexturePath("");
   }, []);
 
   const handleFormatWarning = useCallback((warning) => {
@@ -377,7 +413,6 @@ function App() {
   const applyAndPersistDefaults = useCallback((next) => {
     const merged = { ...BUILT_IN_DEFAULTS, ...(next || {}) };
     setDefaults(merged);
-    setTextureMode(merged.textureMode);
     setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
     setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
     setWindowTextureTarget(merged.windowTextureTarget || "auto");
@@ -389,8 +424,6 @@ function App() {
     setBodyColor(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
     setExperimentalSettings(Boolean(merged.experimentalSettings));
-    setWindowControlsStyle(merged.windowControlsStyle || "windows");
-    setToolbarInTitlebar(Boolean(merged.toolbarInTitlebar));
     const prefs = loadPrefs() || {};
 
     savePrefs({ ...prefs, defaults: merged });
@@ -421,24 +454,35 @@ function App() {
     [applyAndPersistDefaults],
   );
 
-  const restoreSession = useCallback((session) => {
+  const restoreSession = useCallback(async (session) => {
     if (!session) return;
+
+    // Helper: check if a file still exists on disk (silently returns false on error)
+    const fileOk = async (p) => {
+      if (!p) return false;
+      try { return await fsExists(p); } catch { return false; }
+    };
+
+    // Restore non-path settings immediately
     if (session.textureMode) setTextureMode(session.textureMode);
-    if (session.modelPath) loadModel(session.modelPath);
-    if (session.texturePath) setTexturePath(session.texturePath);
-    if (session.windowTexturePath) setWindowTexturePath(session.windowTexturePath);
     if (typeof session.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(session.windowTemplateEnabled);
     if (session.bodyColor) setBodyColor(session.bodyColor);
     if (session.backgroundColor) setBackgroundColor(session.backgroundColor);
     if (typeof session.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(session.liveryExteriorOnly);
-    if (session.dualModelAPath) setDualModelAPath(session.dualModelAPath);
-    if (session.dualModelBPath) setDualModelBPath(session.dualModelBPath);
-    if (session.dualTextureAPath) setDualTextureAPath(session.dualTextureAPath);
-    if (session.dualTextureBPath) setDualTextureBPath(session.dualTextureBPath);
     if (session.dualSelectedSlot) setDualSelectedSlot(session.dualSelectedSlot);
     if (session.dualTextureMode) setDualTextureMode(session.dualTextureMode);
     if (session.dualModelAPos) setDualModelAPos(session.dualModelAPos);
     if (session.dualModelBPos) setDualModelBPos(session.dualModelBPos);
+
+    // Validate file paths before restoring — skip stale references
+    if (session.modelPath && (await fileOk(session.modelPath))) loadModel(session.modelPath);
+    if (session.texturePath && (await fileOk(session.texturePath))) setTexturePath(session.texturePath);
+    if (session.windowTexturePath && (await fileOk(session.windowTexturePath))) setWindowTexturePath(session.windowTexturePath);
+    if (session.dualModelAPath && (await fileOk(session.dualModelAPath))) setDualModelAPath(session.dualModelAPath);
+    if (session.dualModelBPath && (await fileOk(session.dualModelBPath))) setDualModelBPath(session.dualModelBPath);
+    if (session.dualTextureAPath && (await fileOk(session.dualTextureAPath))) setDualTextureAPath(session.dualTextureAPath);
+    if (session.dualTextureBPath && (await fileOk(session.dualTextureBPath))) setDualTextureBPath(session.dualTextureBPath);
+
     setSessionPromptDismissed(true);
     setPendingSession(null);
   }, [loadModel]);
@@ -511,26 +555,7 @@ function App() {
     }
   };
 
-  const handleMinimize = async () => {
-    if (!isTauriRuntime) return;
-    await getCurrentWindow().minimize();
-  };
-
-  const handleMaximize = async () => {
-    if (!isTauriRuntime) return;
-    const win = getCurrentWindow();
-    const isMaximized = await win.isMaximized();
-    if (isMaximized) {
-      await win.unmaximize();
-    } else {
-      await win.maximize();
-    }
-  };
-
-  const handleClose = async () => {
-    if (!isTauriRuntime) return;
-    await getCurrentWindow().close();
-  };
+  // Window controls are handled by Shell
 
   const selectWindowTexture = async () => {
     if (!isTauriRuntime) {
@@ -651,27 +676,7 @@ function App() {
         case HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY:
           setLiveryExteriorOnly((prev) => !prev);
           break;
-        case HOTKEY_ACTIONS.MODE_LIVERY:
-          setTextureMode("livery");
-          break;
-        case HOTKEY_ACTIONS.MODE_ALL:
-          setTextureMode("everything");
-          break;
-        case HOTKEY_ACTIONS.MODE_EUP:
-          setTextureMode("eup");
-          break;
-        case HOTKEY_ACTIONS.MODE_MULTI:
-          setTextureMode("multi");
-          break;
-        case HOTKEY_ACTIONS.CYCLE_MODE:
-          setTextureMode((prev) => {
-            if (prev === "livery") return "everything";
-            if (prev === "everything") return "eup";
-            if (prev === "eup") return "multi";
-            if (prev === "multi") return "livery";
-            return "livery";
-          });
-          break;
+        // Mode switching removed — handled by Shell via new-tab hotkeys
         case HOTKEY_ACTIONS.TOGGLE_PANEL:
           setPanelCollapsed((prev) => !prev);
           break;
@@ -702,6 +707,124 @@ function App() {
   const handleCenterCamera = () => {
     viewerApiRef.current?.reset?.();
   };
+
+  const previewSnapTokenRef = useRef(0);
+  const updatePreviewSnapshot = useCallback(async (zoomLevel) => {
+    if (!viewerApiRef.current || !viewerReady) return;
+    previewSnapTokenRef.current += 1;
+    const token = previewSnapTokenRef.current;
+    setPreviewZoomLoading(true);
+    try {
+      viewerApiRef.current.setPreset("angle");
+      viewerApiRef.current.setZoom?.(zoomLevel);
+      await new Promise((r) => setTimeout(r, 120));
+      if (token !== previewSnapTokenRef.current) return;
+      const dataUrl = viewerApiRef.current.captureScreenshot?.();
+      if (token !== previewSnapTokenRef.current) return;
+      setPreviewZoomPreview(dataUrl || "");
+    } finally {
+      if (token === previewSnapTokenRef.current) setPreviewZoomLoading(false);
+    }
+  }, [viewerReady]);
+
+  // Generate Preview — cycle through camera presets and capture screenshots
+  const handleGeneratePreview = useCallback(async (zoomLevel = 1) => {
+    if (!viewerApiRef.current || !modelPath || generatingPreview) return;
+
+    // Get preview folder from prefs or prompt
+    const prefs = loadPrefs() || {};
+    let folder = prefs?.defaults?.previewFolder;
+
+    if (!folder && isTauriRuntime) {
+      try {
+        const selected = await open({ directory: true, title: "Select Preview Export Folder" });
+        if (typeof selected === "string") {
+          folder = selected;
+          const current = loadPrefs() || {};
+          const defs = current?.defaults || {};
+          savePrefs({ ...current, defaults: { ...defs, previewFolder: folder } });
+        }
+      } catch {}
+    }
+
+    if (!folder) return;
+
+    const presetKeys = ["front", "back", "side", "angle", "top"];
+    const presetLabels = { front: "Front", back: "Back", side: "Side", angle: "3-4 Angle", top: "Top" };
+    const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "preview";
+
+    // Create a subfolder named after the model to keep exports tidy
+    const modelFolder = `${folder}/${modelName}`;
+    if (isTauriRuntime) {
+      try { await invoke("ensure_dir", { path: modelFolder }); } catch {
+        // If ensure_dir command doesn't exist, try mkdir via writeFile workaround
+        // Tauri's writeFile will create the file, the folder must exist.
+        // Fall back to the base folder if subfolder creation fails.
+      }
+    }
+
+    // Temporarily disable grid for clean screenshots
+    const gridWasOn = showGrid;
+    if (gridWasOn) setShowGrid(false);
+
+    setGeneratingPreview(true);
+    setPreviewProgress({ current: 0, total: presetKeys.length, preset: "" });
+    setPreviewOutputPath(modelFolder);
+
+    // Wait a frame for grid to disappear if it was on
+    if (gridWasOn) await new Promise((r) => setTimeout(r, 100));
+
+    try {
+      for (let i = 0; i < presetKeys.length; i++) {
+        const preset = presetKeys[i];
+        setPreviewProgress({ current: i, total: presetKeys.length, preset: presetLabels[preset] || preset });
+
+        viewerApiRef.current.setPreset(preset);
+        viewerApiRef.current.setZoom?.(zoomLevel);
+        await new Promise((r) => setTimeout(r, 400));
+
+        const dataUrl = viewerApiRef.current.captureScreenshot();
+        if (!dataUrl) continue;
+
+        const base64 = dataUrl.split(",")[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let j = 0; j < binary.length; j++) {
+          bytes[j] = binary.charCodeAt(j);
+        }
+
+        const fileName = `${modelName}_${preset}.png`;
+        // Try model subfolder first, fall back to base folder
+        const filePath = `${modelFolder}/${fileName}`;
+        if (isTauriRuntime) {
+          try {
+            await writeFile(filePath, bytes);
+          } catch {
+            // Subfolder might not exist — write to base folder instead
+            await writeFile(`${folder}/${fileName}`, bytes);
+          }
+        }
+      }
+
+      setPreviewProgress({ current: presetKeys.length, total: presetKeys.length, preset: "Complete" });
+      setGeneratingPreview(false);
+      setPreviewComplete(true);
+    } catch (err) {
+      console.error("Generate preview failed:", err);
+      setGeneratingPreview(false);
+    } finally {
+      // Restore grid state
+      if (gridWasOn) setShowGrid(true);
+    }
+  }, [modelPath, generatingPreview, isTauriRuntime, showGrid]);
+
+  useEffect(() => {
+    if (!previewPromptOpen) return;
+    const timer = setTimeout(() => {
+      updatePreviewSnapshot(previewZoomDraft);
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [previewPromptOpen, previewZoomDraft, updatePreviewSnapshot]);
 
 
   const handleDragOver = (event) => {
@@ -883,58 +1006,31 @@ function App() {
       transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
       style={{ pointerEvents: isBooting ? "none" : "auto" }}
     >
-        <div className="titlebar">
-          <div className="titlebar-brand" data-tauri-drag-region>
-            <img src="/app-icon.svg" alt="" className="titlebar-logo" aria-hidden="true" />
-            <span className="titlebar-title">Cortex Studio</span>
-          </div>
-
-          <div className="titlebar-mode-tabs" role="tablist" aria-label="Editor mode">
-            <button
-              type="button"
-              role="tab"
-              className={`titlebar-mode-tab ${textureMode === "livery" ? "is-active" : ""}`}
-              onClick={() => setTextureMode("livery")}
-              aria-selected={textureMode === "livery"}
-            >
-              <Car className="titlebar-mode-tab-icon" aria-hidden="true" />
-              <span>Livery</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className={`titlebar-mode-tab ${textureMode === "everything" ? "is-active" : ""}`}
-              onClick={() => setTextureMode("everything")}
-              aria-selected={textureMode === "everything"}
-            >
-              <Layers className="titlebar-mode-tab-icon" aria-hidden="true" />
-              <span>All</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className={`titlebar-mode-tab ${textureMode === "eup" ? "is-active" : ""}`}
-              onClick={() => setTextureMode("eup")}
-              aria-selected={textureMode === "eup"}
-            >
-              <Shirt className="titlebar-mode-tab-icon" aria-hidden="true" />
-              <span>EUP</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className={`titlebar-mode-tab ${textureMode === "multi" ? "is-active" : ""}`}
-              onClick={() => setTextureMode("multi")}
-              aria-selected={textureMode === "multi"}
-            >
-              <Link2 className="titlebar-mode-tab-icon" aria-hidden="true" />
-              <span>Multi</span>
-            </button>
-          </div>
-
-          <div className="titlebar-spacer" data-tauri-drag-region />
-
-          {toolbarInTitlebar && textureMode !== "multi" ? (
+        <div className="viewer-toolbar-bar">
+          {textureMode === "multi" ? (
+            <div className="titlebar-inline-controls">
+              <button
+                type="button"
+                className={`titlebar-inline-btn ${dualSelectedSlot === "A" ? "is-slot-active" : ""}`}
+                style={dualSelectedSlot === "A" ? { color: "#f97316" } : undefined}
+                onClick={() => setDualSelectedSlot("A")}
+              >A</button>
+              <button
+                type="button"
+                className={`titlebar-inline-btn ${dualSelectedSlot === "B" ? "is-slot-active" : ""}`}
+                style={dualSelectedSlot === "B" ? { color: "#a78bfa" } : undefined}
+                onClick={() => setDualSelectedSlot("B")}
+              >B</button>
+              <div className="titlebar-inline-divider" />
+              <button type="button" className="titlebar-inline-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
+                {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              </button>
+              <button type="button" className="titlebar-inline-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
+                <Link2 className="w-3 h-3" style={{ marginRight: 4 }} />Snap
+              </button>
+              <button type="button" className="titlebar-inline-btn" onClick={() => dualViewerApiRef.current?.reset?.()}>Center</button>
+            </div>
+          ) : (
             <div className="titlebar-inline-controls">
               <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>Front</button>
               <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("back")}>Back</button>
@@ -953,25 +1049,36 @@ function App() {
               <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
                 <span className="mono text-blue-400">Z</span>{!hideRotText && "Rot"}
               </button>
+              {hasModel && (
+                <>
+                  <div className="titlebar-inline-divider" />
+                  <button
+                    type="button"
+                    className="titlebar-inline-btn titlebar-inline-btn--preview"
+                    onClick={() => {
+                      if (generatingPreview || !viewerReady) return;
+                      setPreviewZoomDraft(previewZoom || 1);
+                      setPreviewPromptOpen(true);
+                      setPreviewZoomPreview("");
+                    }}
+                    disabled={generatingPreview || !viewerReady}
+                    title="Generate preview screenshots from all angles"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    {generatingPreview ? (
+                      <span className="toolbar-preview-progress">
+                        {previewProgress.current}/{previewProgress.total}
+                      </span>
+                    ) : (
+                      "Preview"
+                    )}
+                  </button>
+                </>
+              )}
             </div>
-          ) : null}
+          )}
 
-          <button
-            type="button"
-            className={`titlebar-btn titlebar-dock-toggle ${toolbarInTitlebar ? "is-docked" : ""}`}
-            onClick={() => {
-              const next = !toolbarInTitlebar;
-              setToolbarInTitlebar(next);
-              const prefs = loadPrefs() || {};
-              const d = { ...(prefs.defaults || {}), toolbarInTitlebar: next };
-              savePrefs({ ...prefs, defaults: d });
-            }}
-            aria-label={toolbarInTitlebar ? "Undock controls from titlebar" : "Dock controls to titlebar"}
-            data-tauri-drag-region="false"
-            title={toolbarInTitlebar ? "Undock controls from titlebar" : "Dock controls to titlebar"}
-          >
-            <PanelTop className="titlebar-icon" />
-          </button>
+          <div className="viewer-toolbar-bar-spacer" />
 
           <button
             type="button"
@@ -982,69 +1089,6 @@ function App() {
           >
             <PanelLeft className="titlebar-icon" />
           </button>
-          <SettingsMenu
-            defaults={defaults}
-            builtInDefaults={BUILT_IN_DEFAULTS}
-            onSave={applyAndPersistDefaults}
-            hotkeys={hotkeys}
-            onSaveHotkeys={saveHotkeys}
-          />
-          {windowControlsStyle === "mac" ? (
-            <div className="titlebar-controls titlebar-controls--mac">
-              <button
-                type="button"
-                className="mac-btn mac-close"
-                onClick={handleClose}
-                aria-label="Close"
-                data-tauri-drag-region="false"
-              />
-              <button
-                type="button"
-                className="mac-btn mac-min"
-                onClick={handleMinimize}
-                aria-label="Minimize"
-                data-tauri-drag-region="false"
-              />
-              <button
-                type="button"
-                className="mac-btn mac-max"
-                onClick={handleMaximize}
-                aria-label="Maximize"
-                data-tauri-drag-region="false"
-              />
-            </div>
-          ) : (
-            <div className="titlebar-controls">
-              <button
-                type="button"
-                className="titlebar-btn titlebar-min"
-                onClick={handleMinimize}
-                aria-label="Minimize"
-                data-tauri-drag-region="false"
-              >
-                <Minus className="titlebar-icon titlebar-icon--min" />
-              </button>
-              <button
-                type="button"
-                className="titlebar-btn titlebar-max"
-                onClick={handleMaximize}
-                aria-label="Maximize"
-                data-tauri-drag-region="false"
-              >
-                <Square className="titlebar-icon titlebar-icon--max" />
-              </button>
-              <button
-                type="button"
-                className="titlebar-btn titlebar-close"
-                onClick={handleClose}
-                aria-label="Close"
-                data-tauri-drag-region="false"
-              >
-                <X className="titlebar-icon titlebar-icon--close" />
-              </button>
-            </div>
-          )}
-
         </div>
 
       <CyberPanel collapsed={panelCollapsed} isBooting={isBooting} statusBar={
@@ -1688,124 +1732,7 @@ function App() {
           {(modelLoading || (textureMode === "multi" && (dualModelALoading || dualModelBLoading))) ? <AppLoader variant="background" /> : null}
         </AnimatePresence>
 
-        {!(toolbarInTitlebar && textureMode !== "multi") ? (
-          <motion.div 
-            layout
-            className="viewer-toolbar"
-            transition={{ 
-              type: "spring",
-              stiffness: 2000,
-              damping: 60
-            }}
-          >
-            <AnimatePresence mode="wait" initial={false}>
-              {!toolbarCollapsed ? (
-                <motion.div
-                  key="expanded"
-                  layout
-                  className="flex items-center"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.01 }}
-                >
-                  {textureMode === "multi" ? (
-                    <>
-                      <motion.div layout className="viewer-toolbar-group">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className={`toolbar-btn ${dualSelectedSlot === "A" ? "toolbar-btn--slot-a" : ""}`}
-                          onClick={() => setDualSelectedSlot("A")}
-                        >
-                          <span className="toolbar-slot-letter toolbar-slot-letter--a">A</span>
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className={`toolbar-btn ${dualSelectedSlot === "B" ? "toolbar-btn--slot-b" : ""}`}
-                          onClick={() => setDualSelectedSlot("B")}
-                        >
-                          <span className="toolbar-slot-letter toolbar-slot-letter--b">B</span>
-                        </Button>
-                      </motion.div>
-                      <div className="toolbar-divider" />
-                      <motion.div layout className="viewer-toolbar-group">
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
-                          {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                        </Button>
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
-                          <Link2 className="w-3 h-3 mr-1" />Snap
-                        </Button>
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => dualViewerApiRef.current?.reset?.()}>
-                          Center
-                        </Button>
-                      </motion.div>
-                    </>
-                  ) : (
-                    <>
-                      <motion.div layout className="viewer-toolbar-group">
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>
-                          Front
-                        </Button>
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("back")}>
-                          Back
-                        </Button>
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("side")}>
-                          Side
-                        </Button>
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")}>
-                          3/4
-                        </Button>
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.setPreset("top")}>
-                          Top
-                        </Button>
-                        <div className="toolbar-divider" />
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={handleCenterCamera} disabled={!viewerReady}>
-                          Center
-                        </Button>
-                      </motion.div>
-                      <div className="toolbar-divider" />
-                      <motion.div layout className="viewer-toolbar-group">
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-                          <span className="mono mr-1 text-red-400">X</span>{!hideRotText && "Rot"}
-                        </Button>
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-                          <span className="mono mr-1 text-green-400">Y</span>{!hideRotText && "Rot"}
-                        </Button>
-                        <Button size="sm" variant="ghost" className="toolbar-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-                          <span className="mono mr-1 text-blue-400">Z</span>{!hideRotText && "Rot"}
-                        </Button>
-                      </motion.div>
-                    </>
-                  )}
-                  <div className="toolbar-divider" />
-                  <motion.button 
-                    layout
-                    className="toolbar-toggle-btn" 
-                    onClick={() => setToolbarCollapsed(true)}
-                    title="Collapse Toolbar"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </motion.button>
-                </motion.div>
-              ) : (
-                <motion.button
-                  key="collapsed"
-                  layout
-                  className="toolbar-toggle-btn is-collapsed"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() => setToolbarCollapsed(false)}
-                    title="Expand Toolbar"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </motion.button>
-              )}
-            </AnimatePresence>
-          </motion.div>
-        ) : null}
+        {/* Controls now integrated into viewer-toolbar-bar above */}
 
         {showHints ? (
           <div className="viewer-hints">
@@ -1868,11 +1795,7 @@ function App() {
       </motion.section>
 
       <AnimatePresence>{isBooting ? <AppLoader /> : null}</AnimatePresence>
-      <AnimatePresence>
-        {!isBooting && showOnboarding ? (
-          <Onboarding initialDefaults={defaults} onComplete={completeOnboarding} />
-        ) : null}
-      </AnimatePresence>
+      {/* Onboarding handled by Shell */}
 
       {/* Format Warning Modal */}
       <AnimatePresence>
@@ -2078,6 +2001,172 @@ function App() {
             </motion.div>
           </motion.div>
         ) : null}
+      </AnimatePresence>
+
+      {/* Generate Preview — zoom prompt */}
+      <AnimatePresence>
+        {previewPromptOpen && (
+          <motion.div
+            className="preview-zoom-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setPreviewPromptOpen(false)}
+          >
+            <motion.div
+              className="preview-zoom-card"
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="preview-zoom-header">
+                <Camera className="preview-zoom-icon" />
+                <div>
+                  <div className="preview-zoom-title">Preview Zoom</div>
+                  <div className="preview-zoom-sub">Choose how close the export screenshots should be.</div>
+                </div>
+              </div>
+
+              <div className="preview-zoom-preview">
+                {previewZoomPreview && !previewZoomLoading ? (
+                  <img src={previewZoomPreview} alt="Preview zoom" />
+                ) : (
+                  <div className="preview-zoom-placeholder">
+                    <div className="vp-spinner" />
+                    <span>{previewZoomLoading ? "Updating preview..." : "Preview pending"}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="preview-zoom-controls">
+                <div className="preview-zoom-row">
+                  <span>Zoom</span>
+                  <span>{previewZoomDraft.toFixed(2)}x</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.6"
+                  max="1.8"
+                  step="0.02"
+                  value={previewZoomDraft}
+                  onChange={(e) => setPreviewZoomDraft(parseFloat(e.target.value))}
+                  className="preview-zoom-slider"
+                />
+              </div>
+
+              <div className="preview-zoom-actions">
+                <button
+                  type="button"
+                  className="preview-zoom-btn preview-zoom-btn--cancel"
+                  onClick={() => setPreviewPromptOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="preview-zoom-btn preview-zoom-btn--confirm"
+                  onClick={() => {
+                    setPreviewZoom(previewZoomDraft);
+                    setPreviewPromptOpen(false);
+                    handleGeneratePreview(previewZoomDraft);
+                  }}
+                >
+                  Generate Preview
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Generate Preview — progress overlay */}
+      <AnimatePresence>
+        {generatingPreview && (
+          <motion.div
+            className="gen-preview-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <motion.div
+              className="gen-preview-card"
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <Camera className="gen-preview-icon" />
+              <div className="gen-preview-title">Generating Preview</div>
+              <div className="gen-preview-sub">{previewProgress.preset || "Starting..."}</div>
+              <div className="gen-preview-bar-track">
+                <motion.div
+                  className="gen-preview-bar-fill"
+                  animate={{ width: `${previewProgress.total > 0 ? (previewProgress.current / previewProgress.total) * 100 : 0}%` }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
+              <div className="gen-preview-count">{previewProgress.current} / {previewProgress.total}</div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Generate Preview — completion modal */}
+      <AnimatePresence>
+        {previewComplete && (
+          <motion.div
+            className="gen-preview-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setPreviewComplete(false)}
+          >
+            <motion.div
+              className="gen-preview-card"
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <motion.div
+                className="gen-preview-done-check"
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", stiffness: 400, damping: 20, delay: 0.1 }}
+              >
+                <Check className="w-6 h-6" />
+              </motion.div>
+              <div className="gen-preview-title">Preview Complete</div>
+              <div className="gen-preview-sub">5 screenshots exported successfully</div>
+              <div className="gen-preview-actions">
+                <button
+                  type="button"
+                  className="gen-preview-btn gen-preview-btn--open"
+                  onClick={async () => {
+                    if (isTauriRuntime && previewOutputPath) {
+                      try { await openUrl(previewOutputPath); } catch {}
+                    }
+                    setPreviewComplete(false);
+                  }}
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  Open Folder
+                </button>
+                <button
+                  type="button"
+                  className="gen-preview-btn gen-preview-btn--close"
+                  onClick={() => setPreviewComplete(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
     </motion.div>

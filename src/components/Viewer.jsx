@@ -260,7 +260,7 @@ export default function Viewer({
     if (!containerRef.current) return;
 
     const scene = new THREE.Scene();
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
     const getPixelRatio = () => Math.min(window.devicePixelRatio || 1, 1.5);
     renderer.setPixelRatio(getPixelRatio());
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
@@ -365,6 +365,19 @@ export default function Viewer({
         controls.update();
         requestRenderRef.current?.();
       },
+      setZoom: (zoomFactor) => {
+        if (!cameraRef.current || !controlsRef.current) return;
+        const zoom = Math.max(0.4, Math.min(2.5, zoomFactor || 1));
+        const { center, distance } = fitRef.current;
+        const direction = new THREE.Vector3()
+          .subVectors(cameraRef.current.position, controlsRef.current.target)
+          .normalize();
+        const nextDistance = distance / zoom;
+        cameraRef.current.position.copy(center).add(direction.multiplyScalar(nextDistance));
+        controlsRef.current.target.copy(center);
+        controlsRef.current.update();
+        requestRenderRef.current?.();
+      },
       reset: () => {
         const { center, distance } = fitRef.current;
         camera.position.set(center.x + distance, center.y + distance * 0.2, center.z + distance);
@@ -390,6 +403,13 @@ export default function Viewer({
         }
         requestRenderRef.current?.();
       },
+      captureScreenshot: () => {
+        if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return null;
+        // Render a fresh frame and capture it
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
+        return rendererRef.current.domElement.toDataURL("image/png");
+      },
+      getPresetKeys: () => Object.keys(presets),
     });
 
     return () => {
@@ -735,6 +755,50 @@ export default function Viewer({
     }
 
     const loadTexture = async () => {
+      // Handle data: URLs (e.g. from VariantsPage composited preview)
+      if (texturePath.startsWith("data:")) {
+        try {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = texturePath;
+          });
+          const texture = new THREE.CanvasTexture(img);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.flipY = true;
+          texture.wrapS = THREE.RepeatWrapping;
+          texture.wrapT = THREE.RepeatWrapping;
+          texture.needsUpdate = true;
+          texture.anisotropy = rendererRef.current?.capabilities.getMaxAnisotropy() || 1;
+          if (cancelled) return;
+          releaseTexture(textureRef.current);
+          textureRef.current = texture;
+          retainTexture(texture);
+          const materialState = materialStateRef.current;
+          if (modelRef.current) {
+            applyMaterials(
+              modelRef.current,
+              materialState.bodyColor,
+              texture,
+              materialState.textureTarget,
+              windowTextureRef.current,
+              materialState.windowTextureTarget,
+              materialState.liveryExteriorOnly,
+              materialState.textureMode,
+              materialState.glossiness,
+            );
+            requestRender();
+          }
+          onTextureErrorRef.current?.("");
+          onTextureReload?.();
+        } catch {
+          /* data URL loading failed */
+        }
+        return;
+      }
+
       const cacheKey = getTextureCacheKey(texturePath, flipTextureY, textureReloadToken);
       const cached = getCachedTexture(cacheKey);
       if (cached) {

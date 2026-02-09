@@ -1,10 +1,9 @@
 export const HOTKEY_ACTIONS = {
   TOGGLE_EXTERIOR_ONLY: "toggleExteriorOnly",
-  MODE_LIVERY: "modeLivery",
-  MODE_ALL: "modeAll",
-  MODE_EUP: "modeEup",
-  MODE_MULTI: "modeMulti",
-  CYCLE_MODE: "cycleMode",
+  NEW_TAB_LIVERY: "newTabLivery",
+  NEW_TAB_ALL: "newTabAll",
+  NEW_TAB_EUP: "newTabEup",
+  NEW_TAB_MULTI: "newTabMulti",
   TOGGLE_PANEL: "togglePanel",
   SELECT_MODEL: "selectModel",
   SELECT_LIVERY: "selectLivery",
@@ -15,11 +14,10 @@ export const HOTKEY_ACTIONS = {
 
 export const HOTKEY_LABELS = {
   [HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY]: "Toggle Exterior Only",
-  [HOTKEY_ACTIONS.MODE_LIVERY]: "Switch to Livery Mode",
-  [HOTKEY_ACTIONS.MODE_ALL]: "Switch to All Mode",
-  [HOTKEY_ACTIONS.MODE_EUP]: "Switch to EUP Mode",
-  [HOTKEY_ACTIONS.MODE_MULTI]: "Switch to Multi Mode",
-  [HOTKEY_ACTIONS.CYCLE_MODE]: "Cycle Modes",
+  [HOTKEY_ACTIONS.NEW_TAB_LIVERY]: "New Livery Tab",
+  [HOTKEY_ACTIONS.NEW_TAB_ALL]: "New All Tab",
+  [HOTKEY_ACTIONS.NEW_TAB_EUP]: "New EUP Tab",
+  [HOTKEY_ACTIONS.NEW_TAB_MULTI]: "New Multi Tab",
   [HOTKEY_ACTIONS.TOGGLE_PANEL]: "Toggle Control Panel",
   [HOTKEY_ACTIONS.SELECT_MODEL]: "Select Model",
   [HOTKEY_ACTIONS.SELECT_LIVERY]: "Select Livery/Texture",
@@ -29,14 +27,13 @@ export const HOTKEY_LABELS = {
 };
 
 export const HOTKEY_CATEGORIES = {
-  modes: {
-    label: "Mode Switching",
+  tabs: {
+    label: "New Tabs",
     actions: [
-      HOTKEY_ACTIONS.CYCLE_MODE,
-      HOTKEY_ACTIONS.MODE_LIVERY,
-      HOTKEY_ACTIONS.MODE_ALL,
-      HOTKEY_ACTIONS.MODE_EUP,
-      HOTKEY_ACTIONS.MODE_MULTI,
+      HOTKEY_ACTIONS.NEW_TAB_LIVERY,
+      HOTKEY_ACTIONS.NEW_TAB_ALL,
+      HOTKEY_ACTIONS.NEW_TAB_EUP,
+      HOTKEY_ACTIONS.NEW_TAB_MULTI,
     ],
   },
   view: {
@@ -65,11 +62,10 @@ export const HOTKEY_CATEGORIES = {
 
 export const DEFAULT_HOTKEYS = {
   [HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY]: { key: "E", ctrl: false, alt: true, shift: false },
-  [HOTKEY_ACTIONS.MODE_LIVERY]: { key: "1", ctrl: false, alt: true, shift: false },
-  [HOTKEY_ACTIONS.MODE_ALL]: { key: "2", ctrl: false, alt: true, shift: false },
-  [HOTKEY_ACTIONS.MODE_EUP]: { key: "3", ctrl: false, alt: true, shift: false },
-  [HOTKEY_ACTIONS.MODE_MULTI]: { key: "4", ctrl: false, alt: true, shift: false },
-  [HOTKEY_ACTIONS.CYCLE_MODE]: { key: "Tab", ctrl: false, alt: true, shift: false },
+  [HOTKEY_ACTIONS.NEW_TAB_LIVERY]: { key: "1", ctrl: false, alt: true, shift: false },
+  [HOTKEY_ACTIONS.NEW_TAB_ALL]: { key: "2", ctrl: false, alt: true, shift: false },
+  [HOTKEY_ACTIONS.NEW_TAB_EUP]: { key: "3", ctrl: false, alt: true, shift: false },
+  [HOTKEY_ACTIONS.NEW_TAB_MULTI]: { key: "4", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.TOGGLE_PANEL]: { key: "\\", ctrl: false, alt: false, shift: false },
   [HOTKEY_ACTIONS.SELECT_MODEL]: { key: "O", ctrl: true, alt: false, shift: false },
   [HOTKEY_ACTIONS.SELECT_LIVERY]: { key: "L", ctrl: true, alt: false, shift: false },
