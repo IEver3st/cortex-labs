@@ -474,7 +474,11 @@ export default function Shell() {
                   aria-hidden={!isActive}
                 >
                   {tab.type === "home" && (
-                    <HomePage onNavigate={handleNavigate} onOpenWorkspace={handleOpenWorkspace} />
+                    <HomePage
+                      onNavigate={handleNavigate}
+                      onOpenWorkspace={handleOpenWorkspace}
+                      settingsVersion={settingsVersion}
+                    />
                   )}
                   {tab.type === "viewer" && (
                     <App

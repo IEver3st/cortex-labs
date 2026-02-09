@@ -3797,6 +3797,15 @@ label {
   gap: 0;
 }
 
+.home-body.is-single {
+  justify-content: center;
+}
+
+.home-body.is-single .home-left {
+  flex: 0 1 760px;
+  padding-right: 0;
+}
+
 .home-left {
   flex: 1;
   display: flex;
@@ -4916,6 +4925,10 @@ label {
   padding: 8px 12px;
   flex-shrink: 0;
 }
+.vp-strip-section--bulk {
+  background: rgba(255, 255, 255, 0.02);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
 .vp-strip-section--locked { opacity: 0.5; }
 
 .vp-strip-divider {
@@ -4978,6 +4991,17 @@ label {
 }
 .vp-chip.is-on:hover {
   background: rgba(var(--es-success-rgb), 0.12);
+}
+
+.vp-chip--bulk {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(230, 235, 244, 0.86);
+}
+.vp-chip--bulk:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(240, 244, 250, 0.95);
 }
 
 .vp-chip--locked {

@@ -5,6 +5,7 @@ import {
   Plus, ChevronRight, Palette, Eye,
 } from "lucide-react";
 import { loadWorkspaces, loadRecent, deleteWorkspace, createWorkspace } from "../lib/workspace";
+import { loadPrefs } from "../lib/prefs";
 import appMeta from "../../package.json";
 import * as Ctx from "./ContextMenu";
 
@@ -43,17 +44,21 @@ const MODES = [
   },
 ];
 
-export default function HomePage({ onNavigate, onOpenWorkspace }) {
+export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion }) {
   const [recent, setRecent] = useState([]);
   const [workspaces, setWorkspaces] = useState({});
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [selectedMode, setSelectedMode] = useState("livery");
+  const [showRecents, setShowRecents] = useState(true);
 
   useEffect(() => {
-    setRecent(loadRecent());
+    const prefs = loadPrefs();
+    const allowRecents = prefs?.defaults?.showRecents !== false;
+    setShowRecents(allowRecents);
     setWorkspaces(loadWorkspaces());
-  }, []);
+    setRecent(allowRecents ? loadRecent() : []);
+  }, [settingsVersion]);
 
   const handleLaunchMode = useCallback((mode) => {
     const modeNames = {
@@ -186,7 +191,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace }) {
         </motion.div>
 
         {/* Body: two columns with divider */}
-        <div className="home-body">
+        <div className={`home-body ${showRecents ? "" : "is-single"}`}>
           {/* Left — Launch options */}
           <motion.div
             className="home-left"
@@ -264,83 +269,87 @@ export default function HomePage({ onNavigate, onOpenWorkspace }) {
             </motion.button>
           </motion.div>
 
-          {/* Vertical Divider */}
-          <div className="home-divider" />
+          {showRecents && (
+            <>
+              {/* Vertical Divider */}
+              <div className="home-divider" />
 
-          {/* Right — Recents */}
-          <motion.div
-            className="home-right"
-            initial={{ opacity: 0, x: 16 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.6, delay: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="home-section-label">
-              <Clock className="home-section-label-icon" />
-              <span>Recent</span>
-            </div>
+              {/* Right — Recents */}
+              <motion.div
+                className="home-right"
+                initial={{ opacity: 0, x: 16 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.6, delay: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <div className="home-section-label">
+                  <Clock className="home-section-label-icon" />
+                  <span>Recent</span>
+                </div>
 
-            {recent.length > 0 ? (
-              <div className="home-recent-list">
-                {recent.map((entry, i) => {
-                  const ws = workspaces[entry.workspaceId];
-                  if (!ws) return null;
-                  const Icon = modeIconForEntry(entry);
-                  const color = modeColorForEntry(entry);
-                  const modeLabel = modeLabelForEntry(entry);
-                  return (
-                    <Ctx.Root key={entry.workspaceId}>
-                      <Ctx.Trigger>
-                        <motion.div
-                          className="home-recent-item"
-                          onClick={() => handleOpenRecent(entry)}
-                          initial={{ opacity: 0, x: -6 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ duration: 0.3, delay: 0.24 + i * 0.04 }}
-                          whileHover={{ x: 3 }}
-                          role="button"
-                          tabIndex={0}
-                        >
-                          <div className="home-recent-item-icon" style={{ borderColor: `${color}30`, background: `${color}0a` }}>
-                            <Icon className="w-3.5 h-3.5" style={{ color }} />
-                          </div>
-                          <div className="home-recent-item-text">
-                            <span className="home-recent-item-name">{descriptiveNameForEntry(entry)}</span>
-                            <span className="home-recent-item-meta">
-                              {modeLabel}
-                              {ws.updatedAt ? ` \u2014 ${relativeTime(ws.updatedAt)}` : ""}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            className="home-recent-item-delete"
-                            onClick={(e) => handleDeleteWorkspace(e, entry.workspaceId)}
-                            title="Delete"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </motion.div>
-                      </Ctx.Trigger>
-                      <Ctx.Content>
-                        <Ctx.Item onSelect={() => handleOpenRecent(entry)}>
-                          <ChevronRight className="w-3 h-3" /> Open
-                        </Ctx.Item>
-                        <Ctx.Separator />
-                        <Ctx.Item onSelect={(e) => handleDeleteWorkspace(e, entry.workspaceId)} destructive>
-                          <Trash2 className="w-3 h-3" /> Delete
-                        </Ctx.Item>
-                      </Ctx.Content>
-                    </Ctx.Root>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="home-empty-recent">
-                <Clock className="home-empty-recent-icon" />
-                <span>No recent sessions</span>
-                <span className="home-empty-recent-hint">Launch a mode to get started</span>
-              </div>
-            )}
-          </motion.div>
+                {recent.length > 0 ? (
+                  <div className="home-recent-list">
+                    {recent.map((entry, i) => {
+                      const ws = workspaces[entry.workspaceId];
+                      if (!ws) return null;
+                      const Icon = modeIconForEntry(entry);
+                      const color = modeColorForEntry(entry);
+                      const modeLabel = modeLabelForEntry(entry);
+                      return (
+                        <Ctx.Root key={entry.workspaceId}>
+                          <Ctx.Trigger>
+                            <motion.div
+                              className="home-recent-item"
+                              onClick={() => handleOpenRecent(entry)}
+                              initial={{ opacity: 0, x: -6 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ duration: 0.3, delay: 0.24 + i * 0.04 }}
+                              whileHover={{ x: 3 }}
+                              role="button"
+                              tabIndex={0}
+                            >
+                              <div className="home-recent-item-icon" style={{ borderColor: `${color}30`, background: `${color}0a` }}>
+                                <Icon className="w-3.5 h-3.5" style={{ color }} />
+                              </div>
+                              <div className="home-recent-item-text">
+                                <span className="home-recent-item-name">{descriptiveNameForEntry(entry)}</span>
+                                <span className="home-recent-item-meta">
+                                  {modeLabel}
+                                  {ws.updatedAt ? ` — ${relativeTime(ws.updatedAt)}` : ""}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                className="home-recent-item-delete"
+                                onClick={(e) => handleDeleteWorkspace(e, entry.workspaceId)}
+                                title="Delete"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </motion.div>
+                          </Ctx.Trigger>
+                          <Ctx.Content>
+                            <Ctx.Item onSelect={() => handleOpenRecent(entry)}>
+                              <ChevronRight className="w-3 h-3" /> Open
+                            </Ctx.Item>
+                            <Ctx.Separator />
+                            <Ctx.Item onSelect={(e) => handleDeleteWorkspace(e, entry.workspaceId)} destructive>
+                              <Trash2 className="w-3 h-3" /> Delete
+                            </Ctx.Item>
+                          </Ctx.Content>
+                        </Ctx.Root>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="home-empty-recent">
+                    <Clock className="home-empty-recent-icon" />
+                    <span>No recent sessions</span>
+                    <span className="home-empty-recent-hint">Launch a mode to get started</span>
+                  </div>
+                )}
+              </motion.div>
+            </>
+          )}
         </div>
       </div>
 

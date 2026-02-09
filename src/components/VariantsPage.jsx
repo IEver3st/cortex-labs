@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
   FileImage, Plus, Trash2, Download, Lock, Copy, Car,
-  Radio, Eye, FolderOpen, Check, Pencil,
+  Radio, Eye, EyeOff, RotateCcw, FolderOpen, Check, Pencil,
   CheckSquare, AlertTriangle,
   PanelBottomOpen, PanelRightOpen, PanelLeftOpen,
 } from "lucide-react";
@@ -262,6 +262,52 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     setEditingName(null);
   }, []);
 
+  const handleEnableAllToggleable = useCallback(() => {
+    if (!psdData?.toggleable?.length) return;
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== selectedVariantId) return v;
+        const nextToggleable = { ...v.toggleable };
+        for (const layer of psdData.toggleable) {
+          nextToggleable[layer.name] = true;
+        }
+        return { ...v, toggleable: nextToggleable };
+      })
+    );
+  }, [psdData, selectedVariantId]);
+
+  const handleDisableAllToggleable = useCallback(() => {
+    if (!psdData?.toggleable?.length) return;
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== selectedVariantId) return v;
+        const nextToggleable = { ...v.toggleable };
+        for (const layer of psdData.toggleable) {
+          nextToggleable[layer.name] = false;
+        }
+        return { ...v, toggleable: nextToggleable };
+      })
+    );
+  }, [psdData, selectedVariantId]);
+
+  const handleResetLayerDefaults = useCallback(() => {
+    if (!psdData) return;
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== selectedVariantId) return v;
+        const nextToggleable = { ...v.toggleable };
+        for (const layer of psdData.toggleable || []) {
+          nextToggleable[layer.name] = layer.enabled;
+        }
+        const nextSelections = { ...v.variantSelections };
+        for (const group of psdData.variantGroups || []) {
+          nextSelections[group.name] = Math.max(0, group.selectedIndex ?? 0);
+        }
+        return { ...v, toggleable: nextToggleable, variantSelections: nextSelections };
+      })
+    );
+  }, [psdData, selectedVariantId]);
+
   const handleToggleLayer = useCallback((layerName) => {
     setVariants((prev) =>
       prev.map((v) => {
@@ -333,6 +379,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const psdFileName = psdPath ? psdPath.split(/[\\/]/).pop() : "";
   const modelFileName = modelPath ? modelPath.split(/[\\/]/).pop() : "";
   const hasLayers = psdData && (psdData.toggleable.length > 0 || psdData.variantGroups.length > 0 || psdData.locked.length > 0);
+  const hasBulkControls = psdData && (psdData.toggleable.length > 0 || psdData.variantGroups.length > 0);
 
   return (
     <div className="vp" ref={containerRef}>
@@ -605,6 +652,52 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           {/* ─── Layer Strip (compact horizontal bar) ─── */}
           {hasLayers && !layerStripHidden && (
             <div className="vp-strip">
+              {hasBulkControls && (
+                <>
+                  <div className="vp-strip-section vp-strip-section--bulk">
+                    <div className="vp-strip-label">
+                      <CheckSquare className="w-2.5 h-2.5" />
+                      <span>Bulk</span>
+                    </div>
+                    <div className="vp-strip-items">
+                      {psdData.toggleable.length > 0 && (
+                        <button
+                          type="button"
+                          className="vp-chip vp-chip--bulk"
+                          onClick={handleEnableAllToggleable}
+                          title="Enable all toggleable layers"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>All On</span>
+                        </button>
+                      )}
+                      {psdData.toggleable.length > 0 && (
+                        <button
+                          type="button"
+                          className="vp-chip vp-chip--bulk"
+                          onClick={handleDisableAllToggleable}
+                          title="Disable all toggleable layers"
+                        >
+                          <EyeOff className="w-3 h-3" />
+                          <span>All Off</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="vp-chip vp-chip--bulk"
+                        onClick={handleResetLayerDefaults}
+                        title="Reset toggles and variant groups to PSD defaults"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset</span>
+                      </button>
+                    </div>
+                  </div>
+                  {(psdData.toggleable.length > 0 || psdData.variantGroups.length > 0 || psdData.locked.length > 0) && (
+                    <div className="vp-strip-divider" />
+                  )}
+                </>
+              )}
               {/* Toggleable layers */}
               {psdData.toggleable.length > 0 && (
                 <div className="vp-strip-section">

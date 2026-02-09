@@ -26,6 +26,7 @@ const BUILT_IN_DEFAULTS = {
   showHints: true,
   hideRotText: false,
   showGrid: false,
+  showRecents: true,
   lightIntensity: 1.0,
   glossiness: 0.5,
   windowControlsStyle: "windows",
@@ -395,6 +396,22 @@ export default function SettingsMenu({ onSettingsSaved }) {
                                 >
                                   Reset to 100%
                                 </button>
+                                <div className="settings-row" style={{ marginTop: 16 }}>
+                                  <div className="settings-row-label">Show recent sessions</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.showRecents ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, showRecents: !p.showRecents }))}
+                                    aria-pressed={draft.showRecents}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-note">
+                                    Hide the Recent list on the Home page when you want a cleaner launch screen.
+                                  </div>
+                                </div>
                               </section>
                             ) : null}
 
