@@ -124,7 +124,64 @@ function buildLayerIndex(layers, parentPath = "") {
 }
 
 /**
+ * Flatten the walked layer tree into a list with unique path-based IDs.
+ * Each entry: { id, name, path, visible, opacity, colorLabel, isGroup, depth, parentId, children: [ids] }
+ */
+function flattenLayerTree(layers, parentPath = "", parentId = null) {
+  const flat = [];
+  if (!layers) return flat;
+  for (const layer of layers) {
+    const path = parentPath ? `${parentPath}/${layer.name}` : layer.name;
+    const id = path;
+    const entry = {
+      id,
+      name: layer.name,
+      path,
+      visible: layer.visible,
+      opacity: layer.opacity,
+      colorLabel: layer.colorLabel,
+      isGroup: layer.isGroup,
+      depth: layer.depth,
+      parentId,
+      childIds: [],
+    };
+    flat.push(entry);
+    if (layer.isGroup && layer.children) {
+      const childFlat = flattenLayerTree(layer.children, path, id);
+      entry.childIds = childFlat.filter((c) => c.parentId === id).map((c) => c.id);
+      flat.push(...childFlat);
+    }
+  }
+  return flat;
+}
+
+/**
+ * Categorize a layer for the UI sections.
+ * Returns: "toggleable" | "variant-group" | "locked" | "base"
+ */
+function categorizeLayer(layer, useColorLabels) {
+  if (useColorLabels) {
+    const cat = COLOR_CATEGORY_MAP[layer.colorLabel] || null;
+    if (cat === "toggleable") return "toggleable";
+    if (cat === "variant" && layer.isGroup) return "variant-group";
+    if (cat === "variant") return "toggleable";
+    if (cat === "locked") return "locked";
+    return "base";
+  }
+  // Heuristic mode
+  if (isLockedName(layer.name)) return "locked";
+  if (layer.isGroup) {
+    const childCount = layer.childIds?.length || 0;
+    if (childCount >= 2) return "variant-group";
+    if (childCount === 1) return "toggleable";
+    return "locked";
+  }
+  return "toggleable";
+}
+
+/**
  * Parse a PSD file and extract layer structure for the variant builder.
+ * Returns both the legacy categorized buckets AND a full flat layer list.
  */
 export async function parsePsdLayers(filePath) {
   const bytes = await readFile(filePath);
@@ -143,12 +200,22 @@ export async function parsePsdLayers(filePath) {
   const layers = walkLayers(rawLayers, 0, opacityDivisor);
   const useColorLabels = hasColorLabels(layers);
 
+  // Build full flat layer list with unique path IDs
+  const allLayers = flattenLayerTree(layers);
+
+  // Annotate each layer with its category
+  for (const entry of allLayers) {
+    entry.category = categorizeLayer(entry, useColorLabels);
+  }
+
+  // Legacy categorized buckets (still used by export and backward compat)
   const toggleable = [];
   const variantGroups = [];
   const locked = [];
 
-  if (useColorLabels) {
-    for (const layer of layers) {
+  // Only categorize top-level layers for legacy buckets
+  for (const layer of layers) {
+    if (useColorLabels) {
       const cat = COLOR_CATEGORY_MAP[layer.colorLabel] || null;
       if (cat === "toggleable") {
         toggleable.push({ name: layer.name, enabled: layer.visible, colorLabel: layer.colorLabel });
@@ -165,9 +232,7 @@ export async function parsePsdLayers(filePath) {
       } else {
         locked.push({ name: layer.name, colorLabel: layer.colorLabel });
       }
-    }
-  } else {
-    for (const layer of layers) {
+    } else {
       if (isLockedName(layer.name)) {
         locked.push({ name: layer.name, colorLabel: layer.colorLabel });
         continue;
@@ -193,36 +258,41 @@ export async function parsePsdLayers(filePath) {
     }
   }
 
-  return { width, height, layers, toggleable, variantGroups, locked };
+  return { width, height, layers, allLayers, toggleable, variantGroups, locked };
 }
 
 /**
- * Apply the visibility map to the raw PSD layer tree BEFORE ag-psd composites.
- * This mutates the layer objects in place, setting .hidden appropriately.
+ * Apply the visibility map to the raw ag-psd layer tree.
+ * Matches by both path-based IDs ("Group/Child") and plain names.
+ * Path-based matches take priority over name-based matches.
  *
- * The visibility map uses top-level names:
- *  - toggleable layer names → true/false
- *  - variant group CHILD names → true/false
- *  - locked layer names → true (always)
- *
- * For variant groups, the parent group itself must stay visible
- * while only the selected child is shown.
+ * For groups: if any child is explicitly shown, the parent group
+ * is forced visible so the child can render.
  */
-function applyVisibilityToTree(layers, visibility) {
+function applyVisibilityToTree(layers, visibility, parentPath = "") {
   if (!layers) return;
   for (const layer of layers) {
     const name = layer.name || "";
+    const path = parentPath ? `${parentPath}/${name}` : name;
 
-    if (name in visibility) {
+    const hasExplicitVisibility =
+      Object.prototype.hasOwnProperty.call(visibility, path) ||
+      Object.prototype.hasOwnProperty.call(visibility, name);
+
+    // Path-based match takes priority
+    if (path in visibility) {
+      layer.hidden = !visibility[path];
+    } else if (name in visibility) {
       layer.hidden = !visibility[name];
     }
-    // Always recurse into children to apply child-level visibility
-    if (layer.children) {
-      applyVisibilityToTree(layer.children, visibility);
 
-      // If any child is being shown, make sure this group is also visible
+    // Recurse into children
+    if (layer.children) {
+      applyVisibilityToTree(layer.children, visibility, path);
+
+      // If any child is being shown, force this group visible
       const anyChildVisible = layer.children.some((c) => !c.hidden);
-      if (anyChildVisible) {
+      if (!hasExplicitVisibility && anyChildVisible) {
         layer.hidden = false;
       }
     }
@@ -230,31 +300,61 @@ function applyVisibilityToTree(layers, visibility) {
 }
 
 /**
+ * Map ag-psd blend mode strings to Canvas 2D globalCompositeOperation values.
+ * ag-psd uses human-readable strings like "normal", "pass through", "multiply", etc.
+ */
+const BLEND_MAP = {
+  "normal": "source-over",
+  "dissolve": "source-over",
+  "darken": "darken",
+  "multiply": "multiply",
+  "color burn": "color-burn",
+  "linear burn": "multiply",
+  "darker color": "darken",
+  "lighten": "lighten",
+  "screen": "screen",
+  "color dodge": "color-dodge",
+  "linear dodge": "lighten",
+  "lighter color": "lighten",
+  "overlay": "overlay",
+  "soft light": "soft-light",
+  "hard light": "hard-light",
+  "vivid light": "hard-light",
+  "linear light": "hard-light",
+  "pin light": "hard-light",
+  "hard mix": "hard-light",
+  "difference": "difference",
+  "exclusion": "exclusion",
+  "subtract": "difference",
+  "divide": "source-over",
+  "hue": "hue",
+  "saturation": "saturation",
+  "color": "color",
+  "luminosity": "luminosity",
+};
+
+function getCompositeOp(blendMode) {
+  if (!blendMode) return "source-over";
+  return BLEND_MAP[blendMode.toLowerCase()] || "source-over";
+}
+
+/**
  * Composite a PSD with specific layer visibility into a canvas.
  *
- * Strategy: We let ag-psd do the compositing by:
- *   1. Reading the PSD without skipping composite
- *   2. Applying visibility to the layer tree
- *   3. Re-reading with the modified visibility using a two-pass approach
- *
- * Actually, since ag-psd composites on read (not separately), we use
- * a manual layer-by-layer draw approach with proper parent propagation.
+ * Uses manual layer-by-layer compositing with proper handling of:
+ *   - "pass through" groups (children draw directly to parent context)
+ *   - Isolated groups (non-pass-through: composited to offscreen buffer first)
+ *   - Layer opacity and blend modes
+ *   - Clipping masks (layers with .clipping flag)
  */
 export async function compositePsdVariant(filePath, layerVisibility = {}, targetWidth, targetHeight) {
   const bytes = await readFile(filePath);
   const buffer = bytes.buffer || bytes;
 
-  // First, apply visibility to the raw buffer's layer tree, then let ag-psd
-  // do the compositing. We need to read twice:
-  //   Pass 1: get layer tree structure to apply visibility
-  //   Pass 2: read with applied visibility for composite
-  //
-  // But since we can't modify the buffer, we'll do manual compositing.
-
   const psd = readPsd(new DataView(buffer), {
     skipThumbnail: true,
     skipCompositeImageData: true,
-    skipLayerImageData: false,  // Need individual layer canvases
+    skipLayerImageData: false,
   });
 
   const psdW = psd.width;
@@ -263,62 +363,64 @@ export async function compositePsdVariant(filePath, layerVisibility = {}, target
   const outW = targetWidth || psdW;
   const outH = targetHeight || psdH;
 
-  // Apply visibility to the tree before drawing
+  // Apply visibility to the raw ag-psd tree
   applyVisibilityToTree(psd.children || [], layerVisibility);
 
-  // Create working canvas
   const workCanvas = document.createElement("canvas");
   workCanvas.width = psdW;
   workCanvas.height = psdH;
   const workCtx = workCanvas.getContext("2d");
 
   /**
-   * Draw layers bottom-to-top with proper group handling.
+   * Draw layers bottom-to-top.
    *
-   * ag-psd stores children in visual order (topmost layer first in array).
-   * For canvas compositing we need bottom-to-top, so reverse iterate.
+   * ag-psd builds children via unshift while iterating the PSD's bottom-to-top
+   * layer list in reverse, so the resulting array order is:
+   *   children[0]   = bottommost layer (drawn first)
+   *   children[N-1] = topmost layer (drawn last)
+   * We iterate FORWARD to draw bottom-to-top onto the canvas.
    *
-   * For groups: if the group itself has .canvas, it means ag-psd has
-   * pre-composited the group content — use that directly.
-   * Otherwise, recurse into children.
+   * Group blend mode handling:
+   *   - "pass through": children draw directly to the parent context
+   *     (the group is transparent to compositing — Photoshop default for groups)
+   *   - Any other mode: children are composited to an offscreen buffer,
+   *     then the buffer is drawn to the parent with the group's blend mode + opacity
    */
   function drawLayers(layers, ctx) {
     if (!layers) return;
 
-    for (let i = layers.length - 1; i >= 0; i--) {
+    for (let i = 0; i < layers.length; i++) {
       const layer = layers[i];
-
-      // Skip hidden layers
       if (layer.hidden) continue;
 
       const opacity = normalizeOpacity(layer.opacity, opacityDivisor);
+      if (opacity <= 0) continue;
 
-      // Map blend modes
-      let compositeOp = "source-over";
-      const blend = (layer.blendMode || "normal").toLowerCase().replace(/\s+/g, "");
-      const blendMap = {
-        normal: "source-over",
-        multiply: "multiply",
-        screen: "screen",
-        overlay: "overlay",
-        darken: "darken",
-        lighten: "lighten",
-        colordodge: "color-dodge",
-        colorburn: "color-burn",
-        hardlight: "hard-light",
-        softlight: "soft-light",
-        difference: "difference",
-        exclusion: "exclusion",
-        hue: "hue",
-        saturation: "saturation",
-        color: "color",
-        luminosity: "luminosity",
-      };
-      compositeOp = blendMap[blend] || "source-over";
+      const blendMode = (layer.blendMode || "normal").toLowerCase();
+      const compositeOp = getCompositeOp(blendMode);
+      const isPassThrough = blendMode === "pass through";
 
       if (layer.children && layer.children.length > 0) {
-        // Group layer
-        if (layer.canvas) {
+        // ── Group layer ──
+        if (isPassThrough) {
+          // Pass-through: children draw directly to parent context.
+          // Group opacity still applies to each child individually.
+          if (opacity < 1) {
+            // Apply group opacity via offscreen buffer
+            const tmpCanvas = document.createElement("canvas");
+            tmpCanvas.width = psdW;
+            tmpCanvas.height = psdH;
+            const tmpCtx = tmpCanvas.getContext("2d");
+            drawLayers(layer.children, tmpCtx);
+            ctx.save();
+            ctx.globalAlpha = opacity;
+            ctx.drawImage(tmpCanvas, 0, 0);
+            ctx.restore();
+          } else {
+            // Full opacity pass-through: draw children directly
+            drawLayers(layer.children, ctx);
+          }
+        } else if (layer.canvas) {
           // ag-psd pre-composited this group (has effects/clipping)
           ctx.save();
           ctx.globalAlpha = opacity;
@@ -326,25 +428,20 @@ export async function compositePsdVariant(filePath, layerVisibility = {}, target
           ctx.drawImage(layer.canvas, layer.left || 0, layer.top || 0);
           ctx.restore();
         } else {
-          // Recurse into children — draw onto same context
-          // Apply group opacity via an offscreen canvas
-          if (opacity < 1 || compositeOp !== "source-over") {
-            const groupCanvas = document.createElement("canvas");
-            groupCanvas.width = psdW;
-            groupCanvas.height = psdH;
-            const groupCtx = groupCanvas.getContext("2d");
-            drawLayers(layer.children, groupCtx);
-            ctx.save();
-            ctx.globalAlpha = opacity;
-            ctx.globalCompositeOperation = compositeOp;
-            ctx.drawImage(groupCanvas, 0, 0);
-            ctx.restore();
-          } else {
-            drawLayers(layer.children, ctx);
-          }
+          // Isolated group: composite children to offscreen buffer
+          const groupCanvas = document.createElement("canvas");
+          groupCanvas.width = psdW;
+          groupCanvas.height = psdH;
+          const groupCtx = groupCanvas.getContext("2d");
+          drawLayers(layer.children, groupCtx);
+          ctx.save();
+          ctx.globalAlpha = opacity;
+          ctx.globalCompositeOperation = compositeOp;
+          ctx.drawImage(groupCanvas, 0, 0);
+          ctx.restore();
         }
       } else if (layer.canvas) {
-        // Leaf layer with pixel data
+        // ── Leaf layer with pixel data ──
         ctx.save();
         ctx.globalAlpha = opacity;
         ctx.globalCompositeOperation = compositeOp;
@@ -356,7 +453,6 @@ export async function compositePsdVariant(filePath, layerVisibility = {}, target
 
   drawLayers(psd.children || [], workCtx);
 
-  // Scale if needed
   if (outW === psdW && outH === psdH) {
     return workCanvas;
   }

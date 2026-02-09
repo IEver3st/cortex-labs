@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
   FileImage, Plus, Trash2, Download, Lock, Copy, Car,
-  Radio, Eye, EyeOff, RotateCcw, FolderOpen, Check, Pencil,
-  CheckSquare, AlertTriangle,
+  Eye, FolderOpen, Check, Pencil,
+  ChevronRight, ChevronDown, Layers, AlertTriangle,
   PanelBottomOpen, PanelRightOpen, PanelLeftOpen,
 } from "lucide-react";
 import { parsePsdLayers, compositePsdVariant } from "../lib/psd-layers";
@@ -20,6 +20,40 @@ const DEFAULT_SIZES = [
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function buildDefaultVisibility(data) {
+  const vis = {};
+  for (const layer of data?.allLayers || []) {
+    vis[layer.id] = layer.visible;
+  }
+  return vis;
+}
+
+function buildVisibilityFromLegacy(variant, data, fallback) {
+  if (!variant || !data) return fallback || {};
+  const vis = { ...(fallback || {}) };
+  const toggleable = variant.toggleable || {};
+  const variantSelections = variant.variantSelections || {};
+
+  for (const layer of data.allLayers || []) {
+    if (Object.prototype.hasOwnProperty.call(toggleable, layer.name)) {
+      vis[layer.id] = toggleable[layer.name];
+    }
+  }
+
+  for (const group of data.variantGroups || []) {
+    const selectedIdx = variantSelections[group.name] ?? 0;
+    for (let j = 0; j < group.options.length; j++) {
+      const option = group.options[j];
+      const enabled = j === selectedIdx;
+      for (const layer of data.allLayers || []) {
+        if (layer.name === option.name) vis[layer.id] = enabled;
+      }
+    }
+  }
+
+  return vis;
 }
 
 /* ─── Resizable split handle (horizontal) ─── */
@@ -60,7 +94,41 @@ function HResizer({ onResize }) {
   );
 }
 
-/* VResizer removed — layer strip is auto-height */
+/* ─── Resizable split handle (vertical — for layer panel) ─── */
+function VResizer({ onResize }) {
+  const dragging = useRef(false);
+  const startY = useRef(0);
+
+  const onPointerDown = useCallback((e) => {
+    dragging.current = true;
+    startY.current = e.clientY;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const onPointerMove = useCallback((e) => {
+    if (!dragging.current) return;
+    const dy = e.clientY - startY.current;
+    startY.current = e.clientY;
+    onResize(dy);
+  }, [onResize]);
+
+  const onPointerUp = useCallback(() => {
+    dragging.current = false;
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }, []);
+
+  return (
+    <div
+      className="vp-layer-resizer"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    />
+  );
+}
 
 /**
  * VariantsPage — PSD Variant Builder
@@ -93,15 +161,21 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const [modelPath, setModelPath] = useState(workspaceState?.modelPath || "");
   const [viewerReady, setViewerReady] = useState(false);
   const [liveryTarget, setLiveryTarget] = useState("");
+  const [liveryTargetReady, setLiveryTargetReady] = useState(false);
   const viewerApiRef = useRef(null);
 
   // Composited preview
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewToken, setPreviewToken] = useState(0);
 
+  // Layer visibility — keyed by layer path ID
+  const [layerVisibility, setLayerVisibility] = useState({});
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set());
+
   // Panel layout
   const [viewerPanelWidth, setViewerPanelWidth] = useState(55); // percentage
-  const [layerStripHidden, setLayerStripHidden] = useState(false);
+  const [layerPanelHeight, setLayerPanelHeight] = useState(220); // pixels
+  const [layerPanelHidden, setLayerPanelHidden] = useState(false);
   const [viewerCollapsed, setViewerCollapsed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useState(false);
 
@@ -112,6 +186,11 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     typeof window.__TAURI_INTERNALS__ !== "undefined";
 
   const selectedVariant = variants.find((v) => v.id === selectedVariantId) || variants[0];
+  const selectedVariantIdRef = useRef(selectedVariantId);
+
+  useEffect(() => {
+    selectedVariantIdRef.current = selectedVariantId;
+  }, [selectedVariantId]);
 
   // Persist state
   useEffect(() => {
@@ -122,7 +201,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
 
   // Load PSD
   useEffect(() => {
-    if (!psdPath) { setPsdData(null); return; }
+    if (!psdPath) { setPsdData(null); setLayerVisibility({}); return; }
     let cancelled = false;
     setPsdLoading(true);
     setPsdError("");
@@ -131,14 +210,36 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       .then((data) => {
         if (cancelled) return;
         setPsdData(data);
+
+        const defaultVisibility = buildDefaultVisibility(data);
+        const initialVariantVisibility = buildVisibilityFromLegacy(selectedVariant, data, defaultVisibility);
+        const initialVisibility = selectedVariant?.layerVisibility && Object.keys(selectedVariant.layerVisibility).length > 0
+          ? selectedVariant.layerVisibility
+          : initialVariantVisibility;
+        setLayerVisibility(initialVisibility);
+
+        // Also update legacy variant state for backward compat
         setVariants((prev) => {
           const base = prev.find((v) => v.isBase);
-          if (!base) return prev;
+          const baseVisibility = (base?.layerVisibility && Object.keys(base.layerVisibility).length > 0)
+            ? base.layerVisibility
+            : defaultVisibility;
           const toggleable = {};
           for (const t of data.toggleable) toggleable[t.name] = t.enabled;
           const variantSelections = {};
           for (const g of data.variantGroups) variantSelections[g.name] = g.selectedIndex;
-          return prev.map((v) => v.isBase ? { ...v, toggleable, variantSelections } : v);
+          return prev.map((v) => {
+            const hasVisibility = v.layerVisibility && Object.keys(v.layerVisibility).length > 0;
+            const layerVisibility = hasVisibility
+              ? v.layerVisibility
+              : v.isBase
+                ? defaultVisibility
+                : { ...baseVisibility };
+            if (v.isBase) {
+              return { ...v, toggleable, variantSelections, layerVisibility };
+            }
+            return { ...v, layerVisibility };
+          });
         });
       })
       .catch((err) => {
@@ -150,34 +251,26 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     return () => { cancelled = true; };
   }, [psdPath]);
 
-  // Serialize variant state for stable dependency tracking
-  const variantKey = selectedVariant
-    ? JSON.stringify({ t: selectedVariant.toggleable, v: selectedVariant.variantSelections })
-    : "";
+  // Pass path-based IDs directly — the compositor now supports path matching
+  const compositorVisibility = useMemo(() => {
+    return { ...layerVisibility };
+  }, [layerVisibility]);
 
-  // Auto-generate preview when variant or PSD changes
+  const visibilityKey = JSON.stringify(compositorVisibility);
+
+  // Auto-generate preview when layer visibility or PSD changes
   useEffect(() => {
-    if (!psdPath || !psdData || !selectedVariant) return;
+    if (!psdPath || !psdData) return;
     let cancelled = false;
 
     const generate = async () => {
       try {
-        const visibility = {};
-        for (const [name, enabled] of Object.entries(selectedVariant.toggleable || {})) {
-          visibility[name] = enabled;
-        }
-        for (const group of psdData.variantGroups || []) {
-          const selectedIdx = selectedVariant.variantSelections?.[group.name] ?? 0;
-          for (let i = 0; i < group.options.length; i++) {
-            visibility[group.options[i].name] = i === selectedIdx;
-          }
-        }
-        for (const l of psdData.locked || []) {
-          visibility[l.name] = true;
-        }
-        // Use 1024 for real-time preview (fast), full exportSize is for final export
-        const previewRes = Math.min(exportSize, 1024);
-        const canvas = await compositePsdVariant(psdPath, visibility, previewRes, previewRes);
+        const maxDim = Math.max(psdData.width || 0, psdData.height || 0) || exportSize;
+        const targetMax = Math.min(exportSize, maxDim);
+        const scale = Math.min(1, targetMax / maxDim);
+        const previewW = Math.max(1, Math.round((psdData.width || maxDim) * scale));
+        const previewH = Math.max(1, Math.round((psdData.height || maxDim) * scale));
+        const canvas = await compositePsdVariant(psdPath, compositorVisibility, previewW, previewH);
         if (!cancelled) {
           setPreviewUrl(canvas.toDataURL("image/png"));
           setPreviewToken((t) => t + 1);
@@ -190,7 +283,27 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     // Debounce preview generation
     const timer = setTimeout(generate, 120);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [psdPath, psdData, variantKey, exportSize]);
+  }, [psdPath, psdData, visibilityKey, exportSize, compositorVisibility]);
+
+  useEffect(() => {
+    if (!psdData || !selectedVariantId) return;
+    const selected = variants.find((v) => v.id === selectedVariantId);
+    const defaultVisibility = buildDefaultVisibility(psdData);
+    const nextVisibility = selected?.layerVisibility && Object.keys(selected.layerVisibility).length > 0
+      ? selected.layerVisibility
+      : buildVisibilityFromLegacy(selected, psdData, defaultVisibility);
+    setLayerVisibility(nextVisibility);
+  }, [selectedVariantId, psdData]);
+
+  useEffect(() => {
+    const id = selectedVariantIdRef.current;
+    if (!id) return;
+    setVariants((prev) => prev.map((v) => (
+      v.id === id
+        ? { ...v, layerVisibility: { ...layerVisibility } }
+        : v
+    )));
+  }, [layerVisibility]);
 
   // File selectors
   const handleSelectPsd = useCallback(async () => {
@@ -224,12 +337,16 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   // Variant operations
   const handleAddVariant = useCallback(() => {
     const base = variants.find((v) => v.isBase);
+    const baseVisibility = base?.layerVisibility && Object.keys(base.layerVisibility).length > 0
+      ? base.layerVisibility
+      : { ...layerVisibility };
     const nv = {
       id: generateId(),
       name: `Variant ${variants.length}`,
       isBase: false,
       toggleable: base ? { ...base.toggleable } : {},
       variantSelections: base ? { ...base.variantSelections } : {},
+      layerVisibility: { ...baseVisibility },
       locked: false,
     };
     setVariants((prev) => [...prev, nv]);
@@ -247,7 +364,14 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const handleDuplicateVariant = useCallback((id) => {
     const source = variants.find((v) => v.id === id);
     if (!source) return;
-    const dup = { ...source, id: generateId(), name: `${source.name} Copy`, isBase: false, locked: false };
+    const dup = {
+      ...source,
+      id: generateId(),
+      name: `${source.name} Copy`,
+      isBase: false,
+      locked: false,
+      layerVisibility: { ...(source.layerVisibility || {}) },
+    };
     setVariants((prev) => [...prev, dup]);
     setSelectedVariantId(dup.id);
   }, [variants]);
@@ -308,6 +432,69 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     );
   }, [psdData, selectedVariantId]);
 
+  // Toggle a layer by its path-based ID
+  const handleToggleLayerById = useCallback((layerId) => {
+    setLayerVisibility((prev) => ({
+      ...prev,
+      [layerId]: !prev[layerId],
+    }));
+  }, []);
+
+  // Toggle a group's collapsed state
+  const handleToggleGroupCollapse = useCallback((groupId) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }, []);
+
+  // Enable all children of a group
+  const handleEnableAllInGroup = useCallback((groupId) => {
+    if (!psdData?.allLayers) return;
+    const group = psdData.allLayers.find((l) => l.id === groupId);
+    if (!group) return;
+    setLayerVisibility((prev) => {
+      const next = { ...prev };
+      for (const childId of group.childIds) {
+        next[childId] = true;
+      }
+      return next;
+    });
+  }, [psdData]);
+
+  // Disable all children of a group
+  const handleDisableAllInGroup = useCallback((groupId) => {
+    if (!psdData?.allLayers) return;
+    const group = psdData.allLayers.find((l) => l.id === groupId);
+    if (!group) return;
+    setLayerVisibility((prev) => {
+      const next = { ...prev };
+      for (const childId of group.childIds) {
+        next[childId] = false;
+      }
+      return next;
+    });
+  }, [psdData]);
+
+  // Solo a layer (enable only this one, disable siblings)
+  const handleSoloLayer = useCallback((layerId) => {
+    if (!psdData?.allLayers) return;
+    const layer = psdData.allLayers.find((l) => l.id === layerId);
+    if (!layer || !layer.parentId) return;
+    const parent = psdData.allLayers.find((l) => l.id === layer.parentId);
+    if (!parent) return;
+    setLayerVisibility((prev) => {
+      const next = { ...prev };
+      for (const siblingId of parent.childIds) {
+        next[siblingId] = siblingId === layerId;
+      }
+      return next;
+    });
+  }, [psdData]);
+
+  // Legacy handlers kept for backward compat with export
   const handleToggleLayer = useCallback((layerName) => {
     setVariants((prev) =>
       prev.map((v) => {
@@ -326,7 +513,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     );
   }, [selectedVariantId]);
 
-  // Export all
+  // Export all — uses current layer visibility for the active variant
   const handleExportAll = useCallback(async () => {
     if (!psdPath || !psdData || !outputFolder) return;
     setExporting(true);
@@ -334,13 +521,22 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     try {
       for (let i = 0; i < variants.length; i++) {
         const variant = variants[i];
-        const visibility = {};
-        for (const [name, enabled] of Object.entries(variant.toggleable || {})) visibility[name] = enabled;
-        for (const group of psdData.variantGroups || []) {
-          const selectedIdx = variant.variantSelections?.[group.name] ?? 0;
-          for (let j = 0; j < group.options.length; j++) visibility[group.options[j].name] = j === selectedIdx;
+        // For the currently selected variant, use the live layer panel state
+        // For other variants, fall back to legacy toggleable/variantSelections
+        let visibility;
+        if (variant.id === selectedVariantId) {
+          visibility = { ...compositorVisibility };
+        } else if (variant.layerVisibility && Object.keys(variant.layerVisibility).length > 0) {
+          visibility = { ...variant.layerVisibility };
+        } else {
+          visibility = {};
+          for (const [name, enabled] of Object.entries(variant.toggleable || {})) visibility[name] = enabled;
+          for (const group of psdData.variantGroups || []) {
+            const selectedIdx = variant.variantSelections?.[group.name] ?? 0;
+            for (let j = 0; j < group.options.length; j++) visibility[group.options[j].name] = j === selectedIdx;
+          }
+          for (const l of psdData.locked || []) visibility[l.name] = true;
         }
-        for (const l of psdData.locked || []) visibility[l.name] = true;
         const canvas = await compositePsdVariant(psdPath, visibility, exportSize, exportSize);
         const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
         const arrayBuffer = await blob.arrayBuffer();
@@ -354,7 +550,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     } finally {
       setExporting(false);
     }
-  }, [psdPath, psdData, variants, exportSize, outputFolder]);
+  }, [psdPath, psdData, variants, exportSize, outputFolder, selectedVariantId, compositorVisibility]);
 
   // Resizer handlers
   const handleHResize = useCallback((dx) => {
@@ -369,17 +565,35 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     });
   }, []);
 
-  // VResizer removed — layer strip is auto-height
+  // Layer panel vertical resize
+  const handleLayerPanelResize = useCallback((dy) => {
+    setLayerPanelHeight((prev) => Math.max(60, Math.min(500, prev - dy)));
+  }, []);
 
   // Model info callback — capture livery target
   const handleModelInfo = useCallback((info) => {
-    if (info.liveryTarget) setLiveryTarget(info.liveryTarget);
+    if (info.liveryTarget) {
+      setLiveryTarget(info.liveryTarget);
+      setLiveryTargetReady(true);
+    } else {
+      // No livery target found — still mark as ready so texture can apply with "all"
+      setLiveryTargetReady(true);
+    }
   }, []);
+
+  // Reset livery target when model changes
+  useEffect(() => {
+    setLiveryTarget("");
+    setLiveryTargetReady(false);
+  }, [modelPath]);
+
+  // Only pass texture to viewer once livery target is detected (prevents wrong UV mapping)
+  const viewerTexturePath = liveryTargetReady ? (previewUrl || "") : "";
+  const viewerTextureTarget = liveryTarget || "all";
 
   const psdFileName = psdPath ? psdPath.split(/[\\/]/).pop() : "";
   const modelFileName = modelPath ? modelPath.split(/[\\/]/).pop() : "";
   const hasLayers = psdData && (psdData.toggleable.length > 0 || psdData.variantGroups.length > 0 || psdData.locked.length > 0);
-  const hasBulkControls = psdData && (psdData.toggleable.length > 0 || psdData.variantGroups.length > 0);
 
   return (
     <div className="vp" ref={containerRef}>
@@ -424,11 +638,11 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           {hasLayers && (
             <button
               type="button"
-              className={`vp-panel-toggle ${layerStripHidden ? "is-off" : ""}`}
-              onClick={() => setLayerStripHidden((c) => !c)}
-              title={layerStripHidden ? "Show Layers" : "Hide Layers"}
+              className={`vp-panel-toggle ${layerPanelHidden ? "is-off" : ""}`}
+              onClick={() => setLayerPanelHidden((c) => !c)}
+              title={layerPanelHidden ? "Show Layers" : "Hide Layers"}
             >
-              <PanelBottomOpen className="w-3 h-3" />
+              <Layers className="w-3 h-3" />
               <span>Layers</span>
             </button>
           )}
@@ -541,9 +755,9 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                 </div>
                 <Viewer
                   modelPath={modelPath}
-                  texturePath={previewUrl || ""}
+                  texturePath={viewerTexturePath}
                   textureReloadToken={previewToken}
-                  textureTarget={liveryTarget || "all"}
+                  textureTarget={viewerTextureTarget}
                   textureMode="livery"
                   windowTexturePath=""
                   windowTextureTarget="none"
@@ -652,52 +866,6 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           {/* ─── Layer Strip (compact horizontal bar) ─── */}
           {hasLayers && !layerStripHidden && (
             <div className="vp-strip">
-              {hasBulkControls && (
-                <>
-                  <div className="vp-strip-section vp-strip-section--bulk">
-                    <div className="vp-strip-label">
-                      <CheckSquare className="w-2.5 h-2.5" />
-                      <span>Bulk</span>
-                    </div>
-                    <div className="vp-strip-items">
-                      {psdData.toggleable.length > 0 && (
-                        <button
-                          type="button"
-                          className="vp-chip vp-chip--bulk"
-                          onClick={handleEnableAllToggleable}
-                          title="Enable all toggleable layers"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>All On</span>
-                        </button>
-                      )}
-                      {psdData.toggleable.length > 0 && (
-                        <button
-                          type="button"
-                          className="vp-chip vp-chip--bulk"
-                          onClick={handleDisableAllToggleable}
-                          title="Disable all toggleable layers"
-                        >
-                          <EyeOff className="w-3 h-3" />
-                          <span>All Off</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="vp-chip vp-chip--bulk"
-                        onClick={handleResetLayerDefaults}
-                        title="Reset toggles and variant groups to PSD defaults"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Reset</span>
-                      </button>
-                    </div>
-                  </div>
-                  {(psdData.toggleable.length > 0 || psdData.variantGroups.length > 0 || psdData.locked.length > 0) && (
-                    <div className="vp-strip-divider" />
-                  )}
-                </>
-              )}
               {/* Toggleable layers */}
               {psdData.toggleable.length > 0 && (
                 <div className="vp-strip-section">
@@ -710,71 +878,117 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                       const isOn = selectedVariant?.toggleable?.[layer.name] ?? layer.enabled;
                       return (
                         <button
-                          key={layer.name}
+                          key={layer.id}
                           type="button"
-                          className={`vp-chip ${isOn ? "is-on" : ""}`}
-                          onClick={() => handleToggleLayer(layer.name)}
+                          className={`vp-layer-row ${isOn ? "is-on" : ""}`}
+                          onClick={() => handleToggleLayerById(layer.id)}
                         >
-                          <div className={`vp-chip-check ${isOn ? "is-checked" : ""}`}>
-                            {isOn && <Check className="w-2 h-2" />}
+                          <div className="vp-layer-check">
+                            <Check className="vp-layer-check-icon" />
                           </div>
-                          <span>{layer.name}</span>
+                          <span className="vp-layer-name">{layer.name}</span>
+                          {layer.opacity < 1 && (
+                            <span className="vp-layer-opacity">{Math.round(layer.opacity * 100)}%</span>
+                          )}
                         </button>
                       );
                     })}
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Variant Groups — inline radio chips */}
-              {psdData.variantGroups.map((group, gi) => {
-                const selectedIdx = selectedVariant?.variantSelections?.[group.name] ?? 0;
-                return (
-                  <div key={group.name} className="vp-strip-section">
-                    {(gi > 0 || psdData.toggleable.length > 0) && <div className="vp-strip-divider" />}
-                    <div className="vp-strip-label">
-                      <Radio className="w-2.5 h-2.5" />
-                      <span>{group.name}</span>
-                    </div>
-                    <div className="vp-strip-items">
-                      {group.options.map((opt, idx) => (
+                {/* Group sections — collapsible with checkbox children */}
+                {layerSections.groups.map((group) => {
+                  const isCollapsed = collapsedGroups.has(group.id);
+                  const children = getGroupChildren(group.id);
+                  const enabledCount = children.filter((c) => layerVisibility[c.id] ?? c.visible).length;
+                  const allOn = enabledCount === children.length && children.length > 0;
+                  const someOn = enabledCount > 0 && !allOn;
+
+                  return (
+                    <div key={group.id} className="vp-layer-section">
+                      <div className="vp-layer-section-head vp-layer-section-head--group">
                         <button
-                          key={opt.name}
                           type="button"
-                          className={`vp-chip vp-chip--radio ${selectedIdx === idx ? "is-on" : ""}`}
-                          onClick={() => handleSelectVariantOption(group.name, idx)}
+                          className="vp-layer-collapse-btn"
+                          onClick={() => handleToggleGroupCollapse(group.id)}
                         >
-                          <div className={`vp-chip-radio ${selectedIdx === idx ? "is-checked" : ""}`}>
-                            {selectedIdx === idx && <div className="vp-chip-dot" />}
-                          </div>
-                          <span>{opt.name}</span>
+                          {isCollapsed
+                            ? <ChevronRight className="w-2.5 h-2.5" />
+                            : <ChevronDown className="w-2.5 h-2.5" />
+                          }
                         </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Locked layers — compact, always-on indicators */}
-              {psdData.locked.length > 0 && (
-                <div className="vp-strip-section vp-strip-section--locked">
-                  {(psdData.toggleable.length > 0 || psdData.variantGroups.length > 0) && (
-                    <div className="vp-strip-divider" />
-                  )}
-                  <div className="vp-strip-label">
-                    <Lock className="w-2.5 h-2.5" />
-                    <span>Locked</span>
-                  </div>
-                  <div className="vp-strip-items">
-                    {psdData.locked.map((layer) => (
-                      <div key={layer.name} className="vp-chip vp-chip--locked">
-                        <Lock className="w-2 h-2" />
-                        <span>{layer.name}</span>
+                        <button
+                          type="button"
+                          className={`vp-layer-group-check ${allOn ? "is-all" : someOn ? "is-partial" : ""}`}
+                          onClick={() => allOn ? handleDisableAllInGroup(group.id) : handleEnableAllInGroup(group.id)}
+                          title={allOn ? "Uncheck all" : "Check all"}
+                        >
+                          {allOn ? (
+                            <Check className="vp-layer-group-check-icon" />
+                          ) : (
+                            <div className="vp-layer-group-check-inner" />
+                          )}
+                        </button>
+                        <span className="vp-layer-section-name">{group.name}</span>
+                        <span className="vp-layer-section-count">{enabledCount}/{children.length}</span>
+                        <div className="vp-layer-group-actions">
+                          <button type="button" className="vp-layer-group-act" onClick={() => handleEnableAllInGroup(group.id)} title="Enable all">All</button>
+                          <button type="button" className="vp-layer-group-act" onClick={() => handleDisableAllInGroup(group.id)} title="Disable all">None</button>
+                        </div>
                       </div>
-                    ))}
+                      {!isCollapsed && children.map((child) => {
+                        const isOn = layerVisibility[child.id] ?? child.visible;
+                        return (
+                          <button
+                            key={child.id}
+                            type="button"
+                            className={`vp-layer-row vp-layer-row--child ${isOn ? "is-on" : ""}`}
+                            onClick={() => handleToggleLayerById(child.id)}
+                            onDoubleClick={() => handleSoloLayer(child.id)}
+                            title="Click to toggle, double-click to solo"
+                          >
+                            <div className="vp-layer-check">
+                              <Check className="vp-layer-check-icon" />
+                            </div>
+                            <span className="vp-layer-name">{child.name}</span>
+                            {child.opacity < 1 && (
+                              <span className="vp-layer-opacity">{Math.round(child.opacity * 100)}%</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+
+                {/* Locked / base layers section */}
+                {layerSections.locked.length > 0 && (
+                  <div className="vp-layer-section vp-layer-section--locked">
+                    <div className="vp-layer-section-head">
+                      <Lock className="w-2.5 h-2.5" />
+                      <span>Base Layers</span>
+                      <span className="vp-layer-section-count">{layerSections.locked.length}</span>
+                    </div>
+                    {layerSections.locked.map((layer) => {
+                      const isOn = layerVisibility[layer.id] ?? layer.visible;
+                      return (
+                        <button
+                          key={layer.id}
+                          type="button"
+                          className={`vp-layer-row vp-layer-row--locked ${isOn ? "is-on" : ""}`}
+                          onClick={() => handleToggleLayerById(layer.id)}
+                        >
+                          <div className="vp-layer-check">
+                            <Check className="vp-layer-check-icon" />
+                          </div>
+                          <span className="vp-layer-name">{layer.name}</span>
+                          <Lock className="w-2.5 h-2.5 vp-layer-lock-icon" />
+                        </button>
+                      );
+                    })}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
         </div>
