@@ -63,6 +63,9 @@ export default function Shell() {
   // Settings change counter — bumped when settings are saved so children re-read prefs
   const [settingsVersion, setSettingsVersion] = useState(0);
 
+  // Map of tabId -> pane element for focus management
+  const paneRefs = useRef(new Map());
+
   // Hotkeys for new-tab shortcuts (reloaded when settings change)
   const [hotkeys, setHotkeys] = useState(() => {
     const prefs = loadPrefs();
@@ -118,13 +121,13 @@ export default function Shell() {
 
   // Open a new tab (or focus existing for same workspace)
   const openTab = useCallback((type, label, workspaceId, state, defaultMode) => {
-    let tabIdToActivate = null;
-
     setTabs((prev) => {
       const existing = workspaceId ? prev.find((t) => t.workspaceId === workspaceId) : null;
       if (existing) {
-        tabIdToActivate = existing.id;
-        return prev;
+        // Tab already exists — just activate it directly
+        pendingActiveRef.current = existing.id;
+        // Force a state update so the useEffect fires
+        return [...prev];
       }
 
       const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
@@ -135,20 +138,16 @@ export default function Shell() {
         workspaceId: workspaceId || null,
         closable: true,
         defaultMode: defaultMode || null,
+        initialState: state || null,
       };
 
       if (state && type === "variants") {
         setVariantStates((s) => ({ ...s, [newTab.id]: state }));
       }
 
-      tabIdToActivate = newTab.id;
+      pendingActiveRef.current = newTab.id;
       return [...prev, newTab];
     });
-
-    // Activate after setTabs completes to avoid batching issues
-    if (tabIdToActivate) {
-      pendingActiveRef.current = tabIdToActivate;
-    }
   }, []);
 
   // Flush pending tab activation after tabs state updates
@@ -236,10 +235,12 @@ export default function Shell() {
   }, [openTab]);
 
   const handleOpenWorkspace = useCallback((ws) => {
+    if (!ws) return;
     const defaultMode = ws?.state?.textureMode || "livery";
-    openTab(ws.page, ws.name, ws.id, ws.state, defaultMode);
+    const page = ws.page === "variants" ? "variants" : "viewer";
+    openTab(page, ws.name, ws.id, ws.state, defaultMode);
     setActiveWorkspaceId(ws.id);
-    addRecent(ws.id, ws.name, ws.page);
+    addRecent(ws.id, ws.name, page);
   }, [openTab]);
 
   // Variant state per-tab
@@ -265,6 +266,20 @@ export default function Shell() {
   const handleSettingsSaved = useCallback(() => {
     setSettingsVersion((v) => v + 1);
   }, []);
+
+  // If focus lives inside a pane that is being hidden, blur it to avoid aria-hidden conflict
+  useEffect(() => {
+    const activeEl = document.activeElement;
+    if (!(activeEl instanceof Element)) return;
+
+    for (const [tabId, el] of paneRefs.current.entries()) {
+      if (tabId === activeTabId) continue;
+      if (el?.contains(activeEl)) {
+        activeEl.blur();
+        break;
+      }
+    }
+  }, [activeTabId]);
 
   // Global hotkeys for opening new mode tabs
   useEffect(() => {
@@ -472,6 +487,11 @@ export default function Shell() {
                   key={tab.id}
                   className={`shell-pane ${isActive ? "is-visible" : "is-hidden"}`}
                   aria-hidden={!isActive}
+                  inert={!isActive}
+                  ref={(node) => {
+                    if (node) paneRefs.current.set(tab.id, node);
+                    else paneRefs.current.delete(tab.id);
+                  }}
                 >
                   {tab.type === "home" && (
                     <HomePage onNavigate={handleNavigate} onOpenWorkspace={handleOpenWorkspace} />
@@ -481,6 +501,7 @@ export default function Shell() {
                       shellTab={tab}
                       isActive={isActive}
                       defaultTextureMode={tab.defaultMode || "livery"}
+                      initialState={tab.initialState || null}
                       onRenameTab={(label) => renameTab(tab.id, label)}
                       settingsVersion={settingsVersion}
                     />
