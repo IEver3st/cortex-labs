@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
-import { AlertTriangle, ArrowUpRight, Car, Camera, ChevronRight, Eye, EyeOff, History, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import appMeta from "../package.json";
@@ -14,7 +14,8 @@ import Onboarding from "./components/Onboarding";
 // SettingsMenu now rendered by Shell
 import Viewer from "./components/Viewer";
 import DualModelViewer from "./components/DualModelViewer";
-import { loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession, loadSession, clearSession } from "./lib/prefs";
+import { loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession } from "./lib/prefs";
+import { updateWorkspace } from "./lib/workspace";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_ACTIONS,
@@ -98,7 +99,7 @@ function getFileLabel(path, emptyLabel) {
 
 
 
-function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery" }) {
+function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null }) {
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef({ primary: null, window: null });
   const isTauriRuntime =
@@ -179,8 +180,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const bootStartRef = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
   const bootTimerRef = useRef(null);
 
-  const [pendingSession, setPendingSession] = useState(() => loadSession());
-  const [sessionPromptDismissed, setSessionPromptDismissed] = useState(false);
+  const initialStateRestoredRef = useRef(false);
 
   // Generate Preview state
   const [generatingPreview, setGeneratingPreview] = useState(false);
@@ -300,7 +300,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
     sessionSaveTimerRef.current = setTimeout(() => {
-      saveSession({
+      const stateSnapshot = {
         textureMode,
         modelPath: modelPath || "",
         texturePath: texturePath || "",
@@ -317,7 +317,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         dualModelBPos,
         dualSelectedSlot,
         dualTextureMode,
-      });
+      };
+      // Save to legacy session store
+      saveSession(stateSnapshot);
+      // Also persist to workspace so recent projects can restore full state
+      if (shellTab?.workspaceId) {
+        try {
+          updateWorkspace(shellTab.workspaceId, { state: stateSnapshot });
+        } catch {}
+      }
     }, 1000);
 
     return () => {
@@ -329,6 +337,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     bodyColor, backgroundColor, liveryExteriorOnly,
     dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
     dualModelAPos, dualModelBPos, dualSelectedSlot, dualTextureMode,
+    shellTab,
   ]);
 
   const scheduleReload = (kind) => {
@@ -454,44 +463,42 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     [applyAndPersistDefaults],
   );
 
-  const restoreSession = useCallback(async (session) => {
-    if (!session) return;
+  const restoreState = useCallback(async (state) => {
+    if (!state) return;
 
-    // Helper: check if a file still exists on disk (silently returns false on error)
     const fileOk = async (p) => {
       if (!p) return false;
       try { return await fsExists(p); } catch { return false; }
     };
 
     // Restore non-path settings immediately
-    if (session.textureMode) setTextureMode(session.textureMode);
-    if (typeof session.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(session.windowTemplateEnabled);
-    if (session.bodyColor) setBodyColor(session.bodyColor);
-    if (session.backgroundColor) setBackgroundColor(session.backgroundColor);
-    if (typeof session.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(session.liveryExteriorOnly);
-    if (session.dualSelectedSlot) setDualSelectedSlot(session.dualSelectedSlot);
-    if (session.dualTextureMode) setDualTextureMode(session.dualTextureMode);
-    if (session.dualModelAPos) setDualModelAPos(session.dualModelAPos);
-    if (session.dualModelBPos) setDualModelBPos(session.dualModelBPos);
+    if (state.textureMode) setTextureMode(state.textureMode);
+    if (typeof state.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(state.windowTemplateEnabled);
+    if (state.bodyColor) setBodyColor(state.bodyColor);
+    if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
+    if (typeof state.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(state.liveryExteriorOnly);
+    if (state.dualSelectedSlot) setDualSelectedSlot(state.dualSelectedSlot);
+    if (state.dualTextureMode) setDualTextureMode(state.dualTextureMode);
+    if (state.dualModelAPos) setDualModelAPos(state.dualModelAPos);
+    if (state.dualModelBPos) setDualModelBPos(state.dualModelBPos);
 
     // Validate file paths before restoring — skip stale references
-    if (session.modelPath && (await fileOk(session.modelPath))) loadModel(session.modelPath);
-    if (session.texturePath && (await fileOk(session.texturePath))) setTexturePath(session.texturePath);
-    if (session.windowTexturePath && (await fileOk(session.windowTexturePath))) setWindowTexturePath(session.windowTexturePath);
-    if (session.dualModelAPath && (await fileOk(session.dualModelAPath))) setDualModelAPath(session.dualModelAPath);
-    if (session.dualModelBPath && (await fileOk(session.dualModelBPath))) setDualModelBPath(session.dualModelBPath);
-    if (session.dualTextureAPath && (await fileOk(session.dualTextureAPath))) setDualTextureAPath(session.dualTextureAPath);
-    if (session.dualTextureBPath && (await fileOk(session.dualTextureBPath))) setDualTextureBPath(session.dualTextureBPath);
-
-    setSessionPromptDismissed(true);
-    setPendingSession(null);
+    if (state.modelPath && (await fileOk(state.modelPath))) loadModel(state.modelPath);
+    if (state.texturePath && (await fileOk(state.texturePath))) setTexturePath(state.texturePath);
+    if (state.windowTexturePath && (await fileOk(state.windowTexturePath))) setWindowTexturePath(state.windowTexturePath);
+    if (state.dualModelAPath && (await fileOk(state.dualModelAPath))) setDualModelAPath(state.dualModelAPath);
+    if (state.dualModelBPath && (await fileOk(state.dualModelBPath))) setDualModelBPath(state.dualModelBPath);
+    if (state.dualTextureAPath && (await fileOk(state.dualTextureAPath))) setDualTextureAPath(state.dualTextureAPath);
+    if (state.dualTextureBPath && (await fileOk(state.dualTextureBPath))) setDualTextureBPath(state.dualTextureBPath);
   }, [loadModel]);
 
-  const dismissSession = useCallback(() => {
-    setSessionPromptDismissed(true);
-    setPendingSession(null);
-    clearSession();
-  }, []);
+  // Auto-restore workspace state from initialState prop (passed by Shell from workspace)
+  useEffect(() => {
+    if (initialStateRestoredRef.current) return;
+    if (!initialState) return;
+    initialStateRestoredRef.current = true;
+    restoreState(initialState);
+  }, [initialState, restoreState]);
 
   const selectModel = async () => {
     if (!isTauriRuntime) {
@@ -1951,57 +1958,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         ) : null}
       </AnimatePresence>
 
-      {/* Session Restore Prompt */}
-      <AnimatePresence>
-        {!isBooting && !showOnboarding && pendingSession && !sessionPromptDismissed ? (
-          <motion.div
-            className="session-prompt-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.25 }}
-          >
-            <motion.div
-              className="session-prompt"
-              initial={{ opacity: 0, y: 20, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 12, scale: 0.96 }}
-              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <div className="session-prompt-icon-row">
-                <History className="session-prompt-icon" />
-              </div>
-              <div className="session-prompt-title">Previous Session Detected</div>
-              <div className="session-prompt-description">
-                {pendingSession.textureMode === "multi"
-                  ? `You were working in Multi-Model mode${pendingSession.dualModelAPath ? ` with ${pendingSession.dualModelAPath.split(/[\\/]/).pop()}` : ""}${pendingSession.dualModelBPath ? ` + ${pendingSession.dualModelBPath.split(/[\\/]/).pop()}` : ""}.`
-                  : `You had ${pendingSession.modelPath ? pendingSession.modelPath.split(/[\\/]/).pop() : "a model"} loaded${pendingSession.texturePath ? ` with a ${pendingSession.textureMode || "texture"} template` : ""}.`}
-              </div>
-              <div className="session-prompt-meta">
-                {pendingSession.savedAt
-                  ? `Saved ${new Date(pendingSession.savedAt).toLocaleString()}`
-                  : ""}
-              </div>
-              <div className="session-prompt-actions">
-                <button
-                  type="button"
-                  className="session-prompt-btn session-prompt-btn--dismiss"
-                  onClick={dismissSession}
-                >
-                  Start Fresh
-                </button>
-                <button
-                  type="button"
-                  className="session-prompt-btn session-prompt-btn--restore"
-                  onClick={() => restoreSession(pendingSession)}
-                >
-                  Continue Session
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+      {/* Session prompt removed — workspace state is now auto-restored via initialState prop */}
 
       {/* Generate Preview — zoom prompt */}
       <AnimatePresence>
