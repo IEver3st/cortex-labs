@@ -1,111 +1,120 @@
-## Updated Studio UI
+## Cortex Studio v3.1
 ![Cortex Studio UI](https://cdn.discordapp.com/attachments/698747360536297524/1469447401285746709/image.png?ex=6987b109&is=69865f89&hm=e7216855c670021fe97740c186e65dd54fe9145c71b998bf66ccd559f7c2f3dd&)
-# Tauri + React
-
-Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/releases/tag/v3.0.0)!
-
-## Model Support
-
-- `.yft` (FiveM/GTA V): converted to RenderWare `.dff` via a bundled converter sidecar and parsed with `dff-loader`.
-- `.obj` is intentionally unsupported: out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations. OBJ files will never be supported.
-
-See:
-- `THIRD_PARTY_NOTICES.md`
 
 # Cortex Studio
+### The Ultimate Livery Development Environment for GTA V / FiveM
 
-Cortex Studio is a real-time livery previewer for GTA V / FiveM vehicle assets.
-Its purpose is simple: let livery creators see texture changes to a 3D model instantly while they work.
-It is free forever and fully open source under the MIT license.
+Cortex Studio is a high-performance, real-time 3D livery previewer and development environment. It bridges the gap between your design software (Photoshop, GIMP, etc.) and the game engine, allowing for an instantaneous, iterative workflow.
 
-Built with Tauri v2, React, Vite, and Three.js.
+Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/releases/latest)!
 
-## Why Cortex Studio
+---
 
-Livery work is iterative. Exporting, loading, and reloading in-game is slow and breaks the flow.
-Cortex Studio keeps your livery work live so you can focus on design instead of tooling.
+## New: PSD Variant Builder
+The centerpiece of v3.1 is the **Variant Builder**, a dedicated environment for managing complex livery projects with multiple variants.
+
+- **PSD Native Workflow:** Load your Photoshop files directly. Cortex Studio parses layers and groups with full hierarchy support.
+- **Variant Management:** Create, duplicate, and rename variants. Each variant stores its own unique set of layer visibilities.
+- **IDE-Style Interface:** A professional layout featuring a variant sidebar, dual 3D/2D preview panes, and a comprehensive layer panel.
+- **Solo & Group Controls:** Quickly isolate layers or toggle entire groups.
+- **Batch Export:** Export all your variants at once to high-quality PNGs (up to 4K resolution) into a dedicated output folder.
+- **Real-time Compositing:** As you toggle layers in the panel, the 3D model updates instantly with the new composited texture.
+
+---
 
 ## Key Features
 
-- Live texture reloading on file save (Tauri file watcher)
-- Load GTA/FiveM vehicle assets and preview materials in 3D
-- Livery mode auto-targets carpaint/livery materials by name
-- Quick camera presets and center action
-- Drag-and-drop model loading
-- Color controls for body and background
-- Fully local, no cloud dependency
+- **Live Texture Reloading:** Uses a native file watcher to detect saves in your design software and reloads textures in milliseconds.
+- **Four Powerful Viewing Modes:**
+    - **Livery Mode:** Intelligently auto-targets vehicle carpaint and livery materials.
+    - **All Textures:** Applies the loaded texture to every mesh on the model (great for checking templates).
+    - **EUP Mode:** Specialized support for Emergency Uniform Packs and clothing models (`.ydd`).
+    - **Multi-Model Viewer:** Compare two models side-by-side with independent texture controls.
+- **Native GTA V Support:** Direct parsing of `.yft` (vehicles) and `.ydd` (clothing) files.
+- **Full Camera Control:** Quick presets (Front, Side, 3/4, Top), center action, and optional WASD flight controls.
+- **Material Controls:** Fine-tune body color, background color, glossiness, and light intensity to see how your design looks in different conditions.
+- **Fully Local & Private:** No cloud dependencies, no accounts, no data leaves your machine.
+- **Tauri v2 Core:** Built on the latest Tauri framework for maximum performance and a tiny footprint.
+
+---
 
 ## Supported Files
 
-Models:
-- `.yft` (GTA V/FiveM Vehicles)
-- `.ydd` (GTA V/Fivem Clothing)
+### Models
+- **.yft** (GTA V/FiveM Vehicles)
+- **.ydd** (GTA V/FiveM Clothing/EUP)
 
-Textures:
-- `.png`, `.jpg`, `.jpeg`, `.tga`, `.dds`, `.bmp`, `.gif`, `.tiff`, `.webp`, `.psd`
+### Textures
+- **.psd** (Photoshop - Recommended for Variants)
+- **.png, .jpg, .tga, .dds, .bmp, .webp, .tiff**
 
-## How It Works
+---
 
-1. Load a model using the file picker or drag-and-drop.
-2. Select a texture file for your livery.
-3. Cortex Studio watches the texture file and reloads it on every save.
-4. Livery mode tries to auto-detect the correct material target using mesh/material names.
-5. Adjust body/background colors and camera presets to inspect details quickly.
+## Why Cortex Studio
+
+Livery work is iterative. In-game testing is slow and breaks your flow. Cortex Studio keeps your preview live so you can focus on design and iteration instead of constant exporting, loading, and reloading.
+
+---
+
+## Limitations (By Design)
+
+* **Not a material editor.** Cortex Studio doesn’t aim to replace a full material/shader workflow or in-game tuning.
+* **Preview-focused.** It’s built to **view liveries/textures in real time** on a 3D model—fast iteration, quick inspection, and instant feedback.
+* **Asset fidelity depends on the source files.** What you see is constrained by the model/material setup and naming conventions in the asset.
+
+---
+
+## Project Structure
+
+- `src/` - React UI, Three.js viewer, and logic.
+- `src/components/VariantsPage.jsx` - The new PSD Variant Builder.
+- `src/lib/yft.js` - High-performance YFT/YDD parser.
+- `src-tauri/` - Rust-based Tauri v2 backend for file system access and performance.
+
+---
 
 ## Getting Started
 
 ### Prerequisites
+- **Bun** (Fastest JS runtime & package manager)
+- **Rust toolchain** (Required for building the Tauri app)
 
-- Bun (required for dependencies and scripts)
-- Rust toolchain (for Tauri v2)
-- Tauri CLI v2 (`bunx tauri` or `cargo install tauri-cli`)
-
-### Install
-
+### Installation
 ```bash
 bun install
 ```
 
-### Run (full app)
-
+### Development
+To run the full application with native features (recommended):
 ```bash
 bun run tauri dev
 ```
 
-### UI-only (limited features)
-
+To run just the UI (limited features, no file system access):
 ```bash
 bun run dev
 ```
 
-Note: file dialogs and live file watching require the Tauri app.
-
-### Build
-
+### Building
 ```bash
 bun run tauri build
 ```
 
+---
+
 ## Workflow Tips
 
-- Keep your livery texture open in your editor and save frequently.
-- Use Livery mode when working with carpaint, sign, or decal materials.
-- Use the camera presets (Front, Side, 3/4, Top) and Center for quick checks.
-- If a material is not detected, switch to Everything mode or load a `.clmesh` cache.
+- **The Variant Sidebar:** Use it to create "Night", "High-Vis", or "Stealth" versions of your liveries in one project file.
+- **Double-Click Layers:** In the Variant Builder, double-click a layer in the panel to "Solo" it.
+- **Alt + 1-4:** Use these hotkeys to quickly switch between viewing modes.
+- **Custom Hotkeys:** Check the Settings menu to customize every action to your liking.
 
-## Project Structure (high level)
+---
 
-- `src/` React UI and viewer
-- `src/components/Viewer.jsx` Three.js renderer and loaders
-- `src/lib/yft.js` YFT parser
-- `src-tauri/` Tauri v2 backend and file watchers
-- `tools/` optional utilities for YFT workflows
+## ⚖ License
+MIT. Free forever. Developed with ❤️ for the GTA V modding community.
 
-## License
-
-MIT. Free forever. Contributions are welcome.
+---
 
 ## Contributing
-
-Open an issue or submit a PR. If you change file formats or loaders, include a small sample asset and steps to reproduce.
-
+Contributions are welcome! Whether it is a bug fix, a new feature, or improved documentation, feel free to open an issue or a PR.

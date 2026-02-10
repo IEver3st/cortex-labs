@@ -7,7 +7,7 @@ import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
 import { AlertTriangle, ArrowUpRight, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import appMeta from "../package.json";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
@@ -215,7 +215,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [settingsVersion]);
 
   const isBooting = !booted;
-  const modelExtensions = textureMode === "eup" ? ["yft", "clmesh", "dff", "ydd"] : ["yft", "clmesh", "dff"];
+  const modelExtensions =
+    textureMode === "eup" || textureMode === "multi"
+      ? ["yft", "clmesh", "dff", "ydd"]
+      : ["yft", "clmesh", "dff"];
   const modelDropLabel = modelExtensions.map((ext) => `.${ext}`).join(" / ");
 
   const loadModel = useCallback(
@@ -472,7 +475,16 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     };
 
     // Restore non-path settings immediately
-    if (state.textureMode) setTextureMode(state.textureMode);
+    let resolvedTextureMode = state.textureMode;
+    if (!resolvedTextureMode && state.openFile) {
+      const openFileLower = state.openFile.toLowerCase();
+      if (openFileLower.endsWith(".ydd")) {
+        resolvedTextureMode = "eup";
+      } else if (openFileLower.endsWith(".yft")) {
+        resolvedTextureMode = "livery";
+      }
+    }
+    if (resolvedTextureMode) setTextureMode(resolvedTextureMode);
     if (typeof state.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(state.windowTemplateEnabled);
     if (state.bodyColor) setBodyColor(state.bodyColor);
     if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
@@ -483,7 +495,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     if (state.dualModelBPos) setDualModelBPos(state.dualModelBPos);
 
     // Validate file paths before restoring — skip stale references
-    if (state.modelPath && (await fileOk(state.modelPath))) loadModel(state.modelPath);
+    const initialModelPath = state.modelPath || state.openFile || "";
+    if (initialModelPath && (await fileOk(initialModelPath))) loadModel(initialModelPath);
     if (state.texturePath && (await fileOk(state.texturePath))) setTexturePath(state.texturePath);
     if (state.windowTexturePath && (await fileOk(state.windowTexturePath))) setWindowTexturePath(state.windowTexturePath);
     if (state.dualModelAPath && (await fileOk(state.dualModelAPath))) setDualModelAPath(state.dualModelAPath);
@@ -511,7 +524,17 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       });
       setDialogError("");
       if (typeof selected === "string") {
-        await loadModel(selected);
+        if (textureMode === "multi") {
+          if (dualSelectedSlot === "A") {
+            setDualModelAError("");
+            setDualModelAPath(selected);
+          } else {
+            setDualModelBError("");
+            setDualModelBPath(selected);
+          }
+        } else {
+          await loadModel(selected);
+        }
       }
     } catch (error) {
       setDialogError("Dialog permission blocked. Check Tauri capabilities.");
@@ -606,29 +629,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       console.error(error);
     }
   };
-
-  const loadModelRef = useRef(loadModel);
-  loadModelRef.current = loadModel;
-  useEffect(() => {
-    if (!isTauriRuntime) return;
-    let unlisten;
-    let cancelled = false;
-    listen("file-open", (event) => {
-      const filePath = event.payload;
-      if (typeof filePath !== "string" || !filePath) return;
-      const lower = filePath.toLowerCase();
-      if (lower.endsWith(".yft") || lower.endsWith(".ydd") || lower.endsWith(".dff") || lower.endsWith(".clmesh")) {
-        loadModelRef.current(filePath);
-      }
-    }).then((fn) => {
-      if (cancelled) { fn(); }
-      else { unlisten = fn; }
-    });
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, [isTauriRuntime]);
 
   const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
   const textureExtsDual = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai"];
@@ -762,11 +762,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     // Create a subfolder named after the model to keep exports tidy
     const modelFolder = `${folder}/${modelName}`;
+    let outputFolder = modelFolder;
     if (isTauriRuntime) {
       try { await invoke("ensure_dir", { path: modelFolder }); } catch {
         // If ensure_dir command doesn't exist, try mkdir via writeFile workaround
         // Tauri's writeFile will create the file, the folder must exist.
         // Fall back to the base folder if subfolder creation fails.
+        outputFolder = folder;
       }
     }
 
@@ -776,7 +778,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     setGeneratingPreview(true);
     setPreviewProgress({ current: 0, total: presetKeys.length, preset: "" });
-    setPreviewOutputPath(modelFolder);
+    setPreviewOutputPath(outputFolder);
 
     // Wait a frame for grid to disappear if it was on
     if (gridWasOn) await new Promise((r) => setTimeout(r, 100));
@@ -802,17 +804,19 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
         const fileName = `${modelName}_${preset}.png`;
         // Try model subfolder first, fall back to base folder
-        const filePath = `${modelFolder}/${fileName}`;
+        const filePath = `${outputFolder}/${fileName}`;
         if (isTauriRuntime) {
           try {
             await writeFile(filePath, bytes);
           } catch {
             // Subfolder might not exist — write to base folder instead
             await writeFile(`${folder}/${fileName}`, bytes);
+            outputFolder = folder;
           }
         }
       }
 
+      setPreviewOutputPath(outputFolder);
       setPreviewProgress({ current: presetKeys.length, total: presetKeys.length, preset: "Complete" });
       setGeneratingPreview(false);
       setPreviewComplete(true);
@@ -854,10 +858,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     const files = Array.from(event.dataTransfer?.files || []);
     const objFile = files.find((file) => file.name?.toLowerCase()?.endsWith(".obj"));
-    const modelFile = files.find((file) => {
+    const modelFiles = files.filter((file) => {
       const name = file.name?.toLowerCase();
       return modelExtensions.some((ext) => name?.endsWith(`.${ext}`));
     });
+    const modelFile = modelFiles[0];
 
     if (!modelFile) {
       setDialogError(
@@ -874,6 +879,31 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     }
 
     setDialogError("");
+
+    if (textureMode === "multi") {
+      if (modelFiles.length >= 2) {
+        const [first, second] = modelFiles;
+        if (!first?.path || !second?.path) {
+          setDialogError("Unable to read dropped model paths.");
+          return;
+        }
+        setDualModelAError("");
+        setDualModelBError("");
+        setDualModelAPath(first.path);
+        setDualModelBPath(second.path);
+        return;
+      }
+
+      if (dualSelectedSlot === "A") {
+        setDualModelAError("");
+        setDualModelAPath(modelFile.path);
+      } else {
+        setDualModelBError("");
+        setDualModelBPath(modelFile.path);
+      }
+      return;
+    }
+
     loadModel(modelFile.path);
   };
 
@@ -1014,6 +1044,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       style={{ pointerEvents: isBooting ? "none" : "auto" }}
     >
         <div className="viewer-toolbar-bar">
+          <div className="viewer-toolbar-bar-spacer" />
+
           {textureMode === "multi" ? (
             <div className="titlebar-inline-controls">
               <button
@@ -1085,8 +1117,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             </div>
           )}
 
-          <div className="viewer-toolbar-bar-spacer" />
-
           <button
             type="button"
             className="titlebar-btn titlebar-panel-toggle"
@@ -1113,24 +1143,26 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           <span>Last update: {lastUpdate}</span>
         </div>
       }>
-          <CyberSection
-            title="Model"
-            caption={modelLabel}
-            open={panelOpen.model}
-            onToggle={() => togglePanel("model")}
-            contentId="panel-model"
-            icon={Car}
-            color="blue"
-          >
-            <div className="flex flex-col gap-2">
-              <div className="flex gap-2">
-                <CyberButton onClick={selectModel} variant="blue">
-                  Select Model
-                </CyberButton>
+          {textureMode !== "multi" ? (
+            <CyberSection
+              title="Model"
+              caption={modelLabel}
+              open={panelOpen.model}
+              onToggle={() => togglePanel("model")}
+              contentId="panel-model"
+              icon={Car}
+              color="blue"
+            >
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <CyberButton onClick={selectModel} variant="blue">
+                    Select Model
+                  </CyberButton>
+                </div>
+                {modelLoading ? <div className="text-[10px] text-[#7dd3fc] animate-pulse">Initializing construct...</div> : null}
               </div>
-              {modelLoading ? <div className="text-[10px] text-[#7dd3fc] animate-pulse">Initializing construct...</div> : null}
-            </div>
-          </CyberSection>
+            </CyberSection>
+          ) : null}
 
           {textureMode === "livery" ? (
             <div className="space-y-4" id="mode-panel-livery" role="tabpanel">
@@ -2105,7 +2137,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   className="gen-preview-btn gen-preview-btn--open"
                   onClick={async () => {
                     if (isTauriRuntime && previewOutputPath) {
-                      try { await openUrl(previewOutputPath); } catch {}
+                      try {
+                        await openPath(previewOutputPath);
+                      } catch {
+                        console.error("Failed to open preview folder:", previewOutputPath);
+                      }
                     }
                     setPreviewComplete(false);
                   }}
