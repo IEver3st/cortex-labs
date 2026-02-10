@@ -775,7 +775,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             )}
 
             {/* 2D Texture Preview */}
-            {!previewCollapsed && (
+            {!previewCollapsed && (psdPath || modelPath) && (
               <div
                 className="vp-texture-pane"
                 style={{
