@@ -3792,6 +3792,11 @@ label {
   justify-content: center;
 }
 
+.home-body.is-single .home-left {
+  flex: 0 1 760px;
+  padding-right: 0;
+}
+
 .home-left {
   flex: 1;
   display: flex;

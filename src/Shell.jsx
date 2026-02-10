@@ -537,9 +537,6 @@ export default function Shell() {
                       onNavigate={handleNavigate}
                       onOpenWorkspace={handleOpenWorkspace}
                       settingsVersion={settingsVersion}
-                      isOnboarding={showOnboarding}
-                      isActive={isActive}
-                      onOnboardingComplete={handleOnboardingComplete}
                     />
                   )}
                   {tab.type === "viewer" && (

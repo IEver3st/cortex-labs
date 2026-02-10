@@ -25,6 +25,7 @@ const BUILT_IN_DEFAULTS = {
   showHints: true,
   hideRotText: false,
   showGrid: false,
+  showRecents: true,
   lightIntensity: 1.0,
   glossiness: 0.5,
   windowControlsStyle: "windows",
@@ -384,49 +385,71 @@ export default function SettingsMenu({ onSettingsSaved }) {
                                     </button>
                                   </div>
 
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">Interactive Hints</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">Show on-screen control reminders</div>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className={`settings-toggle ${draft.showHints ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, showHints: !p.showHints }))}
-                                    >
-                                      <span className="settings-toggle-dot" />
-                                    </button>
-                                  </div>
-                                </section>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">Hide text labels</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.hideRotText ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, hideRotText: !p.hideRotText }))}
+                                    aria-pressed={draft.hideRotText}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+                              </section>
+                            ) : null}
 
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Asset Loading</div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">Exterior Only (Livery)</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">Hide interior/wheels to optimize view</div>
+                            {/* ─── Display (UI Scale) ─── */}
+                            {activeSection === "display" ? (
+                              <section className="settings-panel" id="settings-panel-display" aria-label="Display">
+                                <div className="settings-panel-title">Interface scaling</div>
+                                <div className="settings-row">
+                                  <div className="settings-row-label">
+                                    <div className="flex items-center gap-2">
+                                      <Monitor className="h-3 w-3 opacity-60" />
+                                      <span>UI Scale</span>
                                     </div>
-                                    <button
-                                      type="button"
-                                      className={`settings-toggle ${draft.liveryExteriorOnly ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, liveryExteriorOnly: !p.liveryExteriorOnly }))}
-                                    >
-                                      <span className="settings-toggle-dot" />
-                                    </button>
                                   </div>
-
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">Reference Grid</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">Render geometric floor plane</div>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className={`settings-toggle ${draft.showGrid ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
-                                    >
-                                      <span className="settings-toggle-dot" />
-                                    </button>
+                                  <div className="settings-scale-control">
+                                    <input
+                                      type="range"
+                                      className="settings-slider"
+                                      min={0.8}
+                                      max={1.4}
+                                      step={0.05}
+                                      value={draft.uiScale ?? 1.0}
+                                      onChange={(e) => setDraft((p) => ({ ...p, uiScale: parseFloat(e.target.value) }))}
+                                    />
+                                    <span className="settings-scale-value">{Math.round((draft.uiScale ?? 1.0) * 100)}%</span>
+                                  </div>
+                                </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-note">
+                                    Adjusts the overall UI text and element sizes. Default is 100%.
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="settings-mini"
+                                  style={{ marginTop: 4 }}
+                                  onClick={() => setDraft((p) => ({ ...p, uiScale: 1.0 }))}
+                                >
+                                  Reset to 100%
+                                </button>
+                                <div className="settings-row" style={{ marginTop: 16 }}>
+                                  <div className="settings-row-label">Show recent sessions</div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.showRecents ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, showRecents: !p.showRecents }))}
+                                    aria-pressed={draft.showRecents}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+                                <div className="settings-row">
+                                  <div className="settings-row-note">
+                                    Hide the Recent list on the Home page when you want a cleaner launch screen.
                                   </div>
                                 </section>
                               </div>

@@ -367,6 +367,52 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     setEditingName(null);
   }, []);
 
+  const handleEnableAllToggleable = useCallback(() => {
+    if (!psdData?.toggleable?.length) return;
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== selectedVariantId) return v;
+        const nextToggleable = { ...v.toggleable };
+        for (const layer of psdData.toggleable) {
+          nextToggleable[layer.name] = true;
+        }
+        return { ...v, toggleable: nextToggleable };
+      })
+    );
+  }, [psdData, selectedVariantId]);
+
+  const handleDisableAllToggleable = useCallback(() => {
+    if (!psdData?.toggleable?.length) return;
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== selectedVariantId) return v;
+        const nextToggleable = { ...v.toggleable };
+        for (const layer of psdData.toggleable) {
+          nextToggleable[layer.name] = false;
+        }
+        return { ...v, toggleable: nextToggleable };
+      })
+    );
+  }, [psdData, selectedVariantId]);
+
+  const handleResetLayerDefaults = useCallback(() => {
+    if (!psdData) return;
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== selectedVariantId) return v;
+        const nextToggleable = { ...v.toggleable };
+        for (const layer of psdData.toggleable || []) {
+          nextToggleable[layer.name] = layer.enabled;
+        }
+        const nextSelections = { ...v.variantSelections };
+        for (const group of psdData.variantGroups || []) {
+          nextSelections[group.name] = Math.max(0, group.selectedIndex ?? 0);
+        }
+        return { ...v, toggleable: nextToggleable, variantSelections: nextSelections };
+      })
+    );
+  }, [psdData, selectedVariantId]);
+
   // Toggle a layer by its path-based ID
   const handleToggleLayerById = useCallback((layerId) => {
     setLayerVisibility((prev) => ({
@@ -528,39 +574,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
 
   const psdFileName = psdPath ? psdPath.split(/[\\/]/).pop() : "";
   const modelFileName = modelPath ? modelPath.split(/[\\/]/).pop() : "";
-  const hasLayers = psdData && (psdData.allLayers?.length > 0);
-
-  // Organize layers into sections for the panel.
-  // ag-psd order: children[0]=bottommost, children[last]=topmost.
-  // We reverse for display so topmost layers appear first (matching Photoshop).
-  const layerSections = useMemo(() => {
-    if (!psdData?.allLayers) return { topLevel: [], groups: [], locked: [] };
-    const topLevel = [];
-    const groups = [];
-    const locked = [];
-    // Iterate top-level layers in reverse for Photoshop-style display order
-    const topLevelLayers = psdData.allLayers.filter((l) => l.depth === 0);
-    for (let i = topLevelLayers.length - 1; i >= 0; i--) {
-      const layer = topLevelLayers[i];
-      if (layer.category === "locked" || layer.category === "base") {
-        locked.push(layer);
-      } else if (layer.isGroup) {
-        groups.push(layer);
-      } else {
-        topLevel.push(layer);
-      }
-    }
-    return { topLevel, groups, locked };
-  }, [psdData]);
-
-  // Helper to get children of a group from allLayers (reversed for Photoshop display order)
-  const getGroupChildren = useCallback((groupId) => {
-    if (!psdData?.allLayers) return [];
-    const group = psdData.allLayers.find((l) => l.id === groupId);
-    if (!group) return [];
-    const children = group.childIds.map((id) => psdData.allLayers.find((l) => l.id === id)).filter(Boolean);
-    return children.slice().reverse();
-  }, [psdData]);
+  const hasLayers = psdData && (psdData.toggleable.length > 0 || psdData.variantGroups.length > 0 || psdData.locked.length > 0);
 
   return (
     <div className="vp" ref={containerRef}>
@@ -830,26 +844,19 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             )}
           </div>
 
-          {/* ─── Layer Panel (vertical resizable) ─── */}
-          {hasLayers && !layerPanelHidden && (
-            <div className="vp-layer-panel" style={{ height: layerPanelHeight }}>
-              <VResizer onResize={handleLayerPanelResize} />
-              <div className="vp-layer-panel-head">
-                <Layers className="w-3.5 h-3.5" />
-                <span>Layers</span>
-                <span className="vp-layer-count">{psdData.allLayers?.length || 0}</span>
-              </div>
-              <div className="vp-layer-panel-body">
-
-                {/* Toggleable layers section */}
-                {layerSections.topLevel.length > 0 && (
-                  <div className="vp-layer-section">
-                    <div className="vp-layer-section-head">
-                      <span>Layers</span>
-                      <span className="vp-layer-section-count">{layerSections.topLevel.length}</span>
-                    </div>
-                    {layerSections.topLevel.map((layer) => {
-                      const isOn = layerVisibility[layer.id] ?? layer.visible;
+          {/* ─── Layer Strip (compact horizontal bar) ─── */}
+          {hasLayers && !layerStripHidden && (
+            <div className="vp-strip">
+              {/* Toggleable layers */}
+              {psdData.toggleable.length > 0 && (
+                <div className="vp-strip-section">
+                  <div className="vp-strip-label">
+                    <CheckSquare className="w-2.5 h-2.5" />
+                    <span>Toggles</span>
+                  </div>
+                  <div className="vp-strip-items">
+                    {psdData.toggleable.map((layer) => {
+                      const isOn = selectedVariant?.toggleable?.[layer.name] ?? layer.enabled;
                       return (
                         <button
                           key={layer.id}
