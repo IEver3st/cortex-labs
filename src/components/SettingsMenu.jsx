@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, Layers, Shirt, FlaskConical, AlertTriangle, FolderOpen, Monitor } from "lucide-react";
+import { ArrowLeft, Settings, Car, Layers, Shirt, FlaskConical, AlertTriangle, FolderOpen, Monitor, Clock } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
@@ -32,6 +32,7 @@ const BUILT_IN_DEFAULTS = {
   windowControlsStyle: "windows",
   toolbarInTitlebar: false,
   uiScale: 1.0,
+  showRecents: true,
   previewFolder: "",
 };
 
@@ -175,6 +176,23 @@ export default function SettingsMenu({ onSettingsSaved }) {
       }
     } catch {}
   }, [isTauriRuntime]);
+
+  const toggleShowRecents = useCallback(() => {
+    const nextShowRecents = draft.showRecents === false;
+    setDraft((prev) => ({ ...prev, showRecents: nextShowRecents }));
+
+    const prefs = loadPrefs() || {};
+    const storedDefaults = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
+    savePrefs({
+      ...prefs,
+      defaults: {
+        ...storedDefaults,
+        showRecents: nextShowRecents,
+      },
+    });
+
+    onSettingsSaved?.();
+  }, [draft.showRecents, onSettingsSaved]);
 
   return (
     <div className="settings-anchor">

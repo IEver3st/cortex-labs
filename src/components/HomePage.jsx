@@ -2,7 +2,7 @@ import { useCallback, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Car, Layers, Shirt, Link2, Clock, Trash2, FolderOpen,
-  Plus, ChevronRight, Palette, Eye,
+  Plus, ChevronRight, Palette, Eye, Check, ChevronLeft,
 } from "lucide-react";
 import { loadWorkspaces, loadRecent, deleteWorkspace, createWorkspace } from "../lib/workspace";
 import { loadPrefs } from "../lib/prefs";
@@ -128,13 +128,10 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
     return "Livery";
   };
 
-  /** Build a descriptive name for a recent entry based on its state/content. */
   const descriptiveNameForEntry = (entry) => {
     const ws = workspaces[entry.workspaceId];
     if (!ws) return entry.name || "Untitled";
     const state = ws.state || {};
-
-    // Variant builder — show PSD name if present
     if (entry.page === "variants") {
       const psd = state.psdPath;
       if (psd) {
@@ -143,18 +140,14 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
       }
       return ws.name;
     }
-
-    // Viewer — show model name + mode
     const modelPath = state.modelPath || "";
     if (modelPath) {
       const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "";
       if (modelName) return `${modelName} Preview`;
     }
-
     return ws.name;
   };
 
-  /** Format relative time for recent entries. */
   const relativeTime = (timestamp) => {
     if (!timestamp) return "";
     const now = Date.now();
@@ -194,75 +187,19 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
         <div className={`home-body ${showRecents ? "" : "is-single"}`}>
           {/* Left — Launch options */}
           <motion.div
-            className="home-left"
-            initial={{ opacity: 0, x: -16 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.6, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
+            key="home"
+            className="home-content-split"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           >
-            <div className="home-section-label">
-              <span>Launch</span>
-            </div>
-
-            <div className="home-mode-grid">
-              {MODES.map((mode, idx) => {
-                const Icon = mode.icon;
-                return (
-                  <motion.button
-                    key={mode.id}
-                    type="button"
-                    className="home-mode-card"
-                    style={{ "--mode-accent": mode.accent }}
-                    onClick={() => handleLaunchMode(mode.id)}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.45, delay: 0.18 + idx * 0.06, ease: [0.22, 1, 0.36, 1] }}
-                    whileHover={{ y: -2, scale: 1.015 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    <div className="home-mode-card-top">
-                      <div className="home-mode-card-icon">
-                        <Icon />
-                      </div>
-                      <span className="home-mode-card-shortcut">{mode.shortcut}</span>
-                    </div>
-                    <div className="home-mode-card-label">{mode.label}</div>
-                    <div className="home-mode-card-desc">{mode.desc}</div>
-                  </motion.button>
-                );
-              })}
-            </div>
-
-            {/* Variant Builder */}
-            <motion.button
-              type="button"
-              className="home-variant-card"
-              onClick={handleLaunchVariants}
-              initial={{ opacity: 0, y: 10 }}
+            {/* Hero */}
+            <motion.div
+              className="home-hero"
+              initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45, delay: 0.42, ease: [0.22, 1, 0.36, 1] }}
-              whileHover={{ x: 3 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <div className="home-variant-card-icon">
-                <Palette />
-              </div>
-              <div className="home-variant-card-text">
-                <span className="home-variant-card-label">Variant Builder</span>
-                <span className="home-variant-card-desc">Import PSD files, configure layer variants, batch export</span>
-              </div>
-              <ChevronRight className="home-variant-card-arrow" />
-            </motion.button>
-
-            {/* Named Project */}
-            <motion.button
-              type="button"
-              className="home-named-project-btn"
-              onClick={() => setShowNewProject(true)}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.5 }}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
             >
               <FolderOpen className="w-4 h-4" />
               <span>New Named Project...</span>

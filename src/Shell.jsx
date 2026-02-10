@@ -155,8 +155,12 @@ export default function Shell() {
     if (pendingActiveRef.current) {
       setActiveTabId(pendingActiveRef.current);
       pendingActiveRef.current = null;
+      return;
     }
-  }, [tabs]);
+    if (!tabs.find((tab) => tab.id === activeTabId) && tabs.length > 0) {
+      setActiveTabId(tabs[tabs.length - 1].id);
+    }
+  }, [tabs, activeTabId]);
 
   // Close tab
   const closeTab = useCallback((tabId) => {
@@ -512,7 +516,7 @@ export default function Shell() {
                   )}
                   {tab.type === "variants" && (
                     <VariantsPage
-                      workspaceState={variantStates[tab.id] || tab.state || {}}
+                      workspaceState={variantStates[tab.id] || tab.initialState || {}}
                       onStateChange={(state) => handleVariantStateChange(tab.id, state)}
                       onRenameTab={(label) => renameTab(tab.id, label)}
                     />
@@ -522,10 +526,7 @@ export default function Shell() {
             })}
           </div>
 
-          {/* Onboarding */}
-          <AnimatePresence>
-            {showOnboarding && <Onboarding onComplete={handleOnboardingComplete} />}
-          </AnimatePresence>
+          {/* Onboarding is now integrated into the HomePage */}
         </>
       )}
     </div>
