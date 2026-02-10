@@ -15,6 +15,46 @@ fn is_yft(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_supported_open_model(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            ext.eq_ignore_ascii_case("yft")
+                || ext.eq_ignore_ascii_case("ydd")
+                || ext.eq_ignore_ascii_case("dff")
+                || ext.eq_ignore_ascii_case("clmesh")
+        })
+        .unwrap_or(false)
+}
+
+fn extract_open_file_arg(args: &[String]) -> Option<String> {
+    args.iter()
+        .skip(1)
+        .find(|arg| {
+            is_supported_open_model(arg) && Path::new(arg).exists() && Path::new(arg).is_file()
+        })
+        .cloned()
+}
+
+fn queue_open_file(app: &tauri::AppHandle, file_path: String) {
+    if !is_supported_open_model(&file_path) {
+        return;
+    }
+
+    if let Ok(mut pending) = app.state::<PendingOpenFileState>().path.lock() {
+        *pending = Some(file_path.clone());
+    }
+
+    let _ = app.emit("file-open", file_path);
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
     if offset + 4 > data.len() {
         return None;
@@ -180,6 +220,11 @@ struct WindowWatchState {
 struct ModelWatchState {
     watcher: Mutex<Option<RecommendedWatcher>>,
     path: Mutex<Option<PathBuf>>,
+}
+
+#[derive(Default)]
+struct PendingOpenFileState {
+    path: Mutex<Option<String>>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -756,12 +801,31 @@ STDERR:\n{}\nSTDOUT:\n{}\nLOG:\n{}",
     }))
 }
 
+#[tauri::command]
+fn consume_pending_open_file(state: State<PendingOpenFileState>) -> Option<String> {
+    state
+        .path
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.take())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(WatchState::default())
         .manage(WindowWatchState::default())
         .manage(ModelWatchState::default())
+        .manage(PendingOpenFileState::default())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(file_path) = extract_open_file_arg(&args) {
+                queue_open_file(app, file_path);
+            } else if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -773,22 +837,16 @@ pub fn run() {
             start_model_watch,
             stop_model_watch,
             parse_yft,
-            convert_yft
+            convert_yft,
+            consume_pending_open_file
         ])
         .setup(|app| {
             // On Windows, "Open With" passes the file path as a CLI argument.
-            // Capture it and emit to the frontend so it can load the file.
+            // Queue it so the frontend can consume it once listeners are mounted.
             let args: Vec<String> = std::env::args().collect();
-            if args.len() > 1 {
-                let file_path = args[1].clone();
-                let path = Path::new(&file_path);
-                if path.exists() {
-                    let handle = app.handle().clone();
-                    // Emit after a short delay so the frontend has time to set up listeners
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        let _ = handle.emit("file-open", file_path);
-                    });
+            if let Some(file_path) = extract_open_file_arg(&args) {
+                if let Ok(mut pending) = app.state::<PendingOpenFileState>().path.lock() {
+                    *pending = Some(file_path);
                 }
             }
             Ok(())

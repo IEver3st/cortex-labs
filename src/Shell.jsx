@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
@@ -56,6 +57,7 @@ export default function Shell() {
   const editTabRef = useRef(null);
   // Track pending tab activation (for use after setTabs)
   const pendingActiveRef = useRef(null);
+  const lastExternalFileOpenRef = useRef({ path: "", at: 0 });
 
   // Per-tab variant state cache
   const [variantStates, setVariantStates] = useState({});
@@ -93,32 +95,6 @@ export default function Shell() {
     return () => clearTimeout(timer);
   }, []);
 
-  // File-open handler
-  useEffect(() => {
-    if (!isTauriRuntime) return;
-    let unlisten;
-    let cancelled = false;
-
-    listen("file-open", (event) => {
-      const filePath = event.payload;
-      if (typeof filePath !== "string" || !filePath) return;
-      const lower = filePath.toLowerCase();
-      if (lower.endsWith(".yft") || lower.endsWith(".ydd") || lower.endsWith(".dff") || lower.endsWith(".clmesh")) {
-        const fileName = filePath.split(/[\\/]/).pop();
-        const wsId = createWorkspace(fileName, "viewer", { openFile: filePath });
-        openTab("viewer", fileName, wsId);
-      }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, [isTauriRuntime]);
-
   // Open a new tab (or focus existing for same workspace)
   const openTab = useCallback((type, label, workspaceId, state, defaultMode) => {
     setTabs((prev) => {
@@ -149,6 +125,65 @@ export default function Shell() {
       return [...prev, newTab];
     });
   }, []);
+
+  const handleExternalFileOpen = useCallback((filePath) => {
+    if (typeof filePath !== "string" || !filePath) return;
+
+    const now = Date.now();
+    const last = lastExternalFileOpenRef.current;
+    if (last.path === filePath && now - last.at < 1200) return;
+    lastExternalFileOpenRef.current = { path: filePath, at: now };
+
+    const lower = filePath.toLowerCase();
+    if (!(lower.endsWith(".yft") || lower.endsWith(".ydd") || lower.endsWith(".dff") || lower.endsWith(".clmesh"))) {
+      return;
+    }
+
+    const fileName = filePath.split(/[\\/]/).pop();
+    const mode = lower.endsWith(".ydd") ? "eup" : "livery";
+    const initialState = { textureMode: mode, modelPath: filePath, openFile: filePath };
+    const wsId = createWorkspace(fileName, "viewer", initialState);
+    openTab("viewer", fileName, wsId, initialState, mode);
+  }, [openTab]);
+
+  // File-open handler (startup + running instance)
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    let unlisten;
+    let cancelled = false;
+
+    const start = async () => {
+      let unlistenFn;
+      try {
+        unlistenFn = await listen("file-open", (event) => {
+          handleExternalFileOpen(event.payload);
+        });
+      } catch {
+        return;
+      }
+
+      if (cancelled) {
+        unlistenFn();
+        return;
+      }
+
+      unlisten = unlistenFn;
+
+      try {
+        const pendingPath = await invoke("consume_pending_open_file");
+        handleExternalFileOpen(pendingPath);
+      } catch {
+        // no-op: command may not be available in web preview
+      }
+    };
+
+    start();
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [isTauriRuntime, handleExternalFileOpen]);
 
   // Flush pending tab activation after tabs state updates
   useEffect(() => {
