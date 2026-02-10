@@ -1,5 +1,6 @@
 ## Updated Studio UI
 ![Cortex Studio UI](https://cdn.discordapp.com/attachments/698747360536297524/1469447401285746709/image.png?ex=6987b109&is=69865f89&hm=e7216855c670021fe97740c186e65dd54fe9145c71b998bf66ccd559f7c2f3dd&)
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C1C41TSVBX)
 # Tauri + React
 
 Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/releases/tag/v3.0.0)!

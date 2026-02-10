@@ -26,6 +26,7 @@ const BUILT_IN_DEFAULTS = {
   showHints: true,
   hideRotText: false,
   showGrid: false,
+  showRecents: true,
   lightIntensity: 1.0,
   glossiness: 0.5,
   windowControlsStyle: "windows",
@@ -413,27 +414,20 @@ export default function SettingsMenu({ onSettingsSaved }) {
                                 >
                                   Reset to 100%
                                 </button>
-
-                                <div className="settings-panel-title" style={{ marginTop: 20 }}>Home Screen</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">
-                                    <div className="flex items-center gap-2">
-                                      <Clock className="h-3 w-3 opacity-60" />
-                                      <span>Show recent sessions</span>
-                                    </div>
-                                  </div>
+                                <div className="settings-row" style={{ marginTop: 16 }}>
+                                  <div className="settings-row-label">Show recent sessions</div>
                                   <button
                                     type="button"
-                                    className={`settings-toggle ${draft.showRecents !== false ? "is-on" : ""}`}
-                                    onClick={toggleShowRecents}
-                                    aria-pressed={draft.showRecents !== false}
+                                    className={`settings-toggle ${draft.showRecents ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, showRecents: !p.showRecents }))}
+                                    aria-pressed={draft.showRecents}
                                   >
                                     <span className="settings-toggle-dot" />
                                   </button>
                                 </div>
                                 <div className="settings-row">
                                   <div className="settings-row-note">
-                                    Display the recent sessions panel on the home page. Disable for a cleaner launch view.
+                                    Hide the Recent list on the Home page when you want a cleaner launch screen.
                                   </div>
                                 </div>
                               </section>
