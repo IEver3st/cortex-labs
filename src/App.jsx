@@ -97,6 +97,12 @@ function getFileLabel(path, emptyLabel) {
   return path.split(/[\\/]/).pop();
 }
 
+function getUnloadLabel(path) {
+  if (!path) return "";
+  const filename = path.split(/[\\/]/).pop();
+  return filename.replace(/\.[^/.]+$/, "");
+}
+
 
 
 function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null }) {
@@ -163,8 +169,20 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [dualModelBPath, setDualModelBPath] = useState("");
   const [dualTextureAPath, setDualTextureAPath] = useState("");
   const [dualTextureBPath, setDualTextureBPath] = useState("");
+  const [dualWindowTextureAPath, setDualWindowTextureAPath] = useState("");
+  const [dualWindowTextureBPath, setDualWindowTextureBPath] = useState("");
+  const [dualWindowTextureATarget, setDualWindowTextureATarget] = useState("auto");
+  const [dualWindowTextureBTarget, setDualWindowTextureBTarget] = useState("auto");
+  const [dualTextureTargetsA, setDualTextureTargetsA] = useState([]);
+  const [dualTextureTargetsB, setDualTextureTargetsB] = useState([]);
+  const [dualWindowAutoTargetA, setDualWindowAutoTargetA] = useState("");
+  const [dualWindowAutoTargetB, setDualWindowAutoTargetB] = useState("");
+  const [dualWindowAutoLabelA, setDualWindowAutoLabelA] = useState("");
+  const [dualWindowAutoLabelB, setDualWindowAutoLabelB] = useState("");
   const [dualTextureAReloadToken, setDualTextureAReloadToken] = useState(0);
   const [dualTextureBReloadToken, setDualTextureBReloadToken] = useState(0);
+  const [dualBodyColorA, setDualBodyColorA] = useState(() => getInitialDefaults().bodyColor);
+  const [dualBodyColorB, setDualBodyColorB] = useState(() => getInitialDefaults().bodyColor);
   const [dualSelectedSlot, setDualSelectedSlot] = useState("A");
   const [dualModelALoading, setDualModelALoading] = useState(false);
   const [dualModelBLoading, setDualModelBLoading] = useState(false);
@@ -208,6 +226,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setHideRotText(Boolean(merged.hideRotText));
     setShowGrid(Boolean(merged.showGrid));
     setBodyColor(merged.bodyColor);
+    setDualBodyColorA(merged.bodyColor);
+    setDualBodyColorB(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
     setExperimentalSettings(Boolean(merged.experimentalSettings));
     const hk = getInitialHotkeys();
@@ -298,7 +318,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const sessionSaveTimerRef = useRef(null);
   useEffect(() => {
     if (isBooting || showOnboarding) return;
-    const hasContent = modelPath || dualModelAPath || dualModelBPath || texturePath || dualTextureAPath || dualTextureBPath;
+    const hasContent = modelPath || dualModelAPath || dualModelBPath || texturePath || dualTextureAPath || dualTextureBPath || dualWindowTextureAPath || dualWindowTextureBPath;
     if (!hasContent) return;
 
     if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
@@ -306,16 +326,28 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       const stateSnapshot = {
         textureMode,
         modelPath: modelPath || "",
+        modelSourcePath: modelSourcePath || "",
         texturePath: texturePath || "",
+        textureTarget,
         windowTexturePath: windowTexturePath || "",
+        windowTextureTarget,
         windowTemplateEnabled,
+        liveryWindowOverride,
         bodyColor,
         backgroundColor,
+        lightIntensity,
+        glossiness,
         liveryExteriorOnly,
+        dualBodyColorA,
+        dualBodyColorB,
         dualModelAPath: dualModelAPath || "",
         dualModelBPath: dualModelBPath || "",
         dualTextureAPath: dualTextureAPath || "",
         dualTextureBPath: dualTextureBPath || "",
+        dualWindowTextureAPath: dualWindowTextureAPath || "",
+        dualWindowTextureBPath: dualWindowTextureBPath || "",
+        dualWindowTextureATarget,
+        dualWindowTextureBTarget,
         dualModelAPos,
         dualModelBPos,
         dualSelectedSlot,
@@ -336,9 +368,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     };
   }, [
     isBooting, showOnboarding, textureMode,
-    modelPath, texturePath, windowTexturePath, windowTemplateEnabled,
-    bodyColor, backgroundColor, liveryExteriorOnly,
+    modelPath, modelSourcePath, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
+    liveryWindowOverride, bodyColor, backgroundColor, lightIntensity, glossiness, liveryExteriorOnly,
+    dualBodyColorA, dualBodyColorB,
     dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
+    dualWindowTextureAPath, dualWindowTextureBPath,
+    dualWindowTextureATarget, dualWindowTextureBTarget,
     dualModelAPos, dualModelBPos, dualSelectedSlot, dualTextureMode,
     shellTab,
   ]);
@@ -397,6 +432,42 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setWindowTextureError("");
   }, [windowTemplateEnabled]);
 
+  const handleDualModelAInfo = useCallback((info) => {
+    const targets = info?.targets ?? [];
+    setDualTextureTargetsA(targets);
+    setDualWindowAutoTargetA(info?.windowTarget || "");
+    setDualWindowAutoLabelA(info?.windowLabel || "");
+    setDualWindowTextureATarget((prev) => {
+      if (prev === "auto" || prev === "none" || prev === "all") return prev;
+      return targets.some((target) => target.value === prev) ? prev : "auto";
+    });
+  }, []);
+
+  const handleDualModelBInfo = useCallback((info) => {
+    const targets = info?.targets ?? [];
+    setDualTextureTargetsB(targets);
+    setDualWindowAutoTargetB(info?.windowTarget || "");
+    setDualWindowAutoLabelB(info?.windowLabel || "");
+    setDualWindowTextureBTarget((prev) => {
+      if (prev === "auto" || prev === "none" || prev === "all") return prev;
+      return targets.some((target) => target.value === prev) ? prev : "auto";
+    });
+  }, []);
+
+  useEffect(() => {
+    setDualWindowTextureATarget((prev) => {
+      if (prev === "auto" || prev === "none" || prev === "all") return prev;
+      return dualTextureTargetsA.some((target) => target.value === prev) ? prev : "auto";
+    });
+  }, [dualTextureTargetsA]);
+
+  useEffect(() => {
+    setDualWindowTextureBTarget((prev) => {
+      if (prev === "auto" || prev === "none" || prev === "all") return prev;
+      return dualTextureTargetsB.some((target) => target.value === prev) ? prev : "auto";
+    });
+  }, [dualTextureTargetsB]);
+
   const handleTextureError = useCallback((message) => {
     setTextureError(message || "");
     // If texture failed to load, clear the stale path
@@ -434,6 +505,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setHideRotText(Boolean(merged.hideRotText));
     setShowGrid(Boolean(merged.showGrid));
     setBodyColor(merged.bodyColor);
+    setDualBodyColorA(merged.bodyColor);
+    setDualBodyColorB(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
     setExperimentalSettings(Boolean(merged.experimentalSettings));
     const prefs = loadPrefs() || {};
@@ -485,24 +558,48 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       }
     }
     if (resolvedTextureMode) setTextureMode(resolvedTextureMode);
+    if (state.textureTarget) setTextureTarget(state.textureTarget);
+    if (state.windowTextureTarget) setWindowTextureTarget(state.windowTextureTarget);
+    if (typeof state.liveryWindowOverride === "string") setLiveryWindowOverride(state.liveryWindowOverride);
     if (typeof state.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(state.windowTemplateEnabled);
     if (state.bodyColor) setBodyColor(state.bodyColor);
+    if (state.dualBodyColorA) setDualBodyColorA(state.dualBodyColorA);
+    else if (state.bodyColor) setDualBodyColorA(state.bodyColor);
+    if (state.dualBodyColorB) setDualBodyColorB(state.dualBodyColorB);
+    else if (state.bodyColor) setDualBodyColorB(state.bodyColor);
     if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
+    if (typeof state.lightIntensity === "number") setLightIntensity(state.lightIntensity);
+    if (typeof state.glossiness === "number") setGlossiness(state.glossiness);
     if (typeof state.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(state.liveryExteriorOnly);
     if (state.dualSelectedSlot) setDualSelectedSlot(state.dualSelectedSlot);
     if (state.dualTextureMode) setDualTextureMode(state.dualTextureMode);
+    if (state.dualWindowTextureATarget) setDualWindowTextureATarget(state.dualWindowTextureATarget);
+    if (state.dualWindowTextureBTarget) setDualWindowTextureBTarget(state.dualWindowTextureBTarget);
     if (state.dualModelAPos) setDualModelAPos(state.dualModelAPos);
     if (state.dualModelBPos) setDualModelBPos(state.dualModelBPos);
 
-    // Validate file paths before restoring — skip stale references
-    const initialModelPath = state.modelPath || state.openFile || "";
-    if (initialModelPath && (await fileOk(initialModelPath))) loadModel(initialModelPath);
+    // Restore file paths (best effort). Some environments can report false negatives
+    // on fs existence checks for previously approved paths.
+    const initialModelPath = state.modelSourcePath || state.modelPath || state.openFile || "";
+    if (initialModelPath) {
+      await loadModel(initialModelPath);
+    }
     if (state.texturePath && (await fileOk(state.texturePath))) setTexturePath(state.texturePath);
+    else if (state.texturePath) setTexturePath(state.texturePath);
     if (state.windowTexturePath && (await fileOk(state.windowTexturePath))) setWindowTexturePath(state.windowTexturePath);
+    else if (state.windowTexturePath) setWindowTexturePath(state.windowTexturePath);
     if (state.dualModelAPath && (await fileOk(state.dualModelAPath))) setDualModelAPath(state.dualModelAPath);
+    else if (state.dualModelAPath) setDualModelAPath(state.dualModelAPath);
     if (state.dualModelBPath && (await fileOk(state.dualModelBPath))) setDualModelBPath(state.dualModelBPath);
+    else if (state.dualModelBPath) setDualModelBPath(state.dualModelBPath);
     if (state.dualTextureAPath && (await fileOk(state.dualTextureAPath))) setDualTextureAPath(state.dualTextureAPath);
+    else if (state.dualTextureAPath) setDualTextureAPath(state.dualTextureAPath);
     if (state.dualTextureBPath && (await fileOk(state.dualTextureBPath))) setDualTextureBPath(state.dualTextureBPath);
+    else if (state.dualTextureBPath) setDualTextureBPath(state.dualTextureBPath);
+    if (state.dualWindowTextureAPath && (await fileOk(state.dualWindowTextureAPath))) setDualWindowTextureAPath(state.dualWindowTextureAPath);
+    else if (state.dualWindowTextureAPath) setDualWindowTextureAPath(state.dualWindowTextureAPath);
+    if (state.dualWindowTextureBPath && (await fileOk(state.dualWindowTextureBPath))) setDualWindowTextureBPath(state.dualWindowTextureBPath);
+    else if (state.dualWindowTextureBPath) setDualWindowTextureBPath(state.dualWindowTextureBPath);
   }, [loadModel]);
 
   // Auto-restore workspace state from initialState prop (passed by Shell from workspace)
@@ -619,6 +716,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       if (typeof selected === "string") {
         if (!isTextureFormatSupported(selected)) {
           setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
+        if (textureMode === "multi") {
+          if (dualSelectedSlot === "A") setDualWindowTextureAPath(selected);
+          else setDualWindowTextureBPath(selected);
           return;
         }
         setWindowTextureError("");
@@ -1002,6 +1104,17 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     textureMode === "livery"
       ? liveryWindowOverride || resolvedWindowBaseTarget
       : resolvedWindowBaseTarget;
+  const resolvedDualWindowTextureATarget =
+    dualWindowTextureATarget === "auto"
+      ? dualWindowAutoTargetA || "none"
+      : dualWindowTextureATarget || "none";
+  const resolvedDualWindowTextureBTarget =
+    dualWindowTextureBTarget === "auto"
+      ? dualWindowAutoTargetB || "none"
+      : dualWindowTextureBTarget || "none";
+  const selectedDualTargets = dualSelectedSlot === "A" ? dualTextureTargetsA : dualTextureTargetsB;
+  const selectedDualWindowAutoTarget = dualSelectedSlot === "A" ? dualWindowAutoTargetA : dualWindowAutoTargetB;
+  const selectedDualWindowAutoLabel = dualSelectedSlot === "A" ? dualWindowAutoLabelA : dualWindowAutoLabelB;
   const hasModel = Boolean(modelPath);
   const liveryStatusLabel = liveryLabel || "No livery material found";
   const windowStatusLabel = windowLiveryLabel || "No window material found";
@@ -1177,17 +1290,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               >
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-2">
-                    <CyberButton onClick={selectTexture} variant="blue">
+                    <CyberButton onClick={selectTexture} variant="blue" className={texturePath ? "flex-1" : "w-full"}>
                       Select Livery
                     </CyberButton>
                     {texturePath ? (
                       <CyberButton
-                        variant="ghost"
-                        className="w-8 p-0"
+                        variant="danger"
+                        className="flex-1"
                         onClick={() => setTexturePath("")}
                         title="Unload texture"
                       >
                         <X className="h-3 w-3" />
+                        <span className="truncate">Unload {getUnloadLabel(texturePath)}</span>
                       </CyberButton>
                     ) : null}
                   </div>
@@ -1216,26 +1330,27 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberLabel className="mb-0">Enabled</CyberLabel>
                     <button
                       type="button"
-                      className={`w-8 h-4 rounded-[2px] border border-[#1F2937] relative transition-colors ${windowTemplateEnabled ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
+                      className={`w-8 h-4 rounded-none border border-[#1F2937] relative transition-colors ${windowTemplateEnabled ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
                       onClick={() => setWindowTemplateEnabled((prev) => !prev)}
                     >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-[2px] bg-[#C5C6C7] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[#C5C6C7] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
                     </button>
                   </div>
                   {windowTemplateEnabled ? (
                     <>
                       <div className="flex gap-2">
-                        <CyberButton onClick={selectWindowTexture} variant="blue">
+                        <CyberButton onClick={selectWindowTexture} variant="blue" className={windowTexturePath ? "flex-1" : "w-full"}>
                           Select Glass
                         </CyberButton>
                         {windowTexturePath ? (
                           <CyberButton
-                            variant="ghost"
-                            className="w-8 p-0"
+                            variant="danger"
+                            className="flex-1"
                             onClick={() => setWindowTexturePath("")}
                             title="Unload window template"
                           >
                             <X className="h-3 w-3" />
+                            <span className="truncate">Unload {getUnloadLabel(windowTexturePath)}</span>
                           </CyberButton>
                         ) : null}
                       </div>
@@ -1280,10 +1395,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberLabel className="mb-0">Exterior Only</CyberLabel>
                     <button
                       type="button"
-                      className={`w-8 h-4 rounded-[2px] border border-[#1F2937] relative transition-colors ${liveryExteriorOnly ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
+                      className={`w-8 h-4 rounded-none border border-[#1F2937] relative transition-colors ${liveryExteriorOnly ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
                       onClick={() => setLiveryExteriorOnly((prev) => !prev)}
                     >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-[2px] bg-[#C5C6C7] transition-transform ${liveryExteriorOnly ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[#C5C6C7] transition-transform ${liveryExteriorOnly ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
                     </button>
                   </div>
                   <div className="text-[9px] text-[#7dd3fc]/50">Hides interior, glass, and wheel meshes.</div>
@@ -1305,17 +1420,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               >
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-2">
-                    <CyberButton onClick={selectTexture} variant="blue">
+                    <CyberButton onClick={selectTexture} variant="blue" className={texturePath ? "flex-1" : "w-full"}>
                       Select Texture
                     </CyberButton>
                     {texturePath ? (
                       <CyberButton
-                        variant="ghost"
-                        className="w-8 p-0"
+                        variant="danger"
+                        className="flex-1"
                         onClick={() => setTexturePath("")}
                         title="Unload texture"
                       >
                         <X className="h-3 w-3" />
+                        <span className="truncate">Unload {getUnloadLabel(texturePath)}</span>
                       </CyberButton>
                     ) : null}
                   </div>
@@ -1352,26 +1468,27 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberLabel className="mb-0">Secondary Texture</CyberLabel>
                     <button
                       type="button"
-                      className={`w-8 h-4 rounded-[2px] border border-[#1F2937] relative transition-colors ${windowTemplateEnabled ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
+                      className={`w-8 h-4 rounded-none border border-[#1F2937] relative transition-colors ${windowTemplateEnabled ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
                       onClick={() => setWindowTemplateEnabled((prev) => !prev)}
                     >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-[2px] bg-[#C5C6C7] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[#C5C6C7] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
                     </button>
                   </div>
                   {windowTemplateEnabled ? (
                     <>
                       <div className="flex gap-2">
-                        <CyberButton onClick={selectWindowTexture} variant="blue">
+                        <CyberButton onClick={selectWindowTexture} variant="blue" className={windowTexturePath ? "flex-1" : "w-full"}>
                           Select Secondary
                         </CyberButton>
                         {windowTexturePath ? (
                           <CyberButton
-                            variant="ghost"
-                            className="w-8 p-0"
+                            variant="danger"
+                            className="flex-1"
                             onClick={() => setWindowTexturePath("")}
                             title="Unload secondary texture"
                           >
                             <X className="h-3 w-3" />
+                            <span className="truncate">Unload {getUnloadLabel(windowTexturePath)}</span>
                           </CyberButton>
                         ) : null}
                       </div>
@@ -1413,17 +1530,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               >
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-2">
-                    <CyberButton onClick={selectTexture} variant="blue">
+                    <CyberButton onClick={selectTexture} variant="blue" className={texturePath ? "flex-1" : "w-full"}>
                       Select Uniform
                     </CyberButton>
                     {texturePath ? (
                       <CyberButton
-                        variant="ghost"
-                        className="w-8 p-0"
+                        variant="danger"
+                        className="flex-1"
                         onClick={() => setTexturePath("")}
                         title="Unload texture"
                       >
                         <X className="h-3 w-3" />
+                        <span className="truncate">Unload {getUnloadLabel(texturePath)}</span>
                       </CyberButton>
                     ) : null}
                   </div>
@@ -1450,10 +1568,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
           {textureMode === "multi" ? (
             <div className="space-y-4" id="mode-panel-multi" role="tabpanel">
-              <div className="flex bg-[#0B0C10] p-1 border border-[#1F2937] rounded-sm">
+              <div className="flex bg-[#0B0C10] p-1 border border-[#1F2937] rounded-none">
                 <button
                   type="button"
-                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-sm transition-colors ${dualTextureMode === "livery" ? "bg-[#1F2833] text-[#7dd3fc]" : "text-[#7dd3fc]/50 hover:text-[#7dd3fc]"}`}
+                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "livery" ? "bg-[#1F2833] text-[#7dd3fc]" : "text-[#7dd3fc]/50 hover:text-[#7dd3fc]"}`}
                   onClick={() => setDualTextureMode("livery")}
                 >
                   <Car className="h-3 w-3" />
@@ -1461,7 +1579,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 </button>
                 <button
                   type="button"
-                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-sm transition-colors ${dualTextureMode === "eup" ? "bg-[#1F2833] text-[#7dd3fc]" : "text-[#7dd3fc]/50 hover:text-[#7dd3fc]"}`}
+                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "eup" ? "bg-[#1F2833] text-[#7dd3fc]" : "text-[#7dd3fc]/50 hover:text-[#7dd3fc]"}`}
                   onClick={() => setDualTextureMode("eup")}
                 >
                   <Shirt className="h-3 w-3" />
@@ -1502,8 +1620,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           Select Model A
                         </CyberButton>
                         {dualModelAPath ? (
-                          <CyberButton variant="ghost" className="w-8 p-0" onClick={() => { setDualModelAPath(""); setDualModelAError(""); }} title="Unload model A">
+                          <CyberButton variant="danger" className="flex-1" onClick={() => { setDualModelAPath(""); setDualModelAError(""); }} title="Unload model A">
                             <X className="h-3 w-3" />
+                            <span className="truncate">Unload {getUnloadLabel(dualModelAPath)}</span>
                           </CyberButton>
                         ) : null}
                       </div>
@@ -1517,13 +1636,53 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           {dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
                         </CyberButton>
                         {dualTextureAPath ? (
-                          <CyberButton variant="ghost" className="w-8 p-0" onClick={() => setDualTextureAPath("")} title="Unload texture A">
+                          <CyberButton variant="danger" className="flex-1" onClick={() => setDualTextureAPath("")} title="Unload texture A">
                             <X className="h-3 w-3" />
+                            <span className="truncate">Unload {getUnloadLabel(dualTextureAPath)}</span>
                           </CyberButton>
                         ) : null}
                       </div>
                       {dualTextureAPath ? <div className="mt-1 px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{getFileLabel(dualTextureAPath, "")}</div> : null}
                     </CyberCard>
+                    {dualTextureMode === "livery" ? (
+                      <CyberCard>
+                        <CyberLabel>Window Design</CyberLabel>
+                        <div className="flex gap-1.5">
+                          <CyberButton variant="secondary" className="flex-1" onClick={selectWindowTexture}>
+                            Select Window A
+                          </CyberButton>
+                          {dualWindowTextureAPath ? (
+                            <CyberButton variant="danger" className="flex-1" onClick={() => setDualWindowTextureAPath("")} title="Unload window design A">
+                              <X className="h-3 w-3" />
+                              <span className="truncate">Unload {getUnloadLabel(dualWindowTextureAPath)}</span>
+                            </CyberButton>
+                          ) : null}
+                        </div>
+                        {dualWindowTextureAPath ? <div className="mt-1 px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{getFileLabel(dualWindowTextureAPath, "")}</div> : null}
+                        <div className="mt-2">
+                          <CyberLabel>Apply To</CyberLabel>
+                          <Select value={dualWindowTextureATarget} onValueChange={setDualWindowTextureATarget}>
+                            <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                              <SelectValue placeholder="Select target" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                              <SelectItem value="auto">
+                                {selectedDualWindowAutoTarget
+                                  ? `Auto (${selectedDualWindowAutoLabel || selectedDualWindowAutoTarget.replace("material:", "")})`
+                                  : "Auto (no material detected)"}
+                              </SelectItem>
+                              <SelectItem value="none">None</SelectItem>
+                              <SelectItem value="all">All meshes</SelectItem>
+                              {selectedDualTargets.map((target) => (
+                                <SelectItem key={`dual-a-window-${target.value}`} value={target.value}>
+                                  {target.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </CyberCard>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="flex flex-col gap-3">
@@ -1534,8 +1693,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           Select Model B
                         </CyberButton>
                         {dualModelBPath ? (
-                          <CyberButton variant="ghost" className="w-8 p-0" onClick={() => { setDualModelBPath(""); setDualModelBError(""); }} title="Unload model B">
+                          <CyberButton variant="danger" className="flex-1" onClick={() => { setDualModelBPath(""); setDualModelBError(""); }} title="Unload model B">
                             <X className="h-3 w-3" />
+                            <span className="truncate">Unload {getUnloadLabel(dualModelBPath)}</span>
                           </CyberButton>
                         ) : null}
                       </div>
@@ -1549,13 +1709,53 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           {dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
                         </CyberButton>
                         {dualTextureBPath ? (
-                          <CyberButton variant="ghost" className="w-8 p-0" onClick={() => setDualTextureBPath("")} title="Unload texture B">
+                          <CyberButton variant="danger" className="flex-1" onClick={() => setDualTextureBPath("")} title="Unload texture B">
                             <X className="h-3 w-3" />
+                            <span className="truncate">Unload {getUnloadLabel(dualTextureBPath)}</span>
                           </CyberButton>
                         ) : null}
                       </div>
                       {dualTextureBPath ? <div className="mt-1 px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{getFileLabel(dualTextureBPath, "")}</div> : null}
                     </CyberCard>
+                    {dualTextureMode === "livery" ? (
+                      <CyberCard>
+                        <CyberLabel>Window Design</CyberLabel>
+                        <div className="flex gap-1.5">
+                          <CyberButton variant="secondary" className="flex-1" onClick={selectWindowTexture}>
+                            Select Window B
+                          </CyberButton>
+                          {dualWindowTextureBPath ? (
+                            <CyberButton variant="danger" className="flex-1" onClick={() => setDualWindowTextureBPath("")} title="Unload window design B">
+                              <X className="h-3 w-3" />
+                              <span className="truncate">Unload {getUnloadLabel(dualWindowTextureBPath)}</span>
+                            </CyberButton>
+                          ) : null}
+                        </div>
+                        {dualWindowTextureBPath ? <div className="mt-1 px-2 py-1 bg-[#1F2833] rounded text-[9px] font-mono text-[#C5C6C7] truncate">{getFileLabel(dualWindowTextureBPath, "")}</div> : null}
+                        <div className="mt-2">
+                          <CyberLabel>Apply To</CyberLabel>
+                          <Select value={dualWindowTextureBTarget} onValueChange={setDualWindowTextureBTarget}>
+                            <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                              <SelectValue placeholder="Select target" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                              <SelectItem value="auto">
+                                {selectedDualWindowAutoTarget
+                                  ? `Auto (${selectedDualWindowAutoLabel || selectedDualWindowAutoTarget.replace("material:", "")})`
+                                  : "Auto (no material detected)"}
+                              </SelectItem>
+                              <SelectItem value="none">None</SelectItem>
+                              <SelectItem value="all">All meshes</SelectItem>
+                              {selectedDualTargets.map((target) => (
+                                <SelectItem key={`dual-b-window-${target.value}`} value={target.value}>
+                                  {target.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </CyberCard>
+                    ) : null}
                   </div>
                 )}
               </CyberSection>
@@ -1573,35 +1773,99 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             color="blue"
           >
             <div className="space-y-4">
-              <div>
-                <CyberLabel>Body Color</CyberLabel>
-                <div className="flex items-center gap-2">
-                  <div className="color-swatch-wrapper">
-                    <div className="color-swatch" style={{ background: bodyColor }} />
-                    <input
-                      type="color"
+              {textureMode === "multi" ? (
+                <>
+                  <div>
+                    <CyberLabel>Slot A Body Color</CyberLabel>
+                    <div className="flex items-center gap-2">
+                      <div className="color-swatch-wrapper">
+                        <div className="color-swatch" style={{ background: dualBodyColorA }} />
+                        <input
+                          type="color"
+                          value={dualBodyColorA}
+                          onChange={(event) => setDualBodyColorA(event.currentTarget.value)}
+                          className="color-picker-native"
+                          aria-label="Slot A body color picker"
+                        />
+                      </div>
+                      <Input
+                        className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
+                        style={{ fontFamily: "var(--font-hud)" }}
+                        value={dualBodyColorA}
+                        onChange={(event) => setDualBodyColorA(event.currentTarget.value)}
+                      />
+                      <button
+                        type="button"
+                        className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                        onClick={() => setDualBodyColorA(DEFAULT_BODY)}
+                        title="Reset Slot A color"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <CyberLabel>Slot B Body Color</CyberLabel>
+                    <div className="flex items-center gap-2">
+                      <div className="color-swatch-wrapper">
+                        <div className="color-swatch" style={{ background: dualBodyColorB }} />
+                        <input
+                          type="color"
+                          value={dualBodyColorB}
+                          onChange={(event) => setDualBodyColorB(event.currentTarget.value)}
+                          className="color-picker-native"
+                          aria-label="Slot B body color picker"
+                        />
+                      </div>
+                      <Input
+                        className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
+                        style={{ fontFamily: "var(--font-hud)" }}
+                        value={dualBodyColorB}
+                        onChange={(event) => setDualBodyColorB(event.currentTarget.value)}
+                      />
+                      <button
+                        type="button"
+                        className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                        onClick={() => setDualBodyColorB(DEFAULT_BODY)}
+                        title="Reset Slot B color"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <CyberLabel>Body Color</CyberLabel>
+                  <div className="flex items-center gap-2">
+                    <div className="color-swatch-wrapper">
+                      <div className="color-swatch" style={{ background: bodyColor }} />
+                      <input
+                        type="color"
+                        value={bodyColor}
+                        onChange={(event) => setBodyColor(event.currentTarget.value)}
+                        className="color-picker-native"
+                        aria-label="Body color picker"
+                      />
+                    </div>
+                    <Input
+                      className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
+                      style={{ fontFamily: "var(--font-hud)" }}
                       value={bodyColor}
                       onChange={(event) => setBodyColor(event.currentTarget.value)}
-                      className="color-picker-native"
-                      aria-label="Body color picker"
                     />
+                    <button
+                      type="button"
+                      className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                      onClick={() => setBodyColor(DEFAULT_BODY)}
+                      title="Revert to default"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                    </button>
                   </div>
-                  <Input
-                    className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
-                    style={{ fontFamily: "var(--font-hud)" }}
-                    value={bodyColor}
-                    onChange={(event) => setBodyColor(event.currentTarget.value)}
-                  />
-                  <button
-                    type="button"
-                    className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
-                    onClick={() => setBodyColor(DEFAULT_BODY)}
-                    title="Revert to default"
-                  >
-                    <RotateCcw className="h-3 w-3" />
-                  </button>
                 </div>
-              </div>
+              )}
 
               <div>
                 <CyberLabel>Background Color</CyberLabel>
@@ -1645,7 +1909,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       min="0.5"
                       max="2.0"
                       step="0.1"
-                      className="flex-1 accent-[#7dd3fc] h-1 bg-[rgba(255,255,255,0.1)] rounded-lg appearance-none cursor-pointer"
+                      className="flex-1 accent-[#7dd3fc] h-1 bg-[rgba(255,255,255,0.1)] rounded-none appearance-none cursor-pointer"
                       value={lightIntensity}
                       onChange={(e) => setLightIntensity(parseFloat(e.target.value))}
                     />
@@ -1671,7 +1935,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       min="0.0"
                       max="1.0"
                       step="0.05"
-                      className="flex-1 accent-[#7dd3fc] h-1 bg-[rgba(255,255,255,0.1)] rounded-lg appearance-none cursor-pointer"
+                      className="flex-1 accent-[#7dd3fc] h-1 bg-[rgba(255,255,255,0.1)] rounded-none appearance-none cursor-pointer"
                       value={glossiness}
                       onChange={(e) => setGlossiness(parseFloat(e.target.value))}
                     />
@@ -1712,10 +1976,17 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             modelBPath={dualModelBPath}
             textureAPath={dualTextureAPath}
             textureBPath={dualTextureBPath}
+            windowTextureAPath={dualTextureMode === "livery" ? dualWindowTextureAPath : ""}
+            windowTextureBPath={dualTextureMode === "livery" ? dualWindowTextureBPath : ""}
+            windowTextureATarget={resolvedDualWindowTextureATarget}
+            windowTextureBTarget={resolvedDualWindowTextureBTarget}
             textureAReloadToken={dualTextureAReloadToken}
             textureBReloadToken={dualTextureBReloadToken}
-            bodyColor={bodyColor}
+            bodyColorA={dualBodyColorA}
+            bodyColorB={dualBodyColorB}
             backgroundColor={backgroundColor}
+            lightIntensity={lightIntensity}
+            glossiness={glossiness}
             selectedSlot={dualSelectedSlot}
             gizmoVisible={dualGizmoVisible}
             showGrid={showGrid}
@@ -1735,6 +2006,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             onModelBError={setDualModelBError}
             onModelALoading={setDualModelALoading}
             onModelBLoading={setDualModelBLoading}
+            onModelAInfo={handleDualModelAInfo}
+            onModelBInfo={handleDualModelBInfo}
+            onFormatWarning={handleFormatWarning}
           />
         ) : (
           <Viewer
@@ -1976,8 +2250,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   className="warning-modal-btn warning-modal-btn-primary"
                   onClick={() => {
                     if (formatWarning.type !== "non-hi-model" && formatWarning.type !== "unsupported-format") {
-                      setTexturePath("");
+                      if (formatWarning.slot === "A") {
+                        if (formatWarning.kind === "window") setDualWindowTextureAPath("");
+                        else setDualTextureAPath("");
+                      } else if (formatWarning.slot === "B") {
+                        if (formatWarning.kind === "window") setDualWindowTextureBPath("");
+                        else setDualTextureBPath("");
+                      } else {
+                        if (formatWarning.kind === "window") setWindowTexturePath("");
+                        else setTexturePath("");
+                      }
                       setTextureError("");
+                      setWindowTextureError("");
                     }
                     setFormatWarning(null);
                   }}

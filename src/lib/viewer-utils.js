@@ -440,9 +440,24 @@ export function applyTextureToAll(object, bodyColor, texture) {
       }
       if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
     } else {
-      if (child.userData.baseMaterial && child.material !== child.userData.baseMaterial) {
-        child.material = child.userData.baseMaterial;
+      if (!child.userData.dualMaterial) {
+        const mat = new THREE.MeshStandardMaterial({
+          color,
+          map: null,
+          side: THREE.DoubleSide,
+          metalness: child.userData.baseMaterial?.metalness ?? 0.2,
+          roughness: child.userData.baseMaterial?.roughness ?? 0.6,
+        });
+        mat.name = child.userData.baseMaterial?.name || "";
+        child.userData.dualMaterial = mat;
+      } else {
+        child.userData.dualMaterial.color.copy(color);
+        if (child.userData.dualMaterial.map !== null) {
+          child.userData.dualMaterial.map = null;
+          child.userData.dualMaterial.needsUpdate = true;
+        }
       }
+      if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
     }
   });
 }
@@ -553,7 +568,13 @@ export async function loadTextureFromPath(texturePath, textureLoader, renderer) 
 
   let texture = null;
   for (const attempt of attempts) {
-    try { texture = await attempt(); if (texture) break; } catch { /* continue */ }
+    try {
+      texture = await attempt();
+      if (texture) break;
+    } catch (error) {
+      if (error?.type === "unsupported-bit-depth") throw error;
+      /* continue */
+    }
   }
   if (!texture) return null;
   applySettings(texture);
@@ -844,7 +865,7 @@ export async function loadPsdTexture(bytes) {
   throw new Error("PSD parsed but no image data found.");
 }
 
-function detectPsdBitDepth(bytes) {
+export function detectPsdBitDepth(bytes) {
   if (!bytes || bytes.length < 26) return 8;
   if (bytes[0] !== 0x38 || bytes[1] !== 0x42 || bytes[2] !== 0x50 || bytes[3] !== 0x53) {
     return 8;

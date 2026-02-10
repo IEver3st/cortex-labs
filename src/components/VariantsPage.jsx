@@ -210,43 +210,22 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       .then((data) => {
         if (cancelled) return;
         setPsdData(data);
-
-        const defaultVisibility = buildDefaultVisibility(data);
-        const initialVariantVisibility = buildVisibilityFromLegacy(selectedVariant, data, defaultVisibility);
-        const initialVisibility = selectedVariant?.layerVisibility && Object.keys(selectedVariant.layerVisibility).length > 0
-          ? selectedVariant.layerVisibility
-          : initialVariantVisibility;
-        setLayerVisibility(initialVisibility);
-
-        // Also update legacy variant state for backward compat
-        setVariants((prev) => {
-          const base = prev.find((v) => v.isBase);
-          const baseVisibility = (base?.layerVisibility && Object.keys(base.layerVisibility).length > 0)
-            ? base.layerVisibility
-            : defaultVisibility;
-          const toggleable = {};
-          for (const t of data.toggleable) toggleable[t.name] = t.enabled;
-          const variantSelections = {};
-          for (const g of data.variantGroups) variantSelections[g.name] = g.selectedIndex;
-          return prev.map((v) => {
-            const hasVisibility = v.layerVisibility && Object.keys(v.layerVisibility).length > 0;
-            const layerVisibility = hasVisibility
-              ? v.layerVisibility
-              : v.isBase
-                ? defaultVisibility
-                : { ...baseVisibility };
-            if (v.isBase) {
-              return { ...v, toggleable, variantSelections, layerVisibility };
-            }
-            return { ...v, layerVisibility };
-          });
-        });
+        setPsdError("");
+        setLayerVisibility(buildDefaultVisibility(data));
       })
       .catch((err) => {
         if (cancelled) return;
-        setPsdError(typeof err === "string" ? err : err?.message || "Failed to parse PSD");
+        console.error("Failed to parse PSD:", err);
+        if (err?.type === "unsupported-bit-depth") {
+          setPsdError(`${err.bitDepth}-bit PSD is not supported. Please export as 8-bit PSD.`);
+        } else {
+          setPsdError("Failed to parse PSD. Make sure it's a valid Photoshop file.");
+        }
+        setPsdData(null);
       })
-      .finally(() => { if (!cancelled) setPsdLoading(false); });
+      .finally(() => {
+        if (!cancelled) setPsdLoading(false);
+      });
 
     return () => { cancelled = true; };
   }, [psdPath]);
@@ -271,12 +250,14 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
         const previewW = Math.max(1, Math.round((psdData.width || maxDim) * scale));
         const previewH = Math.max(1, Math.round((psdData.height || maxDim) * scale));
         const canvas = await compositePsdVariant(psdPath, compositorVisibility, previewW, previewH);
-        if (!cancelled) {
-          setPreviewUrl(canvas.toDataURL("image/png"));
-          setPreviewToken((t) => t + 1);
-        }
+        if (cancelled) return;
+        setPreviewUrl(canvas.toDataURL());
       } catch (err) {
-        console.error("Preview failed:", err);
+        if (cancelled) return;
+        console.error("Failed to composite PSD:", err);
+        if (err?.type === "unsupported-bit-depth") {
+          setPsdError(`${err.bitDepth}-bit PSD is not supported.`);
+        }
       }
     };
 

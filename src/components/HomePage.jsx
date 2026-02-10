@@ -317,7 +317,7 @@ function OnboardingFlow({ onComplete }) {
 }
 
 /* ─── Main HomePage ─── */
-export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion, isOnboarding, onOnboardingComplete }) {
+export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion, isOnboarding, isActive = true, onOnboardingComplete }) {
   const [recent, setRecent] = useState([]);
   const [workspaces, setWorkspaces] = useState({});
   const [showNewProject, setShowNewProject] = useState(false);
@@ -329,13 +329,13 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion,
   });
 
   useEffect(() => {
-    if (isOnboarding) return;
+    if (isOnboarding || !isActive) return;
     const prefs = loadPrefs();
     const allowRecents = prefs?.defaults?.showRecents !== false;
     setShowRecents(allowRecents);
     setWorkspaces(loadWorkspaces());
     setRecent(allowRecents ? loadRecent() : []);
-  }, [settingsVersion, isOnboarding]);
+  }, [settingsVersion, isOnboarding, isActive]);
 
   const handleLaunchMode = useCallback((mode) => {
     const modeNames = {
@@ -369,11 +369,11 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion,
   }, []);
 
   const handleOpenRecent = useCallback((entry) => {
-    const ws = workspaces[entry.workspaceId];
+    const ws = loadWorkspaces()[entry.workspaceId];
     if (ws) {
       onOpenWorkspace(ws);
     }
-  }, [workspaces, onOpenWorkspace]);
+  }, [onOpenWorkspace]);
 
   const modeIconForEntry = (entry) => {
     const ws = workspaces[entry.workspaceId];
@@ -588,7 +588,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion,
                                   role="button"
                                   tabIndex={0}
                                 >
-                                  <div className="home-recent-item-icon" style={{ borderColor: `${color}30`, background: `${color}0a` }}>
+                                  <div className="home-recent-item-icon">
                                     <Icon className="w-3.5 h-3.5" style={{ color }} />
                                   </div>
                                   <div className="home-recent-item-text">

@@ -54,8 +54,6 @@ The centerpiece of v3.1 is the **Variant Builder**, a dedicated environment for 
 
 Livery work is iterative. In-game testing is slow and breaks your flow. Cortex Studio keeps your preview live so you can focus on design and iteration instead of constant exporting, loading, and reloading.
 
----
-
 ## Limitations (By Design)
 
 * **Not a material editor.** Cortex Studio doesn’t aim to replace a full material/shader workflow or in-game tuning.

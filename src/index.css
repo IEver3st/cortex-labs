@@ -8,10 +8,10 @@
   --es-success-rgb: 32, 201, 151;
   --es-info: #7dd3fc;
   --es-border: rgba(255, 255, 255, 0.08);
-  --es-radius: 16px;
+  --es-radius: 0px;
   --es-radius-surface: calc(var(--es-radius) * var(--es-ui-scale));
   --es-radius-control: calc((var(--es-radius) - 4px) * var(--es-ui-scale));
-  --titlebar-height: calc(38px * var(--es-ui-scale));
+  --titlebar-height: 28px;
   --panel-width: clamp(280px, 26vw, 380px);
   --panel-pad: calc(16px * var(--es-ui-scale));
   --panel-gap: calc(10px * var(--es-ui-scale));
@@ -63,8 +63,8 @@ body {
   height: var(--titlebar-height);
   display: flex;
   align-items: center;
-  gap: calc(8px * var(--es-ui-scale));
-  padding: 0 calc(12px * var(--es-ui-scale)) 0 calc(16px * var(--es-ui-scale));
+  gap: 8px;
+  padding: 0 12px 0 16px;
   background: linear-gradient(180deg, rgba(16, 17, 19, 0.45), rgba(12, 13, 15, 0.15));
   backdrop-filter: blur(8px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
@@ -75,22 +75,22 @@ body {
 .titlebar-brand {
   display: inline-flex;
   align-items: center;
-  gap: calc(8px * var(--es-ui-scale));
+  gap: 8px;
   flex-shrink: 0;
 }
 
 .titlebar-logo {
-  width: calc(20px * var(--es-ui-scale));
-  height: calc(20px * var(--es-ui-scale));
+  width: 20px;
+  height: 20px;
   display: block;
   flex: 0 0 auto;
-  border-radius: 4px;
+  border-radius: 0;
   object-fit: contain;
 }
 
 .titlebar-title {
   font-family: "JetBrains Mono", var(--font-hud), monospace;
-  font-size: calc(11px * var(--es-ui-scale));
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -112,8 +112,8 @@ body {
 }
 
 .titlebar-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(24px * var(--es-ui-scale));
+  height: calc(24px * var(--es-ui-scale));
   border-radius: var(--es-radius-control);
   border: none;
   background: transparent;
@@ -126,8 +126,8 @@ body {
 }
 
 .titlebar-icon {
-  width: 13px;
-  height: 13px;
+  width: calc(13px * var(--es-ui-scale));
+  height: calc(13px * var(--es-ui-scale));
 }
 
 .titlebar-icon--min {
@@ -291,7 +291,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.12);
-  border-radius: 99px;
+  border-radius: 0;
   border: 1px solid transparent;
   background-clip: content-box;
 }
@@ -342,7 +342,7 @@ body {
 .panel-collapse {
   width: calc(24px * var(--es-ui-scale));
   height: calc(24px * var(--es-ui-scale));
-  border-radius: 999px;
+  border-radius: 0;
   border: none;
   background: transparent;
   color: rgba(230, 235, 244, 0.4);
@@ -378,7 +378,7 @@ body {
   left: calc(10px * var(--es-ui-scale));
   width: calc(28px * var(--es-ui-scale));
   height: calc(28px * var(--es-ui-scale));
-  border-radius: 999px;
+  border-radius: 0;
   border: none;
   background: transparent;
   color: rgba(230, 235, 244, 0.55);
@@ -615,7 +615,7 @@ body {
   position: relative;
   width: calc(32px * var(--es-ui-scale));
   height: calc(32px * var(--es-ui-scale));
-  border-radius: 999px;
+  border-radius: 0;
   border: none;
   background: transparent;
   color: rgba(233, 238, 244, 0.78);
@@ -851,9 +851,7 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-top: calc(6px * var(--es-ui-scale));
-  padding-bottom: calc(8px * var(--es-ui-scale));
-  padding-right: calc(6px * var(--es-ui-scale));
+  padding: 6px 12px 12px 0;
 }
 
 .settings-footer {
@@ -1013,7 +1011,7 @@ body {
 }
 
 .settings-row-label {
-  font-size: 12px;
+  font-size: calc(12px * var(--es-ui-scale));
   color: rgba(214, 221, 231, 0.7);
   letter-spacing: 0.2px;
   flex: 0 1 auto;
@@ -1062,7 +1060,7 @@ body {
   padding: calc(2px * var(--es-ui-scale));
   display: inline-flex;
   align-items: center;
-  border-radius: 4px;
+  border-radius: 0;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
   position: relative;
@@ -1073,7 +1071,7 @@ body {
 .settings-toggle-dot {
   width: calc(16px * var(--es-ui-scale));
   height: calc(16px * var(--es-ui-scale));
-  border-radius: 2px;
+  border-radius: 0;
   background: rgba(248, 250, 252, 0.85);
   transform: translateX(0);
   transition: transform 0.18s ease;
@@ -1100,7 +1098,7 @@ body {
 }
 
 .settings-input {
-  height: 32px;
+  height: calc(32px * var(--es-ui-scale));
   width: auto;
   flex: 1 1 9ch;
   min-width: 9ch;
@@ -1108,18 +1106,20 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(239, 244, 250, 0.9);
-  padding: 0 10px;
+  padding: 0 calc(10px * var(--es-ui-scale));
+  font-size: calc(11px * var(--es-ui-scale));
   outline: none;
   max-width: 100%;
 }
 
 .settings-mini {
-  height: 32px;
-  padding: 0 10px;
+  height: calc(32px * var(--es-ui-scale));
+  padding: 0 calc(10px * var(--es-ui-scale));
   border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
   color: rgba(214, 221, 231, 0.7);
+  font-size: calc(10px * var(--es-ui-scale));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1134,12 +1134,12 @@ body {
 
 .settings-secondary,
 .settings-primary {
-  height: 34px;
-  padding: 0 12px;
+  height: calc(34px * var(--es-ui-scale));
+  padding: 0 calc(12px * var(--es-ui-scale));
   border-radius: var(--es-radius-control);
   border: 1px solid rgba(255, 255, 255, 0.1);
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: calc(11px * var(--es-ui-scale));
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
@@ -1248,7 +1248,7 @@ body {
 .hotkey-clear {
   width: calc(24px * var(--es-ui-scale));
   height: calc(24px * var(--es-ui-scale));
-  border-radius: 50%;
+  border-radius: 0;
   border: none;
   background: rgba(255, 255, 255, 0.06);
   color: rgba(214, 221, 231, 0.5);
@@ -1394,7 +1394,7 @@ body {
 .onb-toggle-dot {
   width: 16px;
   height: 16px;
-  border-radius: 999px;
+  border-radius: 0;
   background: rgba(248, 250, 252, 0.85);
   transform: translateX(0);
   transition: transform 0.18s ease;
@@ -1635,7 +1635,7 @@ body {
   justify-content: center;
   height: calc(18px * var(--es-ui-scale));
   padding: 0 calc(6px * var(--es-ui-scale));
-  border-radius: 4px;
+  border-radius: 0;
   background: rgba(32, 201, 151, 0.2);
   border: 1px solid rgba(32, 201, 151, 0.45);
   color: var(--es-success);
@@ -1802,7 +1802,7 @@ input[type="range"].range-sm::-webkit-slider-thumb {
   appearance: none;
   width: calc(14px * var(--es-ui-scale));
   height: calc(14px * var(--es-ui-scale));
-  border-radius: 50%;
+  border-radius: 0;
   background: #e7ebf0;
   cursor: pointer;
   transition: transform 0.1s ease, background 0.1s ease;
@@ -1999,7 +1999,7 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
 .mac-btn {
   width: 13px;
   height: 13px;
-  border-radius: 50%;
+  border-radius: 0;
   border: none;
   padding: 0;
   cursor: pointer;
@@ -2076,7 +2076,7 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
   color: var(--es-info);
   background: rgba(14, 165, 233, 0.1);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 0;
   font-weight: 600;
   font-size: calc(10px * var(--es-ui-scale));
 }
@@ -2137,7 +2137,7 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
 .status-dot {
   width: 6px;
   height: 6px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--es-success);
   box-shadow: none;
 }
@@ -2361,12 +2361,12 @@ label {
 
 .warning-modal-body::-webkit-scrollbar-track {
   background: rgba(12, 14, 18, 0.3);
-  border-radius: 999px;
+  border-radius: 0;
 }
 
 .warning-modal-body::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
+  border-radius: 0;
 }
 
 .warning-modal-content {
@@ -2421,7 +2421,7 @@ label {
   width: calc(20px * var(--es-ui-scale));
   height: calc(20px * var(--es-ui-scale));
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 50%;
+  border-radius: 0;
   font-size: calc(10px * var(--es-ui-scale));
   font-weight: 600;
   color: #fff;
@@ -2438,7 +2438,7 @@ label {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
   padding: calc(2px * var(--es-ui-scale)) calc(6px * var(--es-ui-scale));
-  border-radius: 4px;
+  border-radius: 0;
   white-space: nowrap;
 }
 
@@ -2537,7 +2537,7 @@ label {
 .dual-slot-dot {
   width: calc(8px * var(--es-ui-scale));
   height: calc(8px * var(--es-ui-scale));
-  border-radius: 2px;
+  border-radius: 0;
   flex-shrink: 0;
 }
 
@@ -2701,7 +2701,7 @@ label {
   align-items: center;
   gap: 10px;
   padding: 28px 36px;
-  border-radius: 14px;
+  border-radius: 0;
   background: #13151a;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
@@ -2732,7 +2732,7 @@ label {
   width: 100%;
   height: 4px;
   background: rgba(255, 255, 255, 0.06);
-  border-radius: 2px;
+  border-radius: 0;
   overflow: hidden;
   margin-top: 4px;
 }
@@ -2740,7 +2740,7 @@ label {
 .gen-preview-bar-fill {
   height: 100%;
   background: var(--es-success);
-  border-radius: 2px;
+  border-radius: 0;
 }
 
 .gen-preview-count {
@@ -2753,7 +2753,7 @@ label {
 .gen-preview-done-check {
   width: 48px;
   height: 48px;
-  border-radius: 50%;
+  border-radius: 0;
   background: rgba(32, 201, 151, 0.15);
   border: 2px solid var(--es-success);
   display: flex;
@@ -2773,7 +2773,7 @@ label {
   align-items: center;
   gap: 6px;
   padding: 7px 14px;
-  border-radius: 7px;
+  border-radius: 0;
   font-family: var(--font-hud);
   font-size: calc(11px * var(--es-ui-scale));
   border: 1px solid transparent;
@@ -2818,7 +2818,7 @@ label {
 .preview-zoom-card {
   width: min(420px, 92vw);
   padding: 20px 22px;
-  border-radius: 14px;
+  border-radius: 0;
   background: #14161c;
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 20px 55px rgba(0, 0, 0, 0.65);
@@ -2854,7 +2854,7 @@ label {
 }
 
 .preview-zoom-preview {
-  border-radius: 10px;
+  border-radius: 0;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(12, 13, 15, 0.6);
@@ -2911,7 +2911,7 @@ label {
 
 .preview-zoom-btn {
   padding: 7px 14px;
-  border-radius: 7px;
+  border-radius: 0;
   border: 1px solid transparent;
   font-family: var(--font-hud);
   font-size: 11px;
@@ -3065,7 +3065,7 @@ label {
   padding: 3px;
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
+  border-radius: 0;
   gap: 2px;
 }
 
@@ -3076,7 +3076,7 @@ label {
   justify-content: center;
   padding: calc(7px * var(--es-ui-scale)) calc(12px * var(--es-ui-scale));
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: rgba(219, 226, 236, 0.45);
   font-family: var(--font-hud);
@@ -3221,7 +3221,7 @@ label {
 .ctx-menu-content {
   min-width: 180px;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: 0;
   background: #15171b;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
@@ -3248,7 +3248,7 @@ label {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 5px;
+  border-radius: 0;
   cursor: default;
   outline: none;
   transition: background 0.1s, color 0.1s;
@@ -3304,7 +3304,7 @@ label {
   -webkit-appearance: none;
   appearance: none;
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
+  border-radius: 0;
   outline: none;
   cursor: pointer;
 }
@@ -3313,7 +3313,7 @@ label {
   -webkit-appearance: none;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--es-success);
   border: 2px solid rgba(0, 0, 0, 0.5);
   cursor: pointer;
@@ -3327,7 +3327,7 @@ label {
 .settings-slider::-moz-range-thumb {
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--es-success);
   border: 2px solid rgba(0, 0, 0, 0.5);
   cursor: pointer;
@@ -3408,16 +3408,7 @@ label {
 .shell-brand {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
   flex-shrink: 0;
-}
-
-.shell-brand-logo {
-  width: 15px;
-  height: 15px;
-  display: block;
-  border-radius: 3px;
-  object-fit: contain;
 }
 
 .shell-brand-name {
@@ -3518,7 +3509,7 @@ label {
   padding: 0 4px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(32, 201, 151, 0.35);
-  border-radius: 3px;
+  border-radius: 0;
   color: rgba(239, 244, 250, 0.9);
   font-family: var(--font-hud);
   font-size: 10px;
@@ -3536,7 +3527,7 @@ label {
   background: transparent;
   color: rgba(230, 235, 244, 0.15);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 0;
   flex-shrink: 0;
   transition: all 0.12s;
   margin-left: 2px;
@@ -3601,7 +3592,7 @@ label {
   position: relative;
   display: flex;
   align-items: center;
-  height: 30px;
+  height: 28px;
   padding: 0 8px;
   padding-left: calc(var(--panel-width) + 8px);
   background: rgba(8, 9, 11, 0.92);
@@ -3667,7 +3658,7 @@ label {
   background: transparent;
   cursor: pointer;
   transition: background 0.12s;
-  border-radius: 4px;
+  border-radius: 0;
   font-family: var(--font-hud);
 }
 
@@ -3902,7 +3893,7 @@ label {
   padding: 14px 16px;
   background: rgba(255, 255, 255, 0.015);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  border-radius: 0;
   cursor: pointer;
   text-align: left;
   transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
@@ -3941,9 +3932,6 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--mode-accent, #7dd3fc) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--mode-accent, #7dd3fc) 15%, transparent);
   color: var(--mode-accent, #7dd3fc);
 }
 
@@ -3960,7 +3948,7 @@ label {
   color: rgba(230, 235, 244, 0.2);
   background: rgba(255, 255, 255, 0.03);
   padding: 2px 5px;
-  border-radius: 3px;
+  border-radius: 0;
   border: 1px solid rgba(255, 255, 255, 0.04);
   position: relative;
   z-index: 1;
@@ -3994,7 +3982,7 @@ label {
   padding: 12px 14px;
   background: rgba(240, 171, 252, 0.02);
   border: 1px solid rgba(240, 171, 252, 0.08);
-  border-radius: 8px;
+  border-radius: 0;
   cursor: pointer;
   text-align: left;
   transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
@@ -4012,9 +4000,6 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  background: rgba(240, 171, 252, 0.08);
-  border: 1px solid rgba(240, 171, 252, 0.15);
   color: #f0abfc;
   flex-shrink: 0;
 }
@@ -4067,7 +4052,7 @@ label {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  border-radius: 8px;
+  border-radius: 0;
   overflow: hidden;
   overflow-y: auto;
   border: 1px solid rgba(255, 255, 255, 0.04);
@@ -4085,7 +4070,7 @@ label {
 
 .home-recent-list::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
+  border-radius: 0;
 }
 
 .home-recent-item {
@@ -4115,7 +4100,6 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
   flex-shrink: 0;
 }
 
@@ -4156,7 +4140,7 @@ label {
   color: rgba(230, 235, 244, 0.15);
   cursor: pointer;
   transition: all 0.2s;
-  border-radius: 4px;
+  border-radius: 0;
   flex-shrink: 0;
   opacity: 0;
 }
@@ -4180,7 +4164,7 @@ label {
   flex: 1;
   padding: 40px 20px;
   border: 1px dashed rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  border-radius: 0;
   color: rgba(230, 235, 244, 0.25);
   font-family: 'DM Mono', var(--font-hud), monospace;
   font-size: 11px;
@@ -4205,7 +4189,7 @@ label {
   gap: 8px;
   padding: 8px 16px;
   border: 1px dashed rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: rgba(230, 235, 244, 0.35);
   font-family: 'DM Mono', var(--font-hud), monospace;
@@ -4237,7 +4221,7 @@ label {
   width: 380px;
   background: #0e0f11;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  border-radius: 0;
   padding: 24px;
   display: flex;
   flex-direction: column;
@@ -4272,7 +4256,7 @@ label {
   padding: 0 12px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
+  border-radius: 0;
   color: rgba(239, 244, 250, 0.9);
   font-family: 'Outfit', sans-serif;
   font-size: 13px;
@@ -4298,7 +4282,7 @@ label {
   padding: 8px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 6px;
+  border-radius: 0;
   color: rgba(230, 235, 244, 0.5);
   font-family: 'DM Mono', var(--font-hud), monospace;
   font-size: 10px;
@@ -4328,7 +4312,7 @@ label {
   padding: 6px 14px;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
+  border-radius: 0;
   color: rgba(230, 235, 244, 0.5);
   font-family: 'DM Mono', var(--font-hud), monospace;
   font-size: 10px;
@@ -4349,7 +4333,7 @@ label {
   padding: 6px 14px;
   background: rgba(32, 201, 151, 0.12);
   border: 1px solid rgba(32, 201, 151, 0.3);
-  border-radius: 6px;
+  border-radius: 0;
   color: #20c997;
   font-family: 'DM Mono', var(--font-hud), monospace;
   font-size: 10px;
@@ -4395,7 +4379,7 @@ label {
   display: inline-flex;
   align-self: flex-start;
   padding: 3px 10px;
-  border-radius: 20px;
+  border-radius: 0;
   background: rgba(32, 201, 151, 0.08);
   border: 1px solid rgba(32, 201, 151, 0.18);
   font-family: 'DM Mono', var(--font-hud), monospace;
@@ -4438,7 +4422,7 @@ label {
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.015);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  border-radius: 0;
   cursor: pointer;
   text-align: left;
   transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
@@ -4478,9 +4462,6 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--setup-accent, #7dd3fc) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--setup-accent, #7dd3fc) 15%, transparent);
   color: var(--setup-accent, #7dd3fc);
   flex-shrink: 0;
   position: relative;
@@ -4524,7 +4505,7 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--setup-accent, #7dd3fc);
   color: #0a0b0d;
   flex-shrink: 0;
@@ -4544,7 +4525,7 @@ label {
   flex-direction: column;
   gap: 0;
   border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 8px;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -4591,7 +4572,7 @@ label {
   position: relative;
   width: 36px;
   height: 20px;
-  border-radius: 10px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: pointer;
@@ -4608,7 +4589,7 @@ label {
 .home-setup-switch-thumb {
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 0;
   background: rgba(230, 235, 244, 0.4);
   position: absolute;
   top: 2px;
@@ -4635,7 +4616,7 @@ label {
   padding: 8px 18px;
   background: rgba(32, 201, 151, 0.1);
   border: 1px solid rgba(32, 201, 151, 0.28);
-  border-radius: 6px;
+  border-radius: 0;
   color: #20c997;
   font-family: 'DM Mono', var(--font-hud), monospace;
   font-size: 11px;
@@ -4658,7 +4639,7 @@ label {
   padding: 8px 14px;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 6px;
+  border-radius: 0;
   color: rgba(230, 235, 244, 0.4);
   font-family: 'DM Mono', var(--font-hud), monospace;
   font-size: 11px;
@@ -4680,7 +4661,7 @@ label {
   padding: 8px 20px;
   background: rgba(32, 201, 151, 0.14);
   border: 1px solid rgba(32, 201, 151, 0.35);
-  border-radius: 6px;
+  border-radius: 0;
   color: #20c997;
   font-family: 'DM Mono', var(--font-hud), monospace;
   font-size: 11px;
@@ -4704,7 +4685,7 @@ label {
   padding: 14px 16px;
   background: rgba(255, 255, 255, 0.015);
   border: 1px dashed rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  border-radius: 0;
   cursor: pointer;
   text-align: left;
   color: rgba(230, 235, 244, 0.5);
@@ -4797,7 +4778,7 @@ label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 34px;
+  height: 28px;
   padding: 0 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   background: rgba(12, 13, 15, 0.6);
@@ -4824,7 +4805,7 @@ label {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 5px;
+  border-radius: 0;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.06);
   cursor: pointer;
@@ -4858,7 +4839,7 @@ label {
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: 0;
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -4922,7 +4903,7 @@ label {
 .vp-sidebar-count {
   font-size: 9px;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 0;
   background: rgba(32, 201, 151, 0.1);
   color: var(--es-success);
   font-weight: 600;
@@ -4981,7 +4962,7 @@ label {
   background: transparent;
   color: rgba(32, 201, 151, 0.35);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 0;
   flex-shrink: 0;
   margin-left: auto;
   transition: all 0.15s;
@@ -4996,7 +4977,7 @@ label {
   font-size: 7px;
   letter-spacing: 0.15em;
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: 0;
   background: rgba(32, 201, 151, 0.1);
   color: var(--es-success);
   font-weight: 700;
@@ -5009,7 +4990,7 @@ label {
   padding: 0 6px;
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(32, 201, 151, 0.25);
-  border-radius: 3px;
+  border-radius: 0;
   color: rgba(239, 244, 250, 0.9);
   font-family: var(--font-hud);
   font-size: 11px;
@@ -5031,7 +5012,7 @@ label {
   justify-content: center;
   gap: 4px;
   height: 26px;
-  border-radius: 4px;
+  border-radius: 0;
   background: rgba(32, 201, 151, 0.08);
   border: 1px solid rgba(32, 201, 151, 0.15);
   color: var(--es-success);
@@ -5052,7 +5033,7 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 0;
   background: rgba(239, 68, 68, 0.06);
   border: 1px solid rgba(239, 68, 68, 0.12);
   color: rgba(248, 113, 113, 0.6);
@@ -5091,7 +5072,7 @@ label {
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: 0;
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(4px);
   font-size: 9px;
@@ -5103,7 +5084,7 @@ label {
 
 .vp-pane-target {
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 0;
   background: rgba(240, 171, 252, 0.1);
   color: #f0abfc;
   font-weight: 700;
@@ -5175,7 +5156,7 @@ label {
   height: 18px;
   border: 2px solid rgba(255, 255, 255, 0.06);
   border-top-color: var(--es-success);
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 0.7s linear infinite;
 }
 
@@ -5221,7 +5202,7 @@ label {
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  border-radius: 7px;
+  border-radius: 0;
   font-family: var(--font-hud);
   font-size: 11px;
   font-weight: 500;
@@ -5319,7 +5300,7 @@ label {
   display: block;
   width: 32px;
   height: 3px;
-  border-radius: 2px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.08);
   margin: 0 auto;
   position: relative;
@@ -5352,7 +5333,7 @@ label {
 .vp-layer-count {
   font-size: 9px;
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(230, 235, 244, 0.35);
   font-weight: 600;
@@ -5375,7 +5356,7 @@ label {
 }
 .vp-layer-panel-body::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
+  border-radius: 0;
 }
 .vp-layer-panel-body::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
@@ -5425,7 +5406,7 @@ label {
 .vp-layer-section-count {
   font-size: 9px;
   padding: 2px 5px;
-  border-radius: 3px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(230, 235, 244, 0.3);
   font-weight: 600;
@@ -5440,7 +5421,7 @@ label {
   justify-content: center;
   width: 16px;
   height: 16px;
-  border-radius: 3px;
+  border-radius: 0;
   background: none;
   border: none;
   color: rgba(230, 235, 244, 0.3);
@@ -5466,7 +5447,7 @@ label {
   font-weight: 600;
   letter-spacing: 0.03em;
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.02);
   color: rgba(230, 235, 244, 0.3);
@@ -5518,7 +5499,7 @@ label {
 .vp-layer-check {
   width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: 0;
   border: 1.5px solid rgba(230, 235, 244, 0.18);
   background: rgba(255, 255, 255, 0.02);
   flex-shrink: 0;
@@ -5562,7 +5543,7 @@ label {
 .vp-layer-opacity {
   font-size: 9px;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(230, 235, 244, 0.22);
   font-weight: 600;
@@ -5579,7 +5560,7 @@ label {
 .vp-layer-group-check {
   width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: 0;
   border: 1.5px solid rgba(230, 235, 244, 0.18);
   background: rgba(255, 255, 255, 0.02);
   flex-shrink: 0;
@@ -5623,7 +5604,7 @@ label {
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  height: 38px;
+  height: 32px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(12, 13, 15, 0.6);
   flex-shrink: 0;
@@ -5658,7 +5639,7 @@ label {
   background: rgba(32, 201, 151, 0.06);
   border: 1px solid rgba(32, 201, 151, 0.12);
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 0;
   cursor: pointer;
   transition: all 0.15s;
   font-family: var(--font-hud);
@@ -5674,7 +5655,7 @@ label {
   padding: 0 6px;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(32, 201, 151, 0.3);
-  border-radius: 3px;
+  border-radius: 0;
   color: rgba(239, 244, 250, 0.9);
   font-family: var(--font-hud);
   font-size: 10px;
@@ -5696,7 +5677,7 @@ label {
 
 .vp-size {
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 9px;
   font-weight: 600;
   font-family: "DM Mono", var(--font-hud), monospace;
@@ -5723,7 +5704,7 @@ label {
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 10px;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -5747,7 +5728,7 @@ label {
   align-items: center;
   gap: 5px;
   padding: 5px 14px;
-  border-radius: 5px;
+  border-radius: 0;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -5776,7 +5757,7 @@ label {
   width: 120px;
   height: 22px;
   background: rgba(255, 255, 255, 0.04);
-  border-radius: 4px;
+  border-radius: 0;
   overflow: hidden;
   position: relative;
   padding: 0 8px;
@@ -5820,7 +5801,7 @@ label {
   max-height: 80vh;
   background: #0c0d0f;
   border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 14px;
+  border-radius: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -5838,7 +5819,7 @@ label {
 .onb-step-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.12);
 }
 
@@ -5922,7 +5903,7 @@ label {
   padding: 14px 8px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  border-radius: 0;
   cursor: pointer;
   position: relative;
   transition: all 0.2s;
@@ -5969,7 +5950,7 @@ label {
   right: 6px;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--es-success);
   display: flex;
   align-items: center;
@@ -6010,7 +5991,7 @@ label {
 .onb-switch {
   width: 34px;
   height: 18px;
-  border-radius: 10px;
+  border-radius: 0;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.06);
   cursor: pointer;
@@ -6031,7 +6012,7 @@ label {
   left: 2px;
   width: 12px;
   height: 12px;
-  border-radius: 50%;
+  border-radius: 0;
   background: rgba(230, 235, 244, 0.5);
 }
 
@@ -6070,7 +6051,7 @@ label {
 .onb-color-swatch {
   width: 24px;
   height: 24px;
-  border-radius: 4px;
+  border-radius: 0;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -6089,7 +6070,7 @@ label {
   padding: 0 6px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 4px;
+  border-radius: 0;
   color: rgba(239, 244, 250, 0.7);
   font-family: var(--font-hud);
   font-size: 10px;
@@ -6126,7 +6107,7 @@ label {
   width: 100%;
   height: 4px;
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
+  border-radius: 0;
   outline: none;
   cursor: pointer;
 }
@@ -6135,7 +6116,7 @@ label {
   -webkit-appearance: none;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--es-success);
   border: 2px solid rgba(10, 11, 13, 0.8);
   cursor: pointer;
@@ -6145,7 +6126,7 @@ label {
 .onb-ready-check {
   width: 48px;
   height: 48px;
-  border-radius: 50%;
+  border-radius: 0;
   background: rgba(32, 201, 151, 0.15);
   border: 2px solid var(--es-success);
   display: flex;
@@ -6169,7 +6150,7 @@ label {
   gap: 12px;
   width: 100%;
   padding: 14px 16px;
-  border-radius: 10px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.03);
   border: 1px dashed rgba(255, 255, 255, 0.1);
   cursor: pointer;
@@ -6227,7 +6208,7 @@ label {
   align-items: center;
   gap: 4px;
   padding: 6px 14px;
-  border-radius: 6px;
+  border-radius: 0;
   font-family: var(--font-hud);
   font-size: 10px;
   letter-spacing: 0.05em;

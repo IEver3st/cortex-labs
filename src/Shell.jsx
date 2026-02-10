@@ -274,12 +274,13 @@ export default function Shell() {
   }, [openTab]);
 
   const handleOpenWorkspace = useCallback((ws) => {
-    if (!ws) return;
-    const defaultMode = ws?.state?.textureMode || "livery";
-    const page = ws.page === "variants" ? "variants" : "viewer";
-    openTab(page, ws.name, ws.id, ws.state, defaultMode);
-    setActiveWorkspaceId(ws.id);
-    addRecent(ws.id, ws.name, page);
+    if (!ws?.id) return;
+    const latestWs = loadWorkspaces()[ws.id] || ws;
+    const defaultMode = latestWs?.state?.textureMode || "livery";
+    const page = latestWs.page === "variants" ? "variants" : "viewer";
+    openTab(page, latestWs.name, latestWs.id, latestWs.state, defaultMode);
+    setActiveWorkspaceId(latestWs.id);
+    addRecent(latestWs.id, latestWs.name, page);
   }, [openTab]);
 
   // Variant state per-tab
@@ -384,7 +385,6 @@ export default function Shell() {
           {/* ─── Chrome: Brand + Tabs + Settings + Window Controls ─── */}
           <div className="shell-chrome" data-tauri-drag-region>
             <div className="shell-brand" data-tauri-drag-region>
-              <img src="/app-icon.svg" alt="" className="shell-brand-logo" aria-hidden="true" />
               <span className="shell-brand-name">Cortex Studio</span>
             </div>
 
@@ -538,6 +538,7 @@ export default function Shell() {
                       onOpenWorkspace={handleOpenWorkspace}
                       settingsVersion={settingsVersion}
                       isOnboarding={showOnboarding}
+                      isActive={isActive}
                       onOnboardingComplete={handleOnboardingComplete}
                     />
                   )}

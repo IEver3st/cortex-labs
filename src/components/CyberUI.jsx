@@ -85,12 +85,12 @@ export function CyberButton({ children, onClick, variant = "blue", className, di
     purple: "bg-[#a78bfa]/10 text-[#a78bfa] border border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 hover:border-[#a78bfa] hover:shadow-[0_0_15px_-3px_rgba(167,139,250,0.3)]",
     orange: "bg-[#f97316]/10 text-[#f97316] border border-[#f97316]/30 hover:bg-[#f97316]/20 hover:border-[#f97316] hover:shadow-[0_0_15px_-3px_rgba(249,115,22,0.3)]",
     secondary: "bg-[#1F2833]/50 text-[#C5C6C7] border border-[#C5C6C7]/20 hover:bg-[#1F2833] hover:border-[#C5C6C7]/50",
-    danger: "bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 hover:border-red-500",
+    danger: "bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 hover:border-red-500 hover:shadow-[0_0_15px_-3px_rgba(239,68,68,0.3)]",
     ghost: "bg-transparent text-[#C5C6C7]/60 hover:text-[#7dd3fc] hover:bg-[#7dd3fc]/5"
   };
 
   const selectedVariant = variants[variant] || variants.blue;
-  const hoverColor = variant === "purple" ? "#a78bfa" : variant === "orange" ? "#f97316" : "#7dd3fc";
+  const hoverColor = variant === "purple" ? "#a78bfa" : variant === "orange" ? "#f97316" : variant === "danger" ? "#ef4444" : "#7dd3fc";
 
   return (
     <button
