@@ -63,6 +63,7 @@ const BUILT_IN_DEFAULTS = {
   showHints: true,
   hideRotText: false,
   showGrid: false,
+  showRecents: true,
   lightIntensity: 1.0,
   glossiness: 0.5,
   windowControlsStyle: "windows",
