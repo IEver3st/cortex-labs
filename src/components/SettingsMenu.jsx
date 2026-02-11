@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, Layers, Shirt, FlaskConical, AlertTriangle, FolderOpen, Monitor, Clock } from "lucide-react";
+import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
@@ -15,7 +15,6 @@ import { loadPrefs, savePrefs } from "../lib/prefs";
 
 /* ─── Built-in defaults (canonical source) ─── */
 const BUILT_IN_DEFAULTS = {
-  textureMode: "everything",
   liveryExteriorOnly: false,
   windowTemplateEnabled: false,
   windowTextureTarget: "auto",
@@ -32,8 +31,8 @@ const BUILT_IN_DEFAULTS = {
   windowControlsStyle: "windows",
   toolbarInTitlebar: false,
   uiScale: 1.0,
-  showRecents: true,
   previewFolder: "",
+  variantExportFolder: "",
 };
 
 function getStoredDefaults() {
@@ -50,25 +49,29 @@ function getStoredHotkeys() {
 
 function ColorField({ label, value, onChange, onReset }) {
   return (
-    <div className="settings-row">
-      <div className="settings-row-label">{label}</div>
-      <div className="settings-color">
-        <div className="color-swatch-wrapper">
-          <div className="color-swatch" style={{ background: value }} />
+    <div className="flex flex-col gap-2">
+      <div className="text-[10px] uppercase tracking-widest text-white/40 font-mono">{label}</div>
+      <div className="flex items-center gap-2">
+        <div className="relative shrink-0">
+          <div className="w-8 h-8 rounded-none border border-white/10" style={{ background: value }} />
           <input
             type="color"
             value={value}
             onChange={(event) => onChange(event.currentTarget.value)}
-            className="color-picker-native"
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             aria-label={`${label} picker`}
           />
         </div>
         <input
-          className="settings-input mono"
+          className="settings-input flex-1 min-w-0 font-mono text-[11px] h-8 bg-white/5 border border-white/10 rounded-none px-2 outline-none focus:border-white/20 transition-colors"
           value={value}
           onChange={(event) => onChange(event.currentTarget.value)}
         />
-        <button type="button" className="settings-mini" onClick={onReset} aria-label={`Reset ${label}`}>
+        <button
+          type="button"
+          className="h-8 px-3 text-[10px] uppercase tracking-wider bg-white/5 hover:bg-white/10 border border-white/10 transition-colors shrink-0"
+          onClick={onReset}
+        >
           Reset
         </button>
       </div>
@@ -84,7 +87,7 @@ function ColorField({ label, value, onChange, onReset }) {
 export default function SettingsMenu({ onSettingsSaved }) {
   const [open, setOpen] = useState(false);
   const [hoveringIcon, setHoveringIcon] = useState(false);
-  const [activeSection, setActiveSection] = useState("defaults");
+  const [activeSection, setActiveSection] = useState("general");
   const [portalNode, setPortalNode] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
@@ -126,13 +129,11 @@ export default function SettingsMenu({ onSettingsSaved }) {
 
   const sections = useMemo(
     () => [
-      { id: "defaults", label: "Defaults", description: "Baseline texture behavior and viewing rules." },
-      { id: "display", label: "Display", description: "UI scaling and layout preferences." },
-      { id: "hotkeys", label: "Hotkeys", description: "Keyboard shortcuts for quick actions." },
-      { id: "camera", label: "Camera", description: "Keyboard movement and camera controls." },
-      { id: "colors", label: "Appearance", description: "Window style and interface colors." },
-      { id: "export", label: "Export", description: "Preview and export output settings." },
-      { id: "experimental", label: "Experimental", description: "Bleeding edge features and debug tools." },
+      { id: "general", label: "System", description: "Interface scaling and core behavior.", icon: Monitor },
+      { id: "viewer", label: "Viewer", description: "Interaction and rendering defaults.", icon: Car },
+      { id: "hotkeys", label: "Shortcuts", description: "Global keyboard configurations.", icon: Clock },
+      { id: "appearance", label: "Design", description: "Color schemes and interface aesthetics.", icon: Palette },
+      { id: "experimental", label: "Experimental", description: "Beta features and diagnostic tools.", icon: FlaskConical },
     ],
     [],
   );
@@ -173,6 +174,16 @@ export default function SettingsMenu({ onSettingsSaved }) {
       const selected = await openDialog({ directory: true, title: "Select Preview Export Folder" });
       if (typeof selected === "string") {
         setDraft((p) => ({ ...p, previewFolder: selected }));
+      }
+    } catch {}
+  }, [isTauriRuntime]);
+
+  const handleSelectVariantExportFolder = useCallback(async () => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await openDialog({ directory: true, title: "Select Variant Export Folder" });
+      if (typeof selected === "string") {
+        setDraft((p) => ({ ...p, variantExportFolder: selected }));
       }
     } catch {}
   }, [isTauriRuntime]);
@@ -253,23 +264,32 @@ export default function SettingsMenu({ onSettingsSaved }) {
                     </div>
                     <div className="settings-shell">
                       <nav className="settings-nav" aria-label="Settings sections">
-                        <div className="settings-nav-title">Sections</div>
                         <div className="settings-nav-list" role="list">
-                          {sections.map((section) => (
-                            <motion.button
-                              key={section.id}
-                              type="button"
-                              className={`settings-nav-item ${activeSection === section.id ? "is-active" : ""}`}
-                              onClick={() => setActiveSection(section.id)}
-                              aria-current={activeSection === section.id ? "page" : undefined}
-                              whileTap={{ scale: 0.98 }}
-                            >
-                              <span className="settings-nav-item-label">{section.label}</span>
-                              <span className="settings-nav-item-meta">{section.description}</span>
-                            </motion.button>
-                          ))}
+                          {sections.map((section) => {
+                            const Icon = section.icon;
+                            return (
+                              <motion.button
+                                key={section.id}
+                                type="button"
+                                className={`settings-nav-item ${activeSection === section.id ? "is-active" : ""}`}
+                                onClick={() => setActiveSection(section.id)}
+                                aria-current={activeSection === section.id ? "page" : undefined}
+                                whileTap={{ scale: 0.98 }}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className={`p-2 rounded-none transition-colors ${activeSection === section.id ? "bg-[#7dd3fc]/20 text-[#7dd3fc]" : "bg-white/5 text-white/40"}`}>
+                                    <Icon className="h-4 w-4" />
+                                  </div>
+                                  <div className="flex flex-col text-left">
+                                    <span className="settings-nav-item-label">{section.label}</span>
+                                    <span className="settings-nav-item-meta text-[9px] opacity-60 line-clamp-1">{section.description}</span>
+                                  </div>
+                                </div>
+                              </motion.button>
+                            );
+                          })}
                         </div>
-                        <div className="settings-version">Cortex Studio v{appMeta.version}</div>
+                         <div className="settings-version">v{appMeta.version}</div>
                       </nav>
 
                       <div className="settings-content">
@@ -281,87 +301,124 @@ export default function SettingsMenu({ onSettingsSaved }) {
                         <AnimatePresence mode="wait">
                           <motion.div
                             key={activeSection}
-                            className="settings-content-body"
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -8 }}
-                            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                            className="settings-content-body custom-scrollbar"
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                            transition={{ duration: 0.15, ease: "easeOut" }}
                           >
-                            {/* ─── Defaults ─── */}
-                            {activeSection === "defaults" ? (
-                              <section className="settings-panel" id="settings-panel-defaults" aria-label="Defaults">
-                                <div className="settings-panel-title">Texture defaults</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Default mode</div>
-                                  <div className="mode-tabs">
-                                    <motion.button
-                                      type="button"
-                                      className={`mode-tab ${draft.textureMode === "livery" ? "is-active" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, textureMode: "livery" }))}
-                                      whileTap={{ scale: 0.95 }}
-                                    >
-                                      <div className="mode-tab-content">
-                                        <Car className="mode-tab-icon" aria-hidden="true" />
-                                        <span>Livery</span>
-                                      </div>
-                                      {draft.textureMode === "livery" && (
-                                        <motion.div
-                                          layoutId="settings-mode-highlight"
-                                          className="mode-tab-bg"
-                                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                        />
-                                      )}
-                                    </motion.button>
-                                    <motion.button
-                                      type="button"
-                                      className={`mode-tab ${draft.textureMode === "everything" ? "is-active" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, textureMode: "everything" }))}
-                                      whileTap={{ scale: 0.95 }}
-                                    >
-                                      <div className="mode-tab-content">
-                                        <Layers className="mode-tab-icon" aria-hidden="true" />
-                                        <span>All</span>
-                                      </div>
-                                      {draft.textureMode === "everything" && (
-                                        <motion.div
-                                          layoutId="settings-mode-highlight"
-                                          className="mode-tab-bg"
-                                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                        />
-                                      )}
-                                    </motion.button>
-                                    <motion.button
-                                      type="button"
-                                      className={`mode-tab ${draft.textureMode === "eup" ? "is-active" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, textureMode: "eup" }))}
-                                      whileTap={{ scale: 0.95 }}
-                                    >
-                                      <div className="mode-tab-content">
-                                        <Shirt className="mode-tab-icon" aria-hidden="true" />
-                                        <span>EUP</span>
-                                      </div>
-                                      {draft.textureMode === "eup" && (
-                                        <motion.div
-                                          layoutId="settings-mode-highlight"
-                                          className="mode-tab-bg"
-                                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                        />
-                                      )}
-                                    </motion.button>
+                            {/* ─── General (System) ─── */}
+                            {activeSection === "general" ? (
+                              <div className="space-y-6">
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Interface Configuration</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium text-white/90">UI Scaling</div>
+                                      <div className="text-[10px] text-white/40 mt-0.5">Adjust interface density (Default 100%)</div>
+                                    </div>
+                                    <div className="flex items-center gap-4 min-w-[200px]">
+                                      <input
+                                        type="range"
+                                        className="settings-slider flex-1 h-1 bg-white/10 rounded-none appearance-none cursor-pointer accent-[#7dd3fc]"
+                                        min={0.5}
+                                        max={2.0}
+                                        step={0.05}
+                                        value={draft.uiScale ?? 1.0}
+                                        onChange={(e) => setDraft((p) => ({ ...p, uiScale: parseFloat(e.target.value) }))}
+                                      />
+                                      <span className="font-mono text-[11px] text-[#7dd3fc] w-12 text-right">{Math.round((draft.uiScale ?? 1.0) * 100)}%</span>
+                                    </div>
                                   </div>
-                                </div>
 
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Exterior only</div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.liveryExteriorOnly ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, liveryExteriorOnly: !p.liveryExteriorOnly }))}
-                                    aria-pressed={draft.liveryExteriorOnly}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium text-white/90">Session Persistence</div>
+                                      <div className="text-[10px] text-white/40 mt-0.5">Show recent activity on home screen</div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className={`settings-toggle ${draft.showRecents !== false ? "is-on" : ""}`}
+                                      onClick={toggleShowRecents}
+                                    >
+                                      <span className="settings-toggle-dot" />
+                                    </button>
+                                  </div>
+                                </section>
+
+                                  <section className="settings-panel">
+                                    <div className="settings-panel-title">Data & Storage</div>
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="font-medium text-white/90">Preview Export Path</div>
+                                        <div className="text-[10px] text-white/40 mt-0.5">{draft.previewFolder || "Not configured (Default: System Temp)"}</div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          className="settings-mini bg-white/5 hover:bg-white/10 border-white/10 px-3 py-1.5 rounded text-[10px] transition-colors"
+                                          onClick={handleSelectPreviewFolder}
+                                        >
+                                          Browse
+                                        </button>
+                                        {draft.previewFolder && (
+                                          <button
+                                            type="button"
+                                            className="text-[10px] text-red-400/60 hover:text-red-400 px-2 transition-colors"
+                                            onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                          >
+                                            Clear
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="font-medium text-white/90">Variant Export Path</div>
+                                        <div className="text-[10px] text-white/40 mt-0.5">{draft.variantExportFolder || "Not configured (Default: Manual select)"}</div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          className="settings-mini bg-white/5 hover:bg-white/10 border-white/10 px-3 py-1.5 rounded text-[10px] transition-colors"
+                                          onClick={handleSelectVariantExportFolder}
+                                        >
+                                          Browse
+                                        </button>
+                                        {draft.variantExportFolder && (
+                                          <button
+                                            type="button"
+                                            className="text-[10px] text-red-400/60 hover:text-red-400 px-2 transition-colors"
+                                            onClick={() => setDraft((p) => ({ ...p, variantExportFolder: "" }))}
+                                          >
+                                            Clear
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </section>
+                              </div>
+                            ) : null}
+
+                            {/* ─── Viewer ─── */}
+                            {activeSection === "viewer" ? (
+                              <div className="space-y-6">
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Navigation Defaults</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium text-white/90">WASD Free-Cam</div>
+                                      <div className="text-[10px] text-white/40 mt-0.5">W/A/S/D pan, Q/E rise, Shift to boost</div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className={`settings-toggle ${draft.cameraWASD ? "is-on" : ""}`}
+                                      onClick={() => setDraft((p) => ({ ...p, cameraWASD: !p.cameraWASD }))}
+                                    >
+                                      <span className="settings-toggle-dot" />
+                                    </button>
+                                  </div>
 
                                 <div className="settings-row">
                                   <div className="settings-row-label">Hide text labels</div>
@@ -375,6 +432,7 @@ export default function SettingsMenu({ onSettingsSaved }) {
                                   </button>
                                 </div>
                               </section>
+                              </div>
                             ) : null}
 
                             {/* ─── Display (UI Scale) ─── */}
@@ -435,197 +493,126 @@ export default function SettingsMenu({ onSettingsSaved }) {
 
                             {/* ─── Hotkeys ─── */}
                             {activeSection === "hotkeys" ? (
-                              <section className="settings-panel" id="settings-panel-hotkeys" aria-label="Hotkeys">
+                              <div className="space-y-6">
                                 {Object.entries(HOTKEY_CATEGORIES).map(([categoryId, category]) => (
-                                  <div key={categoryId} className="settings-hotkey-category">
+                                  <section key={categoryId} className="settings-panel">
                                     <div className="settings-panel-title">{category.label}</div>
-                                    {category.actions.map((action) => (
-                                      <div key={action} className="settings-row">
-                                        <div className="settings-row-label">{HOTKEY_LABELS[action]}</div>
-                                        <HotkeyInput
-                                          value={hotkeysDraft[action]}
-                                          onChange={(hotkey) => updateHotkey(action, hotkey)}
-                                          onClear={() => clearHotkey(action)}
-                                        />
-                                      </div>
-                                    ))}
-                                  </div>
-                                ))}
-                                <div className="settings-row">
-                                  <div className="settings-row-note">
-                                    Click a hotkey field and press your desired key combination.
-                                  </div>
-                                </div>
-                                <div className="settings-hotkey-reset">
-                                  <button type="button" className="settings-mini" onClick={resetAllHotkeys}>
-                                    Reset all hotkeys
-                                  </button>
-                                </div>
-                              </section>
-                            ) : null}
-
-                            {/* ─── Camera ─── */}
-                            {activeSection === "camera" ? (
-                              <section className="settings-panel" id="settings-panel-camera" aria-label="Camera">
-                                <div className="settings-panel-title">Camera controls</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">WASD mode</div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.cameraWASD ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, cameraWASD: !p.cameraWASD }))}
-                                    aria-pressed={draft.cameraWASD}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-                                <div className="settings-row">
-                                  <div className="settings-row-note">
-                                    W/A/S/D pan, Q/E rise, Shift to boost.
-                                  </div>
-                                </div>
-
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Grid background</div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.showGrid ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
-                                    aria-pressed={draft.showGrid}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Show hints</div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.showHints ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, showHints: !p.showHints }))}
-                                    aria-pressed={draft.showHints}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-                              </section>
-                            ) : null}
-
-                            {/* ─── Appearance ─── */}
-                            {activeSection === "colors" ? (
-                              <section className="settings-panel" id="settings-panel-colors" aria-label="Appearance">
-                                <div className="settings-panel-title">Interface Style</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Window Controls</div>
-                                  <div className="style-pill-toggle">
-                                    <button
-                                      type="button"
-                                      className={`style-pill-option ${draft.windowControlsStyle !== "mac" ? "is-active" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "windows" }))}
-                                    >
-                                      Standard
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`style-pill-option ${draft.windowControlsStyle === "mac" ? "is-active" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "mac" }))}
-                                    >
-                                      Elegant
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <div className="settings-panel-title" style={{ marginTop: 16 }}>Colors</div>
-                                <div className="settings-panel-grid">
-                                  <ColorField
-                                    label="Body"
-                                    value={draft.bodyColor}
-                                    onChange={(value) => setDraft((p) => ({ ...p, bodyColor: value }))}
-                                    onReset={() => setDraft((p) => ({ ...p, bodyColor: BUILT_IN_DEFAULTS.bodyColor }))}
-                                  />
-                                  <ColorField
-                                    label="Background"
-                                    value={draft.backgroundColor}
-                                    onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
-                                    onReset={() => setDraft((p) => ({ ...p, backgroundColor: BUILT_IN_DEFAULTS.backgroundColor }))}
-                                  />
-                                </div>
-                              </section>
-                            ) : null}
-
-                            {/* ─── Export ─── */}
-                            {activeSection === "export" ? (
-                              <section className="settings-panel" id="settings-panel-export" aria-label="Export">
-                                <div className="settings-panel-title">Preview export</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">
-                                    <div className="flex items-center gap-2">
-                                      <FolderOpen className="h-3 w-3 opacity-60" />
-                                      <span>Preview Folder</span>
+                                    <div className="grid grid-cols-1 gap-1">
+                                      {category.actions.map((action) => (
+                                        <div key={action} className="settings-row hover:bg-white/[0.02] px-3 transition-colors gap-4 border-b border-white/5 last:border-none">
+                                          <div className="flex-1 min-w-0 py-2">
+                                            <div className="text-[11px] text-white/80 font-medium">{HOTKEY_LABELS[action]}</div>
+                                          </div>
+                                          <HotkeyInput
+                                            value={hotkeysDraft[action]}
+                                            onChange={(hotkey) => updateHotkey(action, hotkey)}
+                                            onClear={() => clearHotkey(action)}
+                                          />
+                                        </div>
+                                      ))}
                                     </div>
-                                  </div>
-                                  <div className="settings-folder-control">
-                                    <button
-                                      type="button"
-                                      className="settings-folder-btn"
-                                      onClick={handleSelectPreviewFolder}
-                                    >
-                                      {draft.previewFolder
-                                        ? draft.previewFolder.split(/[\\/]/).pop()
-                                        : "Select folder..."}
-                                    </button>
-                                    {draft.previewFolder && (
+                                  </section>
+                                ))}
+                                <div className="pt-4 border-t border-white/5 flex justify-between items-center">
+                                  <div className="text-[10px] text-white/30 italic">Click a field to rebind keys</div>
+                                  <button type="button" className="settings-mini text-[10px] opacity-60 hover:opacity-100" onClick={resetAllHotkeys}>
+                                    Restore default shortcuts
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {/* ─── Appearance (Design) ─── */}
+                            {activeSection === "appearance" ? (
+                              <div className="space-y-6">
+                                  <section className="settings-panel">
+                                    <div className="settings-panel-title">Environment Controls</div>
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="font-medium text-white/90">Show 3D Grid</div>
+                                        <div className="text-[10px] text-white/40 mt-0.5">Display ground grid in the viewer</div>
+                                      </div>
                                       <button
                                         type="button"
-                                        className="settings-mini"
-                                        onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                        className={`settings-toggle ${draft.showGrid ? "is-on" : ""}`}
+                                        onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
                                       >
-                                        Clear
+                                        <span className="settings-toggle-dot" />
                                       </button>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="settings-row">
-                                  <div className="settings-row-note">
-                                    Where generated preview images will be saved. You can also set this during onboarding.
-                                  </div>
-                                </div>
-                                {draft.previewFolder && (
+                                    </div>
+                                  </section>
+
+                                  <section className="settings-panel">
+                                    <div className="settings-panel-title">Interface Aesthetic</div>
                                   <div className="settings-row">
-                                    <div className="settings-row-note mono" style={{ fontSize: 10, opacity: 0.5 }}>
-                                      {draft.previewFolder}
+                                    <div className="settings-row-label">
+                                      <div className="font-medium text-white/90">Window Controls Style</div>
+                                      <div className="text-[10px] text-white/40 mt-0.5">Select visual theme for window buttons</div>
+                                    </div>
+                                    <div className="flex bg-white/5 p-1 rounded-none border border-white/10">
+                                      <button
+                                        type="button"
+                                        className={`px-3 py-1 text-[10px] rounded transition-all ${draft.windowControlsStyle !== "mac" ? "bg-[#7dd3fc]/20 text-[#7dd3fc] font-bold" : "text-white/40 hover:text-white/60"}`}
+                                        onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "windows" }))}
+                                      >
+                                        Standard
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`px-3 py-1 text-[10px] rounded transition-all ${draft.windowControlsStyle === "mac" ? "bg-[#7dd3fc]/20 text-[#7dd3fc] font-bold" : "text-white/40 hover:text-white/60"}`}
+                                        onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "mac" }))}
+                                      >
+                                        Elegant
+                                      </button>
                                     </div>
                                   </div>
-                                )}
-                              </section>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Default Environment Colors</div>
+                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 mt-2">
+                                    <ColorField
+                                      label="Base Body"
+                                      value={draft.bodyColor}
+                                      onChange={(value) => setDraft((p) => ({ ...p, bodyColor: value }))}
+                                      onReset={() => setDraft((p) => ({ ...p, bodyColor: BUILT_IN_DEFAULTS.bodyColor }))}
+                                    />
+                                    <ColorField
+                                      label="Base Background"
+                                      value={draft.backgroundColor}
+                                      onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
+                                      onReset={() => setDraft((p) => ({ ...p, backgroundColor: BUILT_IN_DEFAULTS.backgroundColor }))}
+                                    />
+                                  </div>
+                                </section>
+                              </div>
                             ) : null}
 
                             {/* ─── Experimental ─── */}
                             {activeSection === "experimental" ? (
-                              <section className="settings-panel" id="settings-panel-experimental" aria-label="Experimental">
-                                <div className="settings-panel-title">Experimental features</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">
-                                    <div className="flex items-center gap-2">
-                                      <FlaskConical className="h-3 w-3 text-orange-400" />
-                                      <span>Enable experimental settings</span>
+                              <div className="space-y-6">
+                                <section className="settings-panel bg-orange-500/5 border border-orange-500/20 p-4 rounded-none">
+                                  <div className="flex gap-4 items-start">
+                                    <FlaskConical className="h-5 w-5 text-orange-400 shrink-0 mt-1" />
+                                    <div className="flex-1">
+                                      <div className="font-bold text-orange-400 uppercase tracking-widest text-[11px] mb-2">Beta Access Protocol</div>
+                                      <div className="settings-row border-none p-0 mb-4">
+                                        <div className="text-[11px] text-white/70 max-w-[28ch]">Unlock unstable features and engineering tools</div>
+                                        <button
+                                          type="button"
+                                          className={`settings-toggle ${draft.experimentalSettings ? "is-on" : ""}`}
+                                          onClick={() => setDraft((p) => ({ ...p, experimentalSettings: !p.experimentalSettings }))}
+                                        >
+                                          <span className="settings-toggle-dot" />
+                                        </button>
+                                      </div>
+                                      <div className="text-[10px] text-orange-400/60 leading-relaxed italic">
+                                        Warning: These features are not production-ready. Enabling them may cause memory leaks or renderer crashes.
+                                      </div>
                                     </div>
                                   </div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.experimentalSettings ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, experimentalSettings: !p.experimentalSettings }))}
-                                    aria-pressed={draft.experimentalSettings}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-                                <div className="settings-row">
-                                  <div className="settings-row-note text-orange-400/80">
-                                    These features are not fully stable and may cause issues. Use at your own risk.
-                                  </div>
-                                </div>
-                              </section>
+                                </section>
+                              </div>
                             ) : null}
                           </motion.div>
                         </AnimatePresence>

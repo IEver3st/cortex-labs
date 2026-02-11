@@ -12,6 +12,7 @@
 
 import { readPsd } from "ag-psd";
 import { readFile } from "@tauri-apps/plugin-fs";
+import { detectPsdBitDepth } from "./viewer-utils";
 
 /* ─── Category mapping ─── */
 const COLOR_CATEGORY_MAP = {
@@ -185,6 +186,13 @@ function categorizeLayer(layer, useColorLabels) {
  */
 export async function parsePsdLayers(filePath) {
   const bytes = await readFile(filePath);
+  const bitDepth = detectPsdBitDepth(bytes);
+  if (bitDepth === 16 || bitDepth === 32) {
+    const error = new Error(`${bitDepth}-bit PSD not supported`);
+    error.type = "unsupported-bit-depth";
+    error.bitDepth = bitDepth;
+    throw error;
+  }
   const buffer = bytes.buffer || bytes;
 
   const psd = readPsd(new DataView(buffer), {
@@ -349,6 +357,13 @@ function getCompositeOp(blendMode) {
  */
 export async function compositePsdVariant(filePath, layerVisibility = {}, targetWidth, targetHeight) {
   const bytes = await readFile(filePath);
+  const bitDepth = detectPsdBitDepth(bytes);
+  if (bitDepth === 16 || bitDepth === 32) {
+    const error = new Error(`${bitDepth}-bit PSD not supported`);
+    error.type = "unsupported-bit-depth";
+    error.bitDepth = bitDepth;
+    throw error;
+  }
   const buffer = bytes.buffer || bytes;
 
   const psd = readPsd(new DataView(buffer), {

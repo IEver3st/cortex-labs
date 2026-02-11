@@ -438,15 +438,19 @@ export default function Viewer({
   useEffect(() => {
     if (!modelRef.current) return;
     const factor = 2 - 2 * glossiness;
+    const meshes = getMeshList(modelRef.current);
 
-    modelRef.current.traverse((child) => {
-      if (child.isMesh && child.material) {
-        const base = child.material.userData.baseRoughness;
+    for (const child of meshes) {
+      if (!child.material) continue;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const material of materials) {
+        if (!material) continue;
+        const base = material.userData?.baseRoughness;
         if (typeof base === "number") {
-          child.material.roughness = Math.min(1.0, Math.max(0.0, base * factor));
+          material.roughness = Math.min(1.0, Math.max(0.0, base * factor));
         }
       }
-    });
+    }
     requestRenderRef.current?.();
   }, [glossiness]);
 
@@ -610,14 +614,18 @@ export default function Viewer({
         sceneRef.current.add(object);
 
         const glossFactor = 2 - 2 * glossiness;
-        object.traverse((child) => {
-          if (child.isMesh && child.material) {
-            const base = child.material.userData.baseRoughness;
+        const meshes = getMeshList(object);
+        for (const child of meshes) {
+          if (!child.material) continue;
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          for (const material of materials) {
+            if (!material) continue;
+            const base = material.userData?.baseRoughness;
             if (typeof base === "number") {
-              child.material.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
+              material.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
             }
           }
-        });
+        }
 
         const targets = collectTextureTargets(object);
         const liveryTarget = findLiveryTarget(object);
@@ -977,7 +985,7 @@ export default function Viewer({
         } catch (error) {
           if (error?.type === "unsupported-bit-depth") {
             console.log("[Texture] Unsupported bit depth detected:", error.bitDepth);
-            onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth });
+            onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth, path: texturePath, kind: "primary" });
             return;
           }
           if (!lastError || (error instanceof Error && error.message)) {
@@ -1250,6 +1258,10 @@ export default function Viewer({
           texture = await attempt();
           if (texture) break;
         } catch (error) {
+          if (error?.type === "unsupported-bit-depth") {
+            onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth, path: windowTexturePath, kind: "window" });
+            return;
+          }
           lastError = error;
         }
       }
@@ -1537,7 +1549,7 @@ function applyMaterials(
       child.visible = true;
     }
 
-    if (shouldApply && activeTexture) {
+    if (shouldApply && (activeTexture || matchesVehicle)) {
       const appliedMaterial = getOrCreateAppliedMaterial(child, color);
       updateAppliedMaterial(appliedMaterial, color, activeTexture);
       if (child.material !== appliedMaterial) {

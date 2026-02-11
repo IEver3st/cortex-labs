@@ -12,7 +12,7 @@ const SelectTrigger = React.forwardRef(({ className, children, ...props }, ref) 
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-9 w-full items-center justify-between rounded-[var(--es-radius-control)] border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+      "flex h-[calc(36px*var(--es-ui-scale))] w-full items-center justify-between rounded-[var(--es-radius-control)] border border-white/10 bg-white/5 px-[calc(12px*var(--es-ui-scale))] py-[calc(8px*var(--es-ui-scale))] text-[calc(14px*var(--es-ui-scale))] text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
       "font-hud",
       className,
     )}
@@ -94,15 +94,15 @@ const SelectItem = React.forwardRef(({ className, children, ...props }, ref) => 
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-[var(--es-radius-control)] py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-white/10 focus:text-white data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex w-full cursor-default select-none items-center rounded-[var(--es-radius-control)] py-[calc(6px*var(--es-ui-scale))] pl-[calc(32px*var(--es-ui-scale))] pr-[calc(8px*var(--es-ui-scale))] text-[calc(14px*var(--es-ui-scale))] outline-none focus:bg-white/10 focus:text-white data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       "font-hud",
       className,
     )}
     {...props}
   >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+    <span className="absolute left-[calc(8px*var(--es-ui-scale))] flex h-[calc(14px*var(--es-ui-scale))] w-[calc(14px*var(--es-ui-scale))] items-center justify-center">
       <SelectPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" />
+        <Check className="h-[calc(16px*var(--es-ui-scale))] w-[calc(16px*var(--es-ui-scale))]" />
       </SelectPrimitive.ItemIndicator>
     </span>
 

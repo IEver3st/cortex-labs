@@ -20,10 +20,19 @@ export default function DualModelViewer({
   modelBPath,
   textureAPath,
   textureBPath,
+  windowTextureAPath,
+  windowTextureBPath,
+  windowTextureATarget = "auto",
+  windowTextureBTarget = "auto",
   textureAReloadToken = 0,
   textureBReloadToken = 0,
-  bodyColor,
+  windowTextureAReloadToken = 0,
+  windowTextureBReloadToken = 0,
+  bodyColorA,
+  bodyColorB,
   backgroundColor,
+  lightIntensity = 1.0,
+  glossiness = 0.5,
   selectedSlot,
   gizmoVisible = true,
   showGrid = true,
@@ -37,6 +46,9 @@ export default function DualModelViewer({
   onModelBError,
   onModelALoading,
   onModelBLoading,
+  onModelAInfo,
+  onModelBInfo,
+  onFormatWarning,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -44,11 +56,16 @@ export default function DualModelViewer({
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
   const requestRenderRef = useRef(null);
+  const lightsRef = useRef({ ambient: null, key: null, rim: null });
 
   const modelARef = useRef(null);
   const modelBRef = useRef(null);
   const textureARef = useRef(null);
   const textureBRef = useRef(null);
+  const textureAStateRef = useRef({ path: "", reloadToken: -1 });
+  const textureBStateRef = useRef({ path: "", reloadToken: -1 });
+  const windowTextureARef = useRef(null);
+  const windowTextureBRef = useRef(null);
   const gizmoARef = useRef(null);
   const gizmoBRef = useRef(null);
   const gridRef = useRef(null);
@@ -65,23 +82,58 @@ export default function DualModelViewer({
   const onModelBErrorRef = useRef(onModelBError);
   const onModelALoadingRef = useRef(onModelALoading);
   const onModelBLoadingRef = useRef(onModelBLoading);
+  const onModelAInfoRef = useRef(onModelAInfo);
+  const onModelBInfoRef = useRef(onModelBInfo);
+  const onFormatWarningRef = useRef(onFormatWarning);
   const selectedSlotRef = useRef(selectedSlot);
 
   const onPositionChangeRef = useRef(onPositionChange);
   const textureModeRef = useRef(textureMode);
   const initialPosARef = useRef(initialPosA);
   const initialPosBRef = useRef(initialPosB);
+  const glossinessRef = useRef(glossiness);
 
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   useEffect(() => { onModelAErrorRef.current = onModelAError; }, [onModelAError]);
   useEffect(() => { onModelBErrorRef.current = onModelBError; }, [onModelBError]);
   useEffect(() => { onModelALoadingRef.current = onModelALoading; }, [onModelALoading]);
   useEffect(() => { onModelBLoadingRef.current = onModelBLoading; }, [onModelBLoading]);
+  useEffect(() => { onModelAInfoRef.current = onModelAInfo; }, [onModelAInfo]);
+  useEffect(() => { onModelBInfoRef.current = onModelBInfo; }, [onModelBInfo]);
+  useEffect(() => { onFormatWarningRef.current = onFormatWarning; }, [onFormatWarning]);
   useEffect(() => { selectedSlotRef.current = selectedSlot; }, [selectedSlot]);
   useEffect(() => { onPositionChangeRef.current = onPositionChange; }, [onPositionChange]);
   useEffect(() => { textureModeRef.current = textureMode; }, [textureMode]);
+  useEffect(() => { glossinessRef.current = glossiness; }, [glossiness]);
 
   const requestRender = useCallback(() => { requestRenderRef.current?.(); }, []);
+
+  const applyGlossinessToObject = useCallback((object, nextGlossiness = glossinessRef.current) => {
+    if (!object) return;
+    const glossFactor = 2 - 2 * nextGlossiness;
+    const meshes = getMeshList(object);
+
+    for (const child of meshes) {
+      if (!child.material) continue;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+
+      materials.forEach((material) => {
+        if (!material) return;
+        const baseFromData = material.userData?.baseRoughness;
+        const fallbackBase = typeof material.roughness === "number" ? material.roughness : null;
+        const baseRoughness = typeof baseFromData === "number" ? baseFromData : fallbackBase;
+
+        if (typeof baseFromData !== "number" && typeof fallbackBase === "number") {
+          material.userData = material.userData || {};
+          material.userData.baseRoughness = fallbackBase;
+        }
+
+        if (typeof baseRoughness === "number") {
+          material.roughness = Math.min(1.0, Math.max(0.0, baseRoughness * glossFactor));
+        }
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -105,11 +157,12 @@ export default function DualModelViewer({
     const wheelWhileDragging = setupWheelWhileDragging(controls, requestRenderRef);
     renderer.domElement.addEventListener("wheel", wheelWhileDragging, { passive: false });
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-    const key = new THREE.DirectionalLight(0xffffff, 0.9);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.5 * lightIntensity);
+    const key = new THREE.DirectionalLight(0xffffff, 0.9 * lightIntensity);
     key.position.set(3.5, 4.5, 2.5);
-    const rim = new THREE.DirectionalLight(0xffffff, 0.35);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.35 * lightIntensity);
     rim.position.set(-3, 2, -2.2);
+    lightsRef.current = { ambient, key, rim };
     scene.add(ambient, key, rim);
 
     renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -253,6 +306,21 @@ export default function DualModelViewer({
   }, [backgroundColor]);
 
   useEffect(() => {
+    const { ambient, key, rim } = lightsRef.current;
+    if (ambient) ambient.intensity = 0.5 * lightIntensity;
+    if (key) key.intensity = 0.9 * lightIntensity;
+    if (rim) rim.intensity = 0.35 * lightIntensity;
+    requestRender();
+  }, [lightIntensity, requestRender]);
+
+  useEffect(() => {
+    if (!sceneReady) return;
+    applyGlossinessToObject(modelARef.current);
+    applyGlossinessToObject(modelBRef.current);
+    requestRender();
+  }, [sceneReady, glossiness, applyGlossinessToObject, requestRender]);
+
+  useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
     if (showGrid && !gridRef.current) {
       const grid = createFloorGrid();
@@ -296,6 +364,16 @@ export default function DualModelViewer({
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
     if (!modelAPath) {
+      if (modelARef.current) {
+        gizmoARef.current?.detach();
+        sceneRef.current.remove(modelARef.current);
+        disposeObject(modelARef.current);
+        modelARef.current = null;
+        setModelAVersion((v) => v + 1);
+        refitCamera();
+        requestRender();
+      }
+      onModelAInfoRef.current?.({ targets: [], windowTarget: "", windowLabel: "" });
       onModelALoadingRef.current?.(false);
       return;
     }
@@ -309,6 +387,13 @@ export default function DualModelViewer({
         if (!object) { onModelAErrorRef.current?.("Failed to load model A."); return; }
 
         normalizeLoadedMeshes(object);
+        const targets = collectTextureTargets(object);
+        const windowTarget = findWindowTemplateTarget(object);
+        onModelAInfoRef.current?.({
+          targets,
+          windowTarget: windowTarget?.value || "",
+          windowLabel: windowTarget?.label || "",
+        });
 
         if (modelARef.current) {
           gizmoARef.current?.detach();
@@ -328,6 +413,8 @@ export default function DualModelViewer({
           object.position.set(initA[0], initA[1], initA[2]);
         }
 
+        applyGlossinessToObject(object);
+
         sceneRef.current.add(object);
         modelARef.current = object;
         gizmoARef.current?.attach(object);
@@ -335,6 +422,7 @@ export default function DualModelViewer({
 
         refitCamera();
       } catch (err) {
+        onModelAInfoRef.current?.({ targets: [], windowTarget: "", windowLabel: "" });
         if (!cancelled) onModelAErrorRef.current?.(`Model A load failed: ${err?.message || "Unknown error"}`);
       } finally {
         if (!cancelled) onModelALoadingRef.current?.(false);
@@ -342,11 +430,21 @@ export default function DualModelViewer({
     })();
 
     return () => { cancelled = true; };
-  }, [modelAPath, sceneReady]);
+  }, [modelAPath, sceneReady, applyGlossinessToObject]);
 
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
     if (!modelBPath) {
+      if (modelBRef.current) {
+        gizmoBRef.current?.detach();
+        sceneRef.current.remove(modelBRef.current);
+        disposeObject(modelBRef.current);
+        modelBRef.current = null;
+        setModelBVersion((v) => v + 1);
+        refitCamera();
+        requestRender();
+      }
+      onModelBInfoRef.current?.({ targets: [], windowTarget: "", windowLabel: "" });
       onModelBLoadingRef.current?.(false);
       return;
     }
@@ -360,6 +458,13 @@ export default function DualModelViewer({
         if (!object) { onModelBErrorRef.current?.("Failed to load model B."); return; }
 
         normalizeLoadedMeshes(object);
+        const targets = collectTextureTargets(object);
+        const windowTarget = findWindowTemplateTarget(object);
+        onModelBInfoRef.current?.({
+          targets,
+          windowTarget: windowTarget?.value || "",
+          windowLabel: windowTarget?.label || "",
+        });
 
         if (modelBRef.current) {
           gizmoBRef.current?.detach();
@@ -386,6 +491,8 @@ export default function DualModelViewer({
           object.position.set(0, 0, 3);
         }
 
+        applyGlossinessToObject(object);
+
         sceneRef.current.add(object);
         modelBRef.current = object;
         gizmoBRef.current?.attach(object);
@@ -393,6 +500,7 @@ export default function DualModelViewer({
 
         refitCamera();
       } catch (err) {
+        onModelBInfoRef.current?.({ targets: [], windowTarget: "", windowLabel: "" });
         if (!cancelled) onModelBErrorRef.current?.(`Model B load failed: ${err?.message || "Unknown error"}`);
       } finally {
         if (!cancelled) onModelBLoadingRef.current?.(false);
@@ -400,7 +508,7 @@ export default function DualModelViewer({
     })();
 
     return () => { cancelled = true; };
-  }, [modelBPath, sceneReady]);
+  }, [modelBPath, sceneReady, applyGlossinessToObject]);
 
   useEffect(() => {
     if (!sceneReady) return;
@@ -409,19 +517,49 @@ export default function DualModelViewer({
 
     (async () => {
       if (!textureAPath) {
+        textureAStateRef.current = { path: "", reloadToken: -1 };
         if (textureARef.current) { textureARef.current.dispose?.(); textureARef.current = null; }
-        if (modelARef.current) { applyFn(modelARef.current, bodyColor, null); requestRender(); }
+        if (modelARef.current) {
+          applyFn(modelARef.current, bodyColorA, null);
+          applyGlossinessToObject(modelARef.current);
+          requestRender();
+        }
         return;
       }
-      const tex = await loadTextureFromPath(textureAPath, textureLoader, rendererRef.current);
-      if (cancelled) return;
-      if (textureARef.current && textureARef.current !== tex) textureARef.current.dispose?.();
-      textureARef.current = tex;
-      if (modelARef.current) { applyFn(modelARef.current, bodyColor, tex); requestRender(); }
+
+      if (
+        textureARef.current &&
+        textureAStateRef.current.path === textureAPath &&
+        textureAStateRef.current.reloadToken === textureAReloadToken
+      ) {
+        if (modelARef.current) {
+          applyFn(modelARef.current, bodyColorA, textureARef.current);
+          applyGlossinessToObject(modelARef.current);
+          requestRender();
+        }
+        return;
+      }
+
+      try {
+        const tex = await loadTextureFromPath(textureAPath, textureLoader, rendererRef.current);
+        if (cancelled) return;
+        if (textureARef.current && textureARef.current !== tex) textureARef.current.dispose?.();
+        textureARef.current = tex;
+        textureAStateRef.current = { path: textureAPath, reloadToken: textureAReloadToken };
+        if (modelARef.current) {
+          applyFn(modelARef.current, bodyColorA, tex);
+          applyGlossinessToObject(modelARef.current);
+          requestRender();
+        }
+      } catch (err) {
+        if (err?.type === "unsupported-bit-depth") {
+          onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: err.bitDepth, path: textureAPath, slot: "A", kind: "primary" });
+        }
+      }
     })();
 
     return () => { cancelled = true; };
-  }, [textureAPath, textureAReloadToken, sceneReady, modelAVersion, textureMode]);
+  }, [textureAPath, textureAReloadToken, sceneReady, modelAVersion, textureMode, bodyColorA, applyGlossinessToObject]);
 
   useEffect(() => {
     if (!sceneReady) return;
@@ -430,27 +568,119 @@ export default function DualModelViewer({
 
     (async () => {
       if (!textureBPath) {
+        textureBStateRef.current = { path: "", reloadToken: -1 };
         if (textureBRef.current) { textureBRef.current.dispose?.(); textureBRef.current = null; }
-        if (modelBRef.current) { applyFn(modelBRef.current, bodyColor, null); requestRender(); }
+        if (modelBRef.current) {
+          applyFn(modelBRef.current, bodyColorB, null);
+          applyGlossinessToObject(modelBRef.current);
+          requestRender();
+        }
         return;
       }
-      const tex = await loadTextureFromPath(textureBPath, textureLoader, rendererRef.current);
-      if (cancelled) return;
-      if (textureBRef.current && textureBRef.current !== tex) textureBRef.current.dispose?.();
-      textureBRef.current = tex;
-      if (modelBRef.current) { applyFn(modelBRef.current, bodyColor, tex); requestRender(); }
+
+      if (
+        textureBRef.current &&
+        textureBStateRef.current.path === textureBPath &&
+        textureBStateRef.current.reloadToken === textureBReloadToken
+      ) {
+        if (modelBRef.current) {
+          applyFn(modelBRef.current, bodyColorB, textureBRef.current);
+          applyGlossinessToObject(modelBRef.current);
+          requestRender();
+        }
+        return;
+      }
+
+      try {
+        const tex = await loadTextureFromPath(textureBPath, textureLoader, rendererRef.current);
+        if (cancelled) return;
+        if (textureBRef.current && textureBRef.current !== tex) textureBRef.current.dispose?.();
+        textureBRef.current = tex;
+        textureBStateRef.current = { path: textureBPath, reloadToken: textureBReloadToken };
+        if (modelBRef.current) {
+          applyFn(modelBRef.current, bodyColorB, tex);
+          applyGlossinessToObject(modelBRef.current);
+          requestRender();
+        }
+      } catch (err) {
+        if (err?.type === "unsupported-bit-depth") {
+          onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: err.bitDepth, path: textureBPath, slot: "B", kind: "primary" });
+        }
+      }
     })();
 
     return () => { cancelled = true; };
-  }, [textureBPath, textureBReloadToken, sceneReady, modelBVersion, textureMode]);
+  }, [textureBPath, textureBReloadToken, sceneReady, modelBVersion, textureMode, bodyColorB, applyGlossinessToObject]);
 
   useEffect(() => {
     if (!sceneReady) return;
-    const applyFn = textureMode === "eup" ? applyTextureToAll : applyLiveryToModel;
-    if (modelARef.current) applyFn(modelARef.current, bodyColor, textureARef.current);
-    if (modelBRef.current) applyFn(modelBRef.current, bodyColor, textureBRef.current);
-    requestRender();
-  }, [bodyColor, sceneReady, textureMode]);
+    let cancelled = false;
+
+    (async () => {
+      if (textureMode !== "livery" || !windowTextureAPath) {
+        if (windowTextureARef.current) { windowTextureARef.current.dispose?.(); windowTextureARef.current = null; }
+        if (modelARef.current) {
+          applyWindowDesignToModel(modelARef.current, null, windowTextureATarget);
+          applyGlossinessToObject(modelARef.current);
+          requestRender();
+        }
+        return;
+      }
+
+      try {
+        const tex = await loadTextureFromPath(windowTextureAPath, textureLoader, rendererRef.current);
+        if (cancelled) return;
+        if (windowTextureARef.current && windowTextureARef.current !== tex) windowTextureARef.current.dispose?.();
+        windowTextureARef.current = tex;
+        if (modelARef.current) {
+          applyWindowDesignToModel(modelARef.current, tex, windowTextureATarget);
+          applyGlossinessToObject(modelARef.current);
+          requestRender();
+        }
+      } catch (err) {
+        if (err?.type === "unsupported-bit-depth") {
+          onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: err.bitDepth, path: windowTextureAPath, slot: "A", kind: "window" });
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [windowTextureAPath, windowTextureAReloadToken, windowTextureATarget, sceneReady, modelAVersion, textureMode, applyGlossinessToObject]);
+
+  useEffect(() => {
+    if (!sceneReady) return;
+    let cancelled = false;
+
+    (async () => {
+      if (textureMode !== "livery" || !windowTextureBPath) {
+        if (windowTextureBRef.current) { windowTextureBRef.current.dispose?.(); windowTextureBRef.current = null; }
+        if (modelBRef.current) {
+          applyWindowDesignToModel(modelBRef.current, null, windowTextureBTarget);
+          applyGlossinessToObject(modelBRef.current);
+          requestRender();
+        }
+        return;
+      }
+
+      try {
+        const tex = await loadTextureFromPath(windowTextureBPath, textureLoader, rendererRef.current);
+        if (cancelled) return;
+        if (windowTextureBRef.current && windowTextureBRef.current !== tex) windowTextureBRef.current.dispose?.();
+        windowTextureBRef.current = tex;
+        if (modelBRef.current) {
+          applyWindowDesignToModel(modelBRef.current, tex, windowTextureBTarget);
+          applyGlossinessToObject(modelBRef.current);
+          requestRender();
+        }
+      } catch (err) {
+        if (err?.type === "unsupported-bit-depth") {
+          onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: err.bitDepth, path: windowTextureBPath, slot: "B", kind: "window" });
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [windowTextureBPath, windowTextureBReloadToken, windowTextureBTarget, sceneReady, modelBVersion, textureMode, applyGlossinessToObject]);
 
   const refitCamera = useCallback(() => {
     const objects = [modelARef.current, modelBRef.current].filter(Boolean);
@@ -482,4 +712,211 @@ export default function DualModelViewer({
   }, [requestRender]);
 
   return <div ref={containerRef} className="h-full w-full" />;
+}
+
+const ALL_TARGET = "all";
+const NONE_TARGET = "none";
+const MATERIAL_TARGET_PREFIX = "material:";
+const MESH_TARGET_PREFIX = "mesh:";
+
+function applyWindowDesignToModel(object, texture, windowTarget) {
+  if (!object) return;
+  const resolvedTarget = windowTarget || NONE_TARGET;
+
+  object.traverse((child) => {
+    if (!child.isMesh) return;
+    if (!child.userData.baseMaterial) child.userData.baseMaterial = child.material;
+
+    const matchesWindow = matchesWindowTarget(child, resolvedTarget);
+    const shouldApply = Boolean(texture) && matchesWindow;
+
+    if (!shouldApply) {
+      if (child.userData.windowMaterial && child.material === child.userData.windowMaterial) {
+        child.material = child.userData.baseMaterial;
+      }
+      return;
+    }
+
+    const baseMaterial = child.userData.baseMaterial || child.material;
+    if (!child.userData.windowMaterial) {
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: texture,
+        side: THREE.DoubleSide,
+        metalness: baseMaterial?.metalness ?? 0,
+        roughness: Math.min(baseMaterial?.roughness ?? 0.2, 0.35),
+        transparent: true,
+        opacity: typeof baseMaterial?.opacity === "number" ? baseMaterial.opacity : 0.5,
+      });
+      material.name = baseMaterial?.name || "";
+      child.userData.windowMaterial = material;
+    } else if (child.userData.windowMaterial.map !== texture) {
+      child.userData.windowMaterial.map = texture;
+      child.userData.windowMaterial.needsUpdate = true;
+    }
+
+    if (child.material !== child.userData.windowMaterial) {
+      child.material = child.userData.windowMaterial;
+    }
+  });
+}
+
+function matchesWindowTarget(mesh, target) {
+  if (target === NONE_TARGET) return false;
+  if (!target || target === "auto") return isWindowMesh(mesh);
+  if (target === ALL_TARGET) return true;
+
+  const baseMaterial = mesh.userData?.baseMaterial || mesh.material;
+  if (target.startsWith(MATERIAL_TARGET_PREFIX)) {
+    const requestedName = target.slice(MATERIAL_TARGET_PREFIX.length);
+    return getMaterialNames(baseMaterial).some((name) => name === requestedName);
+  }
+
+  if (target.startsWith(MESH_TARGET_PREFIX)) {
+    const requestedMesh = target.slice(MESH_TARGET_PREFIX.length);
+    return ensureMeshLabel(mesh) === requestedMesh;
+  }
+
+  return isWindowMesh(mesh);
+}
+
+function isWindowMesh(mesh) {
+  const baseMaterial = mesh.userData?.baseMaterial || mesh.material;
+  const materialNames = getMaterialNames(baseMaterial).map((name) => name.toLowerCase());
+  const materialName = materialNames.join(" ");
+  const meshName = (mesh.name || "").toLowerCase();
+  const target = `${materialName} ${meshName}`;
+
+  return (
+    target.includes("window") ||
+    target.includes("glass") ||
+    target.includes("vehglass") ||
+    target.includes("sign_2") ||
+    target.includes("sign-2") ||
+    target.includes("sign2") ||
+    target.includes("sign_3") ||
+    target.includes("sign-3") ||
+    target.includes("sign3")
+  );
+}
+
+function collectTextureTargets(object) {
+  if (!object) return [];
+  const materialNames = new Set();
+  const meshNames = new Set();
+
+  object.traverse((child) => {
+    if (!child.isMesh) return;
+    const baseMaterial = child.userData?.baseMaterial || child.material;
+    getMaterialNames(baseMaterial).forEach((name) => materialNames.add(name));
+    meshNames.add(ensureMeshLabel(child));
+  });
+
+  const targets = [];
+  if (materialNames.size > 0) {
+    Array.from(materialNames)
+      .sort()
+      .forEach((name) => {
+        targets.push({ value: `${MATERIAL_TARGET_PREFIX}${name}`, label: `Material: ${name}` });
+      });
+    return targets;
+  }
+
+  Array.from(meshNames)
+    .sort()
+    .forEach((name) => {
+      targets.push({ value: `${MESH_TARGET_PREFIX}${name}`, label: `Mesh: ${name}` });
+    });
+  return targets;
+}
+
+function getMeshList(object) {
+  if (!object) return [];
+  if (Array.isArray(object.userData?.meshList)) {
+    return object.userData.meshList;
+  }
+  const meshes = [];
+  object.traverse((child) => {
+    if (child.isMesh) meshes.push(child);
+  });
+  object.userData.meshList = meshes;
+  return meshes;
+}
+
+function findWindowTemplateTarget(object) {
+  if (!object) return null;
+  let best = null;
+
+  const applyCandidate = (label, kind) => {
+    const score = scoreWindowTemplateName(label);
+    if (score <= 0) return;
+
+    const value = kind === "material"
+      ? `${MATERIAL_TARGET_PREFIX}${label}`
+      : `${MESH_TARGET_PREFIX}${label}`;
+    const friendlyLabel = kind === "material"
+      ? `Material: ${label}`
+      : `Mesh: ${label}`;
+
+    if (!best || score > best.score) {
+      best = { score, value, label: friendlyLabel };
+    }
+  };
+
+  object.traverse((child) => {
+    if (!child.isMesh) return;
+    const baseMaterial = child.userData?.baseMaterial || child.material;
+    getMaterialNames(baseMaterial).forEach((name) => applyCandidate(name, "material"));
+    applyCandidate(ensureMeshLabel(child), "mesh");
+  });
+
+  if (!best) return null;
+  return { value: best.value, label: best.label };
+}
+
+function scoreWindowTemplateName(name) {
+  if (!name) return 0;
+  const raw = name.toString().trim().toLowerCase();
+  if (!raw) return 0;
+
+  if (raw.includes("sign_2") || raw.includes("sign-2") || raw.includes("sign2")) return 120;
+  if (raw.includes("sign_3") || raw.includes("sign-3") || raw.includes("sign3")) return 110;
+
+  const tokens = tokenizeName(raw);
+  const tokenSet = new Set(tokens);
+  if (tokenSet.has("sign") && tokenSet.has("2")) return 120;
+  if (tokenSet.has("sign") && tokenSet.has("3")) return 110;
+
+  if (raw.includes("vehglass") || raw.includes("vehicle_vehglass")) return 100;
+  if (raw.includes("window")) return 70;
+  if (raw.includes("glass")) return 60;
+  return 0;
+}
+
+function tokenizeName(name) {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function getMaterialNames(material) {
+  if (!material) return [];
+  if (Array.isArray(material)) {
+    return material
+      .map((mat) => mat?.name?.trim())
+      .filter((name) => typeof name === "string" && name.length > 0);
+  }
+  const name = material.name?.trim();
+  return name ? [name] : [];
+}
+
+function ensureMeshLabel(mesh) {
+  if (!mesh?.isMesh) return "";
+  if (mesh.userData?.meshLabel) return mesh.userData.meshLabel;
+  const name = mesh.name?.trim();
+  const label = name || `mesh-${mesh.id}`;
+  mesh.userData.meshLabel = label;
+  return label;
 }

@@ -28,13 +28,33 @@ fn is_supported_open_model(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn normalize_open_file_arg(raw: &str) -> Option<String> {
+    let mut candidate = raw.trim().trim_matches('"').to_string();
+    if candidate.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = candidate.strip_prefix("file://") {
+        let mut normalized = rest.replace("%20", " ");
+        if cfg!(windows) {
+            if normalized.starts_with('/') && normalized.chars().nth(2) == Some(':') {
+                normalized = normalized.chars().skip(1).collect();
+            }
+            normalized = normalized.replace('/', "\\");
+        }
+        candidate = normalized;
+    }
+
+    Some(candidate)
+}
+
 fn extract_open_file_arg(args: &[String]) -> Option<String> {
     args.iter()
         .skip(1)
+        .filter_map(|arg| normalize_open_file_arg(arg))
         .find(|arg| {
             is_supported_open_model(arg) && Path::new(arg).exists() && Path::new(arg).is_file()
         })
-        .cloned()
 }
 
 fn queue_open_file(app: &tauri::AppHandle, file_path: String) {
