@@ -80,11 +80,15 @@ export default function Shell() {
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
     typeof window.__TAURI_INTERNALS__?.invoke === "function";
 
-  // Apply UI scale from prefs on boot and when settings change; reload hotkeys
+  // Apply UI scale and window style from prefs on boot and when settings change; reload hotkeys
   useEffect(() => {
     const prefs = loadPrefs();
     const scale = prefs?.defaults?.uiScale ?? 1.0;
     document.documentElement.style.setProperty("--es-ui-scale", String(scale));
+    
+    const style = prefs?.defaults?.windowControlsStyle ?? "windows";
+    document.documentElement.setAttribute("data-window-style", style);
+
     const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
     setHotkeys(mergeHotkeys(stored, DEFAULT_HOTKEYS));
   }, [settingsVersion]);
@@ -554,6 +558,7 @@ export default function Shell() {
                       workspaceState={variantStates[tab.id] || tab.initialState || {}}
                       onStateChange={(state) => handleVariantStateChange(tab.id, state)}
                       onRenameTab={(label) => renameTab(tab.id, label)}
+                      settingsVersion={settingsVersion}
                     />
                   )}
                 </div>

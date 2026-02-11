@@ -99,10 +99,14 @@ body {
 }
 
 .titlebar-controls {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
+  gap: 4px;
+}
+
+[data-window-style="mac"] .titlebar-controls {
+  flex-direction: row-reverse;
+  gap: 0;
 }
 
 .titlebar-spacer {
@@ -122,8 +126,29 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: color 0.16s ease, background 0.16s ease, text-shadow 0.16s ease, transform 0.12s ease;
+  transition: all 0.16s ease;
 }
+
+[data-window-style="mac"] .titlebar-btn {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  margin: 0 4px;
+}
+
+[data-window-style="mac"] .titlebar-btn .titlebar-icon {
+  display: none;
+}
+
+[data-window-style="mac"] .titlebar-min { background: #ffbd2e !important; border-color: #d19e27 !important; }
+[data-window-style="mac"] .titlebar-max { background: #28c940 !important; border-color: #1e9a30 !important; }
+[data-window-style="mac"] .titlebar-close { background: #ff5f56 !important; border-color: #e1483f !important; }
+
+[data-window-style="mac"] .titlebar-min:hover { background: #ffbd2e; opacity: 0.8; }
+[data-window-style="mac"] .titlebar-max:hover { background: #28c940; opacity: 0.8; }
+[data-window-style="mac"] .titlebar-close:hover { background: #ff5f56; opacity: 0.8; }
 
 .titlebar-icon {
   width: calc(13px * var(--es-ui-scale));
@@ -138,8 +163,9 @@ body {
   transform: scale(1.02);
 }
 
-.titlebar-icon--close {
-  transform: scale(0.96);
+[data-window-style="mac"] .titlebar-controls {
+  flex-direction: row-reverse;
+  gap: 0;
 }
 
 .titlebar-btn:hover {

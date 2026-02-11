@@ -3,11 +3,12 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
   FileImage, Plus, Trash2, Download, Lock, Copy, Car,
-  Eye, FolderOpen, Check, Pencil,
+  Eye, FolderOpen, Check, CheckSquare, Pencil,
   ChevronRight, ChevronDown, Layers, AlertTriangle,
   PanelBottomOpen, PanelRightOpen, PanelLeftOpen,
 } from "lucide-react";
 import { parsePsdLayers, compositePsdVariant } from "../lib/psd-layers";
+import { loadPrefs } from "../lib/prefs";
 import * as Ctx from "./ContextMenu";
 import Viewer from "./Viewer";
 
@@ -134,7 +135,7 @@ function VResizer({ onResize }) {
  * VariantsPage — PSD Variant Builder
  * IDE-style layout: [Sidebar | 3D Preview | 2D Preview] / [Layer Panel] / [Footer]
  */
-export default function VariantsPage({ workspaceState, onStateChange, onRenameTab }) {
+export default function VariantsPage({ workspaceState, onStateChange, onRenameTab, settingsVersion }) {
   // PSD state
   const [psdPath, setPsdPath] = useState(workspaceState?.psdPath || "");
   const [psdData, setPsdData] = useState(null);
@@ -167,6 +168,16 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   // Composited preview
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewToken, setPreviewToken] = useState(0);
+
+  // Load default export folder from prefs if not set in workspace
+  useEffect(() => {
+    if (outputFolder) return;
+    const prefs = loadPrefs();
+    const defaultFolder = prefs?.defaults?.variantExportFolder;
+    if (defaultFolder) {
+      setOutputFolder(defaultFolder);
+    }
+  }, [settingsVersion, outputFolder]);
 
   // Layer visibility — keyed by layer path ID
   const [layerVisibility, setLayerVisibility] = useState({});
@@ -845,11 +856,11 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           </div>
 
           {/* ─── Layer Strip (compact horizontal bar) ─── */}
-          {hasLayers && !layerStripHidden && (
+          {hasLayers && !layerPanelHidden && (
             <div className="vp-strip">
               {/* Toggleable layers */}
-              {psdData.toggleable.length > 0 && (
-                <div className="vp-strip-section">
+                {psdData.toggleable.length > 0 && (
+                  <div className="vp-strip-section">
                   <div className="vp-strip-label">
                     <CheckSquare className="w-2.5 h-2.5" />
                     <span>Toggles</span>
@@ -875,6 +886,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                       );
                     })}
                   </div>
+                </div>
                 )}
 
                 {/* Group sections — collapsible with checkbox children */}
@@ -970,7 +982,6 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                   </div>
                 )}
               </div>
-            </div>
           )}
         </div>
       </div>

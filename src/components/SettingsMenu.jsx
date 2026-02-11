@@ -31,8 +31,8 @@ const BUILT_IN_DEFAULTS = {
   windowControlsStyle: "windows",
   toolbarInTitlebar: false,
   uiScale: 1.0,
-  showRecents: true,
   previewFolder: "",
+  variantExportFolder: "",
 };
 
 function getStoredDefaults() {
@@ -174,6 +174,16 @@ export default function SettingsMenu({ onSettingsSaved }) {
       const selected = await openDialog({ directory: true, title: "Select Preview Export Folder" });
       if (typeof selected === "string") {
         setDraft((p) => ({ ...p, previewFolder: selected }));
+      }
+    } catch {}
+  }, [isTauriRuntime]);
+
+  const handleSelectVariantExportFolder = useCallback(async () => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await openDialog({ directory: true, title: "Select Variant Export Folder" });
+      if (typeof selected === "string") {
+        setDraft((p) => ({ ...p, variantExportFolder: selected }));
       }
     } catch {}
   }, [isTauriRuntime]);
@@ -336,33 +346,58 @@ export default function SettingsMenu({ onSettingsSaved }) {
                                   </div>
                                 </section>
 
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Data & Storage</div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">Preview Export Path</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">{draft.previewFolder || "Not configured (Default: System Temp)"}</div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        type="button"
-                                        className="settings-mini bg-white/5 hover:bg-white/10 border-white/10 px-3 py-1.5 rounded text-[10px] transition-colors"
-                                        onClick={handleSelectPreviewFolder}
-                                      >
-                                        Browse
-                                      </button>
-                                      {draft.previewFolder && (
+                                  <section className="settings-panel">
+                                    <div className="settings-panel-title">Data & Storage</div>
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="font-medium text-white/90">Preview Export Path</div>
+                                        <div className="text-[10px] text-white/40 mt-0.5">{draft.previewFolder || "Not configured (Default: System Temp)"}</div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
                                         <button
                                           type="button"
-                                          className="text-[10px] text-red-400/60 hover:text-red-400 px-2 transition-colors"
-                                          onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                          className="settings-mini bg-white/5 hover:bg-white/10 border-white/10 px-3 py-1.5 rounded text-[10px] transition-colors"
+                                          onClick={handleSelectPreviewFolder}
                                         >
-                                          Clear
+                                          Browse
                                         </button>
-                                      )}
+                                        {draft.previewFolder && (
+                                          <button
+                                            type="button"
+                                            className="text-[10px] text-red-400/60 hover:text-red-400 px-2 transition-colors"
+                                            onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                          >
+                                            Clear
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
-                                </section>
+
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="font-medium text-white/90">Variant Export Path</div>
+                                        <div className="text-[10px] text-white/40 mt-0.5">{draft.variantExportFolder || "Not configured (Default: Manual select)"}</div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          className="settings-mini bg-white/5 hover:bg-white/10 border-white/10 px-3 py-1.5 rounded text-[10px] transition-colors"
+                                          onClick={handleSelectVariantExportFolder}
+                                        >
+                                          Browse
+                                        </button>
+                                        {draft.variantExportFolder && (
+                                          <button
+                                            type="button"
+                                            className="text-[10px] text-red-400/60 hover:text-red-400 px-2 transition-colors"
+                                            onClick={() => setDraft((p) => ({ ...p, variantExportFolder: "" }))}
+                                          >
+                                            Clear
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </section>
                               </div>
                             ) : null}
 
@@ -397,6 +432,7 @@ export default function SettingsMenu({ onSettingsSaved }) {
                                   </button>
                                 </div>
                               </section>
+                              </div>
                             ) : null}
 
                             {/* ─── Display (UI Scale) ─── */}
@@ -451,8 +487,8 @@ export default function SettingsMenu({ onSettingsSaved }) {
                                   <div className="settings-row-note">
                                     Hide the Recent list on the Home page when you want a cleaner launch screen.
                                   </div>
-                                </section>
-                              </div>
+                                </div>
+                              </section>
                             ) : null}
 
                             {/* ─── Hotkeys ─── */}
@@ -489,8 +525,25 @@ export default function SettingsMenu({ onSettingsSaved }) {
                             {/* ─── Appearance (Design) ─── */}
                             {activeSection === "appearance" ? (
                               <div className="space-y-6">
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Interface Aesthetic</div>
+                                  <section className="settings-panel">
+                                    <div className="settings-panel-title">Environment Controls</div>
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="font-medium text-white/90">Show 3D Grid</div>
+                                        <div className="text-[10px] text-white/40 mt-0.5">Display ground grid in the viewer</div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className={`settings-toggle ${draft.showGrid ? "is-on" : ""}`}
+                                        onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
+                                      >
+                                        <span className="settings-toggle-dot" />
+                                      </button>
+                                    </div>
+                                  </section>
+
+                                  <section className="settings-panel">
+                                    <div className="settings-panel-title">Interface Aesthetic</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="font-medium text-white/90">Window Controls Style</div>

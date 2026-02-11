@@ -79,6 +79,7 @@ export default function Onboarding({ onComplete }) {
     toolbarInTitlebar: false,
     uiScale: 1.0,
     previewFolder: "",
+    variantExportFolder: "",
   });
 
   const isTauriRuntime =
@@ -91,6 +92,16 @@ export default function Onboarding({ onComplete }) {
       const selected = await openDialog({ directory: true, title: "Select Preview Export Folder" });
       if (typeof selected === "string") {
         setDraft((p) => ({ ...p, previewFolder: selected }));
+      }
+    } catch {}
+  }, [isTauriRuntime]);
+
+  const handleSelectVariantExportFolder = useCallback(async () => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await openDialog({ directory: true, title: "Select Variant Export Folder" });
+      if (typeof selected === "string") {
+        setDraft((p) => ({ ...p, variantExportFolder: selected }));
       }
     } catch {}
   }, [isTauriRuntime]);
@@ -311,33 +322,58 @@ export default function Onboarding({ onComplete }) {
                 exit={{ opacity: 0, x: -30 }}
                 transition={{ duration: 0.25, ease }}
               >
-                <div className="onb-slide-title">Preview Exports</div>
-                <div className="onb-slide-hint">Choose where generated preview screenshots should be saved. You can change this later in Settings.</div>
+                <div className="onb-slide-title">Storage & Exports</div>
+                <div className="onb-slide-hint">Configure default paths for your exports. You can change these later in Settings.</div>
 
-                <div className="onb-export-folder">
-                  <button
-                    type="button"
-                    className="onb-export-folder-btn"
-                    onClick={handleSelectPreviewFolder}
-                  >
-                    <FolderOpen className="w-5 h-5" style={{ opacity: 0.5 }} />
-                    <div className="onb-export-folder-text">
-                      <span className="onb-export-folder-label">
-                        {draft.previewFolder
-                          ? draft.previewFolder.split(/[\\/]/).pop()
-                          : "Select export folder"}
-                      </span>
-                      {draft.previewFolder && (
-                        <span className="onb-export-folder-path">{draft.previewFolder}</span>
-                      )}
-                    </div>
-                  </button>
-                  {!draft.previewFolder && (
-                    <div className="onb-export-folder-skip">
-                      You can skip this step — you'll be prompted when you first generate a preview.
-                    </div>
-                  )}
+                <div className="space-y-4 mt-6">
+                  <div className="onb-export-folder">
+                    <div className="text-[10px] uppercase tracking-widest text-white/40 mb-2 px-1">Preview Screenshots</div>
+                    <button
+                      type="button"
+                      className="onb-export-folder-btn"
+                      onClick={handleSelectPreviewFolder}
+                    >
+                      <FolderOpen className="w-5 h-5" style={{ opacity: 0.5 }} />
+                      <div className="onb-export-folder-text">
+                        <span className="onb-export-folder-label">
+                          {draft.previewFolder
+                            ? draft.previewFolder.split(/[\\/]/).pop()
+                            : "Select preview folder"}
+                        </span>
+                        {draft.previewFolder && (
+                          <span className="onb-export-folder-path">{draft.previewFolder}</span>
+                        )}
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="onb-export-folder">
+                    <div className="text-[10px] uppercase tracking-widest text-white/40 mb-2 px-1">Variant Builder Exports</div>
+                    <button
+                      type="button"
+                      className="onb-export-folder-btn"
+                      onClick={handleSelectVariantExportFolder}
+                    >
+                      <Palette className="w-5 h-5" style={{ opacity: 0.5 }} />
+                      <div className="onb-export-folder-text">
+                        <span className="onb-export-folder-label">
+                          {draft.variantExportFolder
+                            ? draft.variantExportFolder.split(/[\\/]/).pop()
+                            : "Select variant export folder"}
+                        </span>
+                        {draft.variantExportFolder && (
+                          <span className="onb-export-folder-path">{draft.variantExportFolder}</span>
+                        )}
+                      </div>
+                    </button>
+                  </div>
                 </div>
+
+                {!draft.previewFolder && !draft.variantExportFolder && (
+                  <div className="onb-export-folder-skip">
+                    You can skip this step — you'll be prompted when you first export.
+                  </div>
+                )}
               </motion.div>
             )}
 

@@ -187,23 +187,69 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
         <div className={`home-body ${showRecents ? "" : "is-single"}`}>
           {/* Left — Launch options */}
           <motion.div
-            key="home"
-            className="home-content-split"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="home-left"
+            initial={{ opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.55, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
           >
-            {/* Hero */}
-            <motion.div
-              className="home-hero"
-              initial={{ opacity: 0, y: 20 }}
+            <div className="home-section-label">
+              <Plus className="home-section-label-icon" />
+              <span>Launch</span>
+            </div>
+
+            <div className="home-mode-grid">
+              {MODES.map((mode, i) => {
+                const Icon = mode.icon;
+                return (
+                  <motion.button
+                    key={mode.id}
+                    type="button"
+                    className="home-mode-card"
+                    style={{ "--mode-accent": mode.accent }}
+                    onClick={() => handleLaunchMode(mode.id)}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, delay: 0.12 + i * 0.04 }}
+                  >
+                    <div className="home-mode-card-top">
+                      <div className="home-mode-card-icon">
+                        <Icon />
+                      </div>
+                      <span className="home-mode-card-shortcut">{mode.shortcut}</span>
+                    </div>
+                    <span className="home-mode-card-label">{mode.label}</span>
+                    <span className="home-mode-card-desc">{mode.desc}</span>
+                  </motion.button>
+                );
+              })}
+            </div>
+
+            <motion.button
+              type="button"
+              className="home-variant-card"
+              onClick={handleLaunchVariants}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.35, delay: 0.28 }}
+            >
+              <div className="home-variant-card-icon">
+                <Palette />
+              </div>
+              <div className="home-variant-card-text">
+                <span className="home-variant-card-label">Variant Builder</span>
+                <span className="home-variant-card-desc">Layered PSD workflow with grouped exports</span>
+              </div>
+              <ChevronRight className="home-variant-card-arrow" />
+            </motion.button>
+
+            <button
+              type="button"
+              className="home-named-project-btn"
+              onClick={() => setShowNewProject(true)}
             >
               <FolderOpen className="w-4 h-4" />
               <span>New Named Project...</span>
-            </motion.button>
+            </button>
           </motion.div>
 
           {showRecents && (
