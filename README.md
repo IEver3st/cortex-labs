@@ -112,7 +112,7 @@ bun run tauri build
 
 ---
 
-## ⚖ License
+## License
 MIT. Free forever. Developed with ❤️ for the GTA V modding community.
 
 ---
