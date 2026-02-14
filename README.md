@@ -1,6 +1,5 @@
 ## Cortex Studio v3.1.1
 ![Cortex Studio UI](https://cdn.discordapp.com/attachments/698747360536297524/1471402183953223765/16.png?ex=698ecd91&is=698d7c11&hm=18ca93a4e4e63651f5fdcd35926ad410bc5e8f2107383a242ee4b87734773570&)
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C1C41TSVBX)
 
 # Cortex Studio
 ### The Ultimate Livery Development Environment for GTA V / FiveM
