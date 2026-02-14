@@ -4,7 +4,7 @@
 # Cortex Studio
 ### The Ultimate Livery Development Environment for GTA V / FiveM
 
-Cortex Studio is a high-performance, real-time 3D livery previewer and development environment. It bridges the gap between your design software (Photoshop, GIMP, etc.) and the game engine, allowing for an instantaneous, iterative workflow.
+Cortex Studio is a high-performance, real-time 3D livery previewer and development environment. It bridges the gap between your design software (Photoshop, paint.net, etc.) and the game engine, allowing for an instantaneous, iterative workflow.
 
 Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/releases/latest)!
 
