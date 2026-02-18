@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette } from "lucide-react";
+import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
@@ -12,6 +12,7 @@ import {
   mergeHotkeys,
 } from "../lib/hotkeys";
 import { loadPrefs, savePrefs } from "../lib/prefs";
+import { hasSeenWhatsNew, getAppVersion } from "../lib/changelog";
 
 /* ─── Built-in defaults (canonical source) ─── */
 const BUILT_IN_DEFAULTS = {
@@ -84,7 +85,7 @@ function ColorField({ label, value, onChange, onReset }) {
  * Reads/writes prefs directly via loadPrefs()/savePrefs().
  * Shell renders this in the chrome bar; it emits onSettingsSaved when prefs are persisted.
  */
-export default function SettingsMenu({ onSettingsSaved }) {
+export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   const [open, setOpen] = useState(false);
   const [hoveringIcon, setHoveringIcon] = useState(false);
   const [activeSection, setActiveSection] = useState("general");
@@ -134,6 +135,7 @@ export default function SettingsMenu({ onSettingsSaved }) {
       { id: "hotkeys", label: "Shortcuts", description: "Global keyboard configurations.", icon: Clock },
       { id: "appearance", label: "Design", description: "Color schemes and interface aesthetics.", icon: Palette },
       { id: "experimental", label: "Experimental", description: "Beta features and diagnostic tools.", icon: FlaskConical },
+      { id: "about", label: "About", description: "Version info and release notes.", icon: Info },
     ],
     [],
   );
@@ -610,6 +612,44 @@ export default function SettingsMenu({ onSettingsSaved }) {
                                         Warning: These features are not production-ready. Enabling them may cause memory leaks or renderer crashes.
                                       </div>
                                     </div>
+                                  </div>
+                                </section>
+                              </div>
+                            ) : null}
+
+                            {/* ─── About ─── */}
+                            {activeSection === "about" ? (
+                              <div className="space-y-6">
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Application</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium text-white/90">Version</div>
+                                      <div className="text-[10px] text-white/40 mt-0.5">Current installed version</div>
+                                    </div>
+                                    <span className="font-mono text-[12px] text-[#7dd3fc]">v{getAppVersion()}</span>
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Release Notes</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium text-white/90">What's New</div>
+                                      <div className="text-[10px] text-white/40 mt-0.5">
+                                        {hasSeenWhatsNew() ? "You've seen the latest notes" : "New changes since last update"}
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="settings-mini bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1.5 text-[10px] transition-colors"
+                                      onClick={() => {
+                                        setOpen(false);
+                                        setTimeout(() => onOpenReleaseNotes?.(), 220);
+                                      }}
+                                    >
+                                      View Release Notes
+                                    </button>
                                   </div>
                                 </section>
                               </div>

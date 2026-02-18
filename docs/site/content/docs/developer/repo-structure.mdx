@@ -1,0 +1,27 @@
+---
+title: Repo Structure
+description: Where to find key features and how the project is organized.
+---
+
+## Top level
+
+- `src/` — React UI, Three.js viewer, app logic
+- `src-tauri/` — Tauri 2 Rust backend
+- `tools/codewalker-bridge/` — CodeWalker bridge sidecar (mesh cache generator)
+- `docs/site/` — Documentation site (Next.js + Fumadocs)
+
+## Notable frontend files
+
+- `src/Shell.jsx` — tab system, onboarding, settings integration
+- `src/App.jsx` — main viewer workflow (modes, loading, texture loop)
+- `src/components/VariantsPage.jsx` — PSD Variant Builder
+- `src/components/Viewer.jsx` — single-viewer renderer and texture pipeline
+- `src/components/DualModelViewer.jsx` — multi-model renderer
+
+## Notable libs
+
+- `src/lib/viewer-utils.js` — shared viewer utilities and heuristics
+- `src/lib/yft.js` — YFT/YDD parsing
+- `src/lib/prefs.js` — local settings persistence
+- `src/lib/workspace.js` — workspace save/load and recents
+- `src/lib/hotkeys.js` — hotkey definitions and matching

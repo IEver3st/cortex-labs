@@ -25,6 +25,7 @@ import {
   setupWheelWhileDragging,
   loadTextureFromPath as loadTextureFromPathShared,
   loadPsdTexture,
+  loadPdnTexture,
   YDD_SCAN_SETTINGS,
 } from "../lib/viewer-utils";
 
@@ -960,6 +961,8 @@ export default function Viewer({
         return new THREE.CanvasTexture(canvas);
       };
 
+      const loadPdn = async () => loadPdnTexture(bytes, texturePath);
+
       const attempts = [];
       const kind = (extension || "").toLowerCase();
       const sigKind = (signature.kind || "").toLowerCase();
@@ -967,12 +970,16 @@ export default function Viewer({
       const isPsd = kind === "psd" || sigKind === "psd";
       const isDds = kind === "dds" || sigKind === "dds";
       const isAi = kind === "ai" || sigKind === "ai" || sigKind === "ai-ps";
+      const isPdnFile = kind === "pdn" || sigKind === "pdn";
+      const isPdfCompatibleAi = sigKind === "ai";
+      const isUnsupportedAiVariant = kind === "ai" && sigKind !== "ai";
 
       if (isDds) { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
       if (kind === "tga") attempts.push(loadTga);
       if (isPsd) attempts.push(loadPsd);
+      if (isPdnFile) attempts.push(loadPdn);
       if (isTiff) attempts.push(loadTiff);
-      if (isAi) attempts.push(loadAi);
+      if (isAi && isPdfCompatibleAi) attempts.push(loadAi);
       attempts.push(loadNative);
 
       let texture = null;
@@ -996,8 +1003,10 @@ export default function Viewer({
 
       if (!texture) {
         console.error("[Texture] Load failed:", lastError);
-        const errorMessage = lastError?.message || 
-          "Texture failed to load. Try exporting to PNG or JPG if your editor uses a specialized format.";
+        const errorMessage = isUnsupportedAiVariant
+          ? "This .ai file is not PDF-compatible. Re-save/export it as PDF-compatible AI, or use PNG/JPG."
+          : (lastError?.message ||
+            "Texture failed to load. Try exporting to PNG or JPG if your editor uses a specialized format.");
         onTextureErrorRef.current?.(errorMessage);
         return;
       }
@@ -1235,6 +1244,8 @@ export default function Viewer({
         return new THREE.CanvasTexture(canvas);
       };
 
+      const loadPdn = async () => loadPdnTexture(bytes, windowTexturePath);
+
       const attempts = [];
       const kind = (extension || "").toLowerCase();
       const sigKind = (signature.kind || "").toLowerCase();
@@ -1242,12 +1253,16 @@ export default function Viewer({
       const isPsd = kind === "psd" || sigKind === "psd";
       const isDds = kind === "dds" || sigKind === "dds";
       const isAi = kind === "ai" || sigKind === "ai" || sigKind === "ai-ps";
+      const isPdnFile = kind === "pdn" || sigKind === "pdn";
+      const isPdfCompatibleAi = sigKind === "ai";
+      const isUnsupportedAiVariant = kind === "ai" && sigKind !== "ai";
 
       if (isDds) { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
       if (kind === "tga") attempts.push(loadTga);
       if (isPsd) attempts.push(loadPsd);
+      if (isPdnFile) attempts.push(loadPdn);
       if (isTiff) attempts.push(loadTiff);
-      if (isAi) attempts.push(loadAi);
+      if (isAi && isPdfCompatibleAi) attempts.push(loadAi);
       attempts.push(loadNative);
 
       let texture = null;
@@ -1269,7 +1284,9 @@ export default function Viewer({
       if (!texture) {
         console.error("[Window Texture] Load failed:", lastError);
         onWindowTextureErrorRef.current?.(
-          "Window template failed to load. Try exporting to PNG or JPG if your editor uses a specialized format.",
+          isUnsupportedAiVariant
+            ? "This .ai file is not PDF-compatible. Re-save/export it as PDF-compatible AI, or use PNG/JPG."
+            : "Window template failed to load. Try exporting to PNG or JPG if your editor uses a specialized format.",
         );
         return;
       }

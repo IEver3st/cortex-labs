@@ -1,4 +1,4 @@
-## Cortex Studio v3.1
+## Cortex Studio v3.5
 ![Cortex Studio UI](https://cdn.discordapp.com/attachments/698747360536297524/1470837930636345394/image.png?ex=698cc011&is=698b6e91&hm=2501340555264d6f7ad5d1839650945f806b88153d68620eef074fbd16be6f20&)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C1C41TSVBX)
 

@@ -20,6 +20,7 @@
       "identifier": "fs:scope",
       "allow": [{ "path": "$HOME/**" }, { "path": "$DESKTOP/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DOWNLOAD/**" }]
     },
-    "opener:default"
+    "opener:default",
+    "opener:allow-open-path"
   ]
 }

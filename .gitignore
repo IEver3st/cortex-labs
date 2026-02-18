@@ -135,5 +135,10 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+# Bun
+.bun-cache/
+**/.bun-cache/
+.bun/
+
 # Agents
 AGENTS.md

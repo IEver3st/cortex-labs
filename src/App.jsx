@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
-import { AlertTriangle, ArrowUpRight, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import appMeta from "../package.json";
@@ -38,7 +39,22 @@ const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
 const MIN_LOADER_MS = 650;
 
-const SUPPORTED_TEXTURE_EXTS = ["png", "jpg", "jpeg", "psd", "dds"];
+const SUPPORTED_TEXTURE_EXTS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "avif",
+  "bmp",
+  "gif",
+  "tga",
+  "dds",
+  "tif",
+  "tiff",
+  "psd",
+  "ai",
+  "pdn",
+];
 
 function isTextureFormatSupported(filePath) {
   if (!filePath) return true;
@@ -108,9 +124,9 @@ function UnloadButton({ onClick, title, className }) {
   );
 }
 
-function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null }) {
+function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null, contextBarTarget = null }) {
   const viewerApiRef = useRef(null);
-  const reloadTimerRef = useRef({ primary: null, window: null });
+  const reloadTimerRef = useRef({ primary: null, window: null, dualA: null, dualB: null });
   const isTauriRuntime =
     typeof window !== "undefined" &&
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
@@ -122,6 +138,23 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+
+  // Toast notification system
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
+  const showToast = useCallback((message, type = "info") => {
+    const id = ++toastIdRef.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3200);
+  }, []);
+
+  // Color swatch presets
+  const COLOR_SWATCHES = ["#e7ebf0", "#1a1a2e", "#0f3460", "#16213e", "#533483", "#e94560", "#f5f5dc", "#2c3e50", "#000000", "#ffffff"];
+
+  // Copy to clipboard
+  const copyHex = useCallback((val) => {
+    navigator.clipboard?.writeText(val).then(() => showToast(`Copied ${val}`));
+  }, [showToast]);
 
   const [modelPath, setModelPath] = useState("");
   const [modelSourcePath, setModelSourcePath] = useState("");
@@ -384,15 +417,20 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const scheduleReload = (kind) => {
     const key = kind === "window" ? "window" : "primary";
     const timers = reloadTimerRef.current;
-    if (timers[key]) {
-      clearTimeout(timers[key]);
-    }
+    if (timers[key]) clearTimeout(timers[key]);
     timers[key] = setTimeout(() => {
-      if (key === "window") {
-        setWindowTextureReloadToken((prev) => prev + 1);
-      } else {
-        setTextureReloadToken((prev) => prev + 1);
-      }
+      if (key === "window") setWindowTextureReloadToken((prev) => prev + 1);
+      else setTextureReloadToken((prev) => prev + 1);
+    }, 350);
+  };
+
+  const scheduleDualReload = (slot) => {
+    const key = slot === "B" ? "dualB" : "dualA";
+    const timers = reloadTimerRef.current;
+    if (timers[key]) clearTimeout(timers[key]);
+    timers[key] = setTimeout(() => {
+      if (key === "dualB") setDualTextureBReloadToken((prev) => prev + 1);
+      else setDualTextureAReloadToken((prev) => prev + 1);
     }, 350);
   };
 
@@ -666,6 +704,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               "tiff",
               "psd",
               "ai",
+              "pdn",
             ],
           },
         ],
@@ -711,6 +750,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               "tiff",
               "psd",
               "ai",
+              "pdn",
             ],
           },
         ],
@@ -736,7 +776,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   };
 
   const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
-  const textureExtsDual = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai"];
+  const textureExtsDual = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai", "pdn"];
 
   const selectDualModel = async (slot) => {
     if (!isTauriRuntime) return;
@@ -820,6 +860,30 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     viewerApiRef.current?.reset?.();
   };
 
+  const resolveExistingFolder = useCallback(async (preferredPath, fallbackPath = "") => {
+    if (!isTauriRuntime) return preferredPath || fallbackPath;
+    const candidates = [];
+    if (preferredPath) {
+      candidates.push(preferredPath);
+      const trimmed = preferredPath.replace(/[\\/]+$/, "");
+      const parent = trimmed.replace(/[\\/][^\\/]+$/, "");
+      if (parent && parent !== trimmed) candidates.push(parent);
+    }
+    if (fallbackPath) candidates.push(fallbackPath);
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const ok = await fsExists(candidate);
+        if (ok) return candidate;
+      } catch {
+        // keep trying remaining candidates
+      }
+    }
+
+    return preferredPath || fallbackPath;
+  }, [isTauriRuntime]);
+
   const previewSnapTokenRef = useRef(0);
   const updatePreviewSnapshot = useCallback(async (zoomLevel) => {
     if (!viewerApiRef.current || !viewerReady) return;
@@ -875,6 +939,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         // Fall back to the base folder if subfolder creation fails.
         outputFolder = folder;
       }
+
+      try {
+        const subfolderExists = await fsExists(modelFolder);
+        if (!subfolderExists) outputFolder = folder;
+      } catch {
+        outputFolder = folder;
+      }
     }
 
     // Temporarily disable grid for clean screenshots
@@ -921,7 +992,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         }
       }
 
-      setPreviewOutputPath(outputFolder);
+      const resolvedOutputFolder = await resolveExistingFolder(outputFolder, folder);
+      setPreviewOutputPath(resolvedOutputFolder);
       setPreviewProgress({ current: presetKeys.length, total: presetKeys.length, preset: "Complete" });
       setGeneratingPreview(false);
       setPreviewComplete(true);
@@ -932,7 +1004,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       // Restore grid state
       if (gridWasOn) setShowGrid(true);
     }
-  }, [modelPath, generatingPreview, isTauriRuntime, showGrid]);
+  }, [modelPath, generatingPreview, isTauriRuntime, showGrid, resolveExistingFolder]);
 
   useEffect(() => {
     if (!previewPromptOpen) return;
@@ -1024,19 +1096,60 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         return;
       }
 
+      const isMulti = textureMode === "multi";
+
+      if (isMulti) {
+        // Ensure legacy single-template watchers are stopped so they don't fight over state.
+        await invoke("stop_watch").catch(() => null);
+        await invoke("stop_window_watch").catch(() => null);
+
+        const aPath = dualTextureAPath;
+        const bPath = dualTextureBPath;
+        const paths = [aPath, bPath].filter(Boolean);
+
+        if (!paths.length) {
+          await invoke("stop_multi_watch").catch(() => null);
+          if (!cancelled) setWatchStatus("idle");
+          return;
+        }
+
+        const ok = await invoke("start_multi_watch", { paths }).then(
+          () => true,
+          () => false,
+        );
+
+        if (!cancelled) setWatchStatus(ok ? "watching" : "error");
+
+        unlisten = await listen("texture:update", (event) => {
+          const changedPath = normalizePath(event?.payload?.path);
+          const aNorm = normalizePath(aPath);
+          const bNorm = normalizePath(bPath);
+          if (!aNorm && !bNorm) return;
+
+          if (!changedPath) {
+            scheduleDualReload("A");
+            scheduleDualReload("B");
+            return;
+          }
+
+          if (aNorm && changedPath === aNorm) scheduleDualReload("A");
+          if (bNorm && changedPath === bNorm) scheduleDualReload("B");
+        });
+
+        return;
+      }
+
+      // Non-multi (single viewer) mode
+      await invoke("stop_multi_watch").catch(() => null);
+
       const primaryPath = texturePath;
       const secondaryPath = windowTemplateEnabled ? windowTexturePath : "";
 
       const wantsPrimary = Boolean(primaryPath);
       const wantsSecondary = Boolean(secondaryPath);
 
-      if (!wantsPrimary) {
-        await invoke("stop_watch").catch(() => null);
-      }
-
-      if (!wantsSecondary) {
-        await invoke("stop_window_watch").catch(() => null);
-      }
+      if (!wantsPrimary) await invoke("stop_watch").catch(() => null);
+      if (!wantsSecondary) await invoke("stop_window_watch").catch(() => null);
 
       if (!wantsPrimary && !wantsSecondary) {
         if (!cancelled) setWatchStatus("idle");
@@ -1057,9 +1170,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           )
         : true;
 
-      if (!cancelled) {
-        setWatchStatus(primaryOk && secondaryOk ? "watching" : "error");
-      }
+      if (!cancelled) setWatchStatus(primaryOk && secondaryOk ? "watching" : "error");
 
       unlisten = await listen("texture:update", (event) => {
         const changedPath = normalizePath(event?.payload?.path);
@@ -1083,15 +1194,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     return () => {
       cancelled = true;
-      if (unlisten) {
-        unlisten();
-      }
+      if (unlisten) unlisten();
       if (isTauriRuntime) {
         invoke("stop_watch").catch(() => null);
         invoke("stop_window_watch").catch(() => null);
+        invoke("stop_multi_watch").catch(() => null);
       }
     };
-  }, [texturePath, windowTexturePath, windowTemplateEnabled]);
+  }, [textureMode, texturePath, windowTexturePath, windowTemplateEnabled, dualTextureAPath, dualTextureBPath]);
 
   const onTextureReload = useCallback(() => {
     setLastUpdate(new Date().toLocaleTimeString());
@@ -1151,6 +1261,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const targetingLabel = textureMode === "livery" ? (liveryTarget ? "Auto" : "No target") : manualTargetLabel;
   const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
 
+  const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
+  const currentModeLabel = modeLabels[textureMode] || "Preview";
+
   return (
     <motion.div
       className={`app-shell ${panelCollapsed ? "is-panel-collapsed" : ""}`}
@@ -1159,104 +1272,137 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
       style={{ pointerEvents: isBooting ? "none" : "auto" }}
     >
-        <div className="viewer-toolbar-bar">
-          <div className="viewer-toolbar-bar-spacer" />
+      {/* ── Row 2 Portal: Context Bar ── */}
+      {isActive && contextBarTarget && createPortal(
+        <div className="ctx-bar-inner">
+          <div className="ctx-bar-left">
+            <button
+              type="button"
+              className="ctx-bar-toggle"
+              onClick={() => setPanelCollapsed((prev) => !prev)}
+              title={panelCollapsed ? "Show panel" : "Hide panel"}
+            >
+              <PanelLeft className="w-3.5 h-3.5" />
+            </button>
+            <div className="ctx-bar-sep" />
+            <span className="ctx-bar-badge" style={{ color: textureMode === "livery" ? "#7dd3fc" : textureMode === "eup" ? "#c084fc" : textureMode === "multi" ? "#f97316" : "var(--es-success)" }}>
+              {currentModeLabel}
+            </span>
+            {modelPath && (
+              <>
+                <div className="ctx-bar-sep" />
+                <span className="ctx-bar-file" title={modelSourcePath || modelPath}>
+                  {modelLabel}
+                </span>
+              </>
+            )}
+            <div className="ctx-bar-sep" />
+            <span className={`ctx-bar-dot ${watchStatus === "watching" ? "is-watching" : watchStatus === "error" ? "is-error" : ""}`} />
+            <span className="ctx-bar-status-text">
+              {watchStatus === "watching" ? "Watching" : watchStatus === "error" ? "Error" : "Idle"}
+            </span>
+          </div>
 
-          {textureMode === "multi" ? (
-            <div className="titlebar-inline-controls">
+          <div className="ctx-bar-center">
+            {textureMode === "multi" ? (
+              <>
+                <button
+                  type="button"
+                  className={`ctx-bar-btn ${dualSelectedSlot === "A" ? "is-slot-active" : ""}`}
+                  style={dualSelectedSlot === "A" ? { color: "#f97316" } : undefined}
+                  onClick={() => setDualSelectedSlot("A")}
+                >A</button>
+                <button
+                  type="button"
+                  className={`ctx-bar-btn ${dualSelectedSlot === "B" ? "is-slot-active" : ""}`}
+                  style={dualSelectedSlot === "B" ? { color: "#a78bfa" } : undefined}
+                  onClick={() => setDualSelectedSlot("B")}
+                >B</button>
+                <div className="ctx-bar-sep" />
+                <button type="button" className="ctx-bar-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
+                  {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                </button>
+                <button type="button" className="ctx-bar-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
+                  <Link2 className="w-3 h-3" style={{ marginRight: 4 }} />Snap
+                </button>
+                <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={() => dualViewerApiRef.current?.reset?.()}>
+                  <RotateCcw className="w-3 h-3" style={{ marginRight: 3 }} />Center
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="ctx-bar-group-label">Camera</span>
+                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("front")} title="Front view">Front</button>
+                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("back")} title="Rear view">Back</button>
+                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("side")} title="Side view">Side</button>
+                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")} title="3/4 angle view">3/4</button>
+                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("top")} title="Top-down view">Top</button>
+                <div className="ctx-bar-sep" />
+                <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={handleCenterCamera} disabled={!viewerReady} title="Re-center camera on model">
+                  <RotateCcw className="w-3 h-3" style={{ marginRight: 3 }} />Center
+                </button>
+                <div className="ctx-bar-sep" />
+                <span className="ctx-bar-group-label">Rotate</span>
+                <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
+                  <span style={{ color: "#f87171" }}>X</span>
+                </button>
+                <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
+                  <span style={{ color: "#4ade80" }}>Y</span>
+                </button>
+                <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
+                  <span style={{ color: "#60a5fa" }}>Z</span>
+                </button>
+              </>
+            )}
+          </div>
+
+          <div className="ctx-bar-right">
+            {hasModel && textureMode !== "multi" && (
               <button
                 type="button"
-                className={`titlebar-inline-btn ${dualSelectedSlot === "A" ? "is-slot-active" : ""}`}
-                style={dualSelectedSlot === "A" ? { color: "#f97316" } : undefined}
-                onClick={() => setDualSelectedSlot("A")}
-              >A</button>
-              <button
-                type="button"
-                className={`titlebar-inline-btn ${dualSelectedSlot === "B" ? "is-slot-active" : ""}`}
-                style={dualSelectedSlot === "B" ? { color: "#a78bfa" } : undefined}
-                onClick={() => setDualSelectedSlot("B")}
-              >B</button>
-              <div className="titlebar-inline-divider" />
-              <button type="button" className="titlebar-inline-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
-                {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                className="ctx-bar-btn ctx-bar-primary"
+                onClick={() => {
+                  if (generatingPreview || !viewerReady) return;
+                  setPreviewZoomDraft(previewZoom || 1);
+                  setPreviewPromptOpen(true);
+                  setPreviewZoomPreview("");
+                }}
+                disabled={generatingPreview || !viewerReady}
+                title="Generate preview screenshots from all angles"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                {generatingPreview ? (
+                  <span className="ctx-bar-progress">
+                    {previewProgress.current}/{previewProgress.total}
+                  </span>
+                ) : (
+                  "Preview"
+                )}
               </button>
-              <button type="button" className="titlebar-inline-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
-                <Link2 className="w-3 h-3" style={{ marginRight: 4 }} />Snap
-              </button>
-              <button type="button" className="titlebar-inline-btn" onClick={() => dualViewerApiRef.current?.reset?.()}>Center</button>
-            </div>
-          ) : (
-            <div className="titlebar-inline-controls">
-              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("front")}>Front</button>
-              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("back")}>Back</button>
-              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("side")}>Side</button>
-              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("angle")}>3/4</button>
-              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.setPreset("top")}>Top</button>
-              <div className="titlebar-inline-divider" />
-              <button type="button" className="titlebar-inline-btn" onClick={handleCenterCamera} disabled={!viewerReady}>Center</button>
-              <div className="titlebar-inline-divider" />
-              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-                <span className="mono text-red-400">X</span>{!hideRotText && "Rot"}
-              </button>
-              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-                <span className="mono text-green-400">Y</span>{!hideRotText && "Rot"}
-              </button>
-              <button type="button" className="titlebar-inline-btn" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-                <span className="mono text-blue-400">Z</span>{!hideRotText && "Rot"}
-              </button>
-              {hasModel && (
-                <>
-                  <div className="titlebar-inline-divider" />
-                  <button
-                    type="button"
-                    className="titlebar-inline-btn titlebar-inline-btn--preview"
-                    onClick={() => {
-                      if (generatingPreview || !viewerReady) return;
-                      setPreviewZoomDraft(previewZoom || 1);
-                      setPreviewPromptOpen(true);
-                      setPreviewZoomPreview("");
-                    }}
-                    disabled={generatingPreview || !viewerReady}
-                    title="Generate preview screenshots from all angles"
-                  >
-                    <Camera className="w-3.5 h-3.5" />
-                    {generatingPreview ? (
-                      <span className="toolbar-preview-progress">
-                        {previewProgress.current}/{previewProgress.total}
-                      </span>
-                    ) : (
-                      "Preview"
-                    )}
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-
-          <button
-            type="button"
-            className="titlebar-btn titlebar-panel-toggle"
-            onClick={() => setPanelCollapsed((prev) => !prev)}
-            aria-label={panelCollapsed ? "Show control panel" : "Hide control panel"}
-            data-tauri-drag-region="false"
-          >
-            <PanelLeft className="titlebar-icon" />
-          </button>
-        </div>
+            )}
+          </div>
+        </div>,
+        contextBarTarget
+      )}
 
       <CyberPanel collapsed={panelCollapsed} isBooting={isBooting} statusBar={
-        <div style={{ fontFamily: "var(--font-hud)", flexShrink: 0, borderTop: "1px solid rgba(255,255,255,0.06)", padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "10px", color: "rgba(214, 221, 231, 0.55)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span className={watchStatus === "watching" ? "status-dot" : ""} style={watchStatus !== "watching" ? { width: 6, height: 6, borderRadius: 999, background: watchStatus === "error" ? "#ef4444" : "rgba(255,255,255,0.2)" } : {}} />
-            <span>
+        <div className="cs-status-bar">
+          <div className="cs-status-left">
+            <span className={watchStatus === "watching" ? "status-dot" : "cs-status-dot-idle"} style={watchStatus === "error" ? { background: "#ef4444" } : {}} />
+            <span className="cs-status-text">
               {watchStatus === "watching"
-                ? "Watching for saves"
+                ? "Watching"
                 : watchStatus === "error"
                   ? "Watcher error"
                   : "Idle"}
             </span>
+            {watchStatus === "watching" && texturePath && (
+              <span className="cs-status-file" title={texturePath}>
+                {texturePath.split(/[\\/]/).pop()}
+              </span>
+            )}
           </div>
-          <span>Last update: {lastUpdate}</span>
+          <span className="cs-status-timestamp">{lastUpdate}</span>
         </div>
       }>
           {textureMode !== "multi" ? (
@@ -1909,6 +2055,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         value={dualBodyColorA}
                         onChange={(event) => setDualBodyColorA(event.currentTarget.value)}
                       />
+                      <button type="button" className="cs-copy-btn" onClick={() => copyHex(dualBodyColorA)} title="Copy hex"><Copy className="h-3 w-3" /></button>
                       <button
                         type="button"
                         className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
@@ -1917,6 +2064,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       >
                         <RotateCcw className="h-3 w-3" />
                       </button>
+                    </div>
+                    <div className="cs-swatches">
+                      {COLOR_SWATCHES.map(c => (
+                        <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setDualBodyColorA(c)} title={c} />
+                      ))}
                     </div>
                   </div>
 
@@ -1939,6 +2091,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         value={dualBodyColorB}
                         onChange={(event) => setDualBodyColorB(event.currentTarget.value)}
                       />
+                      <button type="button" className="cs-copy-btn" onClick={() => copyHex(dualBodyColorB)} title="Copy hex"><Copy className="h-3 w-3" /></button>
                       <button
                         type="button"
                         className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
@@ -1947,6 +2100,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       >
                         <RotateCcw className="h-3 w-3" />
                       </button>
+                    </div>
+                    <div className="cs-swatches">
+                      {COLOR_SWATCHES.map(c => (
+                        <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setDualBodyColorB(c)} title={c} />
+                      ))}
                     </div>
                   </div>
                 </>
@@ -1970,6 +2128,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       value={bodyColor}
                       onChange={(event) => setBodyColor(event.currentTarget.value)}
                     />
+                    <button type="button" className="cs-copy-btn" onClick={() => copyHex(bodyColor)} title="Copy hex"><Copy className="h-3 w-3" /></button>
                     <button
                       type="button"
                       className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
@@ -1978,6 +2137,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     >
                       <RotateCcw className="h-3 w-3" />
                     </button>
+                  </div>
+                  <div className="cs-swatches">
+                    {COLOR_SWATCHES.map(c => (
+                      <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setBodyColor(c)} title={c} />
+                    ))}
                   </div>
                 </div>
               )}
@@ -2001,6 +2165,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     value={backgroundColor}
                     onChange={(event) => setBackgroundColor(event.currentTarget.value)}
                   />
+                  <button type="button" className="cs-copy-btn" onClick={() => copyHex(backgroundColor)} title="Copy hex"><Copy className="h-3 w-3" /></button>
                   <button
                     type="button"
                     className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
@@ -2010,13 +2175,42 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <RotateCcw className="h-3 w-3" />
                   </button>
                 </div>
+                <div className="cs-swatches">
+                  {COLOR_SWATCHES.map(c => (
+                    <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setBackgroundColor(c)} title={c} />
+                  ))}
+                </div>
               </div>
 
               <div className="border-t border-[rgba(255,255,255,0.06)] pt-3 space-y-3">
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <CyberLabel className="mb-0">Light Intensity</CyberLabel>
-                    <span className="text-[10px] text-[rgba(230,235,244,0.5)]" style={{ fontFamily: "var(--font-hud)" }}>{lightIntensity.toFixed(1)}</span>
+                    <span
+                      className="cs-slider-value"
+                      onDoubleClick={(e) => {
+                        const span = e.currentTarget;
+                        const input = document.createElement("input");
+                        input.type = "number";
+                        input.min = "0.5"; input.max = "2.0"; input.step = "0.1";
+                        input.value = lightIntensity.toFixed(1);
+                        input.className = "cs-slider-input";
+                        input.style.fontFamily = "var(--font-hud)";
+                        span.replaceWith(input);
+                        input.focus(); input.select();
+                        const commit = () => {
+                          const v = Math.min(2.0, Math.max(0.5, parseFloat(input.value) || 1.0));
+                          setLightIntensity(v);
+                          const ns = document.createElement("span");
+                          ns.className = "cs-slider-value";
+                          ns.textContent = v.toFixed(1);
+                          ns.addEventListener("dblclick", e.currentTarget?._dblHandler || (() => {}));
+                          input.replaceWith(ns);
+                        };
+                        input.addEventListener("blur", commit);
+                        input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") commit(); if (ev.key === "Escape") commit(); });
+                      }}
+                    >{lightIntensity.toFixed(1)}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
@@ -2042,7 +2236,30 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <CyberLabel className="mb-0">Glossiness</CyberLabel>
-                    <span className="text-[10px] text-[rgba(230,235,244,0.5)]" style={{ fontFamily: "var(--font-hud)" }}>{Math.round(glossiness * 100)}%</span>
+                    <span
+                      className="cs-slider-value"
+                      onDoubleClick={(e) => {
+                        const span = e.currentTarget;
+                        const input = document.createElement("input");
+                        input.type = "number";
+                        input.min = "0"; input.max = "100"; input.step = "5";
+                        input.value = Math.round(glossiness * 100);
+                        input.className = "cs-slider-input";
+                        input.style.fontFamily = "var(--font-hud)";
+                        span.replaceWith(input);
+                        input.focus(); input.select();
+                        const commit = () => {
+                          const v = Math.min(1.0, Math.max(0, (parseFloat(input.value) || 50) / 100));
+                          setGlossiness(v);
+                          const ns = document.createElement("span");
+                          ns.className = "cs-slider-value";
+                          ns.textContent = Math.round(v * 100) + "%";
+                          input.replaceWith(ns);
+                        };
+                        input.addEventListener("blur", commit);
+                        input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") commit(); if (ev.key === "Escape") commit(); });
+                      }}
+                    >{Math.round(glossiness * 100)}%</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
@@ -2220,6 +2437,25 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             </motion.div>
           ) : null}
         </AnimatePresence>
+
+        {/* Action toasts */}
+        <div className="cs-toast-stack">
+          <AnimatePresence>
+            {toasts.map(t => (
+              <motion.div
+                key={t.id}
+                className="cs-toast-item"
+                initial={{ opacity: 0, y: 16, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <Check className="h-3 w-3 text-[var(--es-success)]" />
+                <span>{t.msg}</span>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
       </motion.section>
 
       <AnimatePresence>{isBooting ? <AppLoader /> : null}</AnimatePresence>
@@ -2537,7 +2773,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   onClick={async () => {
                     if (isTauriRuntime && previewOutputPath) {
                       try {
-                        await openPath(previewOutputPath);
+                        const prefs = loadPrefs() || {};
+                        const fallbackFolder = prefs?.defaults?.previewFolder || "";
+                        const targetFolder = await resolveExistingFolder(previewOutputPath, fallbackFolder);
+                        await openPath(targetFolder);
                       } catch {
                         console.error("Failed to open preview folder:", previewOutputPath);
                       }

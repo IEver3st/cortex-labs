@@ -1,0 +1,33 @@
+---
+title: Supported Files
+description: File formats for models and textures.
+---
+
+## Models
+
+Cortex Studio focuses on GTA V / FiveM formats.
+
+- `.yft` — vehicles
+- `.ydd` — clothing / EUP
+- `.dff` — legacy model support
+- `.clmesh` — cached mesh format used internally for fast reloads
+
+### Explicit non-support
+
+- `.obj` is intentionally not supported.
+
+## Textures
+
+Supported texture inputs include:
+
+- `.png`
+- `.jpg` / `.jpeg`
+- `.dds`
+- `.psd`
+
+The UI may accept additional image formats for some workflows, but the core “fast loop” targets the formats above.
+
+## Notes on PSD
+
+PSD support is intended for livery iteration and variant workflows.
+If you run into warnings or load failures, export a PNG to validate whether the issue is PSD-specific or content-specific.

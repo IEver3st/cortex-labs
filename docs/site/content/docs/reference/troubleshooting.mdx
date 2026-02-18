@@ -1,0 +1,60 @@
+---
+title: Troubleshooting
+description: Common issues and practical fixes.
+---
+
+## “File picker does nothing” or “Open model” is disabled
+
+You’re probably running the UI-only server.
+
+- Recommended: run the desktop app:
+
+```bash
+bun run tauri dev
+```
+
+## Model loads but nothing renders
+
+Try these checks:
+
+- Toggle the grid to confirm the scene is alive.
+- Use camera reset/fit.
+- Try **All** mode to force texture application everywhere.
+- If the model is extremely tiny/huge, check scale/orientation.
+
+## `.yft` fails to load / mentions mesh cache
+
+- Ensure `CodeWalkerBridge.exe` exists in one of the expected locations.
+- Confirm the bridge prints JSON metadata to stdout and writes the `.clmesh` file.
+
+See **YFT Parser CLI Contract** for exact requirements.
+
+## Texture reload feels inconsistent
+
+Some editors save via temp-file replacement.
+
+Try:
+
+- Re-selecting the texture path.
+- Using PNG as a control test.
+- Ensuring the file extension is supported.
+
+## Glass/window targeting is wrong
+
+- In Livery mode, auto-targeting is heuristic.
+- Use the glass/window selection tools to override.
+- If “Exterior Only” is enabled, it may exclude the material you expect.
+
+## Multi mode: gizmo doesn’t appear
+
+- Toggle the Multi gizmo (default hotkey: Alt + G).
+- Ensure you’ve selected a slot (A/B) before trying to move it.
+
+## Reset to defaults
+
+If the UI feels “weird” after lots of changes:
+
+- Open Settings and use reset options.
+- Restart the app.
+
+Settings are stored locally, so resets are safe and don’t affect your files.

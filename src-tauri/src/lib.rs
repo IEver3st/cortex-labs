@@ -4,6 +4,8 @@ use std::{
     sync::Mutex,
 };
 
+use std::collections::HashSet;
+
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{Emitter, Manager, State};
 
@@ -237,6 +239,12 @@ struct WindowWatchState {
 }
 
 #[derive(Default)]
+struct MultiWatchState {
+    watcher: Mutex<Option<RecommendedWatcher>>,
+    paths: Mutex<Vec<PathBuf>>,
+}
+
+#[derive(Default)]
 struct ModelWatchState {
     watcher: Mutex<Option<RecommendedWatcher>>,
     path: Mutex<Option<PathBuf>>,
@@ -384,6 +392,89 @@ fn stop_window_watch(state: State<WindowWatchState>) -> Result<(), String> {
 
     if let Some(mut watcher) = watcher_guard.take() {
         if let Some(prev_path) = path_guard.take() {
+            let _ = watcher.unwatch(&prev_path);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn start_multi_watch(
+    paths: Vec<String>,
+    app: tauri::AppHandle,
+    state: State<MultiWatchState>,
+) -> Result<(), String> {
+    let mut watcher_guard = state
+        .watcher
+        .lock()
+        .map_err(|_| "watcher lock failed".to_string())?;
+    let mut paths_guard = state
+        .paths
+        .lock()
+        .map_err(|_| "path lock failed".to_string())?;
+
+    if let Some(mut existing) = watcher_guard.take() {
+        for prev_path in paths_guard.drain(..) {
+            let _ = existing.unwatch(&prev_path);
+        }
+    }
+
+    let mut unique: HashSet<PathBuf> = HashSet::new();
+    for raw in paths {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        unique.insert(PathBuf::from(trimmed));
+    }
+
+    if unique.is_empty() {
+        return Ok(());
+    }
+
+    let app_handle = app.clone();
+    let mut watcher =
+        notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = res {
+                let payload = WatchPayload {
+                    path: event
+                        .paths
+                        .get(0)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    kind: format!("{:?}", event.kind),
+                };
+                let _ = app_handle.emit("texture:update", payload);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
+    for path_buf in unique.iter() {
+        watcher
+            .watch(path_buf, RecursiveMode::NonRecursive)
+            .map_err(|e| e.to_string())?;
+    }
+
+    *paths_guard = unique.into_iter().collect();
+    *watcher_guard = Some(watcher);
+
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_multi_watch(state: State<MultiWatchState>) -> Result<(), String> {
+    let mut watcher_guard = state
+        .watcher
+        .lock()
+        .map_err(|_| "watcher lock failed".to_string())?;
+    let mut paths_guard = state
+        .paths
+        .lock()
+        .map_err(|_| "path lock failed".to_string())?;
+
+    if let Some(mut watcher) = watcher_guard.take() {
+        for prev_path in paths_guard.drain(..) {
             let _ = watcher.unwatch(&prev_path);
         }
     }
@@ -830,11 +921,213 @@ fn consume_pending_open_file(state: State<PendingOpenFileState>) -> Option<Strin
         .and_then(|mut pending| pending.take())
 }
 
+#[tauri::command]
+fn ensure_dir(path: String) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("Path is empty".to_string());
+    }
+
+    std::fs::create_dir_all(PathBuf::from(path)).map_err(|e| e.to_string())
+}
+
+/// Decode a Paint.NET (.pdn) file into raw RGBA pixel data.
+/// Returns base64-encoded RGBA pixels plus width/height.
+#[tauri::command]
+fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+
+    let data = std::fs::read(&path).map_err(|e| format!("Failed to read PDN file: {e}"))?;
+
+    // Validate PDN3 magic
+    if data.len() < 24 || &data[0..4] != b"PDN3" {
+        return Err("Not a valid Paint.NET file (missing PDN3 magic).".to_string());
+    }
+
+    // Find image dimensions by scanning for "width" and "height" field names
+    // in the .NET BinaryFormatter stream
+    let (width, height) = extract_pdn_dimensions(&data)
+        .ok_or_else(|| "Could not extract image dimensions from PDN file.".to_string())?;
+
+    if width == 0 || height == 0 || width > 65536 || height > 65536 {
+        return Err(format!("Invalid PDN dimensions: {width}x{height}"));
+    }
+
+    let expected_size = (width as usize) * (height as usize) * 4;
+
+    // Find and decompress all gzip chunks
+    let mut gzip_offsets = Vec::new();
+    let mut i = 24;
+    while i + 2 < data.len() {
+        if data[i] == 0x1F && data[i + 1] == 0x8B && i + 2 < data.len() && data[i + 2] == 0x08 {
+            gzip_offsets.push(i);
+            i += 18; // skip minimum gzip overhead
+        } else {
+            i += 1;
+        }
+    }
+
+    if gzip_offsets.is_empty() {
+        return Err("No compressed pixel data found in PDN file.".to_string());
+    }
+
+    // Decompress all chunks and collect layer data
+    let mut layers: Vec<Vec<u8>> = Vec::new();
+    let mut current_layer: Vec<u8> = Vec::new();
+
+    for offset in &gzip_offsets {
+        let slice = &data[*offset..];
+        let mut decoder = GzDecoder::new(slice);
+        let mut inflated = Vec::new();
+        if decoder.read_to_end(&mut inflated).is_err() || inflated.is_empty() {
+            continue;
+        }
+
+        current_layer.extend_from_slice(&inflated);
+
+        if current_layer.len() >= expected_size {
+            current_layer.truncate(expected_size);
+            layers.push(current_layer);
+            current_layer = Vec::new();
+        }
+    }
+
+    // Handle remaining partial layer
+    if !current_layer.is_empty() {
+        current_layer.resize(expected_size, 0);
+        layers.push(current_layer);
+    }
+
+    if layers.is_empty() {
+        return Err("Failed to decompress any pixel data from PDN file.".to_string());
+    }
+
+    // Composite layers bottom-to-top, converting BGRA → RGBA
+    let mut rgba = vec![0u8; expected_size];
+    for layer in &layers {
+        let len = std::cmp::min(layer.len(), expected_size);
+        let mut j = 0;
+        while j + 3 < len {
+            let pix = (j / 4) * 4;
+            if pix + 3 >= rgba.len() {
+                break;
+            }
+
+            let src_b = layer[j];
+            let src_g = layer[j + 1];
+            let src_r = layer[j + 2];
+            let src_a = layer[j + 3];
+
+            if src_a == 0 {
+                j += 4;
+                continue;
+            }
+
+            let dst_a = rgba[pix + 3];
+            if src_a == 255 || dst_a == 0 {
+                rgba[pix] = src_r;
+                rgba[pix + 1] = src_g;
+                rgba[pix + 2] = src_b;
+                rgba[pix + 3] = src_a;
+            } else {
+                let sa = src_a as f32 / 255.0;
+                let da = dst_a as f32 / 255.0;
+                let out_a = sa + da * (1.0 - sa);
+                if out_a > 0.0 {
+                    rgba[pix] =
+                        ((src_r as f32 * sa + rgba[pix] as f32 * da * (1.0 - sa)) / out_a) as u8;
+                    rgba[pix + 1] =
+                        ((src_g as f32 * sa + rgba[pix + 1] as f32 * da * (1.0 - sa)) / out_a)
+                            as u8;
+                    rgba[pix + 2] =
+                        ((src_b as f32 * sa + rgba[pix + 2] as f32 * da * (1.0 - sa)) / out_a)
+                            as u8;
+                    rgba[pix + 3] = (out_a * 255.0) as u8;
+                }
+            }
+
+            j += 4;
+        }
+    }
+
+    // Encode as base64 for transfer to frontend
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&rgba);
+
+    Ok(serde_json::json!({
+        "width": width,
+        "height": height,
+        "rgba_base64": encoded
+    }))
+}
+
+/// Extract width and height from a PDN file's .NET BinaryFormatter stream.
+fn extract_pdn_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    let mut width: u32 = 0;
+    let mut height: u32 = 0;
+
+    // Scan for "width" and "height" length-prefixed strings
+    let width_needle = b"width";
+    let height_needle = b"height";
+
+    for i in 0..data.len().saturating_sub(10) {
+        // .NET BinaryFormatter writes field names as length-prefixed strings
+        if data[i] == width_needle.len() as u8 && i + 1 + width_needle.len() < data.len() {
+            if &data[i + 1..i + 1 + width_needle.len()] == width_needle {
+                // Scan forward for a reasonable Int32 value
+                width = scan_for_dimension(data, i + 1 + width_needle.len());
+            }
+        }
+        if data[i] == height_needle.len() as u8 && i + 1 + height_needle.len() < data.len() {
+            if &data[i + 1..i + 1 + height_needle.len()] == height_needle {
+                height = scan_for_dimension(data, i + 1 + height_needle.len());
+            }
+        }
+        if width > 0 && height > 0 {
+            return Some((width, height));
+        }
+    }
+
+    // Fallback: scan for dimension pair in the header area
+    for i in 24..std::cmp::min(data.len().saturating_sub(8), 4096) {
+        let a = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        let b = u32::from_le_bytes([data[i + 4], data[i + 5], data[i + 6], data[i + 7]]);
+        if (16..=16384).contains(&a)
+            && (16..=16384).contains(&b)
+            && a.is_power_of_two()
+            && b.is_power_of_two()
+        {
+            return Some((a, b));
+        }
+    }
+
+    None
+}
+
+/// Scan forward from a position to find a reasonable dimension value.
+fn scan_for_dimension(data: &[u8], from: usize) -> u32 {
+    for off in from..std::cmp::min(from + 64, data.len().saturating_sub(4)) {
+        let val = u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+        if (1..=65536).contains(&val) && (val.is_power_of_two() || val % 64 == 0 || val % 100 == 0)
+        {
+            return val;
+        }
+    }
+    for off in from..std::cmp::min(from + 64, data.len().saturating_sub(4)) {
+        let val = u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+        if (16..=65536).contains(&val) {
+            return val;
+        }
+    }
+    0
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(WatchState::default())
         .manage(WindowWatchState::default())
+        .manage(MultiWatchState::default())
         .manage(ModelWatchState::default())
         .manage(PendingOpenFileState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -854,11 +1147,15 @@ pub fn run() {
             stop_watch,
             start_window_watch,
             stop_window_watch,
+            start_multi_watch,
+            stop_multi_watch,
             start_model_watch,
             stop_model_watch,
             parse_yft,
             convert_yft,
-            consume_pending_open_file
+            consume_pending_open_file,
+            ensure_dir,
+            decode_pdn
         ])
         .setup(|app| {
             // On Windows, "Open With" passes the file path as a CLI argument.

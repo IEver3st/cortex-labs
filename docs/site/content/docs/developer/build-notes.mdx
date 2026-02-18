@@ -1,0 +1,37 @@
+---
+title: Build Notes
+description: Practical notes for developing and building Cortex Studio.
+---
+
+## Package manager
+
+This repo uses **Bun**.
+
+- Install: `bun install`
+- Dev UI: `bun run dev`
+- Dev desktop: `bun run tauri dev`
+
+## Rust/Tauri
+
+The desktop runtime is Tauri 2.
+
+Useful commands:
+
+```bash
+cd src-tauri
+cargo check
+cargo fmt
+cargo clippy
+```
+
+## Docs site
+
+The documentation site is its own project under `docs/site/`.
+
+```bash
+cd docs/site
+bun install
+bun run dev
+```
+
+It serves docs at `http://localhost:3000/docs`.

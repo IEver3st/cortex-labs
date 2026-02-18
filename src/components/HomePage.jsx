@@ -1,11 +1,14 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Car, Layers, Shirt, Link2, Clock, Trash2, FolderOpen,
-  Plus, ChevronRight, Palette, Eye, Check, ChevronLeft,
+  Car, Layers, Shirt, Link2, Trash2, FolderOpen,
+  Plus, Palette, ArrowRight,
+  Search, ArrowUpDown, Pin, PinOff,
+  ChevronDown, Rocket, FolderInput, Eye,
+  Zap, Check, X, Command
 } from "lucide-react";
 import { loadWorkspaces, loadRecent, deleteWorkspace, createWorkspace } from "../lib/workspace";
-import { loadPrefs } from "../lib/prefs";
+import { loadPrefs, savePrefs } from "../lib/prefs";
 import appMeta from "../../package.json";
 import * as Ctx from "./ContextMenu";
 
@@ -13,36 +16,120 @@ const MODES = [
   {
     id: "livery",
     label: "Livery",
-    desc: "Auto-target vehicle livery materials",
+    desc: "Vehicle textures & livery painting",
     icon: Car,
     accent: "#7dd3fc",
-    shortcut: "Alt + 1",
+    shortcut: "Alt+1",
+    keyLabel: ["Alt", "1"],
   },
   {
     id: "everything",
     label: "All",
-    desc: "Apply textures to all meshes",
+    desc: "View all meshes & textures",
     icon: Layers,
     accent: "#20c997",
-    shortcut: "Alt + 2",
+    shortcut: "Alt+2",
+    keyLabel: ["Alt", "2"],
   },
   {
     id: "eup",
     label: "EUP",
-    desc: "Emergency uniform textures + YDD",
+    desc: "Uniform & clothing textures",
     icon: Shirt,
     accent: "#c084fc",
-    shortcut: "Alt + 3",
+    shortcut: "Alt+3",
+    keyLabel: ["Alt", "3"],
   },
   {
     id: "multi",
     label: "Multi",
-    desc: "Dual model side-by-side viewer",
+    desc: "Side-by-side model compare",
     icon: Link2,
     accent: "#fb923c",
-    shortcut: "Alt + 4",
+    shortcut: "Alt+4",
+    keyLabel: ["Alt", "4"],
   },
 ];
+
+const FILTER_TABS = [
+  { id: "all", label: "All" },
+  { id: "livery", label: "Livery" },
+  { id: "eup", label: "EUP" },
+  { id: "multi", label: "Multi" },
+  { id: "variants", label: "Variants" },
+];
+
+const SORT_OPTIONS = [
+  { id: "recent", label: "Last Opened" },
+  { id: "name", label: "Name" },
+  { id: "type", label: "Type" },
+];
+
+const PINNED_KEY = "cortex-studio:pinned.v1";
+
+function loadPinned() {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+function savePinned(ids) {
+  try { localStorage.setItem(PINNED_KEY, JSON.stringify(ids)); } catch {}
+}
+
+function getModeTag(entry, ws) {
+  if (entry.page === "variants") return "Variant";
+  const mode = ws?.state?.textureMode || "livery";
+  if (mode === "livery") return "Livery";
+  if (mode === "everything") return "All";
+  if (mode === "eup") return "EUP";
+  if (mode === "multi") return "Multi";
+  return "Livery";
+}
+
+function getModelName(ws) {
+  const path = ws?.state?.modelPath || ws?.state?.openFile;
+  if (!path) return null;
+  return path.split(/[\\/]/).pop();
+}
+
+function getProjectFolder(ws) {
+  const path = ws?.state?.modelPath || ws?.state?.openFile;
+  if (!path) return null;
+  const parts = path.split(/[\\/]/);
+  if (parts.length > 1) return parts[parts.length - 2];
+  return null;
+}
+
+function relativeTime(timestamp) {
+  if (!timestamp) return "";
+  const now = Date.now();
+  const diff = now - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function timeGroup(timestamp) {
+  if (!timestamp) return "older";
+  const now = Date.now();
+  const diff = now - timestamp;
+  const hrs = diff / 3600000;
+  if (hrs < 24) return "today";
+  if (hrs < 168) return "week";
+  return "older";
+}
+
+const GROUP_LABELS = {
+  today: "Today",
+  week: "This Week",
+  older: "Older",
+};
 
 export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion }) {
   const [recent, setRecent] = useState([]);
@@ -50,15 +137,97 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [selectedMode, setSelectedMode] = useState("livery");
-  const [showRecents, setShowRecents] = useState(true);
+  const [activeSection, setActiveSection] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState("recent");
+  const [showSortMenu, setShowSortMenu] = useState(false);
+  const [pinnedIds, setPinnedIds] = useState(() => loadPinned());
+  const [createOpen, setCreateOpen] = useState(false);
+  const searchRef = useRef(null);
+  const createBtnRef = useRef(null);
 
   useEffect(() => {
-    const prefs = loadPrefs();
-    const allowRecents = prefs?.defaults?.showRecents !== false;
-    setShowRecents(allowRecents);
     setWorkspaces(loadWorkspaces());
-    setRecent(allowRecents ? loadRecent() : []);
+    setRecent(loadRecent());
   }, [settingsVersion]);
+
+  // Close create dropdown on outside click
+  useEffect(() => {
+    if (!createOpen) return;
+    const handleClick = (e) => {
+      if (createBtnRef.current?.contains(e.target)) return;
+      setCreateOpen(false);
+    };
+    window.addEventListener("mousedown", handleClick);
+    return () => window.removeEventListener("mousedown", handleClick);
+  }, [createOpen]);
+
+  const togglePin = useCallback((wsId, e) => {
+    if (e) e.stopPropagation();
+    setPinnedIds(prev => {
+      const next = prev.includes(wsId) ? prev.filter(id => id !== wsId) : [...prev, wsId].slice(-5);
+      savePinned(next);
+      return next;
+    });
+  }, []);
+
+  const filteredRecent = useMemo(() => {
+    let list = recent;
+    // Filter by type
+    if (activeSection !== "all") {
+      list = list.filter(entry => {
+        const ws = workspaces[entry.workspaceId];
+        if (!ws) return false;
+        if (activeSection === "variants") return entry.page === "variants";
+        return ws.state?.textureMode === activeSection;
+      });
+    }
+    // Search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(entry => {
+        const ws = workspaces[entry.workspaceId];
+        if (!ws) return false;
+        const name = (ws.name || "").toLowerCase();
+        const model = (getModelName(ws) || "").toLowerCase();
+        const folder = (getProjectFolder(ws) || "").toLowerCase();
+        return name.includes(q) || model.includes(q) || folder.includes(q);
+      });
+    }
+    // Sort
+    if (sortBy === "name") {
+      list = [...list].sort((a, b) => {
+        const na = (workspaces[a.workspaceId]?.name || "").toLowerCase();
+        const nb = (workspaces[b.workspaceId]?.name || "").toLowerCase();
+        return na.localeCompare(nb);
+      });
+    } else if (sortBy === "type") {
+      list = [...list].sort((a, b) => {
+        const wa = workspaces[a.workspaceId];
+        const wb = workspaces[b.workspaceId];
+        return getModeTag(a, wa).localeCompare(getModeTag(b, wb));
+      });
+    }
+    return list;
+  }, [recent, workspaces, activeSection, searchQuery, sortBy]);
+
+  // Group projects by time
+  const groupedRecent = useMemo(() => {
+    if (sortBy !== "recent") return null;
+    const groups = { today: [], week: [], older: [] };
+    filteredRecent.forEach(entry => {
+      const ws = workspaces[entry.workspaceId];
+      const g = timeGroup(ws?.updatedAt || entry.openedAt);
+      groups[g].push(entry);
+    });
+    return groups;
+  }, [filteredRecent, workspaces, sortBy]);
+
+  const pinnedEntries = useMemo(() => {
+    return recent.filter(entry => pinnedIds.includes(entry.workspaceId));
+  }, [recent, pinnedIds]);
+
+  const hasProjects = recent.length > 0;
 
   const handleLaunchMode = useCallback((mode) => {
     const modeNames = {
@@ -89,13 +258,12 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
     deleteWorkspace(wsId);
     setWorkspaces(loadWorkspaces());
     setRecent(loadRecent());
+    setPinnedIds(prev => prev.filter(id => id !== wsId));
   }, []);
 
   const handleOpenRecent = useCallback((entry) => {
     const ws = loadWorkspaces()[entry.workspaceId];
-    if (ws) {
-      onOpenWorkspace(ws);
-    }
+    if (ws) onOpenWorkspace(ws);
   }, [onOpenWorkspace]);
 
   const modeIconForEntry = (entry) => {
@@ -112,286 +280,472 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
     const ws = workspaces[entry.workspaceId];
     const mode = ws?.state?.textureMode || "livery";
     if (entry.page === "variants") return "#f0abfc";
-    if (mode === "everything") return "#20c997";
-    if (mode === "eup") return "#c084fc";
-    if (mode === "multi") return "#fb923c";
-    return "#7dd3fc";
+    const modeConfig = MODES.find(m => m.id === mode);
+    return modeConfig?.accent || "#7dd3fc";
   };
 
-  const modeLabelForEntry = (entry) => {
+  /* ─── Project row renderer ─── */
+  const renderProjectRow = (entry, i, opts = {}) => {
     const ws = workspaces[entry.workspaceId];
-    const mode = ws?.state?.textureMode || "livery";
-    if (entry.page === "variants") return "Variant Builder";
-    if (mode === "everything") return "All";
-    if (mode === "eup") return "EUP";
-    if (mode === "multi") return "Multi";
-    return "Livery";
+    if (!ws) return null;
+    const Icon = modeIconForEntry(entry);
+    const color = modeColorForEntry(entry);
+    const isPinned = pinnedIds.includes(entry.workspaceId);
+    const tag = getModeTag(entry, ws);
+    const model = getModelName(ws);
+    const folder = getProjectFolder(ws);
+
+    return (
+      <Ctx.Root key={entry.workspaceId}>
+        <Ctx.Trigger>
+          <motion.div
+            className={`hp-project-row ${opts.pinned ? "is-pinned" : ""}`}
+            onClick={() => handleOpenRecent(entry)}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: opts.delay || 0 }}
+            style={{ "--project-accent": color }}
+          >
+            <div className="hp-project-indicator" />
+            <div className="hp-project-icon">
+              <Icon className="w-4 h-4" />
+            </div>
+            <div className="hp-project-details">
+              <div className="hp-project-name-row">
+                <span className="hp-project-name">{ws.name}</span>
+                <span className="hp-project-tag" data-tag={tag.toLowerCase()}>{tag}</span>
+              </div>
+              <div className="hp-project-meta">
+                {model && <span className="hp-project-model" title={model}>{model}</span>}
+                {folder && <><span className="hp-meta-sep">/</span><span className="hp-project-folder">{folder}</span></>}
+                <span className="hp-meta-sep">·</span>
+                <span className="hp-project-time">{relativeTime(ws.updatedAt)}</span>
+              </div>
+            </div>
+            <div className="hp-project-actions">
+              <button
+                className={`hp-pin-btn ${isPinned ? "is-pinned" : ""}`}
+                onClick={(e) => togglePin(entry.workspaceId, e)}
+                title={isPinned ? "Unpin" : "Pin"}
+              >
+                {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+              </button>
+              <button
+                className="hp-delete-btn"
+                onClick={(e) => handleDeleteWorkspace(e, entry.workspaceId)}
+                title="Delete"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          </motion.div>
+        </Ctx.Trigger>
+        <Ctx.Content>
+          <Ctx.Item onSelect={() => handleOpenRecent(entry)}>
+            <FolderOpen className="w-3.5 h-3.5" /> Open
+          </Ctx.Item>
+          <Ctx.Item onSelect={(e) => togglePin(entry.workspaceId)}>
+            {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+            {isPinned ? "Unpin" : "Pin to top"}
+          </Ctx.Item>
+          <Ctx.Separator />
+          <Ctx.Item onSelect={(e) => handleDeleteWorkspace(e, entry.workspaceId)} destructive>
+            <Trash2 className="w-3.5 h-3.5" /> Delete
+          </Ctx.Item>
+        </Ctx.Content>
+      </Ctx.Root>
+    );
   };
 
-  const descriptiveNameForEntry = (entry) => {
-    const ws = workspaces[entry.workspaceId];
-    if (!ws) return entry.name || "Untitled";
-    const state = ws.state || {};
-    if (entry.page === "variants") {
-      const psd = state.psdPath;
-      if (psd) {
-        const name = psd.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "";
-        return name ? `${name} Variants` : ws.name;
-      }
-      return ws.name;
+  /* ─── Grouped list renderer ─── */
+  const renderGroupedList = () => {
+    if (!groupedRecent) {
+      // Flat list (sorted by name or type)
+      return filteredRecent.map((entry, i) => renderProjectRow(entry, i, { delay: 0.05 + i * 0.02 }));
     }
-    const modelPath = state.modelPath || "";
-    if (modelPath) {
-      const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "";
-      if (modelName) return `${modelName} Preview`;
+    const elements = [];
+    let idx = 0;
+    for (const key of ["today", "week", "older"]) {
+      const items = groupedRecent[key];
+      if (items.length === 0) continue;
+      elements.push(
+        <div key={`group-${key}`} className="hp-time-group">
+          <span className="hp-time-label">{GROUP_LABELS[key]}</span>
+        </div>
+      );
+      items.forEach((entry) => {
+        elements.push(renderProjectRow(entry, idx, { delay: 0.05 + idx * 0.02 }));
+        idx++;
+      });
     }
-    return ws.name;
-  };
-
-  const relativeTime = (timestamp) => {
-    if (!timestamp) return "";
-    const now = Date.now();
-    const diff = now - timestamp;
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "Just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    if (days < 7) return `${days}d ago`;
-    return new Date(timestamp).toLocaleDateString();
+    return elements;
   };
 
   return (
     <div className="home-page">
-      {/* Atmospheric background */}
-      <div className="home-bg">
-        <div className="home-bg-grain" />
-        <div className="home-bg-gradient" />
-        <div className="home-bg-grid" />
+      <div className="hp-bg">
+        <div className="hp-bg-dots" />
+        <div className="hp-bg-glow" />
       </div>
 
-      <div className="home-content-split">
-        {/* Hero — centered at top */}
-        <motion.div
-          className="home-hero"
-          initial={{ opacity: 0, y: 20 }}
+      <div className="hp-container">
+        {/* ─── Compact Header ─── */}
+        <motion.header
+          className="hp-header"
+          initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.4 }}
         >
-          <h1 className="home-title">Cortex Studio</h1>
-          <span className="home-version">v{appMeta.version}</span>
-        </motion.div>
+          <div className="hp-brand">
+            <span className="hp-brand-mark">Cortex Studio</span>
+            <span className="hp-brand-ver">v{appMeta.version}</span>
+          </div>
+          <div className="hp-header-cta" ref={createBtnRef}>
+            <button className="hp-create-btn" onClick={() => setCreateOpen((p) => !p)}>
+              <Plus className="w-3.5 h-3.5" />
+              <span>Create</span>
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            <AnimatePresence>
+              {createOpen && (
+                <motion.div
+                  className="hp-create-menu"
+                  initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                  transition={{ duration: 0.12 }}
+                >
+                  <button className="hp-create-option" onClick={() => { handleLaunchMode("livery"); setCreateOpen(false); }}>
+                    <Car className="w-3.5 h-3.5" style={{ color: "#7dd3fc" }} /> <span>New Livery</span>
+                  </button>
+                  <button className="hp-create-option" onClick={() => { handleLaunchMode("everything"); setCreateOpen(false); }}>
+                    <Layers className="w-3.5 h-3.5" style={{ color: "#20c997" }} /> <span>New All</span>
+                  </button>
+                  <button className="hp-create-option" onClick={() => { handleLaunchMode("eup"); setCreateOpen(false); }}>
+                    <Shirt className="w-3.5 h-3.5" style={{ color: "#c084fc" }} /> <span>New EUP</span>
+                  </button>
+                  <button className="hp-create-option" onClick={() => { handleLaunchMode("multi"); setCreateOpen(false); }}>
+                    <Link2 className="w-3.5 h-3.5" style={{ color: "#fb923c" }} /> <span>New Multi</span>
+                  </button>
+                  <div className="hp-create-sep" />
+                  <button className="hp-create-option" onClick={() => { handleLaunchVariants(); setCreateOpen(false); }}>
+                    <Palette className="w-3.5 h-3.5" style={{ color: "#f0abfc" }} /> <span>Variant Builder</span>
+                  </button>
+                  <div className="hp-create-sep" />
+                  <button className="hp-create-option" onClick={() => { setShowNewProject(true); setCreateOpen(false); }}>
+                    <Plus className="w-3.5 h-3.5" /> <span>New Project…</span>
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </motion.header>
 
-        {/* Body: two columns with divider */}
-        <div className={`home-body ${showRecents ? "" : "is-single"}`}>
-          {/* Left — Launch options */}
-          <motion.div
-            className="home-left"
+        {/* ─── Main Grid ─── */}
+        <div className="hp-grid">
+          {/* ──── Left: Quick Start ──── */}
+          <motion.section
+            className="hp-left"
             initial={{ opacity: 0, x: -16 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.55, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.45, delay: 0.08 }}
           >
-            <div className="home-section-label">
-              <Plus className="home-section-label-icon" />
-              <span>Launch</span>
+            <div className="hp-section-label">
+              <Zap className="w-3.5 h-3.5" />
+              <span>Quick Start</span>
             </div>
 
-            <div className="home-mode-grid">
+            <div className="hp-mode-cards">
               {MODES.map((mode, i) => {
                 const Icon = mode.icon;
                 return (
                   <motion.button
                     key={mode.id}
-                    type="button"
-                    className="home-mode-card"
-                    style={{ "--mode-accent": mode.accent }}
+                    className="hp-mode-card"
                     onClick={() => handleLaunchMode(mode.id)}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3, delay: 0.12 + i * 0.04 }}
+                    transition={{ duration: 0.3, delay: 0.12 + i * 0.045 }}
+                    style={{ "--mode-accent": mode.accent }}
                   >
-                    <div className="home-mode-card-top">
-                      <div className="home-mode-card-icon">
-                        <Icon />
+                    <div className="hp-mode-bar" />
+                    <div className="hp-mode-body">
+                      <div className="hp-mode-icon-wrap">
+                        <Icon className="w-5 h-5" />
                       </div>
-                      <span className="home-mode-card-shortcut">{mode.shortcut}</span>
+                      <div className="hp-mode-text">
+                        <span className="hp-mode-label">{mode.label}</span>
+                        <span className="hp-mode-desc">{mode.desc}</span>
+                      </div>
                     </div>
-                    <span className="home-mode-card-label">{mode.label}</span>
-                    <span className="home-mode-card-desc">{mode.desc}</span>
+                    <div className="hp-mode-footer">
+                      <div className="hp-keycaps">
+                        {mode.keyLabel.map((k, ki) => (
+                          <span key={ki} className="hp-keycap">{k}</span>
+                        ))}
+                      </div>
+                      <ArrowRight className="w-3.5 h-3.5 hp-mode-arrow" />
+                    </div>
                   </motion.button>
                 );
               })}
             </div>
 
+            <div className="hp-separator" />
+
             <motion.button
-              type="button"
-              className="home-variant-card"
+              className="hp-variant-card"
               onClick={handleLaunchVariants}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.35, delay: 0.28 }}
+              transition={{ duration: 0.3, delay: 0.35 }}
             >
-              <div className="home-variant-card-icon">
-                <Palette />
+              <div className="hp-variant-icon">
+                <Palette className="w-4 h-4" />
               </div>
-              <div className="home-variant-card-text">
-                <span className="home-variant-card-label">Variant Builder</span>
-                <span className="home-variant-card-desc">Layered PSD workflow with grouped exports</span>
+              <div className="hp-variant-text">
+                <span className="hp-variant-label">Variant Builder</span>
+                <span className="hp-variant-desc">PSD workflow with grouped exports</span>
               </div>
-              <ChevronRight className="home-variant-card-arrow" />
+              <ArrowRight className="w-4 h-4 hp-variant-arrow" />
             </motion.button>
+          </motion.section>
 
-            <button
-              type="button"
-              className="home-named-project-btn"
-              onClick={() => setShowNewProject(true)}
-            >
-              <FolderOpen className="w-4 h-4" />
-              <span>New Named Project...</span>
-            </button>
-          </motion.div>
-
-          {showRecents && (
-            <>
-              {/* Vertical Divider */}
-              <div className="home-divider" />
-
-              {/* Right — Recents */}
-              <motion.div
-                className="home-right"
-                initial={{ opacity: 0, x: 16 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.6, delay: 0.18, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <div className="home-section-label">
-                  <Clock className="home-section-label-icon" />
-                  <span>Recent</span>
+          {/* ──── Right: Projects (hero) ──── */}
+          <motion.section
+            className="hp-right"
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.45, delay: 0.15 }}
+          >
+            {/* Section title with search and sort */}
+            <div className="hp-projects-head">
+              <h2 className="hp-projects-title">
+                Recent Projects
+                <span className="hp-projects-count">{filteredRecent.length}</span>
+              </h2>
+              <div className="hp-projects-controls">
+                <div className="hp-search">
+                  <Search className="w-3.5 h-3.5 hp-search-icon" />
+                  <input
+                    ref={searchRef}
+                    type="text"
+                    className="hp-search-input"
+                    placeholder="Search…"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button className="hp-search-clear" onClick={() => setSearchQuery("")}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
+                <div className="hp-sort-wrap">
+                  <button className="hp-sort-btn" onClick={() => setShowSortMenu(!showSortMenu)}>
+                    <ArrowUpDown className="w-3 h-3" />
+                    <span>{SORT_OPTIONS.find(s => s.id === sortBy)?.label}</span>
+                  </button>
+                  <AnimatePresence>
+                    {showSortMenu && (
+                      <motion.div
+                        className="hp-sort-menu"
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.15 }}
+                      >
+                        {SORT_OPTIONS.map(opt => (
+                          <button
+                            key={opt.id}
+                            className={`hp-sort-option ${sortBy === opt.id ? "is-active" : ""}`}
+                            onClick={() => { setSortBy(opt.id); setShowSortMenu(false); }}
+                          >
+                            {sortBy === opt.id && <Check className="w-3 h-3" />}
+                            {opt.label}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
+            </div>
 
-                {recent.length > 0 ? (
-                  <div className="home-recent-list">
-                    {recent.map((entry, i) => {
-                      const ws = workspaces[entry.workspaceId];
-                      if (!ws) return null;
-                      const Icon = modeIconForEntry(entry);
-                      const color = modeColorForEntry(entry);
-                      const modeLabel = modeLabelForEntry(entry);
-                      return (
-                        <Ctx.Root key={entry.workspaceId}>
-                          <Ctx.Trigger>
-                            <motion.div
-                              className="home-recent-item"
-                              onClick={() => handleOpenRecent(entry)}
-                              initial={{ opacity: 0, x: -6 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              transition={{ duration: 0.3, delay: 0.24 + i * 0.04 }}
-                              whileHover={{ x: 3 }}
-                              role="button"
-                              tabIndex={0}
-                            >
-                              <div className="home-recent-item-icon" style={{ borderColor: `${color}30`, background: `${color}0a` }}>
-                                <Icon className="w-3.5 h-3.5" style={{ color }} />
-                              </div>
-                              <div className="home-recent-item-text">
-                                <span className="home-recent-item-name">{descriptiveNameForEntry(entry)}</span>
-                                <span className="home-recent-item-meta">
-                                  {modeLabel}
-                                  {ws.updatedAt ? ` — ${relativeTime(ws.updatedAt)}` : ""}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                className="home-recent-item-delete"
-                                onClick={(e) => handleDeleteWorkspace(e, entry.workspaceId)}
-                                title="Delete"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </motion.div>
-                          </Ctx.Trigger>
-                          <Ctx.Content>
-                            <Ctx.Item onSelect={() => handleOpenRecent(entry)}>
-                              <ChevronRight className="w-3 h-3" /> Open
-                            </Ctx.Item>
-                            <Ctx.Separator />
-                            <Ctx.Item onSelect={(e) => handleDeleteWorkspace(e, entry.workspaceId)} destructive>
-                              <Trash2 className="w-3 h-3" /> Delete
-                            </Ctx.Item>
-                          </Ctx.Content>
-                        </Ctx.Root>
-                      );
-                    })}
+            {/* Filter Tabs */}
+            <div className="hp-filters">
+              {FILTER_TABS.map(filter => {
+                const count = filter.id === "all" ? recent.length : recent.filter(entry => {
+                  const ws = workspaces[entry.workspaceId];
+                  if (!ws) return false;
+                  if (filter.id === "variants") return entry.page === "variants";
+                  return ws.state?.textureMode === filter.id;
+                }).length;
+                return (
+                  <button
+                    key={filter.id}
+                    className={`hp-filter ${activeSection === filter.id ? "is-active" : ""}`}
+                    onClick={() => setActiveSection(filter.id)}
+                  >
+                    {filter.label}
+                    {count > 0 && <span className="hp-filter-num">{count}</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ── Pinned Section ── */}
+            {pinnedEntries.length > 0 && activeSection === "all" && !searchQuery && (
+              <div className="hp-pinned-section">
+                <div className="hp-pinned-label">
+                  <Pin className="w-3 h-3" />
+                  <span>Pinned</span>
+                </div>
+                <div className="hp-pinned-list">
+                  {pinnedEntries.map((entry, i) => renderProjectRow(entry, i, { delay: 0, pinned: true }))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Projects List ── */}
+            <div className="hp-projects-scroll">
+              {hasProjects && filteredRecent.length > 0 ? (
+                renderGroupedList()
+              ) : hasProjects ? (
+                <motion.div className="hp-no-results" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <Search className="w-6 h-6" />
+                  <p>No matches</p>
+                  <span>Try a different search or filter</span>
+                </motion.div>
+              ) : (
+                /* ── Empty State: First-time user onboarding ── */
+                <motion.div
+                  className="hp-empty-state"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2, duration: 0.4 }}
+                >
+                  <div className="hp-empty-hero">
+                    <div className="hp-empty-icon-ring">
+                      <Rocket className="w-6 h-6" />
+                    </div>
+                    <h3 className="hp-empty-title">Get Started</h3>
+                    <p className="hp-empty-subtitle">Open a model or create your first project</p>
                   </div>
-                ) : (
-                  <div className="home-empty-recent">
-                    <Clock className="home-empty-recent-icon" />
-                    <span>No recent sessions</span>
-                    <span className="home-empty-recent-hint">Launch a mode to get started</span>
+
+                  <div className="hp-empty-actions">
+                    <button className="hp-empty-action" onClick={() => handleLaunchMode("livery")}>
+                      <Car className="w-4 h-4" />
+                      <span>Open Model</span>
+                    </button>
+                    <button className="hp-empty-action" onClick={() => setShowNewProject(true)}>
+                      <Plus className="w-4 h-4" />
+                      <span>Create Project</span>
+                    </button>
+                    <button className="hp-empty-action" onClick={() => handleLaunchMode("everything")}>
+                      <FolderInput className="w-4 h-4" />
+                      <span>Import Folder</span>
+                    </button>
                   </div>
-                )}
-              </motion.div>
-            </>
-          )}
+
+                  <div className="hp-empty-checklist">
+                    <span className="hp-checklist-header">Getting Started</span>
+                    <div className="hp-checklist-items">
+                      <div className="hp-checklist-item">
+                        <span className="hp-checklist-num">1</span>
+                        <span>Open a <b>.yft</b> or <b>.ydd</b> model file</span>
+                      </div>
+                      <div className="hp-checklist-item">
+                        <span className="hp-checklist-num">2</span>
+                        <span>Apply a livery or texture overlay</span>
+                      </div>
+                      <div className="hp-checklist-item">
+                        <span className="hp-checklist-num">3</span>
+                        <span>Enable file watching for live reload</span>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </div>
+          </motion.section>
         </div>
+
+        {/* ─── Footer ─── */}
+        <motion.footer
+          className="hp-footer"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.35 }}
+        >
+          <div className="hp-stats">
+            <span>{Object.keys(workspaces).length} projects</span>
+            <span className="hp-stats-sep" />
+            <span>{recent.length} recent</span>
+          </div>
+          <div className="hp-footer-hint">
+            <Command className="w-3 h-3" />
+            <span>Use keyboard shortcuts for faster workflow</span>
+          </div>
+        </motion.footer>
       </div>
 
-      {/* New Project Form */}
+      {/* ─── New Project Modal ─── */}
       <AnimatePresence>
         {showNewProject && (
           <motion.div
-            className="home-new-project-overlay"
+            className="home-modal-overlay"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setShowNewProject(false)}
           >
             <motion.div
-              className="home-new-project"
+              className="home-modal"
               initial={{ opacity: 0, y: 20, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 12, scale: 0.96 }}
-              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              transition={{ duration: 0.22 }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className="home-new-project-title">New Project</h2>
-              <div className="home-new-project-field">
-                <label className="home-new-project-label">Project Name</label>
-                <input
-                  type="text"
-                  className="home-new-project-input"
-                  value={projectName}
-                  onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="My Livery"
-                  autoFocus
-                  onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
-                />
+              <div className="home-modal-header">
+                <h3>New Project</h3>
+                <button className="home-modal-close" onClick={() => setShowNewProject(false)}>
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-              <div className="home-new-project-field">
-                <label className="home-new-project-label">Mode</label>
-                <div className="home-new-project-types">
-                  {MODES.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      className={`home-new-project-type ${selectedMode === m.id ? "is-selected" : ""}`}
-                      style={{ "--type-accent": m.accent }}
-                      onClick={() => setSelectedMode(m.id)}
-                    >
-                      <m.icon className="w-4 h-4" />
-                      <span>{m.label}</span>
-                    </button>
-                  ))}
+              <div className="home-modal-body">
+                <div className="home-field">
+                  <label>Project Name</label>
+                  <input
+                    type="text"
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    placeholder="Enter project name..."
+                    autoFocus
+                    onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
+                  />
+                </div>
+                <div className="home-field">
+                  <label>Mode</label>
+                  <div className="home-mode-select">
+                    {MODES.map((mode) => (
+                      <button
+                        key={mode.id}
+                        className={`home-mode-option ${selectedMode === mode.id ? "is-selected" : ""}`}
+                        style={{ "--mode-accent": mode.accent }}
+                        onClick={() => setSelectedMode(mode.id)}
+                      >
+                        <mode.icon className="w-4 h-4" />
+                        <span>{mode.label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <div className="home-new-project-actions">
-                <button type="button" className="home-new-project-cancel" onClick={() => setShowNewProject(false)}>
-                  Cancel
-                </button>
-                <button type="button" className="home-new-project-create" onClick={handleCreateProject}>
-                  <Plus className="w-3.5 h-3.5" />
-                  Create
-                </button>
+              <div className="home-modal-footer">
+                <button className="home-btn home-btn-secondary" onClick={() => setShowNewProject(false)}>Cancel</button>
+                <button className="home-btn home-btn-primary" onClick={handleCreateProject}>Create Project</button>
               </div>
             </motion.div>
           </motion.div>

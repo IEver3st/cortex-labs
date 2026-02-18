@@ -139,6 +139,11 @@ export function sniffTextureSignature(bytes) {
     return { kind: "ai-ps", mime: "application/postscript" };
   }
 
+  // Paint.NET: "PDN3" magic
+  if (b0 === 0x50 && b1 === 0x44 && b2 === 0x4e && b3 === 0x33) {
+    return { kind: "pdn", mime: "application/x-pdn" };
+  }
+
   return { kind: "", mime: "" };
 }
 
@@ -556,14 +561,18 @@ export async function loadTextureFromPath(texturePath, textureLoader, renderer) 
     return new THREE.CanvasTexture(canvas);
   };
 
+  const loadPdn = async () => loadPdnTexture(bytes, texturePath);
+
   const attempts = [];
   const kind = (extension || "").toLowerCase();
   const sigKind = (signature.kind || "").toLowerCase();
+  const isPdfCompatibleAi = sigKind === "ai";
   if (kind === "dds" || sigKind === "dds") { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
   if (kind === "tga") attempts.push(loadTga);
   if (kind === "psd" || sigKind === "psd") attempts.push(loadPsd);
+  if (kind === "pdn" || sigKind === "pdn") attempts.push(loadPdn);
   if (kind === "tif" || kind === "tiff" || sigKind === "tif" || sigKind === "tiff") attempts.push(loadTiff);
-  if (kind === "ai" || sigKind === "ai" || sigKind === "ai-ps") attempts.push(loadAi);
+  if ((kind === "ai" || sigKind === "ai" || sigKind === "ai-ps") && isPdfCompatibleAi) attempts.push(loadAi);
   attempts.push(loadNative);
 
   let texture = null;
@@ -872,4 +881,66 @@ export function detectPsdBitDepth(bytes) {
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   return view.getUint16(22, false);
+}
+
+/**
+ * Load a Paint.NET (.pdn) file as a Three.js texture.
+ *
+ * Strategy:
+ *   1. Try Rust backend decoder (invoke decode_pdn) for robust parsing
+ *   2. Fall back to JS-side PDN parser if Rust is unavailable
+ *
+ * @param {Uint8Array} bytes  Raw file bytes
+ * @param {string} [filePath]  Original file path (for Rust decoder)
+ * @returns {Promise<THREE.DataTexture>}
+ */
+export async function loadPdnTexture(bytes, filePath) {
+  const isTauriRuntime =
+    typeof window !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__ !== "undefined";
+
+  // Strategy 1: Rust backend decode (fast, robust)
+  if (isTauriRuntime && filePath) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke("decode_pdn", { path: filePath });
+      if (result?.width && result?.height && result?.rgba_base64) {
+        const binaryStr = atob(result.rgba_base64);
+        const rgba = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          rgba[i] = binaryStr.charCodeAt(i);
+        }
+        const texture = new THREE.DataTexture(
+          rgba,
+          result.width,
+          result.height,
+          THREE.RGBAFormat,
+        );
+        texture.premultiplyAlpha = false;
+        texture.userData = texture.userData || {};
+        texture.userData.sourceKind = "pdn";
+        return texture;
+      }
+    } catch (rustErr) {
+      console.warn("[PDN] Rust decoder failed, trying JS fallback:", rustErr);
+    }
+  }
+
+  // Strategy 2: JS-side parser
+  const { decodePdn } = await import("./pdn");
+  const result = decodePdn(bytes);
+  if (result && result.width > 0 && result.height > 0 && result.data) {
+    const texture = new THREE.DataTexture(
+      result.data,
+      result.width,
+      result.height,
+      THREE.RGBAFormat,
+    );
+    texture.premultiplyAlpha = false;
+    texture.userData = texture.userData || {};
+    texture.userData.sourceKind = "pdn";
+    return texture;
+  }
+
+  throw new Error("Failed to decode Paint.NET (.pdn) file. Try re-saving in Paint.NET or exporting to PNG.");
 }

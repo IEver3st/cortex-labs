@@ -1,0 +1,54 @@
+---
+title: Viewer Modes
+description: Choose the right preview mode for your asset type and workflow.
+---
+
+Cortex Studio’s viewer supports multiple modes, optimized for different workflows.
+
+## Livery mode (Alt + 1)
+
+Best for **vehicle liveries**.
+
+- Attempts to auto-target common “livery / carpaint / decal” materials.
+- Designed so your texture applies where you expect without manually picking a mesh.
+- Optional **Exterior Only** behavior to avoid pushing livery textures onto interior/glass candidates.
+
+Use this mode when:
+
+- Your `.yft` has typical GTA material naming conventions.
+- You want a quick “does it look right in-game?” preview.
+
+## All mode (Alt + 2)
+
+Best for **templates** and broad inspection.
+
+- Applies the loaded texture to *every* mesh/material.
+- Useful for checking UV alignment and spotting unexpected UV islands.
+
+Use this mode when:
+
+- You’re validating a blank template.
+- You don’t want auto-targeting logic to hide issues.
+
+## EUP mode (Alt + 3)
+
+Best for **clothing models**.
+
+- Intended for `.ydd` workflows.
+- Uses clothing-friendly model scanning settings.
+
+Use this mode when:
+
+- You’re previewing Emergency Uniform Pack assets.
+
+## Multi mode (Alt + 4)
+
+Best for **comparisons**.
+
+- Shows two models side-by-side with independent texture selection.
+- Includes a transform gizmo for positioning and layout.
+
+Use this mode when:
+
+- You want to compare “before/after” textures.
+- You’re validating consistency across variants or across two assets.

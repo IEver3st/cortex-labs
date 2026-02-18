@@ -3,13 +3,14 @@ import { AnimatePresence, motion } from "motion/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
 import VariantsPage from "./components/VariantsPage";
 import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
+import WhatsNew from "./components/WhatsNew";
 import * as Ctx from "./components/ContextMenu";
 import appMeta from "../package.json";
 import {
@@ -380,32 +381,59 @@ export default function Shell() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
+  // Portal target for Row 2 context bar
+  const contextBarRef = useRef(null);
+  const [contextBarReady, setContextBarReady] = useState(false);
+
+  // New-tab dropdown
+  const [newTabOpen, setNewTabOpen] = useState(false);
+  const newTabBtnRef = useRef(null);
+
+  // Close new-tab dropdown on outside click
+  useEffect(() => {
+    if (!newTabOpen) return;
+    const handleClick = (e) => {
+      if (newTabBtnRef.current?.contains(e.target)) return;
+      setNewTabOpen(false);
+    };
+    window.addEventListener("mousedown", handleClick);
+    return () => window.removeEventListener("mousedown", handleClick);
+  }, [newTabOpen]);
+
+  // WhatsNew modal: auto-open on new version, manual open from settings
+  const [whatsNewManual, setWhatsNewManual] = useState(false);
+  const handleOpenReleaseNotes = useCallback(() => setWhatsNewManual(true), []);
+  const handleCloseWhatsNew = useCallback(() => setWhatsNewManual(false), []);
+
   return (
     <div className="shell-root">
       <AnimatePresence>{!booted ? <AppLoader /> : null}</AnimatePresence>
 
+      {booted && <WhatsNew />}
+      {whatsNewManual && <WhatsNew forceOpen isManual onClose={handleCloseWhatsNew} />}
+
       {booted && (
         <>
-          {/* ─── Chrome: Brand + Tabs + Settings + Window Controls ─── */}
-          <div className="shell-chrome" data-tauri-drag-region>
+          {/* ━━━ ROW 1: Titlebar — Brand + Tab Strip + Window Controls ━━━ */}
+          <div className="shell-row1" data-tauri-drag-region>
             <div className="shell-brand" data-tauri-drag-region>
               <span className="shell-brand-name">Cortex Studio</span>
             </div>
 
-            <div className="shell-chrome-divider" />
+            <div className="shell-row1-divider" />
 
             {/* Tab strip */}
             <div className="shell-tabs" data-tauri-drag-region>
               <AnimatePresence initial={false}>
                 {tabs.map((tab) => {
                   const Icon = TAB_ICONS[tab.type] || Eye;
-                  const isActive = tab.id === activeTabId;
+                  const isTabActive = tab.id === activeTabId;
                   const isEditing = editingTabId === tab.id;
 
                   const tabElement = (
                     <motion.div
                       key={tab.id}
-                      className={`shell-tab ${isActive ? "is-active" : ""}`}
+                      className={`shell-tab ${isTabActive ? "is-active" : ""}`}
                       onClick={() => setActiveTabId(tab.id)}
                       onDoubleClick={() => tab.closable && startRenameTab(tab.id)}
                       layout
@@ -445,7 +473,6 @@ export default function Shell() {
                     </motion.div>
                   );
 
-                  // Wrap closable tabs with context menu
                   if (tab.closable) {
                     return (
                       <Ctx.Root key={tab.id}>
@@ -472,12 +499,54 @@ export default function Shell() {
                   return tabElement;
                 })}
               </AnimatePresence>
+
+              {/* + New tab button */}
+              <div className="shell-new-tab-wrap" ref={newTabBtnRef}>
+                <button
+                  type="button"
+                  className="shell-new-tab-btn"
+                  onClick={() => setNewTabOpen((p) => !p)}
+                  data-tauri-drag-region="false"
+                  title="New tab"
+                >
+                  <Plus className="w-3 h-3" />
+                  <ChevronDown className="w-2 h-2 shell-new-tab-chevron" />
+                </button>
+                <AnimatePresence>
+                  {newTabOpen && (
+                    <motion.div
+                      className="shell-new-tab-menu"
+                      initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                      transition={{ duration: 0.12 }}
+                    >
+                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("viewer", null, "livery"); setNewTabOpen(false); }}>
+                        <Car className="w-3 h-3" /> Livery
+                      </button>
+                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("viewer", null, "everything"); setNewTabOpen(false); }}>
+                        <Layers className="w-3 h-3" /> All
+                      </button>
+                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("viewer", null, "eup"); setNewTabOpen(false); }}>
+                        <Shirt className="w-3 h-3" /> EUP
+                      </button>
+                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("viewer", null, "multi"); setNewTabOpen(false); }}>
+                        <Link2 className="w-3 h-3" /> Multi
+                      </button>
+                      <div className="shell-new-tab-sep" />
+                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("variants"); setNewTabOpen(false); }}>
+                        <Palette className="w-3 h-3" /> Variant Builder
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
 
-            {/* Empty spacer with context menu for new tabs */}
+            {/* Draggable spacer (right-click for new tab) */}
             <Ctx.Root>
               <Ctx.Trigger>
-                <div className="shell-chrome-spacer" data-tauri-drag-region />
+                <div className="shell-row1-spacer" data-tauri-drag-region />
               </Ctx.Trigger>
               <Ctx.Content>
                 <Ctx.Label>New Tab</Ctx.Label>
@@ -503,24 +572,33 @@ export default function Shell() {
             {/* Version pill */}
             <span className="shell-chrome-version">v{appMeta.version}</span>
 
-            {/* Settings (app-wide, in chrome bar) */}
-            <SettingsMenu onSettingsSaved={handleSettingsSaved} />
+            {/* Settings */}
+            <SettingsMenu onSettingsSaved={handleSettingsSaved} onOpenReleaseNotes={handleOpenReleaseNotes} />
 
             {/* Window controls */}
-            <div className="titlebar-controls">
-              <button type="button" className="titlebar-btn titlebar-min" onClick={handleMinimize} aria-label="Minimize" data-tauri-drag-region="false">
-                <Minus className="titlebar-icon titlebar-icon--min" />
+            <div className="shell-window-controls">
+              <button type="button" className="shell-wc-btn shell-wc-min" onClick={handleMinimize} aria-label="Minimize" data-tauri-drag-region="false">
+                <Minus className="shell-wc-icon" />
               </button>
-              <button type="button" className="titlebar-btn titlebar-max" onClick={handleMaximize} aria-label="Maximize" data-tauri-drag-region="false">
-                <Square className="titlebar-icon titlebar-icon--max" />
+              <button type="button" className="shell-wc-btn shell-wc-max" onClick={handleMaximize} aria-label="Maximize" data-tauri-drag-region="false">
+                <Square className="shell-wc-icon" />
               </button>
-              <button type="button" className="titlebar-btn titlebar-close" onClick={handleClose} aria-label="Close" data-tauri-drag-region="false">
-                <X className="titlebar-icon titlebar-icon--close" />
+              <button type="button" className="shell-wc-btn shell-wc-close" onClick={handleClose} aria-label="Close" data-tauri-drag-region="false">
+                <X className="shell-wc-icon" />
               </button>
             </div>
           </div>
 
-          {/* ─── Tab Panes: ALL stay mounted, only active one is visible ─── */}
+          {/* ━━━ ROW 2: Context Bar — changes per active tab ━━━ */}
+          <div
+            className="shell-row2"
+            ref={(node) => {
+              contextBarRef.current = node;
+              if (node && !contextBarReady) setContextBarReady(true);
+            }}
+          />
+
+          {/* ━━━ Tab Panes: ALL stay mounted, only active one is visible ━━━ */}
           <div className="shell-content">
             {tabs.map((tab) => {
               const isActive = tab.id === activeTabId;
@@ -551,6 +629,7 @@ export default function Shell() {
                       initialState={tab.initialState || null}
                       onRenameTab={(label) => renameTab(tab.id, label)}
                       settingsVersion={settingsVersion}
+                      contextBarTarget={contextBarRef.current}
                     />
                   )}
                   {tab.type === "variants" && (
@@ -559,14 +638,14 @@ export default function Shell() {
                       onStateChange={(state) => handleVariantStateChange(tab.id, state)}
                       onRenameTab={(label) => renameTab(tab.id, label)}
                       settingsVersion={settingsVersion}
+                      isActive={isActive}
+                      contextBarTarget={contextBarRef.current}
                     />
                   )}
                 </div>
               );
             })}
           </div>
-
-          {/* Onboarding is now integrated into the HomePage */}
         </>
       )}
     </div>
