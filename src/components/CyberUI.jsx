@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Upload, X, Plus } from "lucide-react";
 function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
 }
@@ -30,10 +30,10 @@ export function CyberPanel({ children, collapsed, isBooting, statusBar }) {
   );
 }
 
-export function CyberSection({ title, caption, open, onToggle, contentId, children, icon, color }) {
+export function CyberSection({ title, caption, open, onToggle, contentId, children, icon, color, badge }) {
   const Icon = icon;
   return (
-    <div className="cyber-section">
+    <div className={safeCn("cyber-section", open && "cyber-section--open")}>
       <button
         type="button"
         onClick={onToggle}
@@ -48,13 +48,16 @@ export function CyberSection({ title, caption, open, onToggle, contentId, childr
             {caption && <span className="cyber-section-caption">{caption}</span>}
           </div>
         </div>
-        <motion.div
-          animate={{ rotate: open ? 90 : 0 }}
-          transition={{ duration: 0.2 }}
-          className="cyber-section-chevron"
-        >
-          <ChevronRight size={12} />
-        </motion.div>
+        <div className="cyber-section-right">
+          {badge && <span className="cyber-section-badge">{badge}</span>}
+          <motion.div
+            animate={{ rotate: open ? 90 : 0 }}
+            transition={{ duration: 0.2 }}
+            className="cyber-section-chevron"
+          >
+            <ChevronRight size={12} />
+          </motion.div>
+        </div>
       </button>
 
       <AnimatePresence initial={false}>
@@ -81,16 +84,15 @@ export function CyberButton({ children, onClick, variant = "blue", className, di
   const baseStyles = "relative group w-full h-9 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden";
   
   const variants = {
-    blue: "bg-[#7dd3fc]/10 text-[#7dd3fc] border border-[#7dd3fc]/30 hover:bg-[#7dd3fc]/20 hover:border-[#7dd3fc] hover:shadow-[0_0_15px_-3px_rgba(125,211,252,0.3)]",
-    purple: "bg-[#a78bfa]/10 text-[#a78bfa] border border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 hover:border-[#a78bfa] hover:shadow-[0_0_15px_-3px_rgba(167,139,250,0.3)]",
-    orange: "bg-[#f97316]/10 text-[#f97316] border border-[#f97316]/30 hover:bg-[#f97316]/20 hover:border-[#f97316] hover:shadow-[0_0_15px_-3px_rgba(249,115,22,0.3)]",
-    secondary: "bg-[#1F2833]/50 text-[#C5C6C7] border border-[#C5C6C7]/20 hover:bg-[#1F2833] hover:border-[#C5C6C7]/50",
-    danger: "bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 hover:border-red-500 hover:shadow-[0_0_15px_-3px_rgba(239,68,68,0.3)]",
-    ghost: "bg-transparent text-[#C5C6C7]/60 hover:text-[#7dd3fc] hover:bg-[#7dd3fc]/5"
+    blue: "cs-btn--primary",
+    purple: "cs-btn--purple",
+    orange: "cs-btn--orange",
+    secondary: "cs-btn--secondary",
+    danger: "cs-btn--danger",
+    ghost: "cs-btn--ghost"
   };
 
   const selectedVariant = variants[variant] || variants.blue;
-  const hoverColor = variant === "purple" ? "#a78bfa" : variant === "orange" ? "#f97316" : variant === "danger" ? "#ef4444" : "#7dd3fc";
 
   return (
     <button
@@ -101,17 +103,13 @@ export function CyberButton({ children, onClick, variant = "blue", className, di
       {...props}
     >
       <span className="relative z-10 flex items-center gap-2">{children}</span>
-      {/* Glitch hover effect overlay */}
-      {!disabled && variant !== "secondary" && variant !== "ghost" && (
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-5 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" style={{ backgroundColor: hoverColor }} />
-      )}
     </button>
   );
 }
 
 export function CyberCard({ children, className }) {
   return (
-    <div className={safeCn("bg-[#0B0C10]/60 border border-[rgba(255,255,255,0.06)] p-3 relative", className)}>
+    <div className={safeCn("cs-card", className)}>
       {children}
     </div>
   );
@@ -119,8 +117,116 @@ export function CyberCard({ children, className }) {
 
 export function CyberLabel({ children, className }) {
     return (
-        <label className={safeCn("block text-[9px] uppercase tracking-[0.18em] text-[rgba(230,235,244,0.45)] mb-1.5", className)} style={{ fontFamily: "var(--font-hud)" }}>
+        <label className={safeCn("cs-label", className)} style={{ fontFamily: "var(--font-hud)" }}>
             {children}
         </label>
     );
+}
+
+/* ── Material Type Pill Selector ── */
+const MATERIAL_TYPES = [
+  { id: "paint", label: "Paint", color: "#3dbaa3" },
+  { id: "chrome", label: "Chrome", color: "#b8c4d0" },
+  { id: "plastic", label: "Plastic", color: "#9fa0a6" },
+  { id: "metal", label: "Metal", color: "#ffd700" },
+  { id: "glass", label: "Glass", color: "#60a5fa" },
+];
+
+export function MaterialTypeSelector({ value, onChange }) {
+  return (
+    <div className="cs-mat-type-row">
+      {MATERIAL_TYPES.map((mat) => (
+        <button
+          key={mat.id}
+          type="button"
+          className={safeCn("cs-mat-pill", value === mat.id && "cs-mat-pill--active")}
+          style={value === mat.id ? { "--pill-color": mat.color } : undefined}
+          onClick={() => onChange(mat.id)}
+        >
+          <span className="cs-mat-pill-dot" style={{ background: mat.color }} />
+          <span>{mat.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ── Material Slider ── */
+export function MaterialSlider({ label, value, onChange, min = 0, max = 1, step = 0.01, unit = "", onReset }) {
+  const displayVal = unit === "%" ? `${Math.round(value * 100)}%` : value.toFixed(2);
+  return (
+    <div className="cs-mat-slider">
+      <div className="cs-mat-slider-header">
+        <span className="cs-mat-slider-label">{label}</span>
+        <span className="cs-mat-slider-readout">{displayVal}</span>
+      </div>
+      <div className="cs-mat-slider-track-wrap">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+          className="cs-mat-slider-input"
+        />
+        <div className="cs-mat-slider-fill" style={{ width: `${((value - min) / (max - min)) * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/* ── Texture Upload Grid ── */
+export function TextureUploadGrid({ textures, onAdd, onRemove, maxSlots = 6 }) {
+  const fileInputRef = useRef(null);
+  
+  const handleFileSelect = useCallback(() => {
+    if (onAdd) onAdd();
+  }, [onAdd]);
+
+  return (
+    <div className="cs-tex-grid">
+      {textures.map((tex, i) => (
+        <div key={tex.id || i} className="cs-tex-slot">
+          {tex.thumbnail ? (
+            <img src={tex.thumbnail} alt={tex.name || `Texture ${i + 1}`} className="cs-tex-slot-img" />
+          ) : (
+            <div className="cs-tex-slot-placeholder">
+              <span className="cs-tex-slot-ext">{tex.name ? tex.name.split('.').pop().toUpperCase() : '?'}</span>
+            </div>
+          )}
+          <button
+            type="button"
+            className="cs-tex-slot-remove"
+            onClick={() => onRemove(i)}
+            title="Remove texture"
+          >
+            <X size={10} />
+          </button>
+          <div className="cs-tex-slot-name" title={tex.name}>{tex.name || `Slot ${i + 1}`}</div>
+        </div>
+      ))}
+      {textures.length < maxSlots && (
+        <button type="button" className="cs-tex-slot cs-tex-slot--add" onClick={handleFileSelect}>
+          <Plus size={16} />
+          <span>Add</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ── Toggle Switch ── */
+export function CyberToggle({ checked, onChange, size = "sm" }) {
+  return (
+    <button
+      type="button"
+      className={safeCn("cs-toggle", checked && "cs-toggle--on", size === "lg" && "cs-toggle--lg")}
+      onClick={() => onChange(!checked)}
+      role="switch"
+      aria-checked={checked}
+    >
+      <div className="cs-toggle-thumb" />
+    </button>
+  );
 }

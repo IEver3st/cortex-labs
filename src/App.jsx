@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
-import { AlertTriangle, ArrowUpRight, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Box, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
 import { openPath } from "@tauri-apps/plugin-opener";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
@@ -32,7 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/select";
-import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel } from "./components/CyberUI";
+import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel, CyberToggle, MaterialTypeSelector, MaterialSlider, TextureUploadGrid } from "./components/CyberUI";
 
 const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
@@ -162,9 +162,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [windowTexturePath, setWindowTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
+  const [backgroundImagePath, setBackgroundImagePath] = useState("");
+  const [backgroundImageReloadToken, setBackgroundImageReloadToken] = useState(0);
+  const [showWireframe, setShowWireframe] = useState(false);
   const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
   const [glossiness, setGlossiness] = useState(() => getInitialDefaults().glossiness ?? 0.5);
   const [experimentalSettings, setExperimentalSettings] = useState(() => Boolean(getInitialDefaults().experimentalSettings));
+
+  // Vehicle Materials state
+  const [materialType, setMaterialType] = useState("paint");
+  const [matLightIntensity, setMatLightIntensity] = useState(1.0);
+  const [matGlossiness, setMatGlossiness] = useState(0.5);
+  const [matRoughness, setMatRoughness] = useState(0.3);
+  const [matClearcoat, setMatClearcoat] = useState(0.0);
+  const [materialTextures, setMaterialTextures] = useState([]);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
+
   // windowControlsStyle now handled by Shell
   const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
 
@@ -370,6 +383,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         liveryWindowOverride,
         bodyColor,
         backgroundColor,
+        backgroundImagePath,
+        showWireframe,
         lightIntensity,
         glossiness,
         liveryExteriorOnly,
@@ -404,7 +419,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [
     isBooting, showOnboarding, textureMode,
     modelPath, modelSourcePath, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
-    liveryWindowOverride, bodyColor, backgroundColor, lightIntensity, glossiness, liveryExteriorOnly,
+    liveryWindowOverride, bodyColor, backgroundColor, backgroundImagePath, showWireframe, lightIntensity, glossiness, liveryExteriorOnly,
     dualBodyColorA, dualBodyColorB,
     dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
     dualWindowTextureAPath, dualWindowTextureBPath,
@@ -608,6 +623,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     if (state.dualBodyColorB) setDualBodyColorB(state.dualBodyColorB);
     else if (state.bodyColor) setDualBodyColorB(state.bodyColor);
     if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
+    if (typeof state.showWireframe === "boolean") setShowWireframe(state.showWireframe);
     if (typeof state.lightIntensity === "number") setLightIntensity(state.lightIntensity);
     if (typeof state.glossiness === "number") setGlossiness(state.glossiness);
     if (typeof state.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(state.liveryExteriorOnly);
@@ -626,6 +642,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     }
     if (state.texturePath && (await fileOk(state.texturePath))) setTexturePath(state.texturePath);
     else if (state.texturePath) setTexturePath(state.texturePath);
+    if (state.backgroundImagePath && (await fileOk(state.backgroundImagePath))) setBackgroundImagePath(state.backgroundImagePath);
+    else if (state.backgroundImagePath) setBackgroundImagePath(state.backgroundImagePath);
     if (state.windowTexturePath && (await fileOk(state.windowTexturePath))) setWindowTexturePath(state.windowTexturePath);
     else if (state.windowTexturePath) setWindowTexturePath(state.windowTexturePath);
     if (state.dualModelAPath && (await fileOk(state.dualModelAPath))) setDualModelAPath(state.dualModelAPath);
@@ -774,8 +792,80 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     }
   };
 
+  const selectBackgroundImage = async () => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
+    try {
+      const selected = await open({
+        filters: [
+          {
+            name: "Background Image",
+            extensions: [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp",
+              "avif",
+              "bmp",
+              "gif",
+              "tga",
+              "dds",
+              "tif",
+              "tiff",
+              "psd",
+              "ai",
+              "pdn",
+            ],
+          },
+        ],
+      });
+      setDialogError("");
+      if (typeof selected === "string") {
+        if (!isTextureFormatSupported(selected)) {
+          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
+        setBackgroundImagePath((prev) => {
+          if (prev === selected) {
+            setBackgroundImageReloadToken((token) => token + 1);
+          }
+          return selected;
+        });
+      }
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
+  };
+
   const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
   const textureExtsDual = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai", "pdn"];
+
+  // Material texture upload handler
+  const selectMaterialTexture = async () => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [{ name: "Texture", extensions: ["png", "jpg", "jpeg", "webp", "dds", "tga", "tif", "tiff", "psd", "bmp"] }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      const newTextures = paths.map((p) => ({
+        id: `mat-tex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: p.split(/[\\/]/).pop(),
+        path: p,
+        thumbnail: null,
+      }));
+      setMaterialTextures((prev) => [...prev, ...newTextures].slice(0, 6));
+    } catch { /* dialog blocked */ }
+  };
+
+  const removeMaterialTexture = useCallback((index) => {
+    setMaterialTextures((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const selectDualModel = async (slot) => {
     if (!isTauriRuntime) return;
@@ -1284,7 +1374,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               <PanelLeft className="w-3.5 h-3.5" />
             </button>
             <div className="ctx-bar-sep" />
-            <span className="ctx-bar-badge" style={{ color: textureMode === "livery" ? "#7dd3fc" : textureMode === "eup" ? "#c084fc" : textureMode === "multi" ? "#f97316" : "var(--es-success)" }}>
+            <span className="ctx-bar-badge" style={{ color: textureMode === "livery" ? "var(--mg-primary)" : textureMode === "eup" ? "oklch(0.714 0.203 305.504)" : textureMode === "multi" ? "var(--mg-primary)" : "var(--es-success)" }}>
               {currentModeLabel}
             </span>
             {modelPath && (
@@ -1308,18 +1398,26 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <button
                   type="button"
                   className={`ctx-bar-btn ${dualSelectedSlot === "A" ? "is-slot-active" : ""}`}
-                  style={dualSelectedSlot === "A" ? { color: "#f97316" } : undefined}
+                  style={dualSelectedSlot === "A" ? { color: "var(--mg-primary)" } : undefined}
                   onClick={() => setDualSelectedSlot("A")}
                 >A</button>
                 <button
                   type="button"
                   className={`ctx-bar-btn ${dualSelectedSlot === "B" ? "is-slot-active" : ""}`}
-                  style={dualSelectedSlot === "B" ? { color: "#a78bfa" } : undefined}
+                  style={dualSelectedSlot === "B" ? { color: "oklch(0.714 0.203 305.504)" } : undefined}
                   onClick={() => setDualSelectedSlot("B")}
                 >B</button>
                 <div className="ctx-bar-sep" />
                 <button type="button" className="ctx-bar-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
                   {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  className={`ctx-bar-btn ${showWireframe ? "is-active" : ""}`}
+                  onClick={() => setShowWireframe((prev) => !prev)}
+                  title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
+                >
+                  <Box className="w-3.5 h-3.5" />
                 </button>
                 <button type="button" className="ctx-bar-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
                   <Link2 className="w-3 h-3" style={{ marginRight: 4 }} />Snap
@@ -1350,6 +1448,16 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 </button>
                 <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
                   <span style={{ color: "#60a5fa" }}>Z</span>
+                </button>
+                <div className="ctx-bar-sep" />
+                <button
+                  type="button"
+                  className={`ctx-bar-btn ${showWireframe ? "is-active" : ""}`}
+                  onClick={() => setShowWireframe((prev) => !prev)}
+                  title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
+                >
+                  <Box className="w-3.5 h-3.5" style={{ marginRight: 3 }} />
+                  Wire
                 </button>
               </>
             )}
@@ -1432,11 +1540,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   ) : null}
                 </div>
                 {modelPath ? (
-                  <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                  <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                     {getFileLabel(modelPath, "")}
                   </div>
                 ) : null}
-                {modelLoading ? <div className="text-[10px] text-[#7dd3fc] animate-pulse mt-2">Initializing construct...</div> : null}
+                {modelLoading ? <div className="text-[10px] text-[var(--mg-primary)] animate-pulse mt-2">Initializing construct...</div> : null}
               </div>
             </CyberSection>
           ) : null}
@@ -1470,18 +1578,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       ) : null}
                     </div>
                     {texturePath ? (
-                      <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                      <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                         {getFileLabel(texturePath, "")}
                       </div>
                     ) : null}
                 </div>
                 <CyberCard className="mt-2">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-[9px] uppercase text-[#7dd3fc] shrink-0">Target</span>
-                    <span className="px-1 py-0.5 bg-[#7dd3fc]/20 text-[#7dd3fc] rounded text-[8px] shrink-0">AUTO</span>
-                    <span className="font-mono text-[10px] text-[#C5C6C7] truncate min-w-0">{liveryStatusLabel}</span>
+                    <span className="font-mono text-[9px] uppercase text-[var(--mg-primary)] shrink-0">Target</span>
+                    <span className="px-1 py-0.5 bg-[oklch(0.648_0.116_182.503_/_0.2)] text-[var(--mg-primary)] rounded text-[8px] shrink-0">AUTO</span>
+                    <span className="font-mono text-[10px] text-[var(--mg-muted)] truncate min-w-0">{liveryStatusLabel}</span>
                   </div>
-                  <div className="text-[9px] text-[#7dd3fc]/50 mt-1 leading-tight">{liveryHint}</div>
+                  <div className="text-[9px] text-[var(--mg-primary)]/50 mt-1 leading-tight">{liveryHint}</div>
                 </CyberCard>
               </CyberSection>
 
@@ -1499,10 +1607,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberLabel className="mb-0">Enabled</CyberLabel>
                     <button
                       type="button"
-                      className={`w-8 h-4 rounded-none border border-[#1F2937] relative transition-colors ${windowTemplateEnabled ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
+                      className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${windowTemplateEnabled ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
                       onClick={() => setWindowTemplateEnabled((prev) => !prev)}
                     >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[#C5C6C7] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
                     </button>
                   </div>
                   {windowTemplateEnabled ? (
@@ -1525,7 +1633,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           ) : null}
                         </div>
                         {windowTexturePath ? (
-                          <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                             {getFileLabel(windowTexturePath, "")}
                           </div>
                         ) : null}
@@ -1533,10 +1641,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       <div className="mt-1">
                         <CyberLabel>Override Target</CyberLabel>
                         <Select value={liveryWindowOverride || "auto"} onValueChange={(val) => setLiveryWindowOverride(val === "auto" ? "" : val)}>
-                          <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                          <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                             <SelectValue placeholder="Select target" />
                           </SelectTrigger>
-                          <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                          <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                             <SelectItem value="auto">
                               {windowLiveryTarget
                                 ? `Auto (${windowStatusLabel})`
@@ -1552,7 +1660,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       </div>
                     </>
                   ) : (
-                    <div className="text-[9px] text-[#7dd3fc]/50">Enable to apply a glass texture overlay.</div>
+                    <div className="text-[9px] text-[var(--mg-primary)]/50">Enable to apply a glass texture overlay.</div>
                   )}
                 </div>
               </CyberSection>
@@ -1571,13 +1679,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberLabel className="mb-0">Exterior Only</CyberLabel>
                     <button
                       type="button"
-                      className={`w-8 h-4 rounded-none border border-[#1F2937] relative transition-colors ${liveryExteriorOnly ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
+                      className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${liveryExteriorOnly ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
                       onClick={() => setLiveryExteriorOnly((prev) => !prev)}
                     >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[#C5C6C7] transition-transform ${liveryExteriorOnly ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${liveryExteriorOnly ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
                     </button>
                   </div>
-                  <div className="text-[9px] text-[#7dd3fc]/50">Hides interior, glass, and wheel meshes.</div>
+                  <div className="text-[9px] text-[var(--mg-primary)]/50">Hides interior, glass, and wheel meshes.</div>
                 </div>
               </CyberSection>
             </div>
@@ -1612,7 +1720,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       ) : null}
                     </div>
                     {texturePath ? (
-                      <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                      <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                         {getFileLabel(texturePath, "")}
                       </div>
                     ) : null}
@@ -1620,10 +1728,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <CyberCard className="mt-2">
                   <CyberLabel>Apply To</CyberLabel>
                   <Select value={textureTarget} onValueChange={setTextureTarget}>
-                    <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                    <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                       <SelectValue placeholder="Select target" />
                     </SelectTrigger>
-                    <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                    <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                       <SelectItem value="all">All meshes</SelectItem>
                       {textureTargets.map((target) => (
                         <SelectItem key={target.value} value={target.value}>
@@ -1649,10 +1757,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberLabel className="mb-0">Secondary Texture</CyberLabel>
                     <button
                       type="button"
-                      className={`w-8 h-4 rounded-none border border-[#1F2937] relative transition-colors ${windowTemplateEnabled ? "bg-[#7dd3fc]/20 border-[#7dd3fc]/50" : "bg-[#0B0C10]"}`}
+                      className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${windowTemplateEnabled ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
                       onClick={() => setWindowTemplateEnabled((prev) => !prev)}
                     >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[#C5C6C7] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[#7dd3fc]" : ""}`} />
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
                     </button>
                   </div>
                   {windowTemplateEnabled ? (
@@ -1675,16 +1783,16 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                             ) : null}
                           </div>
                           {windowTexturePath ? (
-                            <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                            <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                               {getFileLabel(windowTexturePath, "")}
                             </div>
                           ) : null}
                         </div>
                       <Select value={windowTextureTarget} onValueChange={setWindowTextureTarget}>
-                        <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                        <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                           <SelectValue placeholder="Select target" />
                         </SelectTrigger>
-                        <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                        <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                           <SelectItem value="auto">Auto (window materials)</SelectItem>
                           <SelectItem value="none">None</SelectItem>
                           <SelectItem value="all">All meshes</SelectItem>
@@ -1697,7 +1805,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       </Select>
                     </>
                   ) : (
-                    <div className="text-[9px] text-[#7dd3fc]/50">Enable to overlay a secondary texture.</div>
+                    <div className="text-[9px] text-[var(--mg-primary)]/50">Enable to overlay a secondary texture.</div>
                   )}
                 </div>
               </CyberSection>
@@ -1733,7 +1841,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       ) : null}
                     </div>
                     {texturePath ? (
-                      <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                      <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                         {getFileLabel(texturePath, "")}
                       </div>
                     ) : null}
@@ -1741,10 +1849,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <CyberCard className="mt-2">
                   <CyberLabel>Apply To</CyberLabel>
                   <Select value={textureTarget} onValueChange={setTextureTarget}>
-                    <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                    <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                       <SelectValue placeholder="Select target" />
                     </SelectTrigger>
-                    <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                    <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                       <SelectItem value="all">All meshes</SelectItem>
                       {textureTargets.map((target) => (
                         <SelectItem key={target.value} value={target.value}>
@@ -1760,10 +1868,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
           {textureMode === "multi" ? (
             <div className="space-y-4" id="mode-panel-multi" role="tabpanel">
-              <div className="flex bg-[#0B0C10] p-1 border border-[#1F2937] rounded-none">
+              <div className="flex bg-[var(--mg-bg)] p-1 border border-[var(--mg-border)] rounded-none">
                 <button
                   type="button"
-                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "livery" ? "bg-[#1F2833] text-[#7dd3fc]" : "text-[#7dd3fc]/50 hover:text-[#7dd3fc]"}`}
+                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "livery" ? "bg-[var(--mg-surface)] text-[var(--mg-primary)]" : "text-[var(--mg-primary)]/50 hover:text-[var(--mg-primary)]"}`}
                   onClick={() => setDualTextureMode("livery")}
                 >
                   <Car className="h-3 w-3" />
@@ -1771,7 +1879,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 </button>
                 <button
                   type="button"
-                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "eup" ? "bg-[#1F2833] text-[#7dd3fc]" : "text-[#7dd3fc]/50 hover:text-[#7dd3fc]"}`}
+                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "eup" ? "bg-[var(--mg-surface)] text-[var(--mg-primary)]" : "text-[var(--mg-primary)]/50 hover:text-[var(--mg-primary)]"}`}
                   onClick={() => setDualTextureMode("eup")}
                 >
                   <Shirt className="h-3 w-3" />
@@ -1825,12 +1933,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           ) : null}
                         </div>
                         {dualModelAPath ? (
-                          <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                             {getFileLabel(dualModelAPath, "")}
                           </div>
                         ) : null}
                       </div>
-                      {dualModelALoading ? <div className="text-[9px] text-[#f97316] animate-pulse mt-1">Loading...</div> : null}
+                      {dualModelALoading ? <div className="text-[9px] text-[var(--mg-primary)] animate-pulse mt-1">Loading...</div> : null}
                       {dualModelAError ? <div className="text-[9px] text-red-400 mt-1">{dualModelAError}</div> : null}
                     </CyberCard>
                     <CyberCard>
@@ -1853,7 +1961,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           ) : null}
                         </div>
                         {dualTextureAPath ? (
-                          <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                             {getFileLabel(dualTextureAPath, "")}
                           </div>
                         ) : null}
@@ -1880,7 +1988,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                             ) : null}
                           </div>
                           {dualWindowTextureAPath ? (
-                            <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                            <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                               {getFileLabel(dualWindowTextureAPath, "")}
                             </div>
                           ) : null}
@@ -1888,10 +1996,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         <div className="mt-2">
                           <CyberLabel>Apply To</CyberLabel>
                           <Select value={dualWindowTextureATarget} onValueChange={setDualWindowTextureATarget}>
-                            <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                            <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                               <SelectValue placeholder="Select target" />
                             </SelectTrigger>
-                            <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                            <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                               <SelectItem value="auto">
                                 {selectedDualWindowAutoTarget
                                   ? `Auto (${selectedDualWindowAutoLabel || selectedDualWindowAutoTarget.replace("material:", "")})`
@@ -1932,7 +2040,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           ) : null}
                         </div>
                         {dualModelBPath ? (
-                          <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                             {getFileLabel(dualModelBPath, "")}
                           </div>
                         ) : null}
@@ -1960,7 +2068,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                           ) : null}
                         </div>
                         {dualTextureBPath ? (
-                          <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                             {getFileLabel(dualTextureBPath, "")}
                           </div>
                         ) : null}
@@ -1987,7 +2095,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                             ) : null}
                           </div>
                           {dualWindowTextureBPath ? (
-                            <div className="px-2 py-1 bg-[#131b28] border border-white/10 border-t-0 rounded-none text-[9px] font-mono text-[#C5C6C7] truncate">
+                            <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
                               {getFileLabel(dualWindowTextureBPath, "")}
                             </div>
                           ) : null}
@@ -1995,10 +2103,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         <div className="mt-2">
                           <CyberLabel>Apply To</CyberLabel>
                           <Select value={dualWindowTextureBTarget} onValueChange={setDualWindowTextureBTarget}>
-                            <SelectTrigger className="w-full h-8 text-xs bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                            <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                               <SelectValue placeholder="Select target" />
                             </SelectTrigger>
-                            <SelectContent className="bg-[#0B0C10] border-[#1F2937] text-[#C5C6C7]">
+                            <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
                               <SelectItem value="auto">
                                 {selectedDualWindowAutoTarget
                                   ? `Auto (${selectedDualWindowAutoLabel || selectedDualWindowAutoTarget.replace("material:", "")})`
@@ -2024,18 +2132,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
 
           <CyberSection
-            title="Colors"
-            caption="Body + background"
+            title="Appearance"
+            caption="Colors & lighting"
             open={colorsOpen}
             onToggle={() => setColorsOpen((prev) => !prev)}
             contentId="panel-colors"
-            icon={Zap}
+            icon={Palette}
             color="blue"
           >
-            <div className="space-y-4">
+            <div className="space-y-3">
               {textureMode === "multi" ? (
                 <>
-                  <div>
+                  <CyberCard>
                     <CyberLabel>Slot A Body Color</CyberLabel>
                     <div className="flex items-center gap-2">
                       <div className="color-swatch-wrapper">
@@ -2049,15 +2157,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         />
                       </div>
                       <Input
-                        className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
-                        style={{ fontFamily: "var(--font-hud)" }}
+                        className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+                        style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
                         value={dualBodyColorA}
                         onChange={(event) => setDualBodyColorA(event.currentTarget.value)}
                       />
                       <button type="button" className="cs-copy-btn" onClick={() => copyHex(dualBodyColorA)} title="Copy hex"><Copy className="h-3 w-3" /></button>
                       <button
                         type="button"
-                        className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                        className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
                         onClick={() => setDualBodyColorA(DEFAULT_BODY)}
                         title="Reset Slot A color"
                       >
@@ -2069,9 +2177,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setDualBodyColorA(c)} title={c} />
                       ))}
                     </div>
-                  </div>
+                  </CyberCard>
 
-                  <div>
+                  <CyberCard>
                     <CyberLabel>Slot B Body Color</CyberLabel>
                     <div className="flex items-center gap-2">
                       <div className="color-swatch-wrapper">
@@ -2085,15 +2193,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         />
                       </div>
                       <Input
-                        className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
-                        style={{ fontFamily: "var(--font-hud)" }}
+                        className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+                        style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
                         value={dualBodyColorB}
                         onChange={(event) => setDualBodyColorB(event.currentTarget.value)}
                       />
                       <button type="button" className="cs-copy-btn" onClick={() => copyHex(dualBodyColorB)} title="Copy hex"><Copy className="h-3 w-3" /></button>
                       <button
                         type="button"
-                        className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                        className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
                         onClick={() => setDualBodyColorB(DEFAULT_BODY)}
                         title="Reset Slot B color"
                       >
@@ -2105,10 +2213,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setDualBodyColorB(c)} title={c} />
                       ))}
                     </div>
-                  </div>
+                  </CyberCard>
                 </>
               ) : (
-                <div>
+                <CyberCard>
                   <CyberLabel>Body Color</CyberLabel>
                   <div className="flex items-center gap-2">
                     <div className="color-swatch-wrapper">
@@ -2122,15 +2230,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       />
                     </div>
                     <Input
-                      className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
-                      style={{ fontFamily: "var(--font-hud)" }}
+                      className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+                      style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
                       value={bodyColor}
                       onChange={(event) => setBodyColor(event.currentTarget.value)}
                     />
                     <button type="button" className="cs-copy-btn" onClick={() => copyHex(bodyColor)} title="Copy hex"><Copy className="h-3 w-3" /></button>
                     <button
                       type="button"
-                      className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                      className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
                       onClick={() => setBodyColor(DEFAULT_BODY)}
                       title="Revert to default"
                     >
@@ -2142,10 +2250,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setBodyColor(c)} title={c} />
                     ))}
                   </div>
-                </div>
+                </CyberCard>
               )}
 
-              <div>
+              <CyberCard>
                 <CyberLabel>Background Color</CyberLabel>
                 <div className="flex items-center gap-2">
                   <div className="color-swatch-wrapper">
@@ -2159,15 +2267,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     />
                   </div>
                   <Input
-                    className="flex-1 h-8 bg-transparent border-[rgba(255,255,255,0.08)] text-[#C5C6C7] text-xs"
-                    style={{ fontFamily: "var(--font-hud)" }}
+                    className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+                    style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
                     value={backgroundColor}
                     onChange={(event) => setBackgroundColor(event.currentTarget.value)}
                   />
                   <button type="button" className="cs-copy-btn" onClick={() => copyHex(backgroundColor)} title="Copy hex"><Copy className="h-3 w-3" /></button>
                   <button
                     type="button"
-                    className="w-7 h-7 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
+                    className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
                     onClick={() => setBackgroundColor(DEFAULT_BG)}
                     title="Revert to default"
                   >
@@ -2179,107 +2287,137 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setBackgroundColor(c)} title={c} />
                   ))}
                 </div>
+              </CyberCard>
+
+              <CyberCard>
+                <CyberLabel>Background Image</CyberLabel>
+                <div className="flex flex-col gap-0">
+                  <div className="flex gap-0">
+                    <CyberButton
+                      onClick={selectBackgroundImage}
+                      variant="secondary"
+                      className={backgroundImagePath ? "flex-1 rounded-none border-b-0" : "w-full"}
+                    >
+                      Select Background
+                    </CyberButton>
+                    {backgroundImagePath ? (
+                      <UnloadButton
+                        className="flex-1 rounded-none border-b-0 border-l-0"
+                        onClick={() => {
+                          setBackgroundImagePath("");
+                          setBackgroundImageReloadToken((token) => token + 1);
+                        }}
+                        title="Remove background image"
+                      />
+                    ) : null}
+                  </div>
+                  {backgroundImagePath ? (
+                    <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+                      {getFileLabel(backgroundImagePath, "")}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex items-center justify-between mt-2">
+                  <CyberLabel className="mb-0">Wireframe</CyberLabel>
+                  <button
+                    type="button"
+                    className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${showWireframe ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
+                    onClick={() => setShowWireframe((prev) => !prev)}
+                    title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
+                  >
+                    <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${showWireframe ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
+                  </button>
+                </div>
+              </CyberCard>
+
+              <div className="space-y-3">
+                <MaterialSlider
+                  label="Light Intensity"
+                  value={lightIntensity}
+                  onChange={setLightIntensity}
+                  min={0.5}
+                  max={2.0}
+                  step={0.1}
+                />
+                <MaterialSlider
+                  label="Glossiness"
+                  value={glossiness}
+                  onChange={setGlossiness}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  unit="%"
+                />
+              </div>
+            </div>
+          </CyberSection>
+
+          {/* ── Vehicle Materials Section ── */}
+          <CyberSection
+            title="Materials"
+            caption={materialType.charAt(0).toUpperCase() + materialType.slice(1)}
+            open={materialsOpen}
+            onToggle={() => setMaterialsOpen((prev) => !prev)}
+            contentId="panel-materials"
+            icon={Gem}
+            color="blue"
+            badge="NEW"
+          >
+            <div className="space-y-3">
+              <div>
+                <CyberLabel>Surface Type</CyberLabel>
+                <MaterialTypeSelector value={materialType} onChange={setMaterialType} />
               </div>
 
-              <div className="border-t border-[rgba(255,255,255,0.06)] pt-3 space-y-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <CyberLabel className="mb-0">Light Intensity</CyberLabel>
-                    <span
-                      className="cs-slider-value"
-                      onDoubleClick={(e) => {
-                        const span = e.currentTarget;
-                        const input = document.createElement("input");
-                        input.type = "number";
-                        input.min = "0.5"; input.max = "2.0"; input.step = "0.1";
-                        input.value = lightIntensity.toFixed(1);
-                        input.className = "cs-slider-input";
-                        input.style.fontFamily = "var(--font-hud)";
-                        span.replaceWith(input);
-                        input.focus(); input.select();
-                        const commit = () => {
-                          const v = Math.min(2.0, Math.max(0.5, parseFloat(input.value) || 1.0));
-                          setLightIntensity(v);
-                          const ns = document.createElement("span");
-                          ns.className = "cs-slider-value";
-                          ns.textContent = v.toFixed(1);
-                          ns.addEventListener("dblclick", e.currentTarget?._dblHandler || (() => {}));
-                          input.replaceWith(ns);
-                        };
-                        input.addEventListener("blur", commit);
-                        input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") commit(); if (ev.key === "Escape") commit(); });
-                      }}
-                    >{lightIntensity.toFixed(1)}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="2.0"
-                      step="0.1"
-                      className="flex-1 accent-[#7dd3fc] h-1 bg-[rgba(255,255,255,0.1)] rounded-none appearance-none cursor-pointer"
-                      value={lightIntensity}
-                      onChange={(e) => setLightIntensity(parseFloat(e.target.value))}
-                    />
-                    <button
-                      type="button"
-                      className="w-6 h-6 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
-                      onClick={() => setLightIntensity(1.0)}
-                      title="Reset Lighting"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                    </button>
-                  </div>
+              <CyberCard>
+                <CyberLabel>Properties</CyberLabel>
+                <div className="space-y-3">
+                  <MaterialSlider
+                    label="Light Intensity"
+                    value={matLightIntensity}
+                    onChange={setMatLightIntensity}
+                    min={0}
+                    max={3}
+                    step={0.05}
+                  />
+                  <MaterialSlider
+                    label="Glossiness"
+                    value={matGlossiness}
+                    onChange={setMatGlossiness}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    unit="%"
+                  />
+                  <MaterialSlider
+                    label="Roughness"
+                    value={matRoughness}
+                    onChange={setMatRoughness}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    unit="%"
+                  />
+                  <MaterialSlider
+                    label="Clearcoat"
+                    value={matClearcoat}
+                    onChange={setMatClearcoat}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    unit="%"
+                  />
                 </div>
+              </CyberCard>
 
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <CyberLabel className="mb-0">Glossiness</CyberLabel>
-                    <span
-                      className="cs-slider-value"
-                      onDoubleClick={(e) => {
-                        const span = e.currentTarget;
-                        const input = document.createElement("input");
-                        input.type = "number";
-                        input.min = "0"; input.max = "100"; input.step = "5";
-                        input.value = Math.round(glossiness * 100);
-                        input.className = "cs-slider-input";
-                        input.style.fontFamily = "var(--font-hud)";
-                        span.replaceWith(input);
-                        input.focus(); input.select();
-                        const commit = () => {
-                          const v = Math.min(1.0, Math.max(0, (parseFloat(input.value) || 50) / 100));
-                          setGlossiness(v);
-                          const ns = document.createElement("span");
-                          ns.className = "cs-slider-value";
-                          ns.textContent = Math.round(v * 100) + "%";
-                          input.replaceWith(ns);
-                        };
-                        input.addEventListener("blur", commit);
-                        input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") commit(); if (ev.key === "Escape") commit(); });
-                      }}
-                    >{Math.round(glossiness * 100)}%</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.0"
-                      max="1.0"
-                      step="0.05"
-                      className="flex-1 accent-[#7dd3fc] h-1 bg-[rgba(255,255,255,0.1)] rounded-none appearance-none cursor-pointer"
-                      value={glossiness}
-                      onChange={(e) => setGlossiness(parseFloat(e.target.value))}
-                    />
-                    <button
-                      type="button"
-                      className="w-6 h-6 flex items-center justify-center text-[rgba(230,235,244,0.3)] hover:text-[rgba(230,235,244,0.8)] transition-colors"
-                      onClick={() => setGlossiness(0.5)}
-                      title="Reset Gloss"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
+              <div>
+                <CyberLabel>Textures</CyberLabel>
+                <TextureUploadGrid
+                  textures={materialTextures}
+                  onAdd={selectMaterialTexture}
+                  onRemove={removeMaterialTexture}
+                  maxSlots={6}
+                />
               </div>
             </div>
           </CyberSection>
@@ -2316,8 +2454,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             bodyColorA={dualBodyColorA}
             bodyColorB={dualBodyColorB}
             backgroundColor={backgroundColor}
+            backgroundImagePath={backgroundImagePath}
+            backgroundImageReloadToken={backgroundImageReloadToken}
             lightIntensity={lightIntensity}
             glossiness={glossiness}
+            showWireframe={showWireframe}
             selectedSlot={dualSelectedSlot}
             gizmoVisible={dualGizmoVisible}
             showGrid={showGrid}
@@ -2348,12 +2489,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             windowTexturePath={windowTemplateEnabled ? windowTexturePath : ""}
             bodyColor={bodyColor}
             backgroundColor={backgroundColor}
+            backgroundImagePath={backgroundImagePath}
+            backgroundImageReloadToken={backgroundImageReloadToken}
             showGrid={showGrid}
             textureReloadToken={textureReloadToken}
             windowTextureReloadToken={windowTextureReloadToken}
             textureTarget={resolvedTextureTarget}
             windowTextureTarget={resolvedWindowTextureTarget}
             textureMode={textureMode}
+            showWireframe={showWireframe}
             wasdEnabled={cameraWASD}
             liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
             lightIntensity={lightIntensity}

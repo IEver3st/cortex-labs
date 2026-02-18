@@ -163,12 +163,15 @@ export default function Viewer({
   windowTexturePath,
   bodyColor,
   backgroundColor,
+  backgroundImagePath = "",
+  backgroundImageReloadToken = 0,
   textureReloadToken,
   windowTextureReloadToken = textureReloadToken,
   textureTarget,
   windowTextureTarget,
   textureMode = "everything",
   liveryExteriorOnly = false,
+  showWireframe = false,
   flipTextureY = true,
   wasdEnabled = false,
   showGrid = false,
@@ -191,6 +194,7 @@ export default function Viewer({
   const modelRef = useRef(null);
   const textureRef = useRef(null);
   const windowTextureRef = useRef(null);
+  const backgroundTextureRef = useRef(null);
   const lightsRef = useRef({ ambient: null, key: null, rim: null });
   const gridRef = useRef(null);
   const fitRef = useRef({ center: new THREE.Vector3(), distance: 4 });
@@ -250,8 +254,9 @@ export default function Viewer({
       liveryExteriorOnly,
       textureMode,
       glossiness,
+      showWireframe,
     };
-  }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode, glossiness]);
+  }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode, glossiness, showWireframe]);
 
   const requestRender = useCallback(() => {
     requestRenderRef.current?.();
@@ -419,6 +424,11 @@ export default function Viewer({
       controls.removeEventListener("start", requestRenderFrame);
       controls.removeEventListener("change", requestRenderFrame);
       controls.removeEventListener("end", requestRenderFrame);
+      if (scene.background === backgroundTextureRef.current) {
+        scene.background = null;
+      }
+      backgroundTextureRef.current?.dispose?.();
+      backgroundTextureRef.current = null;
       controls.dispose();
       renderer.dispose();
       renderer.domElement.removeEventListener("wheel", wheelWhileDragging);
@@ -467,6 +477,57 @@ export default function Viewer({
     rendererRef.current.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     requestRender();
   }, [backgroundColor]);
+
+  useEffect(() => {
+    if (!sceneRef.current || !rendererRef.current) return;
+    let cancelled = false;
+
+    const clearBackground = () => {
+      if (sceneRef.current?.background === backgroundTextureRef.current) {
+        sceneRef.current.background = null;
+      }
+      backgroundTextureRef.current?.dispose?.();
+      backgroundTextureRef.current = null;
+      requestRender();
+    };
+
+    if (!backgroundImagePath) {
+      clearBackground();
+      return;
+    }
+
+    const loadBackground = async () => {
+      let texture = null;
+      try {
+        texture = await loadTextureFromPathShared(backgroundImagePath, textureLoader, rendererRef.current);
+      } catch {
+        texture = null;
+      }
+      if (!texture) {
+        clearBackground();
+        return;
+      }
+      if (cancelled) {
+        texture.dispose?.();
+        return;
+      }
+
+      const previous = backgroundTextureRef.current;
+      texture.mapping = THREE.UVMapping;
+      backgroundTextureRef.current = texture;
+      sceneRef.current.background = texture;
+      if (previous && previous !== texture) {
+        previous.dispose?.();
+      }
+      requestRender();
+    };
+
+    loadBackground();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backgroundImagePath, backgroundImageReloadToken, textureLoader, requestRender]);
 
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
@@ -694,6 +755,8 @@ export default function Viewer({
           windowTextureTarget,
           liveryExteriorOnly,
           textureMode,
+          glossiness,
+          showWireframe,
         );
         requestRender();
         setModelLoadedVersion((v) => v + 1);
@@ -729,9 +792,10 @@ export default function Viewer({
       liveryExteriorOnly,
       textureMode,
       materialStateRef.current.glossiness,
+      materialStateRef.current.showWireframe,
     );
     requestRender();
-  }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode]);
+  }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode, showWireframe]);
 
   useEffect(() => {
     let cancelled = false;
@@ -753,6 +817,7 @@ export default function Viewer({
           materialState.liveryExteriorOnly,
           materialState.textureMode,
           materialState.glossiness,
+          materialState.showWireframe,
         );
       }
       onTextureErrorRef.current?.("");
@@ -797,6 +862,7 @@ export default function Viewer({
               materialState.liveryExteriorOnly,
               materialState.textureMode,
               materialState.glossiness,
+              materialState.showWireframe,
             );
             requestRender();
           }
@@ -829,6 +895,7 @@ export default function Viewer({
             materialState.liveryExteriorOnly,
             materialState.textureMode,
             materialState.glossiness,
+            materialState.showWireframe,
           );
           requestRender();
         }
@@ -1034,6 +1101,7 @@ export default function Viewer({
           materialState.liveryExteriorOnly,
           materialState.textureMode,
           materialState.glossiness,
+          materialState.showWireframe,
         );
         requestRender();
       }
@@ -1071,13 +1139,14 @@ export default function Viewer({
           textureRef.current,
           materialState.textureTarget,
           null,
-          materialState.windowTextureTarget,
-          materialState.liveryExteriorOnly,
-          materialState.textureMode,
-          materialState.glossiness,
-        );
-        requestRender();
-      }
+              materialState.windowTextureTarget,
+              materialState.liveryExteriorOnly,
+              materialState.textureMode,
+              materialState.glossiness,
+              materialState.showWireframe,
+            );
+            requestRender();
+          }
       onWindowTextureErrorRef.current?.("");
     };
 
@@ -1314,6 +1383,7 @@ export default function Viewer({
           materialState.liveryExteriorOnly,
           materialState.textureMode,
           materialState.glossiness,
+          materialState.showWireframe,
         );
       }
 
@@ -1522,6 +1592,7 @@ function applyMaterials(
   liveryExteriorOnly,
   textureMode,
   glossiness = 0.5,
+  showWireframe = false,
 ) {
   const color = new THREE.Color(bodyColor);
   const vehicleTarget = textureTarget || ALL_TARGET;
@@ -1569,6 +1640,7 @@ function applyMaterials(
     if (shouldApply && (activeTexture || matchesVehicle)) {
       const appliedMaterial = getOrCreateAppliedMaterial(child, color);
       updateAppliedMaterial(appliedMaterial, color, activeTexture);
+      setMaterialWireframe(appliedMaterial, showWireframe);
       if (child.material !== appliedMaterial) {
         child.material = appliedMaterial;
       }
@@ -1586,12 +1658,24 @@ function applyMaterials(
       }
       child.material = child.userData.baseMaterial;
     }
+    setMaterialWireframe(child.material, showWireframe);
 
     const base = child.material.userData.baseRoughness;
     if (typeof base === "number") {
       child.material.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
     }
   }
+}
+
+function setMaterialWireframe(material, enabled) {
+  if (!material) return;
+  if (Array.isArray(material)) {
+    material.forEach((item) => setMaterialWireframe(item, enabled));
+    return;
+  }
+  if (material.wireframe === enabled) return;
+  material.wireframe = enabled;
+  material.needsUpdate = true;
 }
 
 function getBaseUVs(geometry) {

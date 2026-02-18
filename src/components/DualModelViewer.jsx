@@ -31,8 +31,11 @@ export default function DualModelViewer({
   bodyColorA,
   bodyColorB,
   backgroundColor,
+  backgroundImagePath = "",
+  backgroundImageReloadToken = 0,
   lightIntensity = 1.0,
   glossiness = 0.5,
+  showWireframe = false,
   selectedSlot,
   gizmoVisible = true,
   showGrid = true,
@@ -66,6 +69,7 @@ export default function DualModelViewer({
   const textureBStateRef = useRef({ path: "", reloadToken: -1 });
   const windowTextureARef = useRef(null);
   const windowTextureBRef = useRef(null);
+  const backgroundTextureRef = useRef(null);
   const gizmoARef = useRef(null);
   const gizmoBRef = useRef(null);
   const gridRef = useRef(null);
@@ -92,6 +96,7 @@ export default function DualModelViewer({
   const initialPosARef = useRef(initialPosA);
   const initialPosBRef = useRef(initialPosB);
   const glossinessRef = useRef(glossiness);
+  const showWireframeRef = useRef(showWireframe);
 
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   useEffect(() => { onModelAErrorRef.current = onModelAError; }, [onModelAError]);
@@ -105,6 +110,7 @@ export default function DualModelViewer({
   useEffect(() => { onPositionChangeRef.current = onPositionChange; }, [onPositionChange]);
   useEffect(() => { textureModeRef.current = textureMode; }, [textureMode]);
   useEffect(() => { glossinessRef.current = glossiness; }, [glossiness]);
+  useEffect(() => { showWireframeRef.current = showWireframe; }, [showWireframe]);
 
   const requestRender = useCallback(() => { requestRenderRef.current?.(); }, []);
 
@@ -130,6 +136,11 @@ export default function DualModelViewer({
 
         if (typeof baseRoughness === "number") {
           material.roughness = Math.min(1.0, Math.max(0.0, baseRoughness * glossFactor));
+        }
+        const nextWireframe = Boolean(showWireframeRef.current);
+        if (material.wireframe !== nextWireframe) {
+          material.wireframe = nextWireframe;
+          material.needsUpdate = true;
         }
       });
     }
@@ -288,6 +299,11 @@ export default function DualModelViewer({
       controls.removeEventListener("start", requestRenderFrame);
       controls.removeEventListener("change", requestRenderFrame);
       controls.removeEventListener("end", requestRenderFrame);
+      if (scene.background === backgroundTextureRef.current) {
+        scene.background = null;
+      }
+      backgroundTextureRef.current?.dispose?.();
+      backgroundTextureRef.current = null;
       gizmoA.dispose();
       gizmoB.dispose();
       controls.dispose();
@@ -306,6 +322,57 @@ export default function DualModelViewer({
   }, [backgroundColor]);
 
   useEffect(() => {
+    if (!sceneRef.current || !rendererRef.current) return;
+    let cancelled = false;
+
+    const clearBackground = () => {
+      if (sceneRef.current?.background === backgroundTextureRef.current) {
+        sceneRef.current.background = null;
+      }
+      backgroundTextureRef.current?.dispose?.();
+      backgroundTextureRef.current = null;
+      requestRender();
+    };
+
+    if (!backgroundImagePath) {
+      clearBackground();
+      return;
+    }
+
+    const loadBackground = async () => {
+      let texture = null;
+      try {
+        texture = await loadTextureFromPath(backgroundImagePath, textureLoader, rendererRef.current);
+      } catch {
+        texture = null;
+      }
+      if (!texture) {
+        clearBackground();
+        return;
+      }
+      if (cancelled) {
+        texture.dispose?.();
+        return;
+      }
+
+      const previous = backgroundTextureRef.current;
+      texture.mapping = THREE.UVMapping;
+      backgroundTextureRef.current = texture;
+      sceneRef.current.background = texture;
+      if (previous && previous !== texture) {
+        previous.dispose?.();
+      }
+      requestRender();
+    };
+
+    loadBackground();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backgroundImagePath, backgroundImageReloadToken, textureLoader, requestRender]);
+
+  useEffect(() => {
     const { ambient, key, rim } = lightsRef.current;
     if (ambient) ambient.intensity = 0.5 * lightIntensity;
     if (key) key.intensity = 0.9 * lightIntensity;
@@ -319,6 +386,13 @@ export default function DualModelViewer({
     applyGlossinessToObject(modelBRef.current);
     requestRender();
   }, [sceneReady, glossiness, applyGlossinessToObject, requestRender]);
+
+  useEffect(() => {
+    if (!sceneReady) return;
+    applyGlossinessToObject(modelARef.current);
+    applyGlossinessToObject(modelBRef.current);
+    requestRender();
+  }, [sceneReady, showWireframe, applyGlossinessToObject, requestRender]);
 
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;

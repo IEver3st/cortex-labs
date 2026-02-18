@@ -5,7 +5,7 @@ import {
   Plus, Palette, ArrowRight,
   Search, ArrowUpDown, Pin, PinOff,
   ChevronDown, Rocket, FolderInput, Eye,
-  Zap, Check, X, Command
+  Zap, Check, X, Command, Terminal, ChevronRight
 } from "lucide-react";
 import { loadWorkspaces, loadRecent, deleteWorkspace, createWorkspace } from "../lib/workspace";
 import { loadPrefs, savePrefs } from "../lib/prefs";
@@ -18,7 +18,7 @@ const MODES = [
     label: "Livery",
     desc: "Vehicle textures & livery painting",
     icon: Car,
-    accent: "#7dd3fc",
+    accent: "var(--mg-primary)",
     shortcut: "Alt+1",
     keyLabel: ["Alt", "1"],
   },
@@ -27,7 +27,7 @@ const MODES = [
     label: "All",
     desc: "View all meshes & textures",
     icon: Layers,
-    accent: "#20c997",
+    accent: "var(--mg-primary)",
     shortcut: "Alt+2",
     keyLabel: ["Alt", "2"],
   },
@@ -36,7 +36,7 @@ const MODES = [
     label: "EUP",
     desc: "Uniform & clothing textures",
     icon: Shirt,
-    accent: "#c084fc",
+    accent: "var(--mg-primary)",
     shortcut: "Alt+3",
     keyLabel: ["Alt", "3"],
   },
@@ -45,7 +45,7 @@ const MODES = [
     label: "Multi",
     desc: "Side-by-side model compare",
     icon: Link2,
-    accent: "#fb923c",
+    accent: "var(--mg-primary)",
     shortcut: "Alt+4",
     keyLabel: ["Alt", "4"],
   },
@@ -276,12 +276,8 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
     return Car;
   };
 
-  const modeColorForEntry = (entry) => {
-    const ws = workspaces[entry.workspaceId];
-    const mode = ws?.state?.textureMode || "livery";
-    if (entry.page === "variants") return "#f0abfc";
-    const modeConfig = MODES.find(m => m.id === mode);
-    return modeConfig?.accent || "#7dd3fc";
+  const modeColorForEntry = () => {
+    return "var(--mg-primary)";
   };
 
   /* ─── Project row renderer ─── */
@@ -301,14 +297,13 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
           <motion.div
             className={`hp-project-row ${opts.pinned ? "is-pinned" : ""}`}
             onClick={() => handleOpenRecent(entry)}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, delay: opts.delay || 0 }}
-            style={{ "--project-accent": color }}
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.2, delay: opts.delay || 0 }}
           >
             <div className="hp-project-indicator" />
             <div className="hp-project-icon">
-              <Icon className="w-4 h-4" />
+              <Icon className="w-3.5 h-3.5" />
             </div>
             <div className="hp-project-details">
               <div className="hp-project-name-row">
@@ -360,8 +355,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
   /* ─── Grouped list renderer ─── */
   const renderGroupedList = () => {
     if (!groupedRecent) {
-      // Flat list (sorted by name or type)
-      return filteredRecent.map((entry, i) => renderProjectRow(entry, i, { delay: 0.05 + i * 0.02 }));
+      return filteredRecent.map((entry, i) => renderProjectRow(entry, i, { delay: 0.03 + i * 0.015 }));
     }
     const elements = [];
     let idx = 0;
@@ -370,11 +364,11 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
       if (items.length === 0) continue;
       elements.push(
         <div key={`group-${key}`} className="hp-time-group">
-          <span className="hp-time-label">{GROUP_LABELS[key]}</span>
+          <span className="hp-time-label">// {GROUP_LABELS[key].toUpperCase()}</span>
         </div>
       );
       items.forEach((entry) => {
-        elements.push(renderProjectRow(entry, idx, { delay: 0.05 + idx * 0.02 }));
+        elements.push(renderProjectRow(entry, idx, { delay: 0.03 + idx * 0.015 }));
         idx++;
       });
     }
@@ -383,57 +377,60 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
 
   return (
     <div className="home-page">
+      {/* Background grid texture */}
       <div className="hp-bg">
-        <div className="hp-bg-dots" />
-        <div className="hp-bg-glow" />
+        <div className="hp-bg-grid" />
+        <div className="hp-bg-scanline" />
       </div>
 
       <div className="hp-container">
-        {/* ─── Compact Header ─── */}
+        {/* ─── Header Bar ─── */}
         <motion.header
           className="hp-header"
-          initial={{ opacity: 0, y: -10 }}
+          initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
+          transition={{ duration: 0.3, ease: "easeOut" }}
         >
           <div className="hp-brand">
-            <span className="hp-brand-mark">Cortex Studio</span>
+            <span className="hp-brand-bracket">[</span>
+            <span className="hp-brand-mark">CORTEX_STUDIO</span>
+            <span className="hp-brand-bracket">]</span>
             <span className="hp-brand-ver">v{appMeta.version}</span>
           </div>
-          <div className="hp-header-cta" ref={createBtnRef}>
+          <div className="hp-header-actions" ref={createBtnRef}>
             <button className="hp-create-btn" onClick={() => setCreateOpen((p) => !p)}>
               <Plus className="w-3.5 h-3.5" />
-              <span>Create</span>
-              <ChevronDown className="w-3 h-3" />
+              <span>NEW</span>
+              <ChevronDown className="w-3 h-3 hp-create-chevron" style={{ transform: createOpen ? "rotate(180deg)" : "rotate(0)" }} />
             </button>
             <AnimatePresence>
               {createOpen && (
                 <motion.div
                   className="hp-create-menu"
-                  initial={{ opacity: 0, y: -4, scale: 0.96 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                  transition={{ duration: 0.12 }}
+                  initial={{ opacity: 0, y: -4, scaleY: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scaleY: 1 }}
+                  exit={{ opacity: 0, y: -4, scaleY: 0.95 }}
+                  transition={{ duration: 0.1 }}
                 >
                   <button className="hp-create-option" onClick={() => { handleLaunchMode("livery"); setCreateOpen(false); }}>
-                    <Car className="w-3.5 h-3.5" style={{ color: "#7dd3fc" }} /> <span>New Livery</span>
+                    <Car className="w-3.5 h-3.5" /> <span>livery</span> <span className="hp-create-hint">Vehicle textures</span>
                   </button>
                   <button className="hp-create-option" onClick={() => { handleLaunchMode("everything"); setCreateOpen(false); }}>
-                    <Layers className="w-3.5 h-3.5" style={{ color: "#20c997" }} /> <span>New All</span>
+                    <Layers className="w-3.5 h-3.5" /> <span>all</span> <span className="hp-create-hint">All meshes</span>
                   </button>
                   <button className="hp-create-option" onClick={() => { handleLaunchMode("eup"); setCreateOpen(false); }}>
-                    <Shirt className="w-3.5 h-3.5" style={{ color: "#c084fc" }} /> <span>New EUP</span>
+                    <Shirt className="w-3.5 h-3.5" /> <span>eup</span> <span className="hp-create-hint">Uniforms</span>
                   </button>
                   <button className="hp-create-option" onClick={() => { handleLaunchMode("multi"); setCreateOpen(false); }}>
-                    <Link2 className="w-3.5 h-3.5" style={{ color: "#fb923c" }} /> <span>New Multi</span>
+                    <Link2 className="w-3.5 h-3.5" /> <span>multi</span> <span className="hp-create-hint">Compare</span>
                   </button>
                   <div className="hp-create-sep" />
                   <button className="hp-create-option" onClick={() => { handleLaunchVariants(); setCreateOpen(false); }}>
-                    <Palette className="w-3.5 h-3.5" style={{ color: "#f0abfc" }} /> <span>Variant Builder</span>
+                    <Palette className="w-3.5 h-3.5" /> <span>variant</span> <span className="hp-create-hint">PSD workflow</span>
                   </button>
                   <div className="hp-create-sep" />
                   <button className="hp-create-option" onClick={() => { setShowNewProject(true); setCreateOpen(false); }}>
-                    <Plus className="w-3.5 h-3.5" /> <span>New Project…</span>
+                    <Plus className="w-3.5 h-3.5" /> <span>custom...</span>
                   </button>
                 </motion.div>
               )}
@@ -441,18 +438,18 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
           </div>
         </motion.header>
 
-        {/* ─── Main Grid ─── */}
+        {/* ─── Main Content Grid ─── */}
         <div className="hp-grid">
-          {/* ──── Left: Quick Start ──── */}
+          {/* ──── Left: Quick Launch Panel ──── */}
           <motion.section
             className="hp-left"
-            initial={{ opacity: 0, x: -16 }}
+            initial={{ opacity: 0, x: -12 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.45, delay: 0.08 }}
+            transition={{ duration: 0.35, delay: 0.06 }}
           >
             <div className="hp-section-label">
-              <Zap className="w-3.5 h-3.5" />
-              <span>Quick Start</span>
+              <Terminal className="w-3 h-3" />
+              <span>// QUICK_START</span>
             </div>
 
             <div className="hp-mode-cards">
@@ -463,67 +460,78 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
                     key={mode.id}
                     className="hp-mode-card"
                     onClick={() => handleLaunchMode(mode.id)}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3, delay: 0.12 + i * 0.045 }}
-                    style={{ "--mode-accent": mode.accent }}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.25, delay: 0.1 + i * 0.04 }}
                   >
-                    <div className="hp-mode-bar" />
-                    <div className="hp-mode-body">
-                      <div className="hp-mode-icon-wrap">
-                        <Icon className="w-5 h-5" />
-                      </div>
-                      <div className="hp-mode-text">
-                        <span className="hp-mode-label">{mode.label}</span>
-                        <span className="hp-mode-desc">{mode.desc}</span>
-                      </div>
+                    <div className="hp-mode-indicator" />
+                    <div className="hp-mode-icon-wrap">
+                      <Icon className="w-4 h-4" />
                     </div>
-                    <div className="hp-mode-footer">
-                      <div className="hp-keycaps">
-                        {mode.keyLabel.map((k, ki) => (
-                          <span key={ki} className="hp-keycap">{k}</span>
-                        ))}
-                      </div>
-                      <ArrowRight className="w-3.5 h-3.5 hp-mode-arrow" />
+                    <div className="hp-mode-text">
+                      <span className="hp-mode-label">{mode.label}</span>
+                      <span className="hp-mode-desc">{mode.desc}</span>
                     </div>
+                    <div className="hp-mode-shortcut">
+                      {mode.keyLabel.map((k, ki) => (
+                        <span key={ki} className="hp-keycap">{k}</span>
+                      ))}
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 hp-mode-arrow" />
                   </motion.button>
                 );
               })}
             </div>
 
-            <div className="hp-separator" />
+            <div className="hp-divider" />
 
             <motion.button
               className="hp-variant-card"
               onClick={handleLaunchVariants}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.35 }}
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.25, delay: 0.3 }}
             >
               <div className="hp-variant-icon">
-                <Palette className="w-4 h-4" />
+                <Palette className="w-3.5 h-3.5" />
               </div>
               <div className="hp-variant-text">
                 <span className="hp-variant-label">Variant Builder</span>
-                <span className="hp-variant-desc">PSD workflow with grouped exports</span>
+                <span className="hp-variant-desc">PSD workflow &middot; grouped exports</span>
               </div>
-              <ArrowRight className="w-4 h-4 hp-variant-arrow" />
+              <ChevronRight className="w-3.5 h-3.5 hp-variant-arrow" />
             </motion.button>
+
+            {/* System info block */}
+            <div className="hp-sys-info">
+              <div className="hp-sys-row">
+                <span className="hp-sys-key">projects</span>
+                <span className="hp-sys-val">{Object.keys(workspaces).length}</span>
+              </div>
+              <div className="hp-sys-row">
+                <span className="hp-sys-key">recent</span>
+                <span className="hp-sys-val">{recent.length}</span>
+              </div>
+              <div className="hp-sys-row">
+                <span className="hp-sys-key">pinned</span>
+                <span className="hp-sys-val">{pinnedIds.length}</span>
+              </div>
+            </div>
           </motion.section>
 
-          {/* ──── Right: Projects (hero) ──── */}
+          {/* ──── Right: Projects Panel ──── */}
           <motion.section
             className="hp-right"
-            initial={{ opacity: 0, x: 16 }}
+            initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.45, delay: 0.15 }}
+            transition={{ duration: 0.35, delay: 0.12 }}
           >
-            {/* Section title with search and sort */}
+            {/* Section header with search + sort */}
             <div className="hp-projects-head">
-              <h2 className="hp-projects-title">
-                Recent Projects
-                <span className="hp-projects-count">{filteredRecent.length}</span>
-              </h2>
+              <div className="hp-projects-title-row">
+                <h2 className="hp-projects-title">// RECENT</h2>
+                <span className="hp-projects-count">[{filteredRecent.length}]</span>
+              </div>
               <div className="hp-projects-controls">
                 <div className="hp-search">
                   <Search className="w-3.5 h-3.5 hp-search-icon" />
@@ -531,7 +539,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
                     ref={searchRef}
                     type="text"
                     className="hp-search-input"
-                    placeholder="Search…"
+                    placeholder="filter..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -553,7 +561,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
                         initial={{ opacity: 0, y: -4 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -4 }}
-                        transition={{ duration: 0.15 }}
+                        transition={{ duration: 0.12 }}
                       >
                         {SORT_OPTIONS.map(opt => (
                           <button
@@ -599,7 +607,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
               <div className="hp-pinned-section">
                 <div className="hp-pinned-label">
                   <Pin className="w-3 h-3" />
-                  <span>Pinned</span>
+                  <span>PINNED</span>
                 </div>
                 <div className="hp-pinned-list">
                   {pinnedEntries.map((entry, i) => renderProjectRow(entry, i, { delay: 0, pinned: true }))}
@@ -613,54 +621,54 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
                 renderGroupedList()
               ) : hasProjects ? (
                 <motion.div className="hp-no-results" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  <Search className="w-6 h-6" />
-                  <p>No matches</p>
-                  <span>Try a different search or filter</span>
+                  <Search className="w-5 h-5" />
+                  <p>no matches found</p>
+                  <span>try a different search or filter</span>
                 </motion.div>
               ) : (
-                /* ── Empty State: First-time user onboarding ── */
+                /* ── Empty State: First-time user ── */
                 <motion.div
                   className="hp-empty-state"
-                  initial={{ opacity: 0, y: 12 }}
+                  initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2, duration: 0.4 }}
+                  transition={{ delay: 0.15, duration: 0.35 }}
                 >
                   <div className="hp-empty-hero">
                     <div className="hp-empty-icon-ring">
-                      <Rocket className="w-6 h-6" />
+                      <Terminal className="w-5 h-5" />
                     </div>
-                    <h3 className="hp-empty-title">Get Started</h3>
-                    <p className="hp-empty-subtitle">Open a model or create your first project</p>
+                    <h3 className="hp-empty-title">ready_</h3>
+                    <p className="hp-empty-subtitle">open a model or create your first project to begin</p>
                   </div>
 
                   <div className="hp-empty-actions">
-                    <button className="hp-empty-action" onClick={() => handleLaunchMode("livery")}>
-                      <Car className="w-4 h-4" />
+                    <button className="hp-empty-action hp-empty-action--primary" onClick={() => handleLaunchMode("livery")}>
+                      <Car className="w-3.5 h-3.5" />
                       <span>Open Model</span>
                     </button>
                     <button className="hp-empty-action" onClick={() => setShowNewProject(true)}>
-                      <Plus className="w-4 h-4" />
-                      <span>Create Project</span>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>New Project</span>
                     </button>
                     <button className="hp-empty-action" onClick={() => handleLaunchMode("everything")}>
-                      <FolderInput className="w-4 h-4" />
-                      <span>Import Folder</span>
+                      <FolderInput className="w-3.5 h-3.5" />
+                      <span>Import</span>
                     </button>
                   </div>
 
-                  <div className="hp-empty-checklist">
-                    <span className="hp-checklist-header">Getting Started</span>
-                    <div className="hp-checklist-items">
-                      <div className="hp-checklist-item">
-                        <span className="hp-checklist-num">1</span>
+                  <div className="hp-empty-steps">
+                    <span className="hp-steps-header">// GETTING_STARTED</span>
+                    <div className="hp-steps-list">
+                      <div className="hp-step-item">
+                        <span className="hp-step-num">01</span>
                         <span>Open a <b>.yft</b> or <b>.ydd</b> model file</span>
                       </div>
-                      <div className="hp-checklist-item">
-                        <span className="hp-checklist-num">2</span>
+                      <div className="hp-step-item">
+                        <span className="hp-step-num">02</span>
                         <span>Apply a livery or texture overlay</span>
                       </div>
-                      <div className="hp-checklist-item">
-                        <span className="hp-checklist-num">3</span>
+                      <div className="hp-step-item">
+                        <span className="hp-step-num">03</span>
                         <span>Enable file watching for live reload</span>
                       </div>
                     </div>
@@ -671,21 +679,23 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
           </motion.section>
         </div>
 
-        {/* ─── Footer ─── */}
+        {/* ─── Footer Status Bar ─── */}
         <motion.footer
           className="hp-footer"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.35 }}
+          transition={{ delay: 0.3 }}
         >
-          <div className="hp-stats">
+          <div className="hp-footer-left">
+            <span className="hp-footer-status">READY</span>
+            <span className="hp-footer-sep" />
             <span>{Object.keys(workspaces).length} projects</span>
-            <span className="hp-stats-sep" />
+            <span className="hp-footer-sep" />
             <span>{recent.length} recent</span>
           </div>
-          <div className="hp-footer-hint">
+          <div className="hp-footer-right">
             <Command className="w-3 h-3" />
-            <span>Use keyboard shortcuts for faster workflow</span>
+            <span>keyboard shortcuts available</span>
           </div>
         </motion.footer>
       </div>
@@ -702,41 +712,40 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
           >
             <motion.div
               className="home-modal"
-              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              initial={{ opacity: 0, y: 16, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.96 }}
-              transition={{ duration: 0.22 }}
+              exit={{ opacity: 0, y: 8, scale: 0.97 }}
+              transition={{ duration: 0.18 }}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="home-modal-header">
-                <h3>New Project</h3>
+                <h3>// NEW_PROJECT</h3>
                 <button className="home-modal-close" onClick={() => setShowNewProject(false)}>
                   <X className="w-4 h-4" />
                 </button>
               </div>
               <div className="home-modal-body">
                 <div className="home-field">
-                  <label>Project Name</label>
+                  <label>project_name</label>
                   <input
                     type="text"
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
-                    placeholder="Enter project name..."
+                    placeholder="enter name..."
                     autoFocus
                     onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
                   />
                 </div>
                 <div className="home-field">
-                  <label>Mode</label>
+                  <label>mode</label>
                   <div className="home-mode-select">
                     {MODES.map((mode) => (
                       <button
                         key={mode.id}
                         className={`home-mode-option ${selectedMode === mode.id ? "is-selected" : ""}`}
-                        style={{ "--mode-accent": mode.accent }}
                         onClick={() => setSelectedMode(mode.id)}
                       >
-                        <mode.icon className="w-4 h-4" />
+                        <mode.icon className="w-3.5 h-3.5" />
                         <span>{mode.label}</span>
                       </button>
                     ))}
@@ -744,8 +753,8 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
                 </div>
               </div>
               <div className="home-modal-footer">
-                <button className="home-btn home-btn-secondary" onClick={() => setShowNewProject(false)}>Cancel</button>
-                <button className="home-btn home-btn-primary" onClick={handleCreateProject}>Create Project</button>
+                <button className="home-btn home-btn-secondary" onClick={() => setShowNewProject(false)}>cancel</button>
+                <button className="home-btn home-btn-primary" onClick={handleCreateProject}>create</button>
               </div>
             </motion.div>
           </motion.div>
