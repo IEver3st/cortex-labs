@@ -921,7 +921,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                   <Viewer modelPath={modelPath} texturePath={viewerTexturePath} textureReloadToken={previewToken} textureTarget={viewerTextureTarget}
                     textureMode="livery" windowTexturePath="" windowTextureTarget="none" windowTextureReloadToken={0}
                     bodyColor="#e7ebf0" backgroundColor="#111214" lightIntensity={currentLighting.intensity} glossiness={0.5}
-                    showGrid={false} wasdEnabled={false}
+                    showGrid={false} showWireframe={showWireframe} wasdEnabled={false}
                     onReady={(api) => { viewerApiRef.current = api; setViewerReady(true); }} onModelInfo={handleModelInfo}
                     onTextureReload={() => {}} onTextureError={() => {}} onWindowTextureError={() => {}} onModelError={() => {}} onModelLoading={() => {}} onFormatWarning={() => {}} />
                 </div>

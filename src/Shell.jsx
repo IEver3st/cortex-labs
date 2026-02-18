@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from "motion/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Cpu } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
@@ -405,6 +405,14 @@ export default function Shell() {
   const handleOpenReleaseNotes = useCallback(() => setWhatsNewManual(true), []);
   const handleCloseWhatsNew = useCallback(() => setWhatsNewManual(false), []);
 
+  // New-tab dropdown option data for DRY rendering
+  const newTabOptions = useMemo(() => [
+    { mode: "livery", icon: Car, label: "Livery", type: "viewer" },
+    { mode: "everything", icon: Layers, label: "All", type: "viewer" },
+    { mode: "eup", icon: Shirt, label: "EUP", type: "viewer" },
+    { mode: "multi", icon: Link2, label: "Multi", type: "viewer" },
+  ], []);
+
   return (
     <div className="shell-root">
       <AnimatePresence>{!booted ? <AppLoader /> : null}</AnimatePresence>
@@ -414,18 +422,38 @@ export default function Shell() {
 
       {booted && (
         <>
-          {/* ━━━ ROW 1: Titlebar — Brand + Tab Strip + Window Controls ━━━ */}
-          <div className="shell-row1" data-tauri-drag-region>
-            <div className="shell-brand" data-tauri-drag-region>
-              <span className="shell-brand-name">Cortex Studio</span>
-            </div>
+          {/* ━━━ ROW 1: Unified Toolbar ━━━ */}
+          <motion.div
+            className="shell-row1"
+            data-tauri-drag-region
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {/* Brand mark */}
+            <motion.div
+              className="shell-brand"
+              data-tauri-drag-region
+              whileHover={{ scale: 1.02 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            >
+              <motion.div
+                className="shell-brand-icon"
+                animate={{ rotate: [0, 0] }}
+                whileHover={{ rotate: 90 }}
+                transition={{ type: "spring", stiffness: 300, damping: 15 }}
+              >
+                <Cpu className="w-3.5 h-3.5" />
+              </motion.div>
+              <span className="shell-brand-name">CORTEX</span>
+            </motion.div>
 
             <div className="shell-row1-divider" />
 
             {/* Tab strip */}
             <div className="shell-tabs" data-tauri-drag-region>
               <AnimatePresence initial={false}>
-                {tabs.map((tab) => {
+                {tabs.map((tab, index) => {
                   const Icon = TAB_ICONS[tab.type] || Eye;
                   const isTabActive = tab.id === activeTabId;
                   const isEditing = editingTabId === tab.id;
@@ -437,12 +465,24 @@ export default function Shell() {
                       onClick={() => setActiveTabId(tab.id)}
                       onDoubleClick={() => tab.closable && startRenameTab(tab.id)}
                       layout
-                      initial={{ opacity: 0, scale: 0.92, width: 0 }}
+                      initial={{ opacity: 0, scale: 0.9, width: 0 }}
                       animate={{ opacity: 1, scale: 1, width: "auto" }}
-                      exit={{ opacity: 0, scale: 0.92, width: 0 }}
-                      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                      exit={{ opacity: 0, scale: 0.9, width: 0, marginRight: -1 }}
+                      transition={{
+                        layout: { type: "spring", stiffness: 500, damping: 35 },
+                        opacity: { duration: 0.15 },
+                        scale: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
+                        width: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
+                      }}
+                      whileHover={!isTabActive ? { backgroundColor: "rgba(255,255,255,0.04)" } : {}}
                     >
-                      <Icon className="shell-tab-icon" />
+                      <motion.span
+                        className="shell-tab-icon-wrap"
+                        animate={isTabActive ? { scale: 1 } : { scale: 0.9 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                      >
+                        <Icon className="shell-tab-icon" />
+                      </motion.span>
                       {isEditing ? (
                         <input
                           ref={editTabRef}
@@ -461,14 +501,26 @@ export default function Shell() {
                         <span className="shell-tab-label">{tab.label}</span>
                       )}
                       {tab.closable && (
-                        <button
+                        <motion.button
                           type="button"
                           className="shell-tab-close"
                           onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
                           data-tauri-drag-region="false"
+                          whileHover={{ scale: 1.15, backgroundColor: "rgba(232,93,76,0.15)" }}
+                          whileTap={{ scale: 0.9 }}
+                          transition={{ type: "spring", stiffness: 400, damping: 20 }}
                         >
                           <X className="w-3 h-3" />
-                        </button>
+                        </motion.button>
+                      )}
+
+                      {/* Active indicator line */}
+                      {isTabActive && (
+                        <motion.div
+                          className="shell-tab-indicator"
+                          layoutId="tab-indicator"
+                          transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                        />
                       )}
                     </motion.div>
                   );
@@ -502,41 +554,56 @@ export default function Shell() {
 
               {/* + New tab button */}
               <div className="shell-new-tab-wrap" ref={newTabBtnRef}>
-                <button
+                <motion.button
                   type="button"
                   className="shell-new-tab-btn"
                   onClick={() => setNewTabOpen((p) => !p)}
                   data-tauri-drag-region="false"
                   title="New tab"
+                  whileHover={{ scale: 1.08, backgroundColor: "rgba(255,255,255,0.06)" }}
+                  whileTap={{ scale: 0.92 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 25 }}
                 >
-                  <Plus className="w-3 h-3" />
-                  <ChevronDown className="w-2 h-2 shell-new-tab-chevron" />
-                </button>
+                  <motion.span
+                    animate={newTabOpen ? { rotate: 45 } : { rotate: 0 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 20 }}
+                  >
+                    <Plus className="w-3 h-3" />
+                  </motion.span>
+                </motion.button>
                 <AnimatePresence>
                   {newTabOpen && (
                     <motion.div
                       className="shell-new-tab-menu"
-                      initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                      initial={{ opacity: 0, y: -6, scale: 0.95 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                      transition={{ duration: 0.12 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.95 }}
+                      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                     >
-                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("viewer", null, "livery"); setNewTabOpen(false); }}>
-                        <Car className="w-3 h-3" /> Livery
-                      </button>
-                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("viewer", null, "everything"); setNewTabOpen(false); }}>
-                        <Layers className="w-3 h-3" /> All
-                      </button>
-                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("viewer", null, "eup"); setNewTabOpen(false); }}>
-                        <Shirt className="w-3 h-3" /> EUP
-                      </button>
-                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("viewer", null, "multi"); setNewTabOpen(false); }}>
-                        <Link2 className="w-3 h-3" /> Multi
-                      </button>
+                      {newTabOptions.map((opt, i) => (
+                        <motion.button
+                          key={opt.mode}
+                          className="shell-new-tab-option"
+                          onClick={() => { handleNavigate(opt.type, null, opt.mode); setNewTabOpen(false); }}
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: i * 0.03, duration: 0.15 }}
+                          whileHover={{ x: 3, backgroundColor: "rgba(61,186,163,0.08)" }}
+                        >
+                          <opt.icon className="w-3 h-3" /> {opt.label}
+                        </motion.button>
+                      ))}
                       <div className="shell-new-tab-sep" />
-                      <button className="shell-new-tab-option" onClick={() => { handleNavigate("variants"); setNewTabOpen(false); }}>
+                      <motion.button
+                        className="shell-new-tab-option"
+                        onClick={() => { handleNavigate("variants"); setNewTabOpen(false); }}
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.12, duration: 0.15 }}
+                        whileHover={{ x: 3, backgroundColor: "rgba(61,186,163,0.08)" }}
+                      >
                         <Palette className="w-3 h-3" /> Variant Builder
-                      </button>
+                      </motion.button>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -570,32 +637,74 @@ export default function Shell() {
             </Ctx.Root>
 
             {/* Version pill */}
-            <span className="shell-chrome-version">v{appMeta.version}</span>
+            <motion.span
+              className="shell-chrome-version"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.4, duration: 0.3 }}
+            >
+              v{appMeta.version}
+            </motion.span>
 
             {/* Settings */}
             <SettingsMenu onSettingsSaved={handleSettingsSaved} onOpenReleaseNotes={handleOpenReleaseNotes} />
 
             {/* Window controls */}
-            <div className="shell-window-controls">
-              <button type="button" className="shell-wc-btn shell-wc-min" onClick={handleMinimize} aria-label="Minimize" data-tauri-drag-region="false">
+            <motion.div
+              className="shell-window-controls"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.2, duration: 0.25 }}
+            >
+              <motion.button
+                type="button"
+                className="shell-wc-btn shell-wc-min"
+                onClick={handleMinimize}
+                aria-label="Minimize"
+                data-tauri-drag-region="false"
+                whileHover={{ backgroundColor: "rgba(255,255,255,0.08)" }}
+                whileTap={{ scale: 0.88 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              >
                 <Minus className="shell-wc-icon" />
-              </button>
-              <button type="button" className="shell-wc-btn shell-wc-max" onClick={handleMaximize} aria-label="Maximize" data-tauri-drag-region="false">
+              </motion.button>
+              <motion.button
+                type="button"
+                className="shell-wc-btn shell-wc-max"
+                onClick={handleMaximize}
+                aria-label="Maximize"
+                data-tauri-drag-region="false"
+                whileHover={{ backgroundColor: "rgba(255,255,255,0.08)" }}
+                whileTap={{ scale: 0.88 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              >
                 <Square className="shell-wc-icon" />
-              </button>
-              <button type="button" className="shell-wc-btn shell-wc-close" onClick={handleClose} aria-label="Close" data-tauri-drag-region="false">
+              </motion.button>
+              <motion.button
+                type="button"
+                className="shell-wc-btn shell-wc-close"
+                onClick={handleClose}
+                aria-label="Close"
+                data-tauri-drag-region="false"
+                whileHover={{ backgroundColor: "#c42b1c" }}
+                whileTap={{ scale: 0.88 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              >
                 <X className="shell-wc-icon" />
-              </button>
-            </div>
-          </div>
+              </motion.button>
+            </motion.div>
+          </motion.div>
 
           {/* ━━━ ROW 2: Context Bar — changes per active tab ━━━ */}
-          <div
+          <motion.div
             className="shell-row2"
             ref={(node) => {
               contextBarRef.current = node;
               if (node && !contextBarReady) setContextBarReady(true);
             }}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.08, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
           />
 
           {/* ━━━ Tab Panes: ALL stay mounted, only active one is visible ━━━ */}

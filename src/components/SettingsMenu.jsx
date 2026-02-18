@@ -51,10 +51,10 @@ function getStoredHotkeys() {
 function ColorField({ label, value, onChange, onReset }) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-[10px] uppercase tracking-widest text-white/40 font-mono">{label}</div>
+      <div className="text-[9px] uppercase tracking-[0.12em] font-mono" style={{ color: 'var(--mg-muted)' }}>{label}</div>
       <div className="flex items-center gap-2">
         <div className="relative shrink-0">
-          <div className="w-8 h-8 rounded-none border border-white/10" style={{ background: value }} />
+          <div className="w-7 h-7 border" style={{ background: value, borderColor: 'var(--mg-border)', borderRadius: 'var(--mg-radius)' }} />
           <input
             type="color"
             value={value}
@@ -64,13 +64,13 @@ function ColorField({ label, value, onChange, onReset }) {
           />
         </div>
         <input
-          className="settings-input flex-1 min-w-0 font-mono text-[11px] h-8 bg-white/5 border border-white/10 rounded-none px-2 outline-none focus:border-white/20 transition-colors"
+          className="settings-input flex-1 min-w-0"
           value={value}
           onChange={(event) => onChange(event.currentTarget.value)}
         />
         <button
           type="button"
-          className="h-8 px-3 text-[10px] uppercase tracking-wider bg-white/5 hover:bg-white/10 border border-white/10 transition-colors shrink-0"
+          className="settings-mini shrink-0"
           onClick={onReset}
         >
           Reset
@@ -269,22 +269,21 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                         <div className="settings-nav-list" role="list">
                           {sections.map((section) => {
                             const Icon = section.icon;
+                            const isActive = activeSection === section.id;
                             return (
                               <motion.button
                                 key={section.id}
                                 type="button"
-                                className={`settings-nav-item ${activeSection === section.id ? "is-active" : ""}`}
+                                className={`settings-nav-item ${isActive ? "is-active" : ""}`}
                                 onClick={() => setActiveSection(section.id)}
-                                aria-current={activeSection === section.id ? "page" : undefined}
+                                aria-current={isActive ? "page" : undefined}
                                 whileTap={{ scale: 0.98 }}
                               >
-                                <div className="flex items-center gap-3">
-                                  <div className={`p-2 rounded-none transition-colors ${activeSection === section.id ? "bg-[#7dd3fc]/20 text-[#7dd3fc]" : "bg-white/5 text-white/40"}`}>
-                                    <Icon className="h-4 w-4" />
-                                  </div>
+                                <div className="flex items-center gap-2.5">
+                                  <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: isActive ? 'var(--mg-primary)' : 'var(--mg-muted)', opacity: isActive ? 1 : 0.6 }} />
                                   <div className="flex flex-col text-left">
                                     <span className="settings-nav-item-label">{section.label}</span>
-                                    <span className="settings-nav-item-meta text-[9px] opacity-60 line-clamp-1">{section.description}</span>
+                                    <span className="settings-nav-item-meta line-clamp-1">{section.description}</span>
                                   </div>
                                 </div>
                               </motion.button>
@@ -316,27 +315,28 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                   <div className="settings-panel-title">Interface Configuration</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">UI Scaling</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">Adjust interface density (Default 100%)</div>
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>UI Scaling</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Adjust interface density (Default 100%)</div>
                                     </div>
                                     <div className="flex items-center gap-4 min-w-[200px]">
                                       <input
                                         type="range"
-                                        className="settings-slider flex-1 h-1 bg-white/10 rounded-none appearance-none cursor-pointer accent-[#7dd3fc]"
+                                        className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
+                                        style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
                                         min={0.5}
                                         max={2.0}
                                         step={0.05}
                                         value={draft.uiScale ?? 1.0}
                                         onChange={(e) => setDraft((p) => ({ ...p, uiScale: parseFloat(e.target.value) }))}
                                       />
-                                      <span className="font-mono text-[11px] text-[#7dd3fc] w-12 text-right">{Math.round((draft.uiScale ?? 1.0) * 100)}%</span>
+                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{Math.round((draft.uiScale ?? 1.0) * 100)}%</span>
                                     </div>
                                   </div>
 
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">Session Persistence</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">Show recent activity on home screen</div>
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Session Persistence</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Show recent activity on home screen</div>
                                     </div>
                                     <button
                                       type="button"
@@ -352,13 +352,13 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <div className="settings-panel-title">Data & Storage</div>
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="font-medium text-white/90">Preview Export Path</div>
-                                        <div className="text-[10px] text-white/40 mt-0.5">{draft.previewFolder || "Not configured (Default: System Temp)"}</div>
+                                        <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Preview Export Path</div>
+                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>{draft.previewFolder || "Not configured (Default: System Temp)"}</div>
                                       </div>
                                       <div className="flex items-center gap-2">
                                         <button
                                           type="button"
-                                          className="settings-mini bg-white/5 hover:bg-white/10 border-white/10 px-3 py-1.5 rounded text-[10px] transition-colors"
+                                          className="settings-mini"
                                           onClick={handleSelectPreviewFolder}
                                         >
                                           Browse
@@ -366,7 +366,8 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                         {draft.previewFolder && (
                                           <button
                                             type="button"
-                                            className="text-[10px] text-red-400/60 hover:text-red-400 px-2 transition-colors"
+                                            className="settings-mini"
+                                            style={{ color: 'var(--mg-destructive)', borderColor: 'oklch(0.704 0.191 22.216 / 20%)' }}
                                             onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
                                           >
                                             Clear
@@ -377,13 +378,13 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="font-medium text-white/90">Variant Export Path</div>
-                                        <div className="text-[10px] text-white/40 mt-0.5">{draft.variantExportFolder || "Not configured (Default: Manual select)"}</div>
+                                        <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Variant Export Path</div>
+                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>{draft.variantExportFolder || "Not configured (Default: Manual select)"}</div>
                                       </div>
                                       <div className="flex items-center gap-2">
                                         <button
                                           type="button"
-                                          className="settings-mini bg-white/5 hover:bg-white/10 border-white/10 px-3 py-1.5 rounded text-[10px] transition-colors"
+                                          className="settings-mini"
                                           onClick={handleSelectVariantExportFolder}
                                         >
                                           Browse
@@ -391,7 +392,8 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                         {draft.variantExportFolder && (
                                           <button
                                             type="button"
-                                            className="text-[10px] text-red-400/60 hover:text-red-400 px-2 transition-colors"
+                                            className="settings-mini"
+                                            style={{ color: 'var(--mg-destructive)', borderColor: 'oklch(0.704 0.191 22.216 / 20%)' }}
                                             onClick={() => setDraft((p) => ({ ...p, variantExportFolder: "" }))}
                                           >
                                             Clear
@@ -410,8 +412,8 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                   <div className="settings-panel-title">Navigation Defaults</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">WASD Free-Cam</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">W/A/S/D pan, Q/E rise, Shift to boost</div>
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>WASD Free-Cam</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>W/A/S/D pan, Q/E rise, Shift to boost</div>
                                     </div>
                                     <button
                                       type="button"
@@ -501,9 +503,9 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <div className="settings-panel-title">{category.label}</div>
                                     <div className="grid grid-cols-1 gap-1">
                                       {category.actions.map((action) => (
-                                        <div key={action} className="settings-row hover:bg-white/[0.02] px-3 transition-colors gap-4 border-b border-white/5 last:border-none">
+                                <div className="settings-row hover:bg-white/[0.02] px-2 transition-colors gap-4 border-b last:border-none" style={{ borderColor: 'var(--mg-border)' }}>
                                           <div className="flex-1 min-w-0 py-2">
-                                            <div className="text-[11px] text-white/80 font-medium">{HOTKEY_LABELS[action]}</div>
+                                            <div className="text-[10px] font-medium" style={{ color: 'oklch(0.985 0.002 286.375 / 80%)' }}>{HOTKEY_LABELS[action]}</div>
                                           </div>
                                           <HotkeyInput
                                             value={hotkeysDraft[action]}
@@ -515,9 +517,9 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     </div>
                                   </section>
                                 ))}
-                                <div className="pt-4 border-t border-white/5 flex justify-between items-center">
-                                  <div className="text-[10px] text-white/30 italic">Click a field to rebind keys</div>
-                                  <button type="button" className="settings-mini text-[10px] opacity-60 hover:opacity-100" onClick={resetAllHotkeys}>
+                                <div className="pt-4 flex justify-between items-center" style={{ borderTop: '1px solid var(--mg-border)' }}>
+                                  <div className="text-[9px] italic" style={{ color: 'var(--mg-muted)' }}>Click a field to rebind keys</div>
+                                  <button type="button" className="settings-mini" onClick={resetAllHotkeys}>
                                     Restore default shortcuts
                                   </button>
                                 </div>
@@ -531,8 +533,8 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <div className="settings-panel-title">Environment Controls</div>
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="font-medium text-white/90">Show 3D Grid</div>
-                                        <div className="text-[10px] text-white/40 mt-0.5">Display ground grid in the viewer</div>
+                                        <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Show 3D Grid</div>
+                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Display ground grid in the viewer</div>
                                       </div>
                                       <button
                                         type="button"
@@ -548,20 +550,30 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <div className="settings-panel-title">Interface Aesthetic</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">Window Controls Style</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">Select visual theme for window buttons</div>
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Window Controls Style</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Select visual theme for window buttons</div>
                                     </div>
-                                    <div className="flex bg-white/5 p-1 rounded-none border border-white/10">
+                                    <div className="flex p-0.5" style={{ background: 'var(--mg-input-bg)', border: '1px solid var(--mg-border)', borderRadius: 'var(--mg-radius)' }}>
                                       <button
                                         type="button"
-                                        className={`px-3 py-1 text-[10px] rounded transition-all ${draft.windowControlsStyle !== "mac" ? "bg-[#7dd3fc]/20 text-[#7dd3fc] font-bold" : "text-white/40 hover:text-white/60"}`}
+                                        className={`px-3 py-1 text-[9px] transition-all ${draft.windowControlsStyle !== "mac" ? "font-bold" : ""}`}
+                                        style={{
+                                          borderRadius: 'calc(var(--mg-radius) - 2px)',
+                                          background: draft.windowControlsStyle !== "mac" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
+                                          color: draft.windowControlsStyle !== "mac" ? 'var(--mg-primary)' : 'var(--mg-muted)'
+                                        }}
                                         onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "windows" }))}
                                       >
                                         Standard
                                       </button>
                                       <button
                                         type="button"
-                                        className={`px-3 py-1 text-[10px] rounded transition-all ${draft.windowControlsStyle === "mac" ? "bg-[#7dd3fc]/20 text-[#7dd3fc] font-bold" : "text-white/40 hover:text-white/60"}`}
+                                        className={`px-3 py-1 text-[9px] transition-all ${draft.windowControlsStyle === "mac" ? "font-bold" : ""}`}
+                                        style={{
+                                          borderRadius: 'calc(var(--mg-radius) - 2px)',
+                                          background: draft.windowControlsStyle === "mac" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
+                                          color: draft.windowControlsStyle === "mac" ? 'var(--mg-primary)' : 'var(--mg-muted)'
+                                        }}
                                         onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "mac" }))}
                                       >
                                         Elegant
@@ -593,13 +605,13 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                             {/* ─── Experimental ─── */}
                             {activeSection === "experimental" ? (
                               <div className="space-y-6">
-                                <section className="settings-panel bg-orange-500/5 border border-orange-500/20 p-4 rounded-none">
+                                <section className="settings-panel" style={{ border: '1px solid oklch(0.704 0.191 22.216 / 15%)', background: 'oklch(0.704 0.191 22.216 / 4%)' }}>
                                   <div className="flex gap-4 items-start">
-                                    <FlaskConical className="h-5 w-5 text-orange-400 shrink-0 mt-1" />
+                                    <FlaskConical className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--mg-destructive)' }} />
                                     <div className="flex-1">
-                                      <div className="font-bold text-orange-400 uppercase tracking-widest text-[11px] mb-2">Beta Access Protocol</div>
+                                      <div className="font-bold uppercase text-[9px] tracking-[0.12em] mb-2" style={{ color: 'var(--mg-destructive)' }}>Beta Access Protocol</div>
                                       <div className="settings-row border-none p-0 mb-4">
-                                        <div className="text-[11px] text-white/70 max-w-[28ch]">Unlock unstable features and engineering tools</div>
+                                        <div className="text-[10px] max-w-[28ch]" style={{ color: 'var(--mg-muted)' }}>Unlock unstable features and engineering tools</div>
                                         <button
                                           type="button"
                                           className={`settings-toggle ${draft.experimentalSettings ? "is-on" : ""}`}
@@ -608,7 +620,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                           <span className="settings-toggle-dot" />
                                         </button>
                                       </div>
-                                      <div className="text-[10px] text-orange-400/60 leading-relaxed italic">
+                                      <div className="text-[9px] leading-relaxed italic" style={{ color: 'oklch(0.704 0.191 22.216 / 50%)' }}>
                                         Warning: These features are not production-ready. Enabling them may cause memory leaks or renderer crashes.
                                       </div>
                                     </div>
@@ -624,10 +636,10 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                   <div className="settings-panel-title">Application</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">Version</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">Current installed version</div>
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Version</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Current installed version</div>
                                     </div>
-                                    <span className="font-mono text-[12px] text-[#7dd3fc]">v{getAppVersion()}</span>
+                                    <span className="font-mono text-[11px]" style={{ color: 'var(--mg-primary)' }}>v{getAppVersion()}</span>
                                   </div>
                                 </section>
 
@@ -635,14 +647,14 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                   <div className="settings-panel-title">Release Notes</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium text-white/90">What's New</div>
-                                      <div className="text-[10px] text-white/40 mt-0.5">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>What's New</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
                                         {hasSeenWhatsNew() ? "You've seen the latest notes" : "New changes since last update"}
                                       </div>
                                     </div>
                                     <button
                                       type="button"
-                                      className="settings-mini bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1.5 text-[10px] transition-colors"
+                                      className="settings-mini"
                                       onClick={() => {
                                         setOpen(false);
                                         setTimeout(() => onOpenReleaseNotes?.(), 220);
