@@ -21,6 +21,7 @@
       "allow": [{ "path": "$HOME/**" }, { "path": "$DESKTOP/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DOWNLOAD/**" }]
     },
     "opener:default",
-    "opener:allow-open-path"
+    "opener:allow-open-path",
+    "updater:default"
   ]
 }

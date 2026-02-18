@@ -8,8 +8,7 @@ import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
 import { AlertTriangle, ArrowUpRight, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import appMeta from "../package.json";
+import { openPath } from "@tauri-apps/plugin-opener";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 // SettingsMenu now rendered by Shell
@@ -132,7 +131,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
     typeof window.__TAURI_INTERNALS__?.invoke === "function";
 
-  const update = useUpdateChecker(appMeta.version);
+  const update = useUpdateChecker();
 
   const [defaults, setDefaults] = useState(() => getInitialDefaults());
   const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
@@ -2412,17 +2411,17 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   <button
                     type="button"
                     className="update-toast-dismiss-btn update-toast-link-blue"
-                    onClick={() => {
-                      if (update.url) {
-                        if (isTauriRuntime) {
-                          openUrl(update.url).catch(() => window.open(update.url, "_blank"));
-                        } else {
-                          window.open(update.url, "_blank");
-                        }
+                    disabled={update.installing}
+                    onClick={async () => {
+                      const installed = await update.install();
+                      if (installed) {
+                        showToast("Update installed. Restart Cortex Studio to finish.");
                       }
                     }}
                   >
-                    Download Update
+                    {update.installing
+                      ? `Installing...${update.progressPercent > 0 ? ` ${update.progressPercent}%` : ""}`
+                      : "Download & Install"}
                   </button>
 
                   <button
@@ -2433,6 +2432,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     Not now
                   </button>
                 </div>
+                {update.error ? (
+                  <div className="update-toast-desc text-[var(--es-danger)] pt-2">{update.error}</div>
+                ) : null}
               </div>
             </motion.div>
           ) : null}
@@ -2451,7 +2453,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
               >
                 <Check className="h-3 w-3 text-[var(--es-success)]" />
-                <span>{t.msg}</span>
+                <span>{t.message}</span>
               </motion.div>
             ))}
           </AnimatePresence>

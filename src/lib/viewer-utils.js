@@ -37,6 +37,8 @@ export function getTextureMimeType(extension) {
     case "bmp": return "image/bmp";
     case "tif": case "tiff": return "image/tiff";
     case "avif": return "image/avif";
+    case "ai": return "application/pdf";
+    case "pdn": return "application/x-pdn";
     case "svg": return "image/svg+xml";
     case "ico": return "image/x-icon";
     default: return "";
@@ -566,7 +568,7 @@ export async function loadTextureFromPath(texturePath, textureLoader, renderer) 
   const attempts = [];
   const kind = (extension || "").toLowerCase();
   const sigKind = (signature.kind || "").toLowerCase();
-  const isPdfCompatibleAi = sigKind === "ai";
+  const isPdfCompatibleAi = sigKind === "ai" || kind === "ai";
   if (kind === "dds" || sigKind === "dds") { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
   if (kind === "tga") attempts.push(loadTga);
   if (kind === "psd" || sigKind === "psd") attempts.push(loadPsd);

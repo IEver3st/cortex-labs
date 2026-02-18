@@ -228,7 +228,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     if (!psdPath && !modelPath) return { type: "empty", label: "No files loaded", issues: [] };
     const issues = [];
     if (!outputFolder) issues.push({ type: "error", msg: "No output folder" });
-    if (!psdPath) issues.push({ type: "error", msg: "No PSD loaded" });
+    if (!psdPath) issues.push({ type: "error", msg: "No layer source loaded" });
     if (psdData) {
       if (!isPowerOfTwo(exportSize)) issues.push({ type: "warn", msg: `Size ${exportSize} not power-of-two` });
       if (psdData.width !== psdData.height) issues.push({ type: "warn", msg: `Non-square (${psdData.width}\u00D7${psdData.height})` });
@@ -280,7 +280,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
         });
       });
       initialStateRef.current = null;
-    }).catch((err) => { if (!cancelled) setPsdError(typeof err === "string" ? err : err?.message || "Failed to parse PSD"); })
+    }).catch((err) => { if (!cancelled) setPsdError(typeof err === "string" ? err : err?.message || "Failed to parse layer source"); })
       .finally(() => { if (!cancelled) setPsdLoading(false); });
     return () => { cancelled = true; };
   }, [psdPath]);
@@ -626,7 +626,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             <div className="vp-crumb-anchor" ref={templateMenuRef}>
               <button type="button" className={`vp-crumb-chip ${!psdFileName ? "vp-crumb-chip--empty" : ""}`}
                 onClick={() => setOpenMenu((m) => m === "template" ? null : "template")}
-                title={psdPath || "Import PSD/PDN/AI template"}>
+                title={psdPath || "Import PSD/PDN/AI layer source"}>
                 <span className="vp-crumb-chip-label">Template</span>
                 <span className="vp-crumb-chip-value">{psdFileName ? psdFileName.replace(/\.(psd|pdn|ai)$/i, "") : "None"}</span>
                 <ChevronDown className="vp-crumb-chip-chevron" />
@@ -634,7 +634,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
               {openMenu === "template" && (
                 <div className="vp-dropdown-menu vp-dropdown-menu--crumb">
                   <button type="button" className="vp-dropdown-item" onClick={() => { handleSelectPsd(); setOpenMenu(null); }}>
-                    <FileImage className="w-3 h-3" /> Import PSD template
+                    <FileImage className="w-3 h-3" /> Import layer source
                   </button>
                   {psdPath && (
                     <>
@@ -959,7 +959,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                         {showSafeArea && <div className="vp-safe-area-overlay" />}
                       </div>
                     ) : psdLoading ? (
-                      <div className="vp-placeholder"><div className="vp-spinner" /><span>Parsing PSD layers...</span></div>
+                      <div className="vp-placeholder"><div className="vp-spinner" /><span>Parsing layer source...</span></div>
                     ) : psdError ? (
                       <div className="vp-placeholder vp-placeholder--error"><AlertTriangle className="w-5 h-5" /><span>{psdError}</span></div>
                     ) : (

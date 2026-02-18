@@ -1,81 +1,149 @@
 import { useEffect, useRef, useState } from "react";
+import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 
-const GITHUB_OWNER = "IEver3st";
-const GITHUB_REPO = "cortex-labs";
 const CHECK_INTERVAL = 30 * 60 * 1000;
+const INITIAL_DELAY_MS = 5000;
 
-function compareSemver(a, b) {
-  const pa = a.replace(/^v/, "").split(".").map(Number);
-  const pb = b.replace(/^v/, "").split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    const va = pa[i] || 0;
-    const vb = pb[i] || 0;
-    if (va > vb) return 1;
-    if (va < vb) return -1;
-  }
-  return 0;
-}
-
-async function fetchLatestRelease() {
-  const res = await fetch(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
-    { headers: { Accept: "application/vnd.github+json" } },
+function isTauriRuntime() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__ !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__?.invoke === "function"
   );
-  if (!res.ok) return null;
-  const data = await res.json();
-  return {
-    tag: data.tag_name,
-    version: data.tag_name.replace(/^v/, ""),
-    url: data.html_url,
-    notes: data.body || "",
-    name: data.name || data.tag_name,
-  };
 }
 
-export function useUpdateChecker(currentVersion) {
+export function useUpdateChecker() {
   const [state, setState] = useState({
     available: false,
     latest: null,
-    url: null,
-    name: null,
+    notes: "",
+    installing: false,
+    progressPercent: 0,
+    error: "",
   });
   const [dismissed, setDismissed] = useState(false);
   const timerRef = useRef(null);
+  const updateRef = useRef(null);
+  const downloadedBytesRef = useRef(0);
+  const totalBytesRef = useRef(0);
 
   useEffect(() => {
-    if (!currentVersion) return;
+    if (!isTauriRuntime()) return undefined;
 
     let cancelled = false;
 
-    const check = async () => {
+    const checkForUpdates = async () => {
       try {
-        const release = await fetchLatestRelease();
-        if (cancelled || !release) return;
+        const update = await checkForAppUpdate();
+        if (cancelled) return;
+        updateRef.current = update;
 
-        if (compareSemver(release.version, currentVersion) > 0) {
+        if (update) {
           setState({
             available: true,
-            latest: release.version,
-            url: release.url,
-            name: release.name,
+            latest: update.version ?? null,
+            notes: update.body ?? "",
+            installing: false,
+            progressPercent: 0,
+            error: "",
           });
+        } else {
+          setState((prev) => ({
+            ...prev,
+            available: false,
+            latest: null,
+            notes: "",
+            installing: false,
+            progressPercent: 0,
+            error: "",
+          }));
         }
-      } catch {
+      } catch (error) {
+        console.error("Failed to check for updates:", error);
+        setState((prev) => ({
+          ...prev,
+          error: "Unable to check for updates right now.",
+          installing: false,
+        }));
       }
     };
 
-    const initialDelay = setTimeout(check, 5000);
+    const initialDelay = setTimeout(checkForUpdates, INITIAL_DELAY_MS);
 
-    timerRef.current = setInterval(check, CHECK_INTERVAL);
+    timerRef.current = setInterval(checkForUpdates, CHECK_INTERVAL);
 
     return () => {
       cancelled = true;
       clearTimeout(initialDelay);
       clearInterval(timerRef.current);
     };
-  }, [currentVersion]);
+  }, []);
 
   const dismiss = () => setDismissed(true);
 
-  return { ...state, dismissed, dismiss };
+  const install = async () => {
+    if (!isTauriRuntime()) return false;
+
+    const update = updateRef.current;
+    if (!update) return false;
+
+    downloadedBytesRef.current = 0;
+    totalBytesRef.current = 0;
+
+    setState((prev) => ({
+      ...prev,
+      installing: true,
+      progressPercent: 0,
+      error: "",
+    }));
+
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          downloadedBytesRef.current = 0;
+          totalBytesRef.current = Number(event.data?.contentLength || 0);
+          setState((prev) => ({ ...prev, progressPercent: 0 }));
+          return;
+        }
+
+        if (event.event === "Progress") {
+          downloadedBytesRef.current += Number(event.data?.chunkLength || 0);
+          const nextTotal = Number(event.data?.contentLength || totalBytesRef.current || 0);
+          if (nextTotal > 0) {
+            totalBytesRef.current = nextTotal;
+            const ratio = downloadedBytesRef.current / nextTotal;
+            const percent = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+            setState((prev) => ({ ...prev, progressPercent: percent }));
+          }
+          return;
+        }
+
+        if (event.event === "Finished") {
+          setState((prev) => ({ ...prev, progressPercent: 100 }));
+        }
+      });
+
+      updateRef.current = null;
+      setDismissed(true);
+      setState({
+        available: false,
+        latest: null,
+        notes: "",
+        installing: false,
+        progressPercent: 100,
+        error: "",
+      });
+      return true;
+    } catch (error) {
+      console.error("Failed to install update:", error);
+      setState((prev) => ({
+        ...prev,
+        installing: false,
+        error: "Update download/install failed.",
+      }));
+      return false;
+    }
+  };
+
+  return { ...state, dismissed, dismiss, install };
 }

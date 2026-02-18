@@ -12,7 +12,11 @@
 
 import { readPsd } from "ag-psd";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { detectPsdBitDepth } from "./viewer-utils";
+import { decodePdn } from "./pdn";
+import { detectPsdBitDepth, getFileExtension } from "./viewer-utils";
+
+const FLAT_LAYER_ID = "__layer_source__/image";
+const FLAT_LAYER_NAME = "Image";
 
 /* ─── Category mapping ─── */
 const COLOR_CATEGORY_MAP = {
@@ -180,12 +184,124 @@ function categorizeLayer(layer, useColorLabels) {
   return "toggleable";
 }
 
+function isFlatLayerSourceExtension(extension) {
+  return extension === "pdn" || extension === "ai";
+}
+
+function buildFlatLayerSourceData(width, height, name = FLAT_LAYER_NAME) {
+  const layer = {
+    name,
+    visible: true,
+    opacity: 1,
+    colorLabel: "none",
+    isGroup: false,
+    depth: 0,
+  };
+  const allLayer = {
+    id: FLAT_LAYER_ID,
+    name,
+    path: name,
+    visible: true,
+    opacity: 1,
+    colorLabel: "none",
+    isGroup: false,
+    depth: 0,
+    parentId: null,
+    childIds: [],
+    category: "base",
+  };
+  return {
+    width,
+    height,
+    layers: [layer],
+    allLayers: [allLayer],
+    toggleable: [],
+    variantGroups: [],
+    locked: [{ name, colorLabel: "none" }],
+  };
+}
+
+function canvasFromRgba(width, height, rgbaBytes) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context unavailable.");
+  const clamped = new Uint8ClampedArray(
+    rgbaBytes.buffer,
+    rgbaBytes.byteOffset,
+    rgbaBytes.byteLength,
+  );
+  const imageData = new ImageData(clamped, width, height);
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+async function decodeAiCanvas(bytes) {
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const pdfjsLib = await import("pdfjs-dist");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/build/pdf.worker.min.mjs",
+    import.meta.url,
+  ).href;
+
+  const loadingTask = pdfjsLib.getDocument({ data: buffer });
+  const pdf = await loadingTask.promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2.0 });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(viewport.width));
+  canvas.height = Math.max(1, Math.round(viewport.height));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas 2D context unavailable.");
+  await page.render({ canvasContext: context, viewport }).promise;
+  return canvas;
+}
+
+async function decodeFlatLayerSourceCanvas(extension, bytes) {
+  if (extension === "pdn") {
+    const pdn = decodePdn(bytes);
+    if (!pdn?.width || !pdn?.height || !pdn?.data) {
+      throw new Error("Failed to decode Paint.NET layer source.");
+    }
+    return canvasFromRgba(pdn.width, pdn.height, pdn.data);
+  }
+
+  if (extension === "ai") {
+    try {
+      return await decodeAiCanvas(bytes);
+    } catch {
+      throw new Error("This .ai file is not PDF-compatible. Re-save/export it as PDF-compatible AI.");
+    }
+  }
+
+  throw new Error("Unsupported non-PSD layer source.");
+}
+
+function isFlatLayerVisible(layerVisibility) {
+  if (!layerVisibility || typeof layerVisibility !== "object") return true;
+  if (Object.prototype.hasOwnProperty.call(layerVisibility, FLAT_LAYER_ID)) {
+    return Boolean(layerVisibility[FLAT_LAYER_ID]);
+  }
+  if (Object.prototype.hasOwnProperty.call(layerVisibility, FLAT_LAYER_NAME)) {
+    return Boolean(layerVisibility[FLAT_LAYER_NAME]);
+  }
+  return true;
+}
+
 /**
  * Parse a PSD file and extract layer structure for the variant builder.
  * Returns both the legacy categorized buckets AND a full flat layer list.
  */
 export async function parsePsdLayers(filePath) {
   const bytes = await readFile(filePath);
+  const extension = getFileExtension(filePath);
+
+  if (isFlatLayerSourceExtension(extension)) {
+    const canvas = await decodeFlatLayerSourceCanvas(extension, bytes);
+    return buildFlatLayerSourceData(canvas.width, canvas.height);
+  }
+
   const bitDepth = detectPsdBitDepth(bytes);
   if (bitDepth === 16 || bitDepth === 32) {
     const error = new Error(`${bitDepth}-bit PSD not supported`);
@@ -357,6 +473,23 @@ function getCompositeOp(blendMode) {
  */
 export async function compositePsdVariant(filePath, layerVisibility = {}, targetWidth, targetHeight) {
   const bytes = await readFile(filePath);
+  const extension = getFileExtension(filePath);
+
+  if (isFlatLayerSourceExtension(extension)) {
+    const sourceCanvas = await decodeFlatLayerSourceCanvas(extension, bytes);
+    const outW = targetWidth || sourceCanvas.width;
+    const outH = targetHeight || sourceCanvas.height;
+    const outCanvas = document.createElement("canvas");
+    outCanvas.width = outW;
+    outCanvas.height = outH;
+    if (isFlatLayerVisible(layerVisibility)) {
+      const outCtx = outCanvas.getContext("2d");
+      if (!outCtx) throw new Error("Canvas 2D context unavailable.");
+      outCtx.drawImage(sourceCanvas, 0, 0, outW, outH);
+    }
+    return outCanvas;
+  }
+
   const bitDepth = detectPsdBitDepth(bytes);
   if (bitDepth === 16 || bitDepth === 32) {
     const error = new Error(`${bitDepth}-bit PSD not supported`);

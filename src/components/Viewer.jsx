@@ -971,7 +971,7 @@ export default function Viewer({
       const isDds = kind === "dds" || sigKind === "dds";
       const isAi = kind === "ai" || sigKind === "ai" || sigKind === "ai-ps";
       const isPdnFile = kind === "pdn" || sigKind === "pdn";
-      const isPdfCompatibleAi = sigKind === "ai";
+      const isPdfCompatibleAi = sigKind === "ai" || kind === "ai";
       const isUnsupportedAiVariant = kind === "ai" && sigKind !== "ai";
 
       if (isDds) { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
@@ -1254,7 +1254,7 @@ export default function Viewer({
       const isDds = kind === "dds" || sigKind === "dds";
       const isAi = kind === "ai" || sigKind === "ai" || sigKind === "ai-ps";
       const isPdnFile = kind === "pdn" || sigKind === "pdn";
-      const isPdfCompatibleAi = sigKind === "ai";
+      const isPdfCompatibleAi = sigKind === "ai" || kind === "ai";
       const isUnsupportedAiVariant = kind === "ai" && sigKind !== "ai";
 
       if (isDds) { attempts.push(loadDdsCustom); attempts.push(loadDdsFallback); }
