@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 const CHECK_INTERVAL = 30 * 60 * 1000;
 const INITIAL_DELAY_MS = 5000;
@@ -18,8 +19,10 @@ export function useUpdateChecker() {
     latest: null,
     notes: "",
     installing: false,
+    checking: false,
     progressPercent: 0,
     error: "",
+    lastChecked: null,
   });
   const [dismissed, setDismissed] = useState(false);
   const timerRef = useRef(null);
@@ -27,59 +30,62 @@ export function useUpdateChecker() {
   const downloadedBytesRef = useRef(0);
   const totalBytesRef = useRef(0);
 
+  const runCheck = useCallback(async () => {
+    if (!isTauriRuntime()) return;
+    setState((prev) => ({ ...prev, checking: true, error: "" }));
+    try {
+      const update = await checkForAppUpdate();
+      updateRef.current = update;
+
+      if (update) {
+        setState({
+          available: true,
+          latest: update.version ?? null,
+          notes: update.body ?? "",
+          installing: false,
+          checking: false,
+          progressPercent: 0,
+          error: "",
+          lastChecked: Date.now(),
+        });
+      } else {
+        setState((prev) => ({
+          ...prev,
+          available: false,
+          latest: null,
+          notes: "",
+          installing: false,
+          checking: false,
+          progressPercent: 0,
+          error: "",
+          lastChecked: Date.now(),
+        }));
+      }
+    } catch (error) {
+      console.error("Failed to check for updates:", error);
+      setState((prev) => ({
+        ...prev,
+        checking: false,
+        error: "Unable to reach update server.",
+        lastChecked: Date.now(),
+      }));
+    }
+  }, []);
+
   useEffect(() => {
     if (!isTauriRuntime()) return undefined;
 
-    let cancelled = false;
-
-    const checkForUpdates = async () => {
-      try {
-        const update = await checkForAppUpdate();
-        if (cancelled) return;
-        updateRef.current = update;
-
-        if (update) {
-          setState({
-            available: true,
-            latest: update.version ?? null,
-            notes: update.body ?? "",
-            installing: false,
-            progressPercent: 0,
-            error: "",
-          });
-        } else {
-          setState((prev) => ({
-            ...prev,
-            available: false,
-            latest: null,
-            notes: "",
-            installing: false,
-            progressPercent: 0,
-            error: "",
-          }));
-        }
-      } catch (error) {
-        console.error("Failed to check for updates:", error);
-        setState((prev) => ({
-          ...prev,
-          error: "Unable to check for updates right now.",
-          installing: false,
-        }));
-      }
-    };
-
-    const initialDelay = setTimeout(checkForUpdates, INITIAL_DELAY_MS);
-
-    timerRef.current = setInterval(checkForUpdates, CHECK_INTERVAL);
+    const initialDelay = setTimeout(runCheck, INITIAL_DELAY_MS);
+    timerRef.current = setInterval(runCheck, CHECK_INTERVAL);
 
     return () => {
-      cancelled = true;
       clearTimeout(initialDelay);
       clearInterval(timerRef.current);
     };
-  }, []);
+  }, [runCheck]);
 
   const dismiss = () => setDismissed(true);
+  const checkNow = () => runCheck();
 
   const install = async () => {
     if (!isTauriRuntime()) return false;
@@ -125,25 +131,28 @@ export function useUpdateChecker() {
 
       updateRef.current = null;
       setDismissed(true);
-      setState({
+      setState((prev) => ({
         available: false,
         latest: null,
         notes: "",
         installing: false,
+        checking: false,
         progressPercent: 100,
         error: "",
-      });
+        lastChecked: prev.lastChecked,
+      }));
+      await relaunch();
       return true;
     } catch (error) {
       console.error("Failed to install update:", error);
       setState((prev) => ({
         ...prev,
         installing: false,
-        error: "Update download/install failed.",
+        error: "Update installed but relaunch failed. Please restart Cortex Studio manually.",
       }));
       return false;
     }
   };
 
-  return { ...state, dismissed, dismiss, install };
+  return { ...state, dismissed, dismiss, install, checkNow };
 }

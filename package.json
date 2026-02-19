@@ -15,6 +15,7 @@
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "@tauri-apps/plugin-fs": "^2.4.0",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2",
     "@tauri-apps/plugin-updater": "^2",
     "ag-psd": "^30.1.0",
     "dff-loader": "^1.0.1",

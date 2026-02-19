@@ -7,8 +7,14 @@ import {
   ChevronDown, Rocket, FolderInput, Eye,
   Zap, Check, X, Command, Terminal, ChevronRight
 } from "lucide-react";
-import { loadWorkspaces, loadRecent, deleteWorkspace, createWorkspace } from "../lib/workspace";
-import { loadPrefs, savePrefs } from "../lib/prefs";
+import {
+  loadWorkspaces,
+  loadRecent,
+  deleteWorkspace,
+  createWorkspace,
+  WORKSPACE_STORAGE_EVENT,
+} from "../lib/workspace";
+import { loadPrefs } from "../lib/prefs";
 import appMeta from "../../package.json";
 import * as Ctx from "./ContextMenu";
 
@@ -131,9 +137,16 @@ const GROUP_LABELS = {
   older: "Older",
 };
 
+function shouldShowRecents() {
+  const prefs = loadPrefs() || {};
+  const defaults = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
+  return defaults.showRecents !== false;
+}
+
 export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion }) {
   const [recent, setRecent] = useState([]);
   const [workspaces, setWorkspaces] = useState({});
+  const [showRecents, setShowRecents] = useState(() => shouldShowRecents());
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [selectedMode, setSelectedMode] = useState("livery");
@@ -146,10 +159,23 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
   const searchRef = useRef(null);
   const createBtnRef = useRef(null);
 
-  useEffect(() => {
+  const refreshWorkspaceState = useCallback(() => {
     setWorkspaces(loadWorkspaces());
     setRecent(loadRecent());
-  }, [settingsVersion]);
+    setShowRecents(shouldShowRecents());
+  }, []);
+
+  useEffect(() => {
+    refreshWorkspaceState();
+  }, [refreshWorkspaceState, settingsVersion]);
+
+  useEffect(() => {
+    const handleWorkspaceStorage = () => {
+      refreshWorkspaceState();
+    };
+    window.addEventListener(WORKSPACE_STORAGE_EVENT, handleWorkspaceStorage);
+    return () => window.removeEventListener(WORKSPACE_STORAGE_EVENT, handleWorkspaceStorage);
+  }, [refreshWorkspaceState]);
 
   // Close create dropdown on outside click
   useEffect(() => {
@@ -171,27 +197,29 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
     });
   }, []);
 
+  const validRecent = useMemo(() => {
+    return recent.filter((entry) => Boolean(workspaces[entry.workspaceId]));
+  }, [recent, workspaces]);
+
   const filteredRecent = useMemo(() => {
-    let list = recent;
+    let list = validRecent;
     // Filter by type
     if (activeSection !== "all") {
       list = list.filter(entry => {
         const ws = workspaces[entry.workspaceId];
-        if (!ws) return false;
         if (activeSection === "variants") return entry.page === "variants";
         return ws.state?.textureMode === activeSection;
       });
     }
     // Search
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(entry => {
-        const ws = workspaces[entry.workspaceId];
-        if (!ws) return false;
-        const name = (ws.name || "").toLowerCase();
-        const model = (getModelName(ws) || "").toLowerCase();
-        const folder = (getProjectFolder(ws) || "").toLowerCase();
-        return name.includes(q) || model.includes(q) || folder.includes(q);
+        const q = searchQuery.toLowerCase();
+        list = list.filter(entry => {
+          const ws = workspaces[entry.workspaceId];
+          const name = (ws.name || "").toLowerCase();
+          const model = (getModelName(ws) || "").toLowerCase();
+          const folder = (getProjectFolder(ws) || "").toLowerCase();
+          return name.includes(q) || model.includes(q) || folder.includes(q);
       });
     }
     // Sort
@@ -209,7 +237,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
       });
     }
     return list;
-  }, [recent, workspaces, activeSection, searchQuery, sortBy]);
+  }, [validRecent, workspaces, activeSection, searchQuery, sortBy]);
 
   // Group projects by time
   const groupedRecent = useMemo(() => {
@@ -224,10 +252,10 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
   }, [filteredRecent, workspaces, sortBy]);
 
   const pinnedEntries = useMemo(() => {
-    return recent.filter(entry => pinnedIds.includes(entry.workspaceId));
-  }, [recent, pinnedIds]);
+    return validRecent.filter(entry => pinnedIds.includes(entry.workspaceId));
+  }, [validRecent, pinnedIds]);
 
-  const hasProjects = recent.length > 0;
+  const hasProjects = validRecent.length > 0;
 
   const handleLaunchMode = useCallback((mode) => {
     const modeNames = {
@@ -254,12 +282,11 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
   }, [projectName, selectedMode, onNavigate]);
 
   const handleDeleteWorkspace = useCallback((e, wsId) => {
-    e.stopPropagation();
+    e?.stopPropagation?.();
     deleteWorkspace(wsId);
-    setWorkspaces(loadWorkspaces());
-    setRecent(loadRecent());
+    refreshWorkspaceState();
     setPinnedIds(prev => prev.filter(id => id !== wsId));
-  }, []);
+  }, [refreshWorkspaceState]);
 
   const handleOpenRecent = useCallback((entry) => {
     const ws = loadWorkspaces()[entry.workspaceId];
@@ -377,9 +404,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
 
   return (
     <div className="home-page">
-      {/* Background grid texture */}
       <div className="hp-bg">
-        <div className="hp-bg-grid" />
         <div className="hp-bg-scanline" />
       </div>
 
@@ -391,10 +416,9 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: "easeOut" }}
         >
+          <div className="hp-brand-spacer" />
           <div className="hp-brand">
-            <span className="hp-brand-bracket">[</span>
-            <span className="hp-brand-mark">CORTEX_STUDIO</span>
-            <span className="hp-brand-bracket">]</span>
+            <span className="hp-brand-mark">CORTEX STUDIO</span>
             <span className="hp-brand-ver">v{appMeta.version}</span>
           </div>
           <div className="hp-header-actions" ref={createBtnRef}>
@@ -502,21 +526,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
               <ChevronRight className="w-3.5 h-3.5 hp-variant-arrow" />
             </motion.button>
 
-            {/* System info block */}
-            <div className="hp-sys-info">
-              <div className="hp-sys-row">
-                <span className="hp-sys-key">projects</span>
-                <span className="hp-sys-val">{Object.keys(workspaces).length}</span>
-              </div>
-              <div className="hp-sys-row">
-                <span className="hp-sys-key">recent</span>
-                <span className="hp-sys-val">{recent.length}</span>
-              </div>
-              <div className="hp-sys-row">
-                <span className="hp-sys-key">pinned</span>
-                <span className="hp-sys-val">{pinnedIds.length}</span>
-              </div>
-            </div>
+
           </motion.section>
 
           {/* ──── Right: Projects Panel ──── */}
@@ -530,8 +540,9 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
             <div className="hp-projects-head">
               <div className="hp-projects-title-row">
                 <h2 className="hp-projects-title">// RECENT</h2>
-                <span className="hp-projects-count">[{filteredRecent.length}]</span>
+                <span className="hp-projects-count">[{showRecents ? filteredRecent.length : 0}]</span>
               </div>
+              {showRecents && (
               <div className="hp-projects-controls">
                 <div className="hp-search">
                   <Search className="w-3.5 h-3.5 hp-search-icon" />
@@ -578,14 +589,16 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
                   </AnimatePresence>
                 </div>
               </div>
+              )}
             </div>
 
+            {showRecents ? (
+            <>
             {/* Filter Tabs */}
             <div className="hp-filters">
               {FILTER_TABS.map(filter => {
-                const count = filter.id === "all" ? recent.length : recent.filter(entry => {
+                const count = filter.id === "all" ? validRecent.length : validRecent.filter(entry => {
                   const ws = workspaces[entry.workspaceId];
-                  if (!ws) return false;
                   if (filter.id === "variants") return entry.page === "variants";
                   return ws.state?.textureMode === filter.id;
                 }).length;
@@ -676,6 +689,16 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
                 </motion.div>
               )}
             </div>
+            </>
+            ) : (
+              <div className="hp-projects-scroll">
+                <motion.div className="hp-no-results" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <Eye className="w-5 h-5" />
+                  <p>recent sessions hidden</p>
+                  <span>enable in Settings to show project history</span>
+                </motion.div>
+              </div>
+            )}
           </motion.section>
         </div>
 
@@ -691,7 +714,7 @@ export default function HomePage({ onNavigate, onOpenWorkspace, settingsVersion 
             <span className="hp-footer-sep" />
             <span>{Object.keys(workspaces).length} projects</span>
             <span className="hp-footer-sep" />
-            <span>{recent.length} recent</span>
+            <span>{validRecent.length} recent</span>
           </div>
           <div className="hp-footer-right">
             <Command className="w-3 h-3" />

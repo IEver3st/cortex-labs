@@ -930,6 +930,52 @@ fn ensure_dir(path: String) -> Result<(), String> {
     std::fs::create_dir_all(PathBuf::from(path)).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_folder_fallback(path: String) -> Result<(), String> {
+    let trimmed = path.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return Err("Path is empty".to_string());
+    }
+
+    let requested_path = PathBuf::from(trimmed);
+    let target_path = if requested_path.is_dir() {
+        requested_path
+    } else if requested_path.is_file() {
+        requested_path
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "Could not resolve parent folder".to_string())?
+    } else {
+        return Err(format!("Path does not exist: {}", trimmed));
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(&target_path)
+            .spawn()
+            .map_err(|e| format!("Failed to launch Explorer: {e}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&target_path)
+            .spawn()
+            .map_err(|e| format!("Failed to launch Finder: {e}"))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(&target_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {e}"))?;
+    }
+
+    Ok(())
+}
+
 /// Decode a Paint.NET (.pdn) file into raw RGBA pixel data.
 /// Returns base64-encoded RGBA pixels plus width/height.
 #[tauri::command]
@@ -953,8 +999,6 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
         return Err(format!("Invalid PDN dimensions: {width}x{height}"));
     }
 
-    let expected_size = (width as usize) * (height as usize) * 4;
-
     // Find and decompress all gzip chunks
     let mut gzip_offsets = Vec::new();
     let mut i = 24;
@@ -971,9 +1015,8 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
         return Err("No compressed pixel data found in PDN file.".to_string());
     }
 
-    // Decompress all chunks and collect layer data
-    let mut layers: Vec<Vec<u8>> = Vec::new();
-    let mut current_layer: Vec<u8> = Vec::new();
+    // Decompress all chunks first.
+    let mut inflated_chunks: Vec<Vec<u8>> = Vec::new();
 
     for offset in &gzip_offsets {
         let slice = &data[*offset..];
@@ -983,23 +1026,43 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
             continue;
         }
 
-        current_layer.extend_from_slice(&inflated);
-
-        if current_layer.len() >= expected_size {
-            current_layer.truncate(expected_size);
-            layers.push(current_layer);
-            current_layer = Vec::new();
-        }
+        inflated_chunks.push(inflated);
     }
 
-    // Handle remaining partial layer
-    if !current_layer.is_empty() {
-        current_layer.resize(expected_size, 0);
-        layers.push(current_layer);
-    }
-
-    if layers.is_empty() {
+    if inflated_chunks.is_empty() {
         return Err("Failed to decompress any pixel data from PDN file.".to_string());
+    }
+
+    // Width/height extraction can occasionally return swapped values.
+    // If chunk alignment strongly suggests a swap, correct it.
+    let mut width_usize = width as usize;
+    let mut height_usize = height as usize;
+    maybe_swap_pdn_dimensions_by_alignment(&inflated_chunks, &mut width_usize, &mut height_usize);
+
+    let expected_size = width_usize.saturating_mul(height_usize).saturating_mul(4);
+    if expected_size == 0 {
+        return Err("PDN decode produced invalid output dimensions.".to_string());
+    }
+
+    let row_bytes = width_usize.saturating_mul(4);
+    let has_row_misalignment = row_bytes > 0
+        && inflated_chunks
+            .iter()
+            .any(|chunk| chunk.len() >= row_bytes && chunk.len() % row_bytes != 0);
+
+    // If chunks are not row-aligned, strip small per-chunk metadata/header bytes.
+    let mut layers = assemble_pdn_layers(
+        &inflated_chunks,
+        width_usize,
+        height_usize,
+        has_row_misalignment,
+    );
+    if layers.is_empty() {
+        // Fallback to raw concatenation if trimmed assembly yielded nothing.
+        layers = assemble_pdn_layers(&inflated_chunks, width_usize, height_usize, false);
+    }
+    if layers.is_empty() {
+        return Err("Failed to reconstruct any PDN layers from decompressed data.".to_string());
     }
 
     // Composite layers bottom-to-top, converting BGRA → RGBA
@@ -1036,12 +1099,10 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
                 if out_a > 0.0 {
                     rgba[pix] =
                         ((src_r as f32 * sa + rgba[pix] as f32 * da * (1.0 - sa)) / out_a) as u8;
-                    rgba[pix + 1] =
-                        ((src_g as f32 * sa + rgba[pix + 1] as f32 * da * (1.0 - sa)) / out_a)
-                            as u8;
-                    rgba[pix + 2] =
-                        ((src_b as f32 * sa + rgba[pix + 2] as f32 * da * (1.0 - sa)) / out_a)
-                            as u8;
+                    rgba[pix + 1] = ((src_g as f32 * sa + rgba[pix + 1] as f32 * da * (1.0 - sa))
+                        / out_a) as u8;
+                    rgba[pix + 2] = ((src_b as f32 * sa + rgba[pix + 2] as f32 * da * (1.0 - sa))
+                        / out_a) as u8;
                     rgba[pix + 3] = (out_a * 255.0) as u8;
                 }
             }
@@ -1055,10 +1116,129 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
     let encoded = base64::engine::general_purpose::STANDARD.encode(&rgba);
 
     Ok(serde_json::json!({
-        "width": width,
-        "height": height,
+        "width": width_usize,
+        "height": height_usize,
         "rgba_base64": encoded
     }))
+}
+
+fn maybe_swap_pdn_dimensions_by_alignment(
+    chunks: &[Vec<u8>],
+    width: &mut usize,
+    height: &mut usize,
+) {
+    if *width == 0 || *height == 0 || *width == *height {
+        return;
+    }
+
+    let row_a = width.saturating_mul(4);
+    let row_b = height.saturating_mul(4);
+    if row_a == 0 || row_b == 0 {
+        return;
+    }
+
+    let aligned_a = chunks
+        .iter()
+        .filter(|chunk| chunk.len() >= row_a && chunk.len() % row_a == 0)
+        .count();
+    let aligned_b = chunks
+        .iter()
+        .filter(|chunk| chunk.len() >= row_b && chunk.len() % row_b == 0)
+        .count();
+
+    if aligned_b > aligned_a && aligned_b >= chunks.len().saturating_div(2) {
+        std::mem::swap(width, height);
+    }
+}
+
+fn assemble_pdn_layers(
+    chunks: &[Vec<u8>],
+    width: usize,
+    height: usize,
+    trim_chunk_headers: bool,
+) -> Vec<Vec<u8>> {
+    let expected_size = width.saturating_mul(height).saturating_mul(4);
+    let row_bytes = width.saturating_mul(4);
+    if expected_size == 0 {
+        return Vec::new();
+    }
+
+    let mut layers: Vec<Vec<u8>> = Vec::new();
+    let mut current_layer: Vec<u8> = Vec::with_capacity(expected_size);
+
+    for chunk in chunks {
+        let payload = if trim_chunk_headers {
+            select_pdn_chunk_payload(chunk, row_bytes)
+        } else {
+            (0, chunk.len())
+        };
+        if payload.1 <= payload.0 || payload.1 > chunk.len() {
+            continue;
+        }
+
+        current_layer.extend_from_slice(&chunk[payload.0..payload.1]);
+
+        while current_layer.len() >= expected_size {
+            let layer = current_layer.drain(..expected_size).collect::<Vec<u8>>();
+            layers.push(layer);
+        }
+    }
+
+    // Keep non-empty trailing data as a partial layer and pad to full image size.
+    if current_layer.len() >= row_bytes.max(1) {
+        current_layer.resize(expected_size, 0);
+        layers.push(current_layer);
+    }
+
+    layers
+}
+
+fn select_pdn_chunk_payload(chunk: &[u8], row_bytes: usize) -> (usize, usize) {
+    if row_bytes == 0 || chunk.len() <= row_bytes {
+        return (0, chunk.len());
+    }
+
+    let max_trim = std::cmp::min(64, chunk.len().saturating_sub(1));
+    let mut best: Option<(usize, usize, usize)> = None;
+
+    for lead in 0..=max_trim {
+        for trail in 0..=max_trim {
+            if lead + trail >= chunk.len() {
+                continue;
+            }
+            let payload_len = chunk.len() - lead - trail;
+            if payload_len < row_bytes || payload_len % row_bytes != 0 {
+                continue;
+            }
+            let rows = payload_len / row_bytes;
+            if rows == 0 || rows > 8192 {
+                continue;
+            }
+            let discarded = lead + trail;
+            match best {
+                None => best = Some((lead, chunk.len() - trail, discarded)),
+                Some((best_start, best_end, best_discarded)) => {
+                    let best_payload_len = best_end.saturating_sub(best_start);
+                    if discarded < best_discarded
+                        || (discarded == best_discarded && payload_len > best_payload_len)
+                    {
+                        best = Some((lead, chunk.len() - trail, discarded));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((start, end, _)) = best {
+        return (start, end);
+    }
+
+    let aligned_len = chunk.len() - (chunk.len() % row_bytes);
+    if aligned_len >= row_bytes {
+        return (0, aligned_len);
+    }
+
+    (0, chunk.len())
 }
 
 /// Extract width and height from a PDN file's .NET BinaryFormatter stream.
@@ -1142,6 +1322,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             start_watch,
@@ -1156,6 +1337,7 @@ pub fn run() {
             convert_yft,
             consume_pending_open_file,
             ensure_dir,
+            open_folder_fallback,
             decode_pdn
         ])
         .setup(|app| {

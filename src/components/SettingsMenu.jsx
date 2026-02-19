@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info } from "lucide-react";
+import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
@@ -13,6 +13,7 @@ import {
 } from "../lib/hotkeys";
 import { loadPrefs, savePrefs } from "../lib/prefs";
 import { hasSeenWhatsNew, getAppVersion } from "../lib/changelog";
+import { useUpdateChecker } from "../lib/updater";
 
 /* ─── Built-in defaults (canonical source) ─── */
 const BUILT_IN_DEFAULTS = {
@@ -34,12 +35,23 @@ const BUILT_IN_DEFAULTS = {
   uiScale: 1.0,
   previewFolder: "",
   variantExportFolder: "",
+  cameraControlsInPanel: false,
 };
+
+const MIN_UI_SCALE = 0.5;
+const MAX_UI_SCALE = 1.4;
+
+function clampUiScale(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return BUILT_IN_DEFAULTS.uiScale;
+  return Math.min(MAX_UI_SCALE, Math.max(MIN_UI_SCALE, num));
+}
 
 function getStoredDefaults() {
   const prefs = loadPrefs();
   const stored = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
-  return { ...BUILT_IN_DEFAULTS, ...stored };
+  const merged = { ...BUILT_IN_DEFAULTS, ...stored };
+  return { ...merged, uiScale: clampUiScale(merged.uiScale) };
 }
 
 function getStoredHotkeys() {
@@ -91,6 +103,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   const [activeSection, setActiveSection] = useState("general");
   const [portalNode, setPortalNode] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const updater = useUpdateChecker();
 
   const [draft, setDraft] = useState(() => getStoredDefaults());
   const [hotkeysDraft, setHotkeysDraft] = useState(() => getStoredHotkeys());
@@ -143,10 +156,12 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   const activeMeta = sections.find((section) => section.id === activeSection) ?? sections[0];
 
   const save = useCallback(() => {
+    const normalizedUiScale = clampUiScale(draft.uiScale);
+    const normalizedDraft = { ...draft, uiScale: normalizedUiScale };
     const prefs = loadPrefs() || {};
-    savePrefs({ ...prefs, defaults: draft, hotkeys: hotkeysDraft });
+    savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: hotkeysDraft });
     // Apply UI scale immediately
-    document.documentElement.style.setProperty("--es-ui-scale", String(draft.uiScale ?? 1.0));
+    document.documentElement.style.setProperty("--es-ui-scale", String(normalizedUiScale));
     setOpen(false);
     onSettingsSaved?.();
   }, [draft, hotkeysDraft, onSettingsSaved]);
@@ -324,12 +339,12 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                         className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
                                         style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
                                         min={0.5}
-                                        max={2.0}
+                                        max={1.4}
                                         step={0.05}
-                                        value={draft.uiScale ?? 1.0}
-                                        onChange={(e) => setDraft((p) => ({ ...p, uiScale: parseFloat(e.target.value) }))}
+                                        value={clampUiScale(draft.uiScale)}
+                                        onChange={(e) => setDraft((p) => ({ ...p, uiScale: clampUiScale(parseFloat(e.target.value)) }))}
                                       />
-                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{Math.round((draft.uiScale ?? 1.0) * 100)}%</span>
+                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{Math.round(clampUiScale(draft.uiScale) * 100)}%</span>
                                     </div>
                                   </div>
 
@@ -435,6 +450,20 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <span className="settings-toggle-dot" />
                                   </button>
                                 </div>
+
+                                <div className="settings-row">
+                                  <div className="settings-row-label">
+                                    <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Panel Camera Controls</div>
+                                    <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Move camera presets &amp; rotation to the side panel</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.cameraControlsInPanel ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, cameraControlsInPanel: !p.cameraControlsInPanel }))}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
                               </section>
                               </div>
                             ) : null}
@@ -457,10 +486,10 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                       min={0.8}
                                       max={1.4}
                                       step={0.05}
-                                      value={draft.uiScale ?? 1.0}
-                                      onChange={(e) => setDraft((p) => ({ ...p, uiScale: parseFloat(e.target.value) }))}
+                                      value={clampUiScale(draft.uiScale)}
+                                      onChange={(e) => setDraft((p) => ({ ...p, uiScale: clampUiScale(parseFloat(e.target.value)) }))}
                                     />
-                                    <span className="settings-scale-value">{Math.round((draft.uiScale ?? 1.0) * 100)}%</span>
+                                    <span className="settings-scale-value">{Math.round(clampUiScale(draft.uiScale) * 100)}%</span>
                                   </div>
                                 </div>
                                 <div className="settings-row">
@@ -631,7 +660,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                             {/* ─── About ─── */}
                             {activeSection === "about" ? (
-                              <div className="space-y-6">
+                              <div className="space-y-3">
                                 <section className="settings-panel">
                                   <div className="settings-panel-title">Application</div>
                                   <div className="settings-row">
@@ -641,6 +670,130 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     </div>
                                     <span className="font-mono text-[11px]" style={{ color: 'var(--mg-primary)' }}>v{getAppVersion()}</span>
                                   </div>
+                                </section>
+
+                                {/* ─── Update Panel ─── */}
+                                <section className="settings-panel settings-update-panel">
+                                  <div className="settings-panel-title">Software Update</div>
+
+                                  {/* Up-to-date state */}
+                                  {!updater.available && !updater.checking && !updater.error && updater.lastChecked ? (
+                                    <div className="settings-update-status settings-update-status--ok">
+                                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-[10px]" style={{ color: 'var(--mg-fg)' }}>You're up to date</div>
+                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
+                                          Last checked {new Date(updater.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="settings-mini settings-update-check-btn"
+                                        onClick={updater.checkNow}
+                                        disabled={updater.checking}
+                                      >
+                                        <RefreshCw className="h-3 w-3" />
+                                        Check again
+                                      </button>
+                                    </div>
+                                  ) : null}
+
+                                  {/* Never checked / idle */}
+                                  {!updater.available && !updater.checking && !updater.error && !updater.lastChecked ? (
+                                    <div className="settings-update-status">
+                                      <RefreshCw className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-muted)' }} />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-[10px]" style={{ color: 'var(--mg-fg)' }}>Check for updates</div>
+                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Manual check or auto-checks every 30 min</div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="settings-mini settings-update-check-btn"
+                                        onClick={updater.checkNow}
+                                        disabled={updater.checking}
+                                      >
+                                        Check now
+                                      </button>
+                                    </div>
+                                  ) : null}
+
+                                  {/* Checking spinner */}
+                                  {updater.checking ? (
+                                    <div className="settings-update-status">
+                                      <motion.div
+                                        animate={{ rotate: 360 }}
+                                        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                                        className="shrink-0"
+                                      >
+                                        <Loader className="h-3.5 w-3.5" style={{ color: 'var(--mg-primary)' }} />
+                                      </motion.div>
+                                      <div className="text-[10px]" style={{ color: 'var(--mg-muted)' }}>Checking for updates...</div>
+                                    </div>
+                                  ) : null}
+
+                                  {/* Error state */}
+                                  {updater.error && !updater.checking ? (
+                                    <div className="settings-update-status settings-update-status--error">
+                                      <AlertCircle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-[10px]" style={{ color: 'var(--mg-destructive)' }}>Check failed</div>
+                                        <div className="text-[9px] mt-0.5 truncate" style={{ color: 'var(--mg-muted)' }}>{updater.error}</div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="settings-mini settings-update-check-btn"
+                                        onClick={updater.checkNow}
+                                      >
+                                        Retry
+                                      </button>
+                                    </div>
+                                  ) : null}
+
+                                  {/* Update available */}
+                                  {updater.available ? (
+                                    <div className="settings-update-available">
+                                      <div className="settings-update-available-header">
+                                        <Download className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
+                                        <div className="flex-1 min-w-0">
+                                          <div className="text-[10px] font-medium" style={{ color: 'var(--mg-primary)' }}>
+                                            Update available — v{updater.latest}
+                                          </div>
+                                          <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
+                                            {updater.installing ? "Downloading and installing..." : "Ready to install"}
+                                          </div>
+                                        </div>
+                                        {!updater.installing ? (
+                                          <button
+                                            type="button"
+                                            className="settings-update-install-btn"
+                                            onClick={updater.install}
+                                          >
+                                            Install
+                                          </button>
+                                        ) : null}
+                                      </div>
+
+                                      {updater.installing ? (
+                                        <div className="settings-update-progress">
+                                          <div className="settings-update-progress-track">
+                                            <motion.div
+                                              className="settings-update-progress-fill"
+                                              animate={{ width: `${updater.progressPercent}%` }}
+                                              transition={{ duration: 0.3, ease: "easeOut" }}
+                                            />
+                                          </div>
+                                          <span className="settings-update-progress-pct">{updater.progressPercent}%</span>
+                                        </div>
+                                      ) : null}
+
+                                      {updater.notes ? (
+                                        <div className="settings-update-notes">
+                                          <div className="text-[9px] uppercase tracking-[0.08em] mb-1" style={{ color: 'var(--mg-muted)' }}>Release notes</div>
+                                          <div className="settings-update-notes-body">{updater.notes}</div>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </section>
 
                                 <section className="settings-panel">

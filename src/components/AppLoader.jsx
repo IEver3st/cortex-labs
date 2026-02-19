@@ -1,7 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useState } from "react";
+import { motion } from "motion/react";
 
 const GRID = 32;
+const SEGMENTS = 16;
+
+const BOOT_LINES = [
+  "CORTEX.SYS loaded",
+  "renderer.init() → ok",
+  "workspace.mount() → ok",
+  "shaders compiled",
+  "runtime ready",
+];
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -74,73 +83,25 @@ function buildCubePoints() {
     .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
 }
 
-function buildSpherePoints() {
-  const r = GRID * 0.31;
-  const cx = (GRID - 1) / 2;
-  const cy = (GRID - 1) / 2;
-  const hx = cx - r * 0.35;
-  const hy = cy - r * 0.45;
+const CUBE_POINTS = buildCubePoints();
 
-  const points = [];
-  for (let y = 0; y < GRID; y += 1) {
-    for (let x = 0; x < GRID; x += 1) {
-      const dx = x - cx;
-      const dy = y - cy;
-      const dist = Math.hypot(dx, dy);
-      if (dist > r) continue;
+// Compute per-dot diagonal wave delay for materialization effect
+const CUBE_DELAYS = (() => {
+  const maxDiag = (GRID - 1) * 2;
+  return CUBE_POINTS.map((p) => ((p.x + p.y) / maxDiag) * 0.55);
+})();
 
-      const rim = 1 - dist / r;
-      const highlight = 1 - Math.hypot(x - hx, y - hy) / (r * 1.35);
-      const alpha = clamp(0.25 + rim * 0.5 + highlight * 0.4, 0.22, 0.95);
-      const dither = (x + y) % 2 === 0 ? 1 : 0.92;
-      points.push({ x, y, alpha: alpha * dither });
-    }
-  }
-  return points;
-}
-
-function buildTrianglePoints() {
-  const cx = (GRID - 1) / 2;
-  const apexY = Math.round(GRID * 0.18);
-  const baseY = Math.round(GRID * 0.83);
-  const baseHalf = Math.round(GRID * 0.28);
-
-  const points = [];
-  for (let y = apexY; y <= baseY; y += 1) {
-    const t = (y - apexY) / Math.max(1, baseY - apexY);
-    const half = Math.round(baseHalf * t);
-    const x0 = Math.round(cx - half);
-    const x1 = Math.round(cx + half);
-    for (let x = x0; x <= x1; x += 1) {
-      if (x < 0 || x >= GRID) continue;
-      const leftShade = x <= cx ? 0.55 : 0.8;
-      const taper = 1 - t * 0.25;
-      const alpha = clamp(leftShade * taper, 0.22, 0.9);
-      const dither = (x + y) % 2 === 0 ? 1 : 0.9;
-      points.push({ x, y, alpha: alpha * dither });
-    }
-  }
-  return points;
-}
-
-const GLYPHS = {
-  cube: buildCubePoints(),
-  sphere: buildSpherePoints(),
-  triangle: buildTrianglePoints(),
-};
-
-export function LoadingGlyph({ kind, className, ...props }) {
-  const points = GLYPHS[kind] ?? GLYPHS.cube;
+export function LoadingGlyph({ className, animate: doAnimate = false, ...props }) {
   return (
     <svg
       className={className || "loader-glyph"}
       viewBox={`0 0 ${GRID} ${GRID}`}
       role="img"
-      aria-label={`Loading shape: ${kind}`}
+      aria-label="Cortex Studio logo"
       shapeRendering="crispEdges"
       {...props}
     >
-      {points.map((point) => (
+      {CUBE_POINTS.map((point, i) => (
         <rect
           key={`${point.x}-${point.y}`}
           x={point.x}
@@ -150,6 +111,12 @@ export function LoadingGlyph({ kind, className, ...props }) {
           rx={0.18}
           fill="currentColor"
           opacity={point.alpha}
+          className={doAnimate ? "loader-dot" : undefined}
+          style={
+            doAnimate
+              ? { animationDelay: `${CUBE_DELAYS[i].toFixed(3)}s` }
+              : undefined
+          }
         />
       ))}
     </svg>
@@ -157,59 +124,125 @@ export function LoadingGlyph({ kind, className, ...props }) {
 }
 
 export default function AppLoader({ variant = "boot" }) {
-  const shapeOrder = useMemo(() => ["cube", "sphere", "triangle"], []);
-  const [shapeIndex, setShapeIndex] = useState(0);
+  const [visibleLines, setVisibleLines] = useState(0);
+  const [litSegments, setLitSegments] = useState(0);
+
+  const isBackground = variant === "background";
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setShapeIndex((prev) => (prev + 1) % shapeOrder.length);
-    }, 900);
+    if (isBackground) return;
+    // Reveal boot lines one by one, paired with segment fill
+    const timers = BOOT_LINES.map((_, i) =>
+      setTimeout(() => {
+        setVisibleLines(i + 1);
+        setLitSegments(Math.round(((i + 1) / BOOT_LINES.length) * SEGMENTS));
+      }, 600 + i * 480)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [isBackground]);
 
-    return () => clearInterval(interval);
-  }, [shapeOrder.length]);
-
-  const kind = shapeOrder[shapeIndex] ?? "cube";
-  const isBackground = variant === "background";
+  if (isBackground) {
+    return (
+      <motion.div
+        className="app-loader app-loader--bg"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      >
+        <div className="loader-bg-inner">
+          <motion.div
+            className="loader-shape-sm"
+            animate={{ opacity: [0.35, 0.6, 0.35] }}
+            transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+          >
+            <LoadingGlyph />
+          </motion.div>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
-      className={`app-loader${isBackground ? " app-loader--bg" : ""}`}
-      initial={isBackground ? { opacity: 0 } : { opacity: 1 }}
-      animate={{ opacity: 1 }}
+      className="app-loader"
+      initial={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.5, ease: "easeInOut" }}
     >
-      <motion.div
-        className="loader-stage"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -6 }}
-        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      >
+      <div className="loader-stage">
+        {/* Logo */}
         <motion.div
-          className="loader-shape"
-          animate={{ y: [0, -14, 0], rotate: [-2, 2, -2] }}
-          transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
+          className="loader-glyph-wrap"
+          initial={{ opacity: 0, scale: 0.88 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
         >
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={kind}
-              className="loader-shape-inner"
-              initial={{ opacity: 0, scale: 0.92 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.92 }}
-              transition={{ duration: 0.18 }}
-            >
-              <LoadingGlyph kind={kind} />
-            </motion.div>
-          </AnimatePresence>
+          <LoadingGlyph animate />
         </motion.div>
 
-        <div className="loader-meta">
-          <div className="loader-title">Cortex Studio</div>
-          <div className="loader-subtitle">Initializing...</div>
-        </div>
-      </motion.div>
+        {/* Title */}
+        <motion.div
+          className="loader-meta"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3, duration: 0.4 }}
+        >
+          <div className="loader-title">CORTEX STUDIO</div>
+        </motion.div>
+
+        {/* Boot log */}
+        <motion.div
+          className="loader-boot-log"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5, duration: 0.3 }}
+        >
+          {BOOT_LINES.map((line, i) => (
+            <div
+              key={line}
+              className="loader-log-line"
+              style={{
+                opacity: i < visibleLines ? 1 : 0,
+                color: i === visibleLines - 1
+                  ? "oklch(0.72 0.13 182)"
+                  : "oklch(0.45 0.05 182)",
+                transition: "opacity 0.2s ease, color 0.6s ease",
+              }}
+            >
+              <span className="loader-log-prompt">›</span>
+              {line}
+            </div>
+          ))}
+        </motion.div>
+
+        {/* Segmented progress bar */}
+        <motion.div
+          className="loader-seg-track"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.55, duration: 0.3 }}
+        >
+          {Array.from({ length: SEGMENTS }, (_, i) => (
+            <div
+              key={i}
+              className="loader-seg"
+              style={{
+                opacity: i < litSegments ? 1 : 0.08,
+                background:
+                  i < litSegments
+                    ? "oklch(0.72 0.13 182)"
+                    : "oklch(0.72 0.13 182 / 15%)",
+                boxShadow:
+                  i < litSegments && i === litSegments - 1
+                    ? "0 0 6px 1px oklch(0.72 0.13 182 / 60%)"
+                    : "none",
+                transition: `opacity 0.15s ease ${i * 0.02}s, box-shadow 0.3s ease`,
+              }}
+            />
+          ))}
+        </motion.div>
+      </div>
     </motion.div>
   );
 }

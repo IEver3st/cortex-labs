@@ -888,54 +888,19 @@ export function detectPsdBitDepth(bytes) {
 /**
  * Load a Paint.NET (.pdn) file as a Three.js texture.
  *
- * Strategy:
- *   1. Try Rust backend decoder (invoke decode_pdn) for robust parsing
- *   2. Fall back to JS-side PDN parser if Rust is unavailable
- *
  * @param {Uint8Array} bytes  Raw file bytes
- * @param {string} [filePath]  Original file path (for Rust decoder)
+ * @param {string} [filePath]  Original file path (unused)
  * @returns {Promise<THREE.DataTexture>}
  */
 export async function loadPdnTexture(bytes, filePath) {
-  const isTauriRuntime =
-    typeof window !== "undefined" &&
-    typeof window.__TAURI_INTERNALS__ !== "undefined";
-
-  // Strategy 1: Rust backend decode (fast, robust)
-  if (isTauriRuntime && filePath) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const result = await invoke("decode_pdn", { path: filePath });
-      if (result?.width && result?.height && result?.rgba_base64) {
-        const binaryStr = atob(result.rgba_base64);
-        const rgba = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          rgba[i] = binaryStr.charCodeAt(i);
-        }
-        const texture = new THREE.DataTexture(
-          rgba,
-          result.width,
-          result.height,
-          THREE.RGBAFormat,
-        );
-        texture.premultiplyAlpha = false;
-        texture.userData = texture.userData || {};
-        texture.userData.sourceKind = "pdn";
-        return texture;
-      }
-    } catch (rustErr) {
-      console.warn("[PDN] Rust decoder failed, trying JS fallback:", rustErr);
-    }
-  }
-
-  // Strategy 2: JS-side parser
+  void filePath;
   const { decodePdn } = await import("./pdn");
-  const result = decodePdn(bytes);
-  if (result && result.width > 0 && result.height > 0 && result.data) {
+  const jsResult = decodePdn(bytes);
+  if (jsResult && jsResult.width > 0 && jsResult.height > 0 && jsResult.data) {
     const texture = new THREE.DataTexture(
-      result.data,
-      result.width,
-      result.height,
+      jsResult.data,
+      jsResult.width,
+      jsResult.height,
       THREE.RGBAFormat,
     );
     texture.premultiplyAlpha = false;

@@ -1,0 +1,9 @@
+$content = [System.IO.File]::ReadAllText("src/index.css", [System.Text.Encoding]::UTF8)
+$startIdx = 95885
+$endMarker = ".shell-content {"
+$endIdx = $content.IndexOf($endMarker, $startIdx)
+Write-Host "endIdx=$endIdx"
+$lineStart = $content.LastIndexOf("`n", $endIdx) + 1
+Write-Host "lineStart=$lineStart"
+$excerpt = $content.Substring($startIdx, 100)
+Write-Host "Start exc=[$excerpt]"

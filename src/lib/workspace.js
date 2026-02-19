@@ -8,9 +8,25 @@ const WORKSPACES_KEY = "cortex-studio:workspaces.v1";
 const ACTIVE_WORKSPACE_KEY = "cortex-studio:active-workspace.v1";
 const RECENT_KEY = "cortex-studio:recent.v1";
 const MAX_RECENT = 12;
+export const WORKSPACE_STORAGE_EVENT = "cortex-studio:workspace-storage-updated";
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function emitWorkspaceStorageEvent(reason, workspaceId) {
+  if (typeof window === "undefined") return;
+  try {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_STORAGE_EVENT, {
+        detail: {
+          reason: reason || "changed",
+          workspaceId: workspaceId || null,
+          at: Date.now(),
+        },
+      }),
+    );
+  } catch {}
 }
 
 /**
@@ -35,6 +51,7 @@ export function loadWorkspaces() {
 export function saveWorkspaces(workspaces) {
   try {
     localStorage.setItem(WORKSPACES_KEY, JSON.stringify(workspaces));
+    emitWorkspaceStorageEvent("workspaces");
   } catch (err) {
     console.error("[Workspace] Failed to save:", err);
   }
@@ -49,9 +66,10 @@ export function saveWorkspaces(workspaces) {
  */
 export function createWorkspace(name, page = "viewer", state = {}) {
   const id = generateId();
+  const normalizedName = typeof name === "string" && name.trim() ? name.trim() : "Untitled";
   const workspace = {
     id,
-    name: name || "Untitled",
+    name: normalizedName,
     page,
     state,
     createdAt: Date.now(),
@@ -61,7 +79,7 @@ export function createWorkspace(name, page = "viewer", state = {}) {
   all[id] = workspace;
   saveWorkspaces(all);
   setActiveWorkspaceId(id);
-  addRecent(id, name, page);
+  addRecent(id, normalizedName, page);
   return id;
 }
 
@@ -82,6 +100,7 @@ export function deleteWorkspace(id) {
   const all = loadWorkspaces();
   delete all[id];
   saveWorkspaces(all);
+  removeRecentByWorkspaceId(id);
   const active = getActiveWorkspaceId();
   if (active === id) {
     clearActiveWorkspaceId();
@@ -142,25 +161,44 @@ export function loadRecent() {
     const raw = localStorage.getItem(RECENT_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry) =>
+        entry &&
+        typeof entry === "object" &&
+        typeof entry.workspaceId === "string" &&
+        entry.workspaceId.length > 0,
+    );
   } catch {
     return [];
   }
 }
 
+function removeRecentByWorkspaceId(workspaceId) {
+  try {
+    const current = loadRecent();
+    const next = current.filter((entry) => entry.workspaceId !== workspaceId);
+    if (next.length === current.length) return;
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    emitWorkspaceStorageEvent("recent-remove", workspaceId);
+  } catch {}
+}
+
 export function addRecent(workspaceId, name, page) {
+  if (typeof workspaceId !== "string" || !workspaceId) return;
   try {
     let recent = loadRecent();
     // Remove duplicate if exists
     recent = recent.filter((r) => r.workspaceId !== workspaceId);
     recent.unshift({
       workspaceId,
-      name,
-      page,
+      name: typeof name === "string" && name.trim() ? name.trim() : "Untitled",
+      page: page === "variants" ? "variants" : "viewer",
       openedAt: Date.now(),
     });
     if (recent.length > MAX_RECENT) recent = recent.slice(0, MAX_RECENT);
     localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+    emitWorkspaceStorageEvent("recent-add", workspaceId);
   } catch {}
 }
 
@@ -176,11 +214,13 @@ export function touchRecent(workspaceId) {
     entry.openedAt = Date.now();
     recent.unshift(entry);
     localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+    emitWorkspaceStorageEvent("recent-touch", workspaceId);
   } catch {}
 }
 
 export function clearRecent() {
   try {
     localStorage.removeItem(RECENT_KEY);
+    emitWorkspaceStorageEvent("recent-clear");
   } catch {}
 }

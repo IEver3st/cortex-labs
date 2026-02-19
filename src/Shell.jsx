@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Cpu } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
@@ -40,6 +40,15 @@ const TAB_ICONS = {
   viewer: Eye,
   variants: Layers,
 };
+
+const MIN_UI_SCALE = 0.5;
+const MAX_UI_SCALE = 1.4;
+
+function clampUiScale(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 1.0;
+  return Math.min(MAX_UI_SCALE, Math.max(MIN_UI_SCALE, num));
+}
 
 /**
  * Shell — browser-style tabbed container for Cortex Studio.
@@ -84,7 +93,7 @@ export default function Shell() {
   // Apply UI scale and window style from prefs on boot and when settings change; reload hotkeys
   useEffect(() => {
     const prefs = loadPrefs();
-    const scale = prefs?.defaults?.uiScale ?? 1.0;
+    const scale = clampUiScale(prefs?.defaults?.uiScale ?? 1.0);
     document.documentElement.style.setProperty("--es-ui-scale", String(scale));
     
     const style = prefs?.defaults?.windowControlsStyle ?? "windows";
@@ -298,13 +307,15 @@ export default function Shell() {
   // Onboarding
   const handleOnboardingComplete = useCallback((defaults) => {
     const prefs = loadPrefs() || {};
-    savePrefs({ ...prefs, defaults });
+    const normalizedDefaults = {
+      ...defaults,
+      uiScale: clampUiScale(defaults?.uiScale ?? 1.0),
+    };
+    savePrefs({ ...prefs, defaults: normalizedDefaults });
     setOnboarded();
     setShowOnboarding(false);
     // Apply UI scale
-    if (defaults?.uiScale) {
-      document.documentElement.style.setProperty("--es-ui-scale", String(defaults.uiScale));
-    }
+    document.documentElement.style.setProperty("--es-ui-scale", String(normalizedDefaults.uiScale));
   }, []);
 
   // Settings saved callback
@@ -422,33 +433,21 @@ export default function Shell() {
 
       {booted && (
         <>
-          {/* ━━━ ROW 1: Unified Toolbar ━━━ */}
+          {/* ━━━ UNIFIED TOOLBAR ━━━ */}
           <motion.div
-            className="shell-row1"
+            className="shell-toolbar"
             data-tauri-drag-region
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           >
             {/* Brand mark */}
-            <motion.div
-              className="shell-brand"
-              data-tauri-drag-region
-              whileHover={{ scale: 1.02 }}
-              transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            >
-              <motion.div
-                className="shell-brand-icon"
-                animate={{ rotate: [0, 0] }}
-                whileHover={{ rotate: 90 }}
-                transition={{ type: "spring", stiffness: 300, damping: 15 }}
-              >
-                <Cpu className="w-3.5 h-3.5" />
-              </motion.div>
+            <div className="shell-brand" data-tauri-drag-region>
+              <span className="shell-brand-dot" />
               <span className="shell-brand-name">CORTEX</span>
-            </motion.div>
+            </div>
 
-            <div className="shell-row1-divider" />
+            <div className="shell-toolbar-sep" />
 
             {/* Tab strip */}
             <div className="shell-tabs" data-tauri-drag-region>
@@ -610,10 +609,22 @@ export default function Shell() {
               </div>
             </div>
 
+            <div className="shell-toolbar-sep" />
+
+            {/* Context bar — page-specific controls portaled here */}
+            <div
+              className="shell-context"
+              data-tauri-drag-region
+              ref={(node) => {
+                contextBarRef.current = node;
+                if (node && !contextBarReady) setContextBarReady(true);
+              }}
+            />
+
             {/* Draggable spacer (right-click for new tab) */}
             <Ctx.Root>
               <Ctx.Trigger>
-                <div className="shell-row1-spacer" data-tauri-drag-region />
+                <div className="shell-toolbar-spacer" data-tauri-drag-region />
               </Ctx.Trigger>
               <Ctx.Content>
                 <Ctx.Label>New Tab</Ctx.Label>
@@ -635,16 +646,6 @@ export default function Shell() {
                 </Ctx.Item>
               </Ctx.Content>
             </Ctx.Root>
-
-            {/* Version pill */}
-            <motion.span
-              className="shell-chrome-version"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.4, duration: 0.3 }}
-            >
-              v{appMeta.version}
-            </motion.span>
 
             {/* Settings */}
             <SettingsMenu onSettingsSaved={handleSettingsSaved} onOpenReleaseNotes={handleOpenReleaseNotes} />
@@ -686,7 +687,6 @@ export default function Shell() {
                 onClick={handleClose}
                 aria-label="Close"
                 data-tauri-drag-region="false"
-                whileHover={{ backgroundColor: "#c42b1c" }}
                 whileTap={{ scale: 0.88 }}
                 transition={{ type: "spring", stiffness: 400, damping: 25 }}
               >
@@ -694,18 +694,6 @@ export default function Shell() {
               </motion.button>
             </motion.div>
           </motion.div>
-
-          {/* ━━━ ROW 2: Context Bar — changes per active tab ━━━ */}
-          <motion.div
-            className="shell-row2"
-            ref={(node) => {
-              contextBarRef.current = node;
-              if (node && !contextBarReady) setContextBarReady(true);
-            }}
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          />
 
           {/* ━━━ Tab Panes: ALL stay mounted, only active one is visible ━━━ */}
           <div className="shell-content">

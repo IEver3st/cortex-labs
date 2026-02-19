@@ -258,13 +258,14 @@ async function decodeAiCanvas(bytes) {
   return canvas;
 }
 
-async function decodeFlatLayerSourceCanvas(extension, bytes) {
+async function decodeFlatLayerSourceCanvas(extension, bytes, filePath = "") {
+  void filePath;
   if (extension === "pdn") {
     const pdn = decodePdn(bytes);
-    if (!pdn?.width || !pdn?.height || !pdn?.data) {
-      throw new Error("Failed to decode Paint.NET layer source.");
+    if (pdn?.width && pdn?.height && pdn?.data) {
+      return canvasFromRgba(pdn.width, pdn.height, pdn.data);
     }
-    return canvasFromRgba(pdn.width, pdn.height, pdn.data);
+    throw new Error("Failed to decode Paint.NET layer source.");
   }
 
   if (extension === "ai") {
@@ -298,7 +299,7 @@ export async function parsePsdLayers(filePath) {
   const extension = getFileExtension(filePath);
 
   if (isFlatLayerSourceExtension(extension)) {
-    const canvas = await decodeFlatLayerSourceCanvas(extension, bytes);
+    const canvas = await decodeFlatLayerSourceCanvas(extension, bytes, filePath);
     return buildFlatLayerSourceData(canvas.width, canvas.height);
   }
 
@@ -476,7 +477,7 @@ export async function compositePsdVariant(filePath, layerVisibility = {}, target
   const extension = getFileExtension(filePath);
 
   if (isFlatLayerSourceExtension(extension)) {
-    const sourceCanvas = await decodeFlatLayerSourceCanvas(extension, bytes);
+    const sourceCanvas = await decodeFlatLayerSourceCanvas(extension, bytes, filePath);
     const outW = targetWidth || sourceCanvas.width;
     const outH = targetHeight || sourceCanvas.height;
     const outCanvas = document.createElement("canvas");

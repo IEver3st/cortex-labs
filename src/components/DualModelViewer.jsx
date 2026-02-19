@@ -33,6 +33,7 @@ export default function DualModelViewer({
   backgroundColor,
   backgroundImagePath = "",
   backgroundImageReloadToken = 0,
+  backgroundImageBlur = 0,
   lightIntensity = 1.0,
   glossiness = 0.5,
   showWireframe = false,
@@ -52,6 +53,7 @@ export default function DualModelViewer({
   onModelAInfo,
   onModelBInfo,
   onFormatWarning,
+  isActive = true,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -97,6 +99,7 @@ export default function DualModelViewer({
   const initialPosBRef = useRef(initialPosB);
   const glossinessRef = useRef(glossiness);
   const showWireframeRef = useRef(showWireframe);
+  const isActiveRef = useRef(isActive);
 
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   useEffect(() => { onModelAErrorRef.current = onModelAError; }, [onModelAError]);
@@ -111,6 +114,10 @@ export default function DualModelViewer({
   useEffect(() => { textureModeRef.current = textureMode; }, [textureMode]);
   useEffect(() => { glossinessRef.current = glossiness; }, [glossiness]);
   useEffect(() => { showWireframeRef.current = showWireframe; }, [showWireframe]);
+  useEffect(() => {
+    isActiveRef.current = isActive;
+    if (isActive) requestRenderRef.current?.();
+  }, [isActive]);
 
   const requestRender = useCallback(() => { requestRenderRef.current?.(); }, []);
 
@@ -221,9 +228,18 @@ export default function DualModelViewer({
     let frameId = 0;
     let isRendering = false;
     let renderRequested = false;
+    const canRenderFrame = () => {
+      if (!isActiveRef.current) return false;
+      const container = containerRef.current;
+      return Boolean(container && container.clientWidth > 0 && container.clientHeight > 0);
+    };
 
     const renderFrame = () => {
       frameId = 0;
+      if (!canRenderFrame()) {
+        isRendering = false;
+        return;
+      }
       const needsUpdate = controls.update();
       renderer.render(scene, camera);
       if (renderRequested || needsUpdate) {
@@ -235,6 +251,7 @@ export default function DualModelViewer({
     };
 
     const requestRenderFrame = () => {
+      if (!canRenderFrame()) return;
       renderRequested = true;
       if (isRendering) return;
       isRendering = true;
@@ -357,9 +374,38 @@ export default function DualModelViewer({
 
       const previous = backgroundTextureRef.current;
       texture.mapping = THREE.UVMapping;
-      backgroundTextureRef.current = texture;
-      sceneRef.current.background = texture;
-      if (previous && previous !== texture) {
+
+      // Apply blur via offscreen canvas if requested
+      let finalTexture = texture;
+      if (backgroundImageBlur > 0) {
+        const img = texture.image;
+        const isBlurrable = img && (
+          img instanceof HTMLImageElement ||
+          img instanceof HTMLCanvasElement ||
+          img instanceof ImageBitmap
+        );
+        if (isBlurrable) {
+          const w = img.naturalWidth || img.width || img.videoWidth || 512;
+          const h = img.naturalHeight || img.height || img.videoHeight || 512;
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          const pad = backgroundImageBlur * 2;
+          ctx.filter = `blur(${backgroundImageBlur}px)`;
+          ctx.drawImage(img, -pad, -pad, w + pad * 2, h + pad * 2);
+          const blurredTexture = new THREE.CanvasTexture(canvas);
+          blurredTexture.colorSpace = THREE.SRGBColorSpace;
+          blurredTexture.wrapS = THREE.RepeatWrapping;
+          blurredTexture.wrapT = THREE.RepeatWrapping;
+          texture.dispose();
+          finalTexture = blurredTexture;
+        }
+      }
+
+      backgroundTextureRef.current = finalTexture;
+      sceneRef.current.background = finalTexture;
+      if (previous && previous !== finalTexture) {
         previous.dispose?.();
       }
       requestRender();
@@ -370,7 +416,7 @@ export default function DualModelViewer({
     return () => {
       cancelled = true;
     };
-  }, [backgroundImagePath, backgroundImageReloadToken, textureLoader, requestRender]);
+  }, [backgroundImagePath, backgroundImageReloadToken, backgroundImageBlur, textureLoader, requestRender]);
 
   useEffect(() => {
     const { ambient, key, rim } = lightsRef.current;

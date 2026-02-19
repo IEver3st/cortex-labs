@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { DDSLoader } from "three/examples/jsm/loaders/DDSLoader";
@@ -89,6 +89,26 @@ const EXTERIOR_EXCLUDE_TOKENS = [
 ];
 const TEXTURE_CACHE_LIMIT = 16;
 const textureCache = new Map();
+const MODEL_CACHE_LIMIT = 4;
+const modelCache = new Map();
+const DEFAULT_MATERIAL_CONFIG = {
+  type: "paint",
+  lightIntensity: 1.0,
+  glossiness: 0.62,
+  roughness: 0.28,
+  clearcoat: 0.72,
+};
+const MATERIAL_TYPE_PRESETS = {
+  paint: { metalness: 0.22, transparency: 0, transmission: 0, depthWrite: true },
+  chrome: { metalness: 1.0, transparency: 0, transmission: 0, depthWrite: true },
+  plastic: { metalness: 0.06, transparency: 0, transmission: 0, depthWrite: true },
+  metal: { metalness: 0.82, transparency: 0, transmission: 0, depthWrite: true },
+  glass: { metalness: 0.0, transparency: 0.62, transmission: 0.9, depthWrite: false },
+};
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 
 function getTextureCacheKey(path, flipY, reloadToken) {
   if (!path) return "";
@@ -157,7 +177,63 @@ function releaseTexture(texture) {
   }
   entry.refs = Math.max(0, (entry.refs || 0) - 1);
 }
-export default function Viewer({
+
+function touchModelCache(key) {
+  const entry = modelCache.get(key);
+  if (!entry) return null;
+  modelCache.delete(key);
+  modelCache.set(key, entry);
+  return entry.template;
+}
+
+function getCachedModelTemplate(path) {
+  if (!path) return null;
+  return touchModelCache(path.toString());
+}
+
+function pruneModelCache() {
+  while (modelCache.size > MODEL_CACHE_LIMIT) {
+    const [oldestKey, oldestEntry] = modelCache.entries().next().value || [];
+    if (!oldestKey) break;
+    modelCache.delete(oldestKey);
+    disposeObject(oldestEntry?.template);
+  }
+}
+
+function cacheModelTemplate(path, template) {
+  if (!path || !template) return;
+  const key = path.toString();
+  const existing = modelCache.get(key);
+  if (existing?.template && existing.template !== template) {
+    disposeObject(existing.template);
+  }
+  modelCache.delete(key);
+  modelCache.set(key, { template });
+  pruneModelCache();
+}
+
+function cloneCachedModelTemplate(template) {
+  if (!template) return null;
+  const clone = template.clone(true);
+  clone.traverse((child) => {
+    if (!child?.isMesh) return;
+    if (child.geometry?.clone) {
+      child.geometry = child.geometry.clone();
+    }
+    if (Array.isArray(child.material)) {
+      child.material = child.material.map((material) => (material?.clone ? material.clone() : material));
+    } else if (child.material?.clone) {
+      child.material = child.material.clone();
+    }
+    child.userData = { ...(child.userData || {}) };
+    delete child.userData.baseMaterial;
+    delete child.userData.appliedMaterial;
+    delete child.userData.textureMeta;
+  });
+  return clone;
+}
+
+function ViewerComponent({
   modelPath,
   texturePath,
   windowTexturePath,
@@ -165,6 +241,7 @@ export default function Viewer({
   backgroundColor,
   backgroundImagePath = "",
   backgroundImageReloadToken = 0,
+  backgroundImageBlur = 0,
   textureReloadToken,
   windowTextureReloadToken = textureReloadToken,
   textureTarget,
@@ -177,6 +254,12 @@ export default function Viewer({
   showGrid = false,
   lightIntensity = 1.0,
   glossiness = 0.5,
+  materialType = "paint",
+  materialLightIntensity = 1.0,
+  materialGlossiness = 0.62,
+  materialRoughness = 0.28,
+  materialClearcoat = 0.72,
+  materialTexturePath = "",
   onReady,
   onModelInfo,
   onModelError,
@@ -185,6 +268,7 @@ export default function Viewer({
   onTextureError,
   onWindowTextureError,
   onFormatWarning,
+  isActive = true,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -194,12 +278,12 @@ export default function Viewer({
   const modelRef = useRef(null);
   const textureRef = useRef(null);
   const windowTextureRef = useRef(null);
+  const materialTextureRef = useRef(null);
   const backgroundTextureRef = useRef(null);
   const lightsRef = useRef({ ambient: null, key: null, rim: null });
   const gridRef = useRef(null);
   const fitRef = useRef({ center: new THREE.Vector3(), distance: 4 });
   const [sceneReady, setSceneReady] = useState(false);
-  const [modelLoadedVersion, setModelLoadedVersion] = useState(0);
   const requestRenderRef = useRef(null);
   const wasdStateRef = useRef({
     forward: false,
@@ -218,6 +302,7 @@ export default function Viewer({
   const onTextureErrorRef = useRef(onTextureError);
   const onWindowTextureErrorRef = useRef(onWindowTextureError);
   const onFormatWarningRef = useRef(onFormatWarning);
+  const isActiveRef = useRef(isActive);
   const materialStateRef = useRef({});
 
   const resolvedBodyColor = bodyColor || defaultBody;
@@ -244,9 +329,23 @@ export default function Viewer({
     onTextureErrorRef.current = onTextureError;
     onWindowTextureErrorRef.current = onWindowTextureError;
     onFormatWarningRef.current = onFormatWarning;
-  });
+  }, [onTextureError, onWindowTextureError, onFormatWarning]);
 
   useEffect(() => {
+    isActiveRef.current = isActive;
+    if (isActive) {
+      requestRenderRef.current?.();
+    }
+  }, [isActive]);
+
+  useEffect(() => {
+    const materialConfig = {
+      type: materialType,
+      lightIntensity: materialLightIntensity,
+      glossiness: materialGlossiness,
+      roughness: materialRoughness,
+      clearcoat: materialClearcoat,
+    };
     materialStateRef.current = {
       bodyColor: resolvedBodyColor,
       textureTarget,
@@ -255,8 +354,27 @@ export default function Viewer({
       textureMode,
       glossiness,
       showWireframe,
+      materialConfig,
     };
-  }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode, glossiness, showWireframe]);
+    if (modelRef.current) {
+      modelRef.current.userData = modelRef.current.userData || {};
+      modelRef.current.userData.materialConfig = materialConfig;
+      modelRef.current.userData.materialDetailTexture = materialTextureRef.current || null;
+    }
+  }, [
+    resolvedBodyColor,
+    textureTarget,
+    windowTextureTarget,
+    liveryExteriorOnly,
+    textureMode,
+    glossiness,
+    showWireframe,
+    materialType,
+    materialLightIntensity,
+    materialGlossiness,
+    materialRoughness,
+    materialClearcoat,
+  ]);
 
   const requestRender = useCallback(() => {
     requestRenderRef.current?.();
@@ -314,9 +432,19 @@ export default function Viewer({
     let frameId = 0;
     let isRendering = false;
     let renderRequested = false;
+    const lastViewport = { width: 0, height: 0, pixelRatio: 0 };
+    const canRenderFrame = () => {
+      if (!isActiveRef.current) return false;
+      const container = containerRef.current;
+      return Boolean(container && container.clientWidth > 0 && container.clientHeight > 0);
+    };
 
     const renderFrame = () => {
       frameId = 0;
+      if (!canRenderFrame()) {
+        isRendering = false;
+        return;
+      }
       const needsUpdate = controls.update();
       renderer.render(scene, camera);
       if (renderRequested || needsUpdate) {
@@ -328,6 +456,7 @@ export default function Viewer({
     };
 
     const requestRenderFrame = () => {
+      if (!canRenderFrame()) return;
       renderRequested = true;
       if (isRendering) return;
       isRendering = true;
@@ -336,20 +465,44 @@ export default function Viewer({
 
     requestRenderRef.current = requestRenderFrame;
 
-    const resize = () => {
+    const applyResize = () => {
       if (!containerRef.current) return;
       const { clientWidth, clientHeight } = containerRef.current;
       if (clientWidth === 0 || clientHeight === 0) return;
-      renderer.setPixelRatio(getPixelRatio());
-      renderer.setSize(clientWidth, clientHeight);
+      const pixelRatio = getPixelRatio();
+      if (
+        clientWidth === lastViewport.width &&
+        clientHeight === lastViewport.height &&
+        pixelRatio === lastViewport.pixelRatio
+      ) {
+        return;
+      }
+      lastViewport.width = clientWidth;
+      lastViewport.height = clientHeight;
+      // Only reconfigure pixel ratio when it actually changes (e.g. monitor switch)
+      if (pixelRatio !== lastViewport.pixelRatio) {
+        lastViewport.pixelRatio = pixelRatio;
+        renderer.setPixelRatio(pixelRatio);
+      }
+      // false = don't touch canvas.style (avoids layout thrash during drag)
+      renderer.setSize(clientWidth, clientHeight, false);
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
-      requestRenderFrame();
+      if (!isActiveRef.current) return;
+      const needsUpdate = controls.update();
+      renderer.render(scene, camera);
+      if (needsUpdate || renderRequested) {
+        requestRenderFrame();
+      }
     };
 
-    const resizeObserver = new ResizeObserver(resize);
+    // ResizeObserver fires at most once per frame after layout, before paint.
+    // Invoke applyResize directly (no RAF indirection) so the canvas buffer
+    // matches the container size in the same paint frame — eliminates the
+    // 1-frame size mismatch that caused visible lag during panel drag.
+    const resizeObserver = new ResizeObserver(applyResize);
     resizeObserver.observe(containerRef.current);
-    resize();
+    applyResize();
 
     controls.addEventListener("start", requestRenderFrame);
     controls.addEventListener("change", requestRenderFrame);
@@ -429,6 +582,8 @@ export default function Viewer({
       }
       backgroundTextureRef.current?.dispose?.();
       backgroundTextureRef.current = null;
+      releaseTexture(materialTextureRef.current);
+      materialTextureRef.current = null;
       controls.dispose();
       renderer.dispose();
       renderer.domElement.removeEventListener("wheel", wheelWhileDragging);
@@ -456,6 +611,7 @@ export default function Viewer({
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       for (const material of materials) {
         if (!material) continue;
+        if (child.userData?.appliedMaterial && material === child.userData.appliedMaterial) continue;
         const base = material.userData?.baseRoughness;
         if (typeof base === "number") {
           material.roughness = Math.min(1.0, Math.max(0.0, base * factor));
@@ -514,9 +670,38 @@ export default function Viewer({
 
       const previous = backgroundTextureRef.current;
       texture.mapping = THREE.UVMapping;
-      backgroundTextureRef.current = texture;
-      sceneRef.current.background = texture;
-      if (previous && previous !== texture) {
+
+      // Apply blur via offscreen canvas if requested
+      let finalTexture = texture;
+      if (backgroundImageBlur > 0) {
+        const img = texture.image;
+        const isBlurrable = img && (
+          img instanceof HTMLImageElement ||
+          img instanceof HTMLCanvasElement ||
+          img instanceof ImageBitmap
+        );
+        if (isBlurrable) {
+          const w = img.naturalWidth || img.width || img.videoWidth || 512;
+          const h = img.naturalHeight || img.height || img.videoHeight || 512;
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          const pad = backgroundImageBlur * 2;
+          ctx.filter = `blur(${backgroundImageBlur}px)`;
+          ctx.drawImage(img, -pad, -pad, w + pad * 2, h + pad * 2);
+          const blurredTexture = new THREE.CanvasTexture(canvas);
+          blurredTexture.colorSpace = THREE.SRGBColorSpace;
+          blurredTexture.wrapS = THREE.RepeatWrapping;
+          blurredTexture.wrapT = THREE.RepeatWrapping;
+          texture.dispose();
+          finalTexture = blurredTexture;
+        }
+      }
+
+      backgroundTextureRef.current = finalTexture;
+      sceneRef.current.background = finalTexture;
+      if (previous && previous !== finalTexture) {
         previous.dispose?.();
       }
       requestRender();
@@ -527,7 +712,7 @@ export default function Viewer({
     return () => {
       cancelled = true;
     };
-  }, [backgroundImagePath, backgroundImageReloadToken, textureLoader, requestRender]);
+  }, [backgroundImagePath, backgroundImageReloadToken, backgroundImageBlur, textureLoader, requestRender]);
 
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
@@ -560,112 +745,123 @@ export default function Viewer({
       try {
         const extension = getFileExtension(modelPath);
         let object = null;
-
-        if (extension === "obj") {
-          onModelErrorRef.current?.(
-            "out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported.",
-          );
-          return;
-        }
-
-        if (extension === "yft") {
-          let bytes = null;
-          try {
-            bytes = await readFile(modelPath);
-          } catch {
-            onModelErrorRef.current?.("Failed to read YFT file.");
-            return;
-          }
-          if (cancelled) return;
-          const name = getFileNameWithoutExtension(modelPath) || "yft_model";
-          let drawable = null;
-          try {
-            drawable = parseYft(bytes, name);
-          } catch (err) {
-            console.error("[YFT] Parse error:", err);
-            onModelErrorRef.current?.("YFT parsing failed.");
-            return;
-          }
-          if (!drawable || !drawable.models?.length) {
-            onModelErrorRef.current?.("YFT parsing returned no drawable data.");
-            return;
-          }
-
-          object = buildDrawableObject(drawable, { useVertexColors: false });
-          if (!hasRenderableMeshes(object)) {
-            onModelErrorRef.current?.("YFT parsed but no mesh data was generated.");
-            return;
-          }
-          object.userData.sourceFormat = "yft";
-
-        } else if (extension === "ydd") {
-          let bytes = null;
-          try {
-            bytes = await readFile(modelPath);
-          } catch {
-            onModelErrorRef.current?.("Failed to read YDD file.");
-            return;
-          }
-          if (cancelled) return;
-          const name = getFileNameWithoutExtension(modelPath) || "ydd_model";
-          let drawable = null;
-          try {
-            drawable = parseYft(bytes, name, YDD_SCAN_SETTINGS);
-          } catch (err) {
-            console.error("[YDD] Parse error:", err);
-            onModelErrorRef.current?.("YDD parsing failed.");
-            return;
-          }
-          if (!drawable || !drawable.models?.length) {
-            onModelErrorRef.current?.("YDD parsing returned no drawable data.");
-            return;
-          }
-          object = buildDrawableObject(drawable, { useVertexColors: false });
-          if (!hasRenderableMeshes(object)) {
-            onModelErrorRef.current?.("YDD parsed but no mesh data was generated.");
-            return;
-          }
-          object.userData.sourceFormat = "ydd";
-        } else if (extension === "clmesh") {
-          let bytes = null;
-          try {
-            bytes = await readFile(modelPath);
-          } catch {
-            onModelErrorRef.current?.("Failed to read mesh cache.");
-            return;
-          }
-          if (cancelled) return;
-          const meshes = parseClmesh(bytes);
-          if (!meshes || meshes.length === 0) {
-            onModelErrorRef.current?.("Mesh cache contained no meshes.");
-            return;
-          }
-          object = buildClmeshObject(meshes);
-        } else if (extension === "dff") {
-          let bytes = null;
-          try {
-            bytes = await readFile(modelPath);
-          } catch {
-            return;
-          }
-          if (cancelled) return;
-          const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-          const loader = new DFFLoader();
-          try {
-            object = loader.parse(buffer);
-          } catch {
-            return;
-          }
-        } else {
-          onModelErrorRef.current?.("Unsupported model format.");
-          return;
+        const cachedTemplate = getCachedModelTemplate(modelPath);
+        if (cachedTemplate) {
+          object = cloneCachedModelTemplate(cachedTemplate);
         }
 
         if (!object) {
-          onModelErrorRef.current?.("Model loaded with no geometry.");
-          return;
+          if (extension === "obj") {
+            onModelErrorRef.current?.(
+              "out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported.",
+            );
+            return;
+          }
+
+          if (extension === "yft") {
+            let bytes = null;
+            try {
+              bytes = await readFile(modelPath);
+            } catch {
+              onModelErrorRef.current?.("Failed to read YFT file.");
+              return;
+            }
+            if (cancelled) return;
+            const name = getFileNameWithoutExtension(modelPath) || "yft_model";
+            let drawable = null;
+            try {
+              drawable = parseYft(bytes, name);
+            } catch (err) {
+              console.error("[YFT] Parse error:", err);
+              onModelErrorRef.current?.("YFT parsing failed.");
+              return;
+            }
+            if (!drawable || !drawable.models?.length) {
+              onModelErrorRef.current?.("YFT parsing returned no drawable data.");
+              return;
+            }
+
+            object = buildDrawableObject(drawable, { useVertexColors: false });
+            if (!hasRenderableMeshes(object)) {
+              onModelErrorRef.current?.("YFT parsed but no mesh data was generated.");
+              return;
+            }
+            object.userData.sourceFormat = "yft";
+
+          } else if (extension === "ydd") {
+            let bytes = null;
+            try {
+              bytes = await readFile(modelPath);
+            } catch {
+              onModelErrorRef.current?.("Failed to read YDD file.");
+              return;
+            }
+            if (cancelled) return;
+            const name = getFileNameWithoutExtension(modelPath) || "ydd_model";
+            let drawable = null;
+            try {
+              drawable = parseYft(bytes, name, YDD_SCAN_SETTINGS);
+            } catch (err) {
+              console.error("[YDD] Parse error:", err);
+              onModelErrorRef.current?.("YDD parsing failed.");
+              return;
+            }
+            if (!drawable || !drawable.models?.length) {
+              onModelErrorRef.current?.("YDD parsing returned no drawable data.");
+              return;
+            }
+            object = buildDrawableObject(drawable, { useVertexColors: false });
+            if (!hasRenderableMeshes(object)) {
+              onModelErrorRef.current?.("YDD parsed but no mesh data was generated.");
+              return;
+            }
+            object.userData.sourceFormat = "ydd";
+          } else if (extension === "clmesh") {
+            let bytes = null;
+            try {
+              bytes = await readFile(modelPath);
+            } catch {
+              onModelErrorRef.current?.("Failed to read mesh cache.");
+              return;
+            }
+            if (cancelled) return;
+            const meshes = parseClmesh(bytes);
+            if (!meshes || meshes.length === 0) {
+              onModelErrorRef.current?.("Mesh cache contained no meshes.");
+              return;
+            }
+            object = buildClmeshObject(meshes);
+          } else if (extension === "dff") {
+            let bytes = null;
+            try {
+              bytes = await readFile(modelPath);
+            } catch {
+              return;
+            }
+            if (cancelled) return;
+            const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+            const loader = new DFFLoader();
+            try {
+              object = loader.parse(buffer);
+            } catch {
+              return;
+            }
+          } else {
+            onModelErrorRef.current?.("Unsupported model format.");
+            return;
+          }
+
+          if (!object) {
+            onModelErrorRef.current?.("Model loaded with no geometry.");
+            return;
+          }
+
+          normalizeLoadedMeshes(object);
+          const modelTemplate = cloneCachedModelTemplate(object);
+          if (modelTemplate) {
+            cacheModelTemplate(modelPath, modelTemplate);
+          }
         }
-        normalizeLoadedMeshes(object);
 
         if (modelRef.current) {
           sceneRef.current.remove(modelRef.current);
@@ -674,6 +870,9 @@ export default function Viewer({
 
         modelRef.current = object;
         sceneRef.current.add(object);
+        object.userData = object.userData || {};
+        object.userData.materialConfig = materialStateRef.current.materialConfig || DEFAULT_MATERIAL_CONFIG;
+        object.userData.materialDetailTexture = materialTextureRef.current || null;
 
         const glossFactor = 2 - 2 * glossiness;
         const meshes = getMeshList(object);
@@ -759,7 +958,6 @@ export default function Viewer({
           showWireframe,
         );
         requestRender();
-        setModelLoadedVersion((v) => v + 1);
       } catch (error) {
         const message =
           error && typeof error === "object" && "message" in error
@@ -782,6 +980,9 @@ export default function Viewer({
 
   useEffect(() => {
     if (!modelRef.current) return;
+    modelRef.current.userData = modelRef.current.userData || {};
+    modelRef.current.userData.materialConfig = materialStateRef.current.materialConfig || DEFAULT_MATERIAL_CONFIG;
+    modelRef.current.userData.materialDetailTexture = materialTextureRef.current || null;
     applyMaterials(
       modelRef.current,
       resolvedBodyColor,
@@ -795,7 +996,19 @@ export default function Viewer({
       materialStateRef.current.showWireframe,
     );
     requestRender();
-  }, [resolvedBodyColor, textureTarget, windowTextureTarget, liveryExteriorOnly, textureMode, showWireframe]);
+  }, [
+    resolvedBodyColor,
+    textureTarget,
+    windowTextureTarget,
+    liveryExteriorOnly,
+    textureMode,
+    showWireframe,
+    materialType,
+    materialLightIntensity,
+    materialGlossiness,
+    materialRoughness,
+    materialClearcoat,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1404,8 +1617,99 @@ export default function Viewer({
     flipTextureY,
   ]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const applyCurrent = () => {
+      if (!modelRef.current) return;
+      modelRef.current.userData = modelRef.current.userData || {};
+      modelRef.current.userData.materialConfig = materialStateRef.current.materialConfig || DEFAULT_MATERIAL_CONFIG;
+      modelRef.current.userData.materialDetailTexture = materialTextureRef.current || null;
+      const materialState = materialStateRef.current;
+      applyMaterials(
+        modelRef.current,
+        materialState.bodyColor,
+        textureRef.current,
+        materialState.textureTarget,
+        windowTextureRef.current,
+        materialState.windowTextureTarget,
+        materialState.liveryExteriorOnly,
+        materialState.textureMode,
+        materialState.glossiness,
+        materialState.showWireframe,
+      );
+      requestRender();
+    };
+
+    const clearTexture = () => {
+      if (materialTextureRef.current) {
+        releaseTexture(materialTextureRef.current);
+        materialTextureRef.current = null;
+      }
+      applyCurrent();
+    };
+
+    if (!materialTexturePath) {
+      clearTexture();
+      return;
+    }
+
+    const loadTexture = async () => {
+      const cacheKey = getTextureCacheKey(materialTexturePath, flipTextureY, 0);
+      const cached = getCachedTexture(cacheKey);
+      if (cached) {
+        if (cancelled) return;
+        releaseTexture(materialTextureRef.current);
+        materialTextureRef.current = cached;
+        retainTexture(cached);
+        applyCurrent();
+        return;
+      }
+
+      let texture = null;
+      try {
+        texture = await loadTextureFromPathShared(materialTexturePath, textureLoader, rendererRef.current);
+      } catch (error) {
+        if (error?.type === "unsupported-bit-depth") {
+          onFormatWarningRef.current?.({
+            type: "16bit-psd",
+            bitDepth: error.bitDepth,
+            path: materialTexturePath,
+            kind: "material",
+          });
+        }
+        return;
+      }
+
+      if (!texture) return;
+      if (cancelled) {
+        texture.dispose?.();
+        return;
+      }
+
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.flipY = flipTextureY;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.needsUpdate = true;
+      texture.anisotropy = rendererRef.current?.capabilities?.getMaxAnisotropy?.() || 1;
+      cacheTexture(cacheKey, texture);
+      releaseTexture(materialTextureRef.current);
+      materialTextureRef.current = texture;
+      retainTexture(texture);
+      applyCurrent();
+    };
+
+    loadTexture();
+    return () => {
+      cancelled = true;
+    };
+  }, [materialTexturePath, textureLoader, flipTextureY, requestRender]);
+
   return <div ref={containerRef} className="h-full w-full" />;
 }
+
+export default memo(ViewerComponent);
 
 function buildClmeshObject(meshes) {
   const root = new THREE.Group();
@@ -1554,21 +1858,32 @@ function getMeshList(object) {
   return meshes;
 }
 
+function getPrimaryMaterial(material) {
+  if (!material) return null;
+  if (Array.isArray(material)) return material.find(Boolean) || null;
+  return material;
+}
+
 function getOrCreateAppliedMaterial(mesh, color) {
   if (mesh.userData.appliedMaterial) return mesh.userData.appliedMaterial;
-  
-  const baseMat = mesh.userData.baseMaterial || mesh.material;
-  const baseRoughness = baseMat.userData?.baseRoughness ?? baseMat.roughness ?? 0.6;
-  const metalness = baseMat.metalness ?? 0.2;
 
-  const material = new THREE.MeshStandardMaterial({
+  const baseMat = getPrimaryMaterial(mesh.userData.baseMaterial || mesh.material);
+  const baseRoughness = baseMat?.userData?.baseRoughness ?? baseMat?.roughness ?? 0.6;
+  const baseMetalness = baseMat?.metalness ?? 0.2;
+  const baseOpacity = typeof baseMat?.opacity === "number" ? baseMat.opacity : 1;
+  const material = new THREE.MeshPhysicalMaterial({
     color,
     map: null,
     side: THREE.FrontSide,
-    metalness,
+    metalness: baseMetalness,
     roughness: baseRoughness,
+    clearcoat: 0,
+    clearcoatRoughness: 0.35,
   });
   material.userData.baseRoughness = baseRoughness;
+  material.userData.baseMetalness = baseMetalness;
+  material.userData.baseOpacity = baseOpacity;
+  material.userData.baseDepthWrite = baseMat?.depthWrite ?? true;
   setupLiveryShader(material);
   mesh.userData.appliedMaterial = material;
   return material;
@@ -1580,6 +1895,69 @@ function updateAppliedMaterial(material, color, map) {
     material.map = map || null;
     material.needsUpdate = true;
   }
+}
+
+function applyMaterialProfile(material, color, materialConfig, showWireframe) {
+  const resolvedConfig = materialConfig || DEFAULT_MATERIAL_CONFIG;
+  const type = resolvedConfig.type || DEFAULT_MATERIAL_CONFIG.type;
+  const preset = MATERIAL_TYPE_PRESETS[type] || MATERIAL_TYPE_PRESETS.paint;
+
+  const tint = color.clone();
+  const lightBoost = clamp(
+    Number.isFinite(resolvedConfig.lightIntensity) ? resolvedConfig.lightIntensity : DEFAULT_MATERIAL_CONFIG.lightIntensity,
+    0,
+    3,
+  );
+  tint.multiplyScalar(lightBoost);
+  tint.r = clamp(tint.r, 0, 1);
+  tint.g = clamp(tint.g, 0, 1);
+  tint.b = clamp(tint.b, 0, 1);
+  material.color.copy(tint);
+
+  const materialGlossiness = clamp(
+    Number.isFinite(resolvedConfig.glossiness) ? resolvedConfig.glossiness : DEFAULT_MATERIAL_CONFIG.glossiness,
+    0,
+    1,
+  );
+  const materialRoughness = clamp(
+    Number.isFinite(resolvedConfig.roughness) ? resolvedConfig.roughness : DEFAULT_MATERIAL_CONFIG.roughness,
+    0,
+    1,
+  );
+  const glossFactor = 2 - 2 * materialGlossiness;
+  material.roughness = clamp(materialRoughness * glossFactor, 0.02, 1);
+  material.metalness = clamp(
+    Number.isFinite(preset.metalness) ? preset.metalness : (material.userData.baseMetalness ?? 0.2),
+    0,
+    1,
+  );
+
+  const clearcoatValue = clamp(
+    Number.isFinite(resolvedConfig.clearcoat) ? resolvedConfig.clearcoat : DEFAULT_MATERIAL_CONFIG.clearcoat,
+    0,
+    1,
+  );
+  material.clearcoat = clearcoatValue;
+  material.clearcoatRoughness = clamp((1 - materialGlossiness) * 0.55, 0, 1);
+
+  const transparency = clamp(preset.transparency ?? 0, 0, 1);
+  const transmission = clamp(preset.transmission ?? 0, 0, 1);
+  const baseOpacity = typeof material.userData.baseOpacity === "number" ? material.userData.baseOpacity : 1;
+  material.opacity = clamp(baseOpacity * (1 - transparency), 0.08, 1);
+  material.transmission = transmission;
+  material.ior = type === "glass" ? 1.45 : 1.35;
+  material.thickness = type === "glass" ? 0.24 : 0;
+  material.transparent = material.opacity < 0.995 || material.transmission > 0;
+  material.depthWrite = preset.depthWrite ?? (material.userData.baseDepthWrite ?? true);
+  material.side = type === "glass" ? THREE.DoubleSide : THREE.FrontSide;
+
+  if (!material.transparent) {
+    material.opacity = 1;
+    material.transmission = 0;
+  }
+
+  setMaterialWireframe(material, showWireframe);
+  material.needsUpdate = true;
 }
 
 function applyMaterials(
@@ -1594,14 +1972,17 @@ function applyMaterials(
   glossiness = 0.5,
   showWireframe = false,
 ) {
-  const color = new THREE.Color(bodyColor);
+  if (!object) return;
+
+  const color = new THREE.Color(bodyColor || defaultBody);
   const vehicleTarget = textureTarget || ALL_TARGET;
   const windowTarget = windowTextureTarget || ALL_TARGET;
   const exteriorOnly = Boolean(liveryExteriorOnly);
   const preferUv2 = textureMode === "livery";
   const meshes = getMeshList(object);
-
-  const glossFactor = 2 - 2 * glossiness;
+  const materialConfig = object.userData?.materialConfig || DEFAULT_MATERIAL_CONFIG;
+  const materialDetailTexture = object.userData?.materialDetailTexture || null;
+  const baseGlossFactor = 2 - 2 * clamp(glossiness, 0, 1);
 
   for (const child of meshes) {
     if (!child.userData.baseMaterial) {
@@ -1609,12 +1990,15 @@ function applyMaterials(
     }
 
     const isGlass = isGlassMaterial(child);
-
     const matchesVehicleRaw = matchesTextureTarget(child, vehicleTarget);
     const matchesVehicle = preferUv2 && isGlass ? false : matchesVehicleRaw;
     const matchesWindow = Boolean(windowTexture) && matchesTextureTarget(child, windowTarget);
     const shouldApply = matchesVehicle || matchesWindow;
-    const activeTexture = matchesWindow ? windowTexture : matchesVehicle ? texture : null;
+    const activeTexture = matchesWindow
+      ? windowTexture
+      : matchesVehicle
+        ? (materialDetailTexture || texture)
+        : null;
     const preferUv2ForMesh = matchesWindow ? false : preferUv2;
 
     if (activeTexture && child.geometry) {
@@ -1640,14 +2024,9 @@ function applyMaterials(
     if (shouldApply && (activeTexture || matchesVehicle)) {
       const appliedMaterial = getOrCreateAppliedMaterial(child, color);
       updateAppliedMaterial(appliedMaterial, color, activeTexture);
-      setMaterialWireframe(appliedMaterial, showWireframe);
+      applyMaterialProfile(appliedMaterial, color, materialConfig, showWireframe);
       if (child.material !== appliedMaterial) {
         child.material = appliedMaterial;
-      }
-      
-      const base = appliedMaterial.userData.baseRoughness;
-      if (typeof base === "number") {
-        appliedMaterial.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
       }
       continue;
     }
@@ -1659,10 +2038,12 @@ function applyMaterials(
       child.material = child.userData.baseMaterial;
     }
     setMaterialWireframe(child.material, showWireframe);
-
-    const base = child.material.userData.baseRoughness;
-    if (typeof base === "number") {
-      child.material.roughness = Math.min(1.0, Math.max(0.0, base * glossFactor));
+    const materialList = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materialList) {
+      const base = material?.userData?.baseRoughness;
+      if (typeof base === "number") {
+        material.roughness = clamp(base * baseGlossFactor, 0, 1);
+      }
     }
   }
 }

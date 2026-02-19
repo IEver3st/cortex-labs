@@ -1,37 +1,515 @@
-/**
- * PDN (Paint.NET) File Parser for Cortex Studio.
- *
- * Supports Paint.NET .pdn files by parsing the .NET BinaryFormatter
- * serialization stream to extract layer pixel data (BGRA32) and compositing
- * into a final RGBA image.
- *
- * Format overview:
- *   - Magic: "PDN3" (0x50 0x44 0x4E 0x33)
- *   - 20-byte header (magic + 16 bytes)
- *   - .NET BinaryFormatter stream containing Document → LayerList → BitmapLayer → Surface
- *   - Pixel data is stored in gzip-compressed chunks (BGRA32)
- *
- * Strategy:
- *   1. Validate PDN3 magic
- *   2. Parse header to extract document dimensions
- *   3. Locate gzip-compressed chunks by scanning for 0x1F 0x8B signatures
- *   4. Decompress each chunk and assemble BGRA pixel strips
- *   5. Composite layers with alpha blending into final RGBA output
- */
-
 import pako from "pako";
 
-/* ─── Constants ─── */
-const PDN_MAGIC = [0x50, 0x44, 0x4e, 0x33]; // "PDN3"
-const GZIP_MAGIC = [0x1f, 0x8b];
+const PDN_MAGIC = [0x50, 0x44, 0x4e, 0x33]; // PDN3
+const GZIP_ID1 = 0x1f;
+const GZIP_ID2 = 0x8b;
+const GZIP_CM_DEFLATE = 0x08;
 
-/* ─── Public API ─── */
+const MIN_DIMENSION = 1;
+const MAX_DIMENSION = 65536;
+const MAX_DIMENSION_SCAN_BYTES = 1024 * 1024; // first 1MB is enough for metadata fields
+const MAX_TRIM_BYTES = 128;
+const MAX_PIXEL_COUNT = 64 * 1024 * 1024; // avoid runaway allocations
 
-/**
- * Detect if bytes start with the PDN3 magic.
- * @param {Uint8Array} bytes
- * @returns {boolean}
- */
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function readU32LE(bytes, offset) {
+  if (offset < 0 || offset + 4 > bytes.length) return 0;
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
+
+function isReasonableDimension(value) {
+  return Number.isFinite(value) && value >= MIN_DIMENSION && value <= MAX_DIMENSION;
+}
+
+function isPlausibleDimensionPair(width, height) {
+  if (!isReasonableDimension(width) || !isReasonableDimension(height)) return false;
+  if (width * height > MAX_PIXEL_COUNT) return false;
+  const ratio = width >= height ? width / Math.max(1, height) : height / Math.max(1, width);
+  return ratio <= 64;
+}
+
+function isPowerOfTwo(value) {
+  return value > 0 && (value & (value - 1)) === 0;
+}
+
+function asciiMatchesIgnoreCase(bytes, offset, textLower) {
+  if (offset < 0 || offset + textLower.length > bytes.length) return false;
+  for (let i = 0; i < textLower.length; i += 1) {
+    let code = bytes[offset + i];
+    if (code >= 65 && code <= 90) code += 32;
+    if (code !== textLower.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+function findAsciiOffsets(bytes, text) {
+  const out = [];
+  const lower = text.toLowerCase();
+  const end = Math.min(bytes.length - lower.length, MAX_DIMENSION_SCAN_BYTES);
+  for (let i = 0; i <= end; i += 1) {
+    if (asciiMatchesIgnoreCase(bytes, i, lower)) out.push(i);
+  }
+  return out;
+}
+
+function scoreDimensionValue(value, distanceFromToken = 0) {
+  if (!isReasonableDimension(value)) return 0;
+  let score = 1;
+  if (isPowerOfTwo(value)) score += 2;
+  if (value % 64 === 0) score += 1;
+  if (value % 2 === 0) score += 0.5;
+  score += Math.max(0, 1 - distanceFromToken / 64);
+  return score;
+}
+
+function addMapScore(map, key, score) {
+  if (!map.has(key)) map.set(key, 0);
+  map.set(key, map.get(key) + score);
+}
+
+function collectDimensionsNearTokens(bytes, tokenOffsets) {
+  const scoreMap = new Map();
+  for (const tokenOffset of tokenOffsets) {
+    const start = Math.max(0, tokenOffset - 24);
+    const end = Math.min(bytes.length - 4, tokenOffset + 128);
+    for (let off = start; off <= end; off += 1) {
+      const value = readU32LE(bytes, off);
+      if (!isReasonableDimension(value)) continue;
+      const distance = Math.abs(off - tokenOffset);
+      const score = scoreDimensionValue(value, distance);
+      if (score > 0) addMapScore(scoreMap, value, score);
+    }
+  }
+  return scoreMap;
+}
+
+function collectGenericDimensionPairs(bytes) {
+  const pairs = [];
+  const limit = Math.min(bytes.length - 8, MAX_DIMENSION_SCAN_BYTES);
+  for (let i = 24; i <= limit; i += 1) {
+    const a = readU32LE(bytes, i);
+    const b = readU32LE(bytes, i + 4);
+    if (!isPlausibleDimensionPair(a, b)) continue;
+    let score = 0.1;
+    if (isPowerOfTwo(a)) score += 0.2;
+    if (isPowerOfTwo(b)) score += 0.2;
+    if (a % 64 === 0) score += 0.1;
+    if (b % 64 === 0) score += 0.1;
+    pairs.push({ width: a, height: b, metadataScore: score });
+  }
+  return pairs;
+}
+
+function uniquePairKey(width, height) {
+  return `${width}x${height}`;
+}
+
+function collectDimensionCandidates(bytes) {
+  const candidates = [];
+  const seen = new Set();
+
+  const widthOffsets = findAsciiOffsets(bytes, "width");
+  const heightOffsets = findAsciiOffsets(bytes, "height");
+  const widthScores = collectDimensionsNearTokens(bytes, widthOffsets);
+  const heightScores = collectDimensionsNearTokens(bytes, heightOffsets);
+
+  const topValues = (map, maxCount = 20) =>
+    Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, maxCount);
+
+  const topWidths = topValues(widthScores, 24);
+  const topHeights = topValues(heightScores, 24);
+
+  for (const [width, wScore] of topWidths) {
+    for (const [height, hScore] of topHeights) {
+      if (!isPlausibleDimensionPair(width, height)) continue;
+      const key = uniquePairKey(width, height);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      candidates.push({
+        width,
+        height,
+        metadataScore: wScore + hScore,
+      });
+    }
+  }
+
+  const genericPairs = collectGenericDimensionPairs(bytes);
+  for (const pair of genericPairs) {
+    const key = uniquePairKey(pair.width, pair.height);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(pair);
+  }
+
+  candidates.sort((a, b) => (b.metadataScore || 0) - (a.metadataScore || 0));
+  return candidates.slice(0, 256);
+}
+
+function isGzipHeaderAt(bytes, offset) {
+  if (offset < 0 || offset + 3 > bytes.length) return false;
+  return (
+    bytes[offset] === GZIP_ID1 &&
+    bytes[offset + 1] === GZIP_ID2 &&
+    bytes[offset + 2] === GZIP_CM_DEFLATE
+  );
+}
+
+function findGzipOffsets(bytes) {
+  const offsets = [];
+  for (let i = 24; i + 3 <= bytes.length; i += 1) {
+    if (!isGzipHeaderAt(bytes, i)) continue;
+    if (offsets.length > 0 && i - offsets[offsets.length - 1] < 8) continue;
+    offsets.push(i);
+  }
+  return offsets;
+}
+
+function hashPayloadSignature(payload) {
+  let hash = 2166136261;
+  const mix = (byte) => {
+    hash ^= byte;
+    hash = Math.imul(hash, 16777619);
+  };
+
+  const len = payload.length;
+  const sampleFront = Math.min(256, len);
+  const sampleBack = Math.min(256, Math.max(0, len - sampleFront));
+  for (let i = 0; i < sampleFront; i += 1) mix(payload[i]);
+  for (let i = len - sampleBack; i < len; i += 1) mix(payload[i]);
+  mix((len >>> 0) & 0xff);
+  mix((len >>> 8) & 0xff);
+  mix((len >>> 16) & 0xff);
+  mix((len >>> 24) & 0xff);
+
+  return hash >>> 0;
+}
+
+function extractInflatedPayloads(bytes) {
+  const offsets = findGzipOffsets(bytes);
+  const payloads = [];
+  const seen = new Set();
+
+  for (const offset of offsets) {
+    let inflated = null;
+    try {
+      inflated = pako.ungzip(bytes.subarray(offset));
+    } catch {
+      inflated = null;
+    }
+    if (!inflated || inflated.length === 0) continue;
+    if (inflated.length % 4 !== 0) continue;
+    if (inflated.length < 16) continue;
+
+    const signature = `${inflated.length}:${hashPayloadSignature(inflated)}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    payloads.push(inflated);
+  }
+
+  return payloads;
+}
+
+function selectAlignedSegment(payload, rowBytes, maxTrim = MAX_TRIM_BYTES) {
+  if (!payload || rowBytes <= 0) return null;
+  if (payload.length < rowBytes) return null;
+
+  const limit = Math.min(maxTrim, payload.length - 1);
+  let best = null;
+
+  for (let lead = 0; lead <= limit; lead += 1) {
+    const usable = payload.length - lead;
+    if (usable < rowBytes) continue;
+    const remainder = usable % rowBytes;
+    const trail = remainder;
+    if (trail > limit) continue;
+
+    const start = lead;
+    const end = payload.length - trail;
+    const len = end - start;
+    if (len < rowBytes) continue;
+
+    const rows = len / rowBytes;
+    if (rows <= 0) continue;
+
+    const discard = lead + trail;
+    if (
+      !best ||
+      discard < best.discard ||
+      (discard === best.discard && len > best.length)
+    ) {
+      best = { start, end, length: len, rows, discard };
+    }
+  }
+
+  if (best) return best;
+
+  if (payload.length % rowBytes === 0) {
+    return {
+      start: 0,
+      end: payload.length,
+      length: payload.length,
+      rows: payload.length / rowBytes,
+      discard: 0,
+    };
+  }
+
+  return null;
+}
+
+function evaluateDimensionCandidate(payloads, width, height, metadataScore = 0) {
+  if (!isPlausibleDimensionPair(width, height)) return null;
+  const rowBytes = width * 4;
+  const expectedSize = width * height * 4;
+  if (!Number.isFinite(rowBytes) || rowBytes <= 0) return null;
+  if (!Number.isFinite(expectedSize) || expectedSize <= 0) return null;
+
+  let alignedPayloadCount = 0;
+  let alignedBytes = 0;
+  let totalBytes = 0;
+  let discardedBytes = 0;
+  let totalRows = 0;
+
+  for (const payload of payloads) {
+    totalBytes += payload.length;
+    const segment = selectAlignedSegment(payload, rowBytes);
+    if (!segment) continue;
+    alignedPayloadCount += 1;
+    alignedBytes += segment.length;
+    discardedBytes += segment.discard;
+    totalRows += segment.rows;
+  }
+
+  if (alignedPayloadCount === 0) return null;
+
+  const coverage = totalRows / Math.max(1, height);
+  const completeLayers = Math.floor(coverage);
+  const alignmentRatio = alignedBytes / Math.max(1, totalBytes);
+  const ratio = width >= height ? width / Math.max(1, height) : height / Math.max(1, width);
+  const aspectPenalty = Math.max(0, ratio - 8) * 0.8;
+
+  const score =
+    metadataScore * 8 +
+    completeLayers * 120 +
+    Math.min(coverage, 4) * 24 +
+    alignedPayloadCount * 2 +
+    alignmentRatio * 40 -
+    discardedBytes / 2048 -
+    aspectPenalty;
+
+  return {
+    width,
+    height,
+    rowBytes,
+    expectedSize,
+    completeLayers,
+    coverage,
+    alignedPayloadCount,
+    score,
+  };
+}
+
+function makeByteQueue() {
+  return {
+    chunks: [],
+    headIndex: 0,
+    headOffset: 0,
+    size: 0,
+  };
+}
+
+function queuePush(queue, chunk) {
+  if (!chunk || chunk.length === 0) return;
+  queue.chunks.push(chunk);
+  queue.size += chunk.length;
+}
+
+function queuePull(queue, count) {
+  const out = new Uint8Array(count);
+  let written = 0;
+
+  while (written < count && queue.headIndex < queue.chunks.length) {
+    const chunk = queue.chunks[queue.headIndex];
+    const available = chunk.length - queue.headOffset;
+    if (available <= 0) {
+      queue.headIndex += 1;
+      queue.headOffset = 0;
+      continue;
+    }
+    const need = count - written;
+    const take = Math.min(available, need);
+    out.set(chunk.subarray(queue.headOffset, queue.headOffset + take), written);
+    written += take;
+    queue.headOffset += take;
+    queue.size -= take;
+    if (queue.headOffset >= chunk.length) {
+      queue.headIndex += 1;
+      queue.headOffset = 0;
+    }
+  }
+
+  if (queue.headIndex > 64) {
+    queue.chunks = queue.chunks.slice(queue.headIndex);
+    queue.headIndex = 0;
+  }
+
+  return out;
+}
+
+function assembleLayers(payloads, width, height) {
+  const rowBytes = width * 4;
+  const expectedSize = width * height * 4;
+  if (!rowBytes || !expectedSize) return [];
+
+  const layers = [];
+  const queue = makeByteQueue();
+
+  for (const payload of payloads) {
+    const segment = selectAlignedSegment(payload, rowBytes);
+    if (!segment || segment.length <= 0) continue;
+    queuePush(queue, payload.subarray(segment.start, segment.end));
+
+    while (queue.size >= expectedSize) {
+      layers.push(queuePull(queue, expectedSize));
+    }
+  }
+
+  if (queue.size >= rowBytes) {
+    const partial = queuePull(queue, queue.size);
+    const padded = new Uint8Array(expectedSize);
+    padded.set(partial.subarray(0, Math.min(partial.length, expectedSize)));
+    layers.push(padded);
+  }
+
+  return layers;
+}
+
+function compositeBgraLayersToRgba(layers, width, height) {
+  const pixelBytes = width * height * 4;
+  const rgba = new Uint8Array(pixelBytes);
+
+  for (const layer of layers) {
+    if (!layer || layer.length === 0) continue;
+    const len = Math.min(layer.length, pixelBytes);
+    for (let i = 0; i + 3 < len; i += 4) {
+      const dstR = rgba[i];
+      const dstG = rgba[i + 1];
+      const dstB = rgba[i + 2];
+      const dstA = rgba[i + 3];
+
+      const srcB = layer[i];
+      const srcG = layer[i + 1];
+      const srcR = layer[i + 2];
+      const srcA = layer[i + 3];
+
+      if (srcA === 0) continue;
+
+      if (srcA === 255 || dstA === 0) {
+        rgba[i] = srcR;
+        rgba[i + 1] = srcG;
+        rgba[i + 2] = srcB;
+        rgba[i + 3] = srcA;
+        continue;
+      }
+
+      const sa = srcA / 255;
+      const da = dstA / 255;
+      const outA = sa + da * (1 - sa);
+      if (outA <= 0) continue;
+
+      rgba[i] = clamp(Math.round((srcR * sa + dstR * da * (1 - sa)) / outA), 0, 255);
+      rgba[i + 1] = clamp(Math.round((srcG * sa + dstG * da * (1 - sa)) / outA), 0, 255);
+      rgba[i + 2] = clamp(Math.round((srcB * sa + dstB * da * (1 - sa)) / outA), 0, 255);
+      rgba[i + 3] = clamp(Math.round(outA * 255), 0, 255);
+    }
+  }
+
+  return rgba;
+}
+
+function selectBestDimension(payloads, dimensionCandidates) {
+  const scored = [];
+  for (const candidate of dimensionCandidates) {
+    const evalResult = evaluateDimensionCandidate(
+      payloads,
+      candidate.width,
+      candidate.height,
+      candidate.metadataScore || 0,
+    );
+    if (evalResult) scored.push(evalResult);
+
+    // Handle occasional width/height inversion in BinaryFormatter extraction.
+    if (candidate.width !== candidate.height) {
+      const swapped = evaluateDimensionCandidate(
+        payloads,
+        candidate.height,
+        candidate.width,
+        (candidate.metadataScore || 0) * 0.9,
+      );
+      if (swapped) scored.push(swapped);
+    }
+  }
+
+  if (scored.length === 0) return null;
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0];
+}
+
+function fallbackDimensionsFromPayload(payloads) {
+  if (!payloads || payloads.length === 0) return null;
+  const largest = payloads.reduce((best, cur) => (cur.length > best.length ? cur : best), payloads[0]);
+  const pixelCount = Math.floor(largest.length / 4);
+  if (pixelCount <= 0) return null;
+
+  const commonWidths = [
+    64, 96, 128, 192, 256, 320, 384, 512, 640, 768, 800, 960, 1024, 1280, 1536, 1600,
+    1920, 2048, 2560, 3072, 3200, 3840, 4096, 5120, 6144, 7680, 8192,
+  ];
+
+  let best = null;
+  const consider = (width, height, scoreBase = 0) => {
+    if (!isPlausibleDimensionPair(width, height)) return;
+    if (width * height > pixelCount) return;
+    const ratio = width >= height ? width / Math.max(1, height) : height / Math.max(1, width);
+    const score = scoreBase - Math.abs(Math.log2(ratio));
+    if (!best || score > best.score) {
+      best = { width, height, score };
+    }
+  };
+
+  for (const width of commonWidths) {
+    if (pixelCount % width !== 0) continue;
+    consider(width, pixelCount / width, 2);
+  }
+
+  const side = Math.floor(Math.sqrt(pixelCount));
+  for (let delta = 0; delta <= 256; delta += 1) {
+    const wA = side - delta;
+    const wB = side + delta;
+    if (wA > 0 && pixelCount % wA === 0) consider(wA, pixelCount / wA, 1.5);
+    if (wB > 0 && pixelCount % wB === 0) consider(wB, pixelCount / wB, 1.5);
+    if (best && delta > 32) break;
+  }
+
+  if (best) {
+    return { width: best.width, height: best.height };
+  }
+
+  if (side > 0) {
+    return { width: side, height: Math.max(1, Math.floor(pixelCount / side)) };
+  }
+  return null;
+}
+
 export function isPdnFile(bytes) {
   if (!bytes || bytes.length < 4) return false;
   return (
@@ -42,410 +520,34 @@ export function isPdnFile(bytes) {
   );
 }
 
-/**
- * Parse a Paint.NET .pdn file and return the flattened RGBA image.
- * @param {Uint8Array} bytes  Raw file bytes
- * @returns {{ width: number, height: number, data: Uint8Array } | null}
- *   data is RGBA, row-major, top-to-bottom
- */
-export function parsePdn(bytes) {
-  if (!isPdnFile(bytes)) return null;
-
-  // ─── Parse header ───
-  // PDN3 header: 4 bytes magic + 3x 24-bit LE integers (custom header varies by version)
-  // We extract dimensions from the serialized .NET stream instead.
-  const dims = extractDimensions(bytes);
-  if (!dims) return null;
-
-  const { width, height } = dims;
-  if (width <= 0 || height <= 0 || width > 65536 || height > 65536) return null;
-
-  // ─── Find and decompress all gzip chunks ───
-  const chunks = findGzipChunks(bytes);
-  if (chunks.length === 0) return null;
-
-  // ─── Decode layers from chunks ───
-  const layers = decodeLayers(chunks, width, height);
-  if (layers.length === 0) return null;
-
-  // ─── Composite layers ───
-  const rgba = compositeLayers(layers, width, height);
-  return { width, height, data: rgba };
-}
-
-/* ─── Internal: Dimension extraction ─── */
-
-/**
- * Scan the .NET serialization stream for width/height fields.
- * The Document contains "width" and "height" as Int32 fields.
- * We look for the serialized field names followed by their values.
- */
-function extractDimensions(bytes) {
-  // Strategy 1: Scan for the strings "width" and "height" in the binary stream
-  // .NET BinaryFormatter writes field names as length-prefixed strings
-  let width = 0;
-  let height = 0;
-
-  // Search for "width" field (lowercase, as stored in PdnLib.Document)
-  const widthIdx = findStringInBytes(bytes, "width");
-  const heightIdx = findStringInBytes(bytes, "height");
-
-  if (widthIdx >= 0 && heightIdx >= 0) {
-    // The Int32 value follows after the field name + type info
-    // In .NET BinaryFormatter, after the field name reference, the value is written.
-    // We scan forward from the found position for a reasonable Int32 value
-    width = scanForDimension(bytes, widthIdx);
-    height = scanForDimension(bytes, heightIdx);
-  }
-
-  // Strategy 2: If we found gzip chunks, infer dimensions from the first decompressed chunk
-  // PDN stores pixel data as horizontal strips; the strip width equals image width.
-  if (width <= 0 || height <= 0) {
-    const firstChunk = findGzipChunks(bytes, 1);
-    if (firstChunk.length > 0) {
-      const decompressed = tryInflate(bytes, firstChunk[0].offset);
-      if (decompressed && decompressed.length >= 4) {
-        // Each pixel is 4 bytes (BGRA). The strip width must divide evenly.
-        // Common PDN strip height is typically matched to scanlines.
-        // Try to detect width from chunk size heuristic.
-        const pixelCount = decompressed.length / 4;
-        // Try common power-of-2 widths
-        for (const candidateW of [4096, 2048, 1024, 512, 256, 128, 64]) {
-          if (pixelCount % candidateW === 0) {
-            width = candidateW;
-            break;
-          }
-        }
-        if (width <= 0 && pixelCount > 0) {
-          // Fallback: guess square
-          const sq = Math.sqrt(pixelCount);
-          if (Number.isInteger(sq)) {
-            width = sq;
-          }
-        }
-      }
-    }
-
-    // If we have width but not height, compute from total decompressed pixels
-    if (width > 0 && height <= 0) {
-      const allChunks = findGzipChunks(bytes);
-      let totalPixels = 0;
-      for (const chunk of allChunks) {
-        const inflated = tryInflate(bytes, chunk.offset);
-        if (inflated) {
-          totalPixels += inflated.length / 4;
-        }
-      }
-      if (totalPixels > 0 && totalPixels % width === 0) {
-        // totalPixels might be for multiple layers
-        const rawHeight = totalPixels / width;
-        // PDN stores each layer separately, so divide by number of layers
-        // We'll just use the first layer's data to determine height
-        const firstInflated = tryInflate(bytes, allChunks[0].offset);
-        if (firstInflated) {
-          const firstPixels = firstInflated.length / 4;
-          if (firstPixels % width === 0) {
-            height = firstPixels / width;
-          }
-        }
-      }
-    }
-  }
-
-  // Strategy 3: Look for two consecutive Int32 values that look like dimensions
-  // This is a fallback scanning for reasonable dimension pairs
-  if (width <= 0 || height <= 0) {
-    const result = scanForDimensionPair(bytes);
-    if (result) {
-      width = result.width;
-      height = result.height;
-    }
-  }
-
-  if (width > 0 && height > 0) return { width, height };
-  return null;
-}
-
-/**
- * Find a length-prefixed .NET string in the byte stream.
- * .NET BinaryFormatter writes strings as: length (7-bit encoded int) + UTF8 bytes
- */
-function findStringInBytes(bytes, target) {
-  const targetBytes = new TextEncoder().encode(target);
-  const targetLen = targetBytes.length;
-
-  for (let i = 0; i < bytes.length - targetLen - 1; i++) {
-    // Check if this position has a length prefix matching our target
-    if (bytes[i] === targetLen) {
-      let match = true;
-      for (let j = 0; j < targetLen; j++) {
-        if (bytes[i + 1 + j] !== targetBytes[j]) {
-          match = false;
-          break;
-        }
-      }
-      if (match) return i;
-    }
-  }
-  return -1;
-}
-
-/**
- * Scan forward from a position to find a reasonable dimension value (Int32).
- */
-function scanForDimension(bytes, fromIdx) {
-  // Scan up to 32 bytes ahead for an Int32 that looks like a dimension
-  for (let off = fromIdx; off < Math.min(fromIdx + 64, bytes.length - 4); off++) {
-    const val = readInt32LE(bytes, off);
-    if (val >= 1 && val <= 65536) {
-      // Check if this is a power of 2 or common texture size - more likely to be a dimension
-      if (isPowerOfTwo(val) || val % 64 === 0 || val % 100 === 0) {
-        return val;
-      }
-    }
-  }
-  // Broader scan: any reasonable value
-  for (let off = fromIdx; off < Math.min(fromIdx + 64, bytes.length - 4); off++) {
-    const val = readInt32LE(bytes, off);
-    if (val >= 16 && val <= 65536) {
-      return val;
-    }
-  }
-  return 0;
-}
-
-/**
- * Scan for two consecutive Int32 values that look like image dimensions.
- */
-function scanForDimensionPair(bytes) {
-  // PDN documents typically have width/height stored near each other
-  for (let i = 24; i < Math.min(bytes.length - 8, 4096); i++) {
-    const a = readInt32LE(bytes, i);
-    const b = readInt32LE(bytes, i + 4);
-    if (a >= 16 && a <= 16384 && b >= 16 && b <= 16384) {
-      // Both look like reasonable dimensions
-      if ((isPowerOfTwo(a) || a % 64 === 0) && (isPowerOfTwo(b) || b % 64 === 0)) {
-        return { width: a, height: b };
-      }
-    }
-  }
-  return null;
-}
-
-/* ─── Internal: Gzip chunk scanning ─── */
-
-/**
- * Find gzip-compressed chunks within the byte stream.
- * @param {Uint8Array} bytes
- * @param {number} [maxChunks] Maximum chunks to find
- * @returns {Array<{offset: number}>}
- */
-function findGzipChunks(bytes, maxChunks = Infinity) {
-  const chunks = [];
-  for (let i = 24; i < bytes.length - 2; i++) {
-    if (bytes[i] === GZIP_MAGIC[0] && bytes[i + 1] === GZIP_MAGIC[1]) {
-      // Verify it's a valid gzip header (check method byte)
-      if (i + 2 < bytes.length && bytes[i + 2] === 0x08) {
-        chunks.push({ offset: i });
-        if (chunks.length >= maxChunks) break;
-
-        // Skip ahead past this gzip stream to avoid finding sub-offsets
-        // Minimum gzip overhead is ~18 bytes
-        i += 18;
-      }
-    }
-  }
-  return chunks;
-}
-
-/**
- * Try to inflate (decompress) gzip data starting at offset.
- * @param {Uint8Array} bytes
- * @param {number} offset
- * @returns {Uint8Array|null}
- */
-function tryInflate(bytes, offset) {
-  try {
-    const slice = bytes.subarray(offset);
-    return pako.ungzip(slice);
-  } catch {
-    // Try inflate (raw deflate, no gzip header) as fallback
-    try {
-      return pako.inflate(bytes.subarray(offset + 10)); // Skip gzip header
-    } catch {
-      return null;
-    }
-  }
-}
-
-/* ─── Internal: Layer decoding ─── */
-
-/**
- * Decode BGRA pixel layers from decompressed chunks.
- * PDN stores each layer's pixel data as a series of gzip-compressed strips.
- * Each strip contains raw BGRA32 pixel data for a band of scanlines.
- *
- * @param {Array<{offset: number}>} chunks
- * @param {number} width
- * @param {number} height
- * @returns {Array<Uint8Array>} Array of BGRA pixel buffers, one per layer
- */
-function decodeLayers(chunks, width, height) {
-  const expectedSize = width * height * 4;
-  const layers = [];
-  let currentLayer = [];
-  let currentSize = 0;
-
-  for (const chunk of chunks) {
-    const inflated = tryInflate(
-      /* We need the original bytes — pass them by closing over parsePdn's scope */
-      chunk._bytes || chunk.bytes,
-      chunk.offset,
-    );
-    if (!inflated || inflated.length === 0) continue;
-
-    currentLayer.push(inflated);
-    currentSize += inflated.length;
-
-    // If we've accumulated enough data for one layer, save it
-    if (currentSize >= expectedSize) {
-      const layerData = mergeChunks(currentLayer, expectedSize);
-      if (layerData) layers.push(layerData);
-      currentLayer = [];
-      currentSize = 0;
-    }
-  }
-
-  // Handle remaining data as a partial/final layer
-  if (currentLayer.length > 0 && currentSize > 0) {
-    const layerData = mergeChunks(currentLayer, Math.min(currentSize, expectedSize));
-    if (layerData) layers.push(layerData);
-  }
-
-  return layers;
-}
-
-/**
- * Merge multiple Uint8Arrays into a single buffer, truncated to maxSize.
- */
-function mergeChunks(chunks, maxSize) {
-  const merged = new Uint8Array(maxSize);
-  let offset = 0;
-  for (const chunk of chunks) {
-    const remaining = maxSize - offset;
-    if (remaining <= 0) break;
-    const toCopy = Math.min(chunk.length, remaining);
-    merged.set(chunk.subarray(0, toCopy), offset);
-    offset += toCopy;
-  }
-  return offset > 0 ? merged : null;
-}
-
-/* ─── Internal: Layer compositing ─── */
-
-/**
- * Composite BGRA layers into a final RGBA image.
- * Layers are composited bottom-to-top with standard alpha blending.
- *
- * @param {Array<Uint8Array>} layers  BGRA pixel data per layer
- * @param {number} width
- * @param {number} height
- * @returns {Uint8Array} RGBA pixel data
- */
-function compositeLayers(layers, width, height) {
-  const pixelCount = width * height;
-  const rgba = new Uint8Array(pixelCount * 4);
-
-  // Start with transparent background
-  for (const layer of layers) {
-    const bgraLen = Math.min(layer.length, pixelCount * 4);
-
-    for (let i = 0; i < bgraLen; i += 4) {
-      const pixIdx = (i / 4) * 4;
-      if (pixIdx + 3 >= rgba.length) break;
-
-      // BGRA → extract components
-      const srcB = layer[i];
-      const srcG = layer[i + 1];
-      const srcR = layer[i + 2];
-      const srcA = layer[i + 3];
-
-      if (srcA === 0) continue;
-
-      const dstR = rgba[pixIdx];
-      const dstG = rgba[pixIdx + 1];
-      const dstB = rgba[pixIdx + 2];
-      const dstA = rgba[pixIdx + 3];
-
-      if (srcA === 255 || dstA === 0) {
-        // Fully opaque source or transparent destination: direct copy
-        rgba[pixIdx] = srcR;
-        rgba[pixIdx + 1] = srcG;
-        rgba[pixIdx + 2] = srcB;
-        rgba[pixIdx + 3] = srcA;
-      } else {
-        // Alpha blending: src over dst
-        const sa = srcA / 255;
-        const da = dstA / 255;
-        const outA = sa + da * (1 - sa);
-        if (outA > 0) {
-          rgba[pixIdx] = Math.round((srcR * sa + dstR * da * (1 - sa)) / outA);
-          rgba[pixIdx + 1] = Math.round((srcG * sa + dstG * da * (1 - sa)) / outA);
-          rgba[pixIdx + 2] = Math.round((srcB * sa + dstB * da * (1 - sa)) / outA);
-          rgba[pixIdx + 3] = Math.round(outA * 255);
-        }
-      }
-    }
-  }
-
-  return rgba;
-}
-
-/* ─── Internal: Helpers ─── */
-
-function readInt32LE(bytes, offset) {
-  if (offset + 4 > bytes.length) return 0;
-  return (
-    bytes[offset] |
-    (bytes[offset + 1] << 8) |
-    (bytes[offset + 2] << 16) |
-    (bytes[offset + 3] << 24)
-  ) >>> 0; // unsigned
-}
-
-function isPowerOfTwo(n) {
-  return n > 0 && (n & (n - 1)) === 0;
-}
-
-/**
- * High-level: parse a PDN file and return the flattened RGBA image,
- * with the gzip chunk references patched so decodeLayers can access the raw bytes.
- * This is the main entry point intended for external use.
- *
- * @param {Uint8Array} bytes  Raw .pdn file bytes
- * @returns {{ width: number, height: number, data: Uint8Array } | null}
- */
 export function decodePdn(bytes) {
   if (!isPdnFile(bytes)) return null;
 
-  const dims = extractDimensions(bytes);
-  if (!dims) return null;
+  const payloads = extractInflatedPayloads(bytes);
+  if (payloads.length === 0) return null;
 
-  const { width, height } = dims;
-  if (width <= 0 || height <= 0 || width > 65536 || height > 65536) return null;
+  const dimensionCandidates = collectDimensionCandidates(bytes);
+  let best = selectBestDimension(payloads, dimensionCandidates);
 
-  const chunks = findGzipChunks(bytes);
-  if (chunks.length === 0) return null;
-
-  // Attach bytes reference to each chunk so decodeLayers can access the source
-  for (const chunk of chunks) {
-    chunk._bytes = bytes;
-    chunk.bytes = bytes;
+  if (!best) {
+    const fallback = fallbackDimensionsFromPayload(payloads);
+    if (!fallback) return null;
+    const evaluated = evaluateDimensionCandidate(payloads, fallback.width, fallback.height, 0);
+    if (!evaluated) return null;
+    best = evaluated;
   }
 
-  const layers = decodeLayers(chunks, width, height);
+  const layers = assembleLayers(payloads, best.width, best.height);
   if (layers.length === 0) return null;
 
-  const rgba = compositeLayers(layers, width, height);
-  return { width, height, data: rgba };
+  const rgba = compositeBgraLayersToRgba(layers, best.width, best.height);
+  return {
+    width: best.width,
+    height: best.height,
+    data: rgba,
+  };
+}
+
+export function parsePdn(bytes) {
+  return decodePdn(bytes);
 }

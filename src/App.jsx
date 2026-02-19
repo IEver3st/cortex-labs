@@ -84,6 +84,7 @@ const BUILT_IN_DEFAULTS = {
   windowControlsStyle: "windows",
   toolbarInTitlebar: false,
   variantExportFolder: "",
+  cameraControlsInPanel: false,
 };
 
 const BUILT_IN_UI = {
@@ -187,6 +188,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     targeting: true,
     overlays: false,
     view: true,
+    camera: true,
   }));
   const [textureReloadToken, setTextureReloadToken] = useState(0);
   const [windowTextureReloadToken, setWindowTextureReloadToken] = useState(0);
@@ -198,6 +200,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [windowTextureTarget, setWindowTextureTarget] = useState(() => getInitialDefaults().windowTextureTarget || "auto");
 
   const [cameraWASD, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
+  const [cameraControlsInPanel, setCameraControlsInPanel] = useState(() => Boolean(getInitialDefaults().cameraControlsInPanel));
   const [showHints, setShowHints] = useState(() => Boolean(getInitialDefaults().showHints ?? true));
   const [hideRotText, setHideRotText] = useState(() => Boolean(getInitialDefaults().hideRotText));
   const [showGrid, setShowGrid] = useState(() => Boolean(getInitialDefaults().showGrid));
@@ -270,6 +273,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
     setWindowTextureTarget(merged.windowTextureTarget || "auto");
     setCameraWASD(Boolean(merged.cameraWASD));
+    setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
     setShowHints(Boolean(merged.showHints ?? true));
     setHideRotText(Boolean(merged.hideRotText));
     setShowGrid(Boolean(merged.showGrid));
@@ -556,6 +560,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setWindowTextureTarget(merged.windowTextureTarget || "auto");
 
     setCameraWASD(Boolean(merged.cameraWASD));
+    setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
     setShowHints(Boolean(merged.showHints ?? true));
     setHideRotText(Boolean(merged.hideRotText));
     setShowGrid(Boolean(merged.showGrid));
@@ -1393,100 +1398,39 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           </div>
 
           <div className="ctx-bar-center">
-            {textureMode === "multi" ? (
+            {textureMode !== "multi" && (
               <>
-                <button
-                  type="button"
-                  className={`ctx-bar-btn ${dualSelectedSlot === "A" ? "is-slot-active" : ""}`}
-                  style={dualSelectedSlot === "A" ? { color: "var(--mg-primary)" } : undefined}
-                  onClick={() => setDualSelectedSlot("A")}
-                >A</button>
-                <button
-                  type="button"
-                  className={`ctx-bar-btn ${dualSelectedSlot === "B" ? "is-slot-active" : ""}`}
-                  style={dualSelectedSlot === "B" ? { color: "oklch(0.714 0.203 305.504)" } : undefined}
-                  onClick={() => setDualSelectedSlot("B")}
-                >B</button>
-                <div className="ctx-bar-sep" />
-                <button type="button" className="ctx-bar-btn" onClick={() => setDualGizmoVisible((p) => !p)} title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}>
-                  {dualGizmoVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  type="button"
-                  className={`ctx-bar-btn ${showWireframe ? "is-active" : ""}`}
-                  onClick={() => setShowWireframe((prev) => !prev)}
-                  title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
-                >
-                  <Box className="w-3.5 h-3.5" />
-                </button>
-                <button type="button" className="ctx-bar-btn" onClick={() => dualViewerApiRef.current?.snapTogether?.()}>
-                  <Link2 className="w-3 h-3" style={{ marginRight: 4 }} />Snap
-                </button>
-                <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={() => dualViewerApiRef.current?.reset?.()}>
-                  <RotateCcw className="w-3 h-3" style={{ marginRight: 3 }} />Center
-                </button>
-              </>
-            ) : (
-              <>
-                <span className="ctx-bar-group-label">Camera</span>
-                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("front")} title="Front view">Front</button>
-                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("back")} title="Rear view">Back</button>
-                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("side")} title="Side view">Side</button>
-                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")} title="3/4 angle view">3/4</button>
-                <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("top")} title="Top-down view">Top</button>
-                <div className="ctx-bar-sep" />
-                <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={handleCenterCamera} disabled={!viewerReady} title="Re-center camera on model">
-                  <RotateCcw className="w-3 h-3" style={{ marginRight: 3 }} />Center
-                </button>
-                <div className="ctx-bar-sep" />
-                <span className="ctx-bar-group-label">Rotate</span>
-                <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-                  <span style={{ color: "#f87171" }}>X</span>
-                </button>
-                <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-                  <span style={{ color: "#4ade80" }}>Y</span>
-                </button>
-                <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-                  <span style={{ color: "#60a5fa" }}>Z</span>
-                </button>
-                <div className="ctx-bar-sep" />
-                <button
-                  type="button"
-                  className={`ctx-bar-btn ${showWireframe ? "is-active" : ""}`}
-                  onClick={() => setShowWireframe((prev) => !prev)}
-                  title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
-                >
-                  <Box className="w-3.5 h-3.5" style={{ marginRight: 3 }} />
-                  Wire
-                </button>
+                {!cameraControlsInPanel && (
+                  <>
+                    <span className="ctx-bar-group-label">Camera</span>
+                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("front")} title="Front view">Front</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("back")} title="Rear view">Back</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("side")} title="Side view">Side</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")} title="3/4 angle view">3/4</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("top")} title="Top-down view">Top</button>
+                    <div className="ctx-bar-sep" />
+                    <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={handleCenterCamera} disabled={!viewerReady} title="Re-center camera on model">
+                      <RotateCcw className="w-3 h-3" style={{ marginRight: 3 }} />Center
+                    </button>
+                    <div className="ctx-bar-sep" />
+                    <span className="ctx-bar-group-label">Rotate</span>
+                    <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
+                      <span style={{ color: "#f87171" }}>X</span>
+                    </button>
+                    <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
+                      <span style={{ color: "#4ade80" }}>Y</span>
+                    </button>
+                    <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
+                      <span style={{ color: "#60a5fa" }}>Z</span>
+                    </button>
+                    <div className="ctx-bar-sep" />
+                  </>
+                )}
               </>
             )}
           </div>
 
           <div className="ctx-bar-right">
-            {hasModel && textureMode !== "multi" && (
-              <button
-                type="button"
-                className="ctx-bar-btn ctx-bar-primary"
-                onClick={() => {
-                  if (generatingPreview || !viewerReady) return;
-                  setPreviewZoomDraft(previewZoom || 1);
-                  setPreviewPromptOpen(true);
-                  setPreviewZoomPreview("");
-                }}
-                disabled={generatingPreview || !viewerReady}
-                title="Generate preview screenshots from all angles"
-              >
-                <Camera className="w-3.5 h-3.5" />
-                {generatingPreview ? (
-                  <span className="ctx-bar-progress">
-                    {previewProgress.current}/{previewProgress.total}
-                  </span>
-                ) : (
-                  "Preview"
-                )}
-              </button>
-            )}
           </div>
         </div>,
         contextBarTarget
@@ -1887,19 +1831,68 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 </button>
               </div>
 
-              <div className="flex gap-2">
-                 <CyberButton 
-                    variant={dualSelectedSlot === "A" ? "orange" : "secondary"}
+              <div className="cs-multi-slot-card">
+                {/* Header */}
+                <div className="cs-multi-slot-header">
+                  <span className="cs-multi-slot-header-label">Active Slot</span>
+                  <div className="cs-multi-slot-pips">
+                    <div className={`cs-multi-slot-pip cs-multi-slot-pip--a ${dualSelectedSlot === "A" ? "is-active" : ""}`} />
+                    <div className={`cs-multi-slot-pip cs-multi-slot-pip--b ${dualSelectedSlot === "B" ? "is-active" : ""}`} />
+                  </div>
+                </div>
+
+                {/* Slot switcher */}
+                <div className="cs-multi-slot-switcher">
+                  <button
+                    type="button"
+                    className={`cs-multi-slot-btn cs-multi-slot-btn--a ${dualSelectedSlot === "A" ? "is-active" : ""}`}
                     onClick={() => setDualSelectedSlot("A")}
-                 >
-                    Slot A
-                 </CyberButton>
-                 <CyberButton 
-                    variant={dualSelectedSlot === "B" ? "purple" : "secondary"}
+                  >
+                    <div className="cs-multi-slot-btn-bar" />
+                    <span className="cs-multi-slot-btn-glyph">A</span>
+                    <span className="cs-multi-slot-btn-sublabel">Slot</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`cs-multi-slot-btn cs-multi-slot-btn--b ${dualSelectedSlot === "B" ? "is-active" : ""}`}
                     onClick={() => setDualSelectedSlot("B")}
-                 >
-                    Slot B
-                 </CyberButton>
+                  >
+                    <div className="cs-multi-slot-btn-bar" />
+                    <span className="cs-multi-slot-btn-glyph">B</span>
+                    <span className="cs-multi-slot-btn-sublabel">Slot</span>
+                  </button>
+                </div>
+
+                {/* Action bar */}
+                <div className="cs-multi-slot-actions">
+                  <button
+                    type="button"
+                    className="cs-multi-slot-action"
+                    onClick={() => dualViewerApiRef.current?.snapTogether?.()}
+                    title="Snap models together"
+                  >
+                    <Link2 className="w-3 h-3" />
+                    <span>Snap</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="cs-multi-slot-action"
+                    onClick={() => dualViewerApiRef.current?.reset?.()}
+                    title="Re-center camera"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Center</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`cs-multi-slot-action ${dualGizmoVisible ? "cs-multi-slot-action--gizmo-on" : ""}`}
+                    onClick={() => setDualGizmoVisible((p) => !p)}
+                    title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}
+                  >
+                    {dualGizmoVisible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                    <span>Gizmo</span>
+                  </button>
+                </div>
               </div>
 
               <CyberSection
@@ -2133,7 +2126,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
           <CyberSection
             title="Appearance"
-            caption="Colors & lighting"
+            caption="Colors"
             open={colorsOpen}
             onToggle={() => setColorsOpen((prev) => !prev)}
             contentId="panel-colors"
@@ -2330,32 +2323,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 </div>
               </CyberCard>
 
-              <div className="space-y-3">
-                <MaterialSlider
-                  label="Light Intensity"
-                  value={lightIntensity}
-                  onChange={setLightIntensity}
-                  min={0.5}
-                  max={2.0}
-                  step={0.1}
-                />
-                <MaterialSlider
-                  label="Glossiness"
-                  value={glossiness}
-                  onChange={setGlossiness}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  unit="%"
-                />
-              </div>
             </div>
           </CyberSection>
 
           {/* ── Vehicle Materials Section ── */}
           <CyberSection
             title="Materials"
-            caption={materialType.charAt(0).toUpperCase() + materialType.slice(1)}
+            caption={`${materialType.charAt(0).toUpperCase() + materialType.slice(1)} & Lighting`}
             open={materialsOpen}
             onToggle={() => setMaterialsOpen((prev) => !prev)}
             contentId="panel-materials"
@@ -2368,6 +2342,29 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <CyberLabel>Surface Type</CyberLabel>
                 <MaterialTypeSelector value={materialType} onChange={setMaterialType} />
               </div>
+
+              <CyberCard>
+                <CyberLabel>Scene Lighting</CyberLabel>
+                <div className="space-y-3">
+                  <MaterialSlider
+                    label="Light Intensity"
+                    value={lightIntensity}
+                    onChange={setLightIntensity}
+                    min={0.5}
+                    max={2.0}
+                    step={0.1}
+                  />
+                  <MaterialSlider
+                    label="Glossiness"
+                    value={glossiness}
+                    onChange={setGlossiness}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    unit="%"
+                  />
+                </div>
+              </CyberCard>
 
               <CyberCard>
                 <CyberLabel>Properties</CyberLabel>
@@ -2421,6 +2418,125 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               </div>
             </div>
           </CyberSection>
+
+          {/* ── Camera Controls in Panel ── */}
+          {cameraControlsInPanel && textureMode !== "multi" && (
+            <CyberSection
+              title="Camera"
+              caption="Presets & rotation"
+              open={panelOpen.camera !== false}
+              onToggle={() => togglePanel("camera")}
+              contentId="panel-camera"
+              icon={Camera}
+              color="blue"
+            >
+              <div className="space-y-3">
+                <div>
+                  <CyberLabel>Presets</CyberLabel>
+                  <div className="panel-cam-presets">
+                    {[
+                      { key: "front", label: "Front" },
+                      { key: "back", label: "Back" },
+                      { key: "side", label: "Side" },
+                      { key: "angle", label: "3/4" },
+                      { key: "top", label: "Top" },
+                    ].map(({ key, label }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className="panel-cam-preset-btn"
+                        onClick={() => viewerApiRef.current?.setPreset(key)}
+                        title={`${label} view`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    className="panel-cam-action-btn flex-1"
+                    onClick={handleCenterCamera}
+                    disabled={!viewerReady}
+                    title="Re-center camera"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Center
+                  </button>
+                  <button
+                    type="button"
+                    className={`panel-cam-action-btn ${showWireframe ? "is-active" : ""}`}
+                    onClick={() => setShowWireframe((prev) => !prev)}
+                    title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
+                  >
+                    <Box className="w-3 h-3" />
+                    Wire
+                  </button>
+                </div>
+                <div>
+                  <CyberLabel>Rotate Model</CyberLabel>
+                  <div className="flex gap-1.5 mt-1">
+                    <button
+                      type="button"
+                      className="panel-cam-axis-btn flex-1"
+                      onClick={() => viewerApiRef.current?.rotateModel("x")}
+                      title="Rotate 90° on X axis"
+                    >
+                      <span style={{ color: "#f87171", fontWeight: 700 }}>X</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="panel-cam-axis-btn flex-1"
+                      onClick={() => viewerApiRef.current?.rotateModel("y")}
+                      title="Rotate 90° on Y axis"
+                    >
+                      <span style={{ color: "#4ade80", fontWeight: 700 }}>Y</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="panel-cam-axis-btn flex-1"
+                      onClick={() => viewerApiRef.current?.rotateModel("z")}
+                      title="Rotate 90° on Z axis"
+                    >
+                      <span style={{ color: "#60a5fa", fontWeight: 700 }}>Z</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </CyberSection>
+          )}
+
+          {/* ── Capture Preview ── */}
+          {textureMode !== "multi" && (
+            <div className="panel-capture-section">
+              <button
+                type="button"
+                className={`panel-capture-btn${generatingPreview ? " is-generating" : ""}`}
+                onClick={() => {
+                  if (generatingPreview || !viewerReady) return;
+                  setPreviewZoomDraft(previewZoom || 1);
+                  setPreviewPromptOpen(true);
+                  setPreviewZoomPreview("");
+                }}
+                disabled={generatingPreview || !viewerReady || !hasModel}
+                title="Generate preview screenshots from all angles"
+              >
+                <Camera className="panel-capture-icon" />
+                <span className="panel-capture-label">
+                  {generatingPreview
+                    ? `${previewProgress.current} / ${previewProgress.total}`
+                    : "Capture Preview"}
+                </span>
+                {generatingPreview && previewProgress.total > 0 && (
+                  <div
+                    className="panel-capture-bar-fill"
+                    style={{ width: `${(previewProgress.current / previewProgress.total) * 100}%` }}
+                  />
+                )}
+              </button>
+            </div>
+          )}
 
       </CyberPanel>
 

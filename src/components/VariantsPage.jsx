@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
@@ -6,7 +7,7 @@ import {
   FileImage, Plus, Trash2, Download, Lock, Copy, Car, X,
   Eye, EyeOff, FolderOpen, Check, Pencil,
   ChevronRight, ChevronDown, Layers, AlertTriangle,
-  PanelRightOpen, PanelLeftOpen,
+  PanelRightOpen, PanelLeftOpen, Palette,
   Maximize2, ZoomIn, ZoomOut, Grid3x3, SquareDashedBottom,
   RotateCcw, Sun, MoreHorizontal, RefreshCw,
   Play, Pause, Box, Search, FolderTree,
@@ -45,6 +46,7 @@ const LIGHTING_PRESETS = [
 ];
 
 const BLEND_MODES = ["Normal", "Multiply", "Add", "Screen", "Overlay"];
+const NOOP = () => {};
 
 /* ═══════════════════════════════════════════════════════════
    Helpers
@@ -90,8 +92,8 @@ function getDefaultVariantExportFolder() {
    Sub-components
    ═══════════════════════════════════════════════════════════ */
 
-/* --- Horizontal drag handle --- */
-function HResizer({ onResize }) {
+/* --- Horizontal drag handle (memo-wrapped to skip re-renders during panel drag) --- */
+const HResizer = memo(function HResizer({ onResize }) {
   const dragging = useRef(false);
   const startX = useRef(0);
   const onPointerDown = useCallback((e) => {
@@ -111,7 +113,7 @@ function HResizer({ onResize }) {
       <div className="vp-resizer-grip" />
     </div>
   );
-}
+});
 
 /* --- Opacity slider with double-click number entry --- */
 function OpacitySlider({ value, onChange }) {
@@ -217,6 +219,13 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const lightMenuRef = useRef(null);
   const [showSavedToast, setShowSavedToast] = useState(false);
   const savedToastTimer = useRef(null);
+  const persistTimerRef = useRef(null);
+  const pendingHResizeDxRef = useRef(0);
+  const hResizeRafRef = useRef(0);
+  const sidebarOpenRef = useRef(sidebarOpen);
+  const inspectorOpenRef = useRef(inspectorOpen);
+  useEffect(() => { sidebarOpenRef.current = sidebarOpen; }, [sidebarOpen]);
+  useEffect(() => { inspectorOpenRef.current = inspectorOpen; }, [inspectorOpen]);
 
   const isTauriRuntime = typeof window !== "undefined" && typeof window.__TAURI_INTERNALS__ !== "undefined";
   const selectedVariant = variants.find((v) => v.id === selectedVariantId) || variants[0];
@@ -248,13 +257,24 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
 
   /* ── Persist ── */
   useEffect(() => {
-    if (onStateChange) onStateChange({ psdPath, modelPath, variants, selectedVariantId, exportSize, outputFolder });
-  }, [psdPath, modelPath, variants, selectedVariantId, exportSize, outputFolder]);
+    if (!onStateChange) return;
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      onStateChange({ psdPath, modelPath, variants, selectedVariantId, exportSize, outputFolder });
+    }, 140);
+    return () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    };
+  }, [psdPath, modelPath, variants, selectedVariantId, exportSize, outputFolder, onStateChange]);
 
   useEffect(() => {
     if (!settingsVersion) return;
     setOutputFolder((prev) => prev || getDefaultVariantExportFolder());
   }, [settingsVersion]);
+
+  useEffect(() => () => {
+    if (hResizeRafRef.current) cancelAnimationFrame(hResizeRafRef.current);
+  }, []);
 
   /* ── Load PSD ── */
   useEffect(() => {
@@ -286,11 +306,11 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   }, [psdPath]);
 
   const compositorVisibility = useMemo(() => ({ ...layerVisibility }), [layerVisibility]);
-  const visibilityKey = JSON.stringify(compositorVisibility);
+  const visibilityKey = useMemo(() => JSON.stringify(compositorVisibility), [compositorVisibility]);
 
   /* ── Preview generation ── */
   useEffect(() => {
-    if (!psdPath || !psdData) return;
+    if (!isActive || !psdPath || !psdData) return;
     let cancelled = false;
     const gen = async () => {
       try {
@@ -304,7 +324,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     };
     const timer = setTimeout(gen, 120);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [psdPath, psdData, visibilityKey, exportSize, compositorVisibility]);
+  }, [isActive, psdPath, psdData, visibilityKey, exportSize, compositorVisibility]);
 
   useEffect(() => {
     if (!psdData || !selectedVariantId) return;
@@ -320,11 +340,11 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
 
   /* ── Turntable ── */
   useEffect(() => {
-    if (!turntableActive) { if (turntableRef.current) { cancelAnimationFrame(turntableRef.current); turntableRef.current = null; } return; }
+    if (!turntableActive || !isActive) { if (turntableRef.current) { cancelAnimationFrame(turntableRef.current); turntableRef.current = null; } return; }
     const rot = () => { turntableRef.current = requestAnimationFrame(rot); };
     turntableRef.current = requestAnimationFrame(rot);
     return () => { if (turntableRef.current) cancelAnimationFrame(turntableRef.current); };
-  }, [turntableActive]);
+  }, [turntableActive, isActive]);
 
   /* ── File selectors ── */
   const handleSelectPsd = useCallback(async () => {
@@ -436,16 +456,29 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   }, [psdPath, psdData, variants, exportSize, outputFolder, selectedVariantId, compositorVisibility, selectedVariant, selectedVariantIds, validationStatus]);
 
   /* ── Resize ── */
+  // Stable callback (empty deps) — reads sidebar/inspector from refs so the
+  // function identity never changes and memo'd HResizer never re-renders.
   const handleHResize = useCallback((dx) => {
-    if (!containerRef.current) return;
-    const sidebar = sidebarOpen ? 260 : 36;
-    const inspector = inspectorOpen ? 320 : 0;
-    const avail = containerRef.current.getBoundingClientRect().width - sidebar - inspector;
-    if (avail <= 0) return;
-    setViewerPanelWidth((p) => Math.max(20, Math.min(80, p + (dx / avail) * 100)));
-  }, [sidebarOpen, inspectorOpen]);
+    pendingHResizeDxRef.current += dx;
+    if (hResizeRafRef.current) return;
+    hResizeRafRef.current = requestAnimationFrame(() => {
+      hResizeRafRef.current = 0;
+      const batchedDx = pendingHResizeDxRef.current;
+      pendingHResizeDxRef.current = 0;
+      if (!batchedDx || !containerRef.current) return;
+      const sidebar = sidebarOpenRef.current ? 260 : 36;
+      const inspector = inspectorOpenRef.current ? 320 : 0;
+      const avail = containerRef.current.getBoundingClientRect().width - sidebar - inspector;
+      if (avail <= 0) return;
+      setViewerPanelWidth((p) => {
+        const next = Math.max(20, Math.min(80, p + (batchedDx / avail) * 100));
+        return Math.abs(next - p) < 0.01 ? p : next;
+      });
+    });
+  }, []);
 
   /* ── Model info ── */
+  const handleViewerReady = useCallback((api) => { viewerApiRef.current = api; setViewerReady(true); }, []);
   const handleModelInfo = useCallback((info) => { setLiveryTarget(info.liveryTarget || ""); setLiveryTargetReady(true); }, []);
   useEffect(() => { setLiveryTarget(""); setLiveryTargetReady(false); }, [modelPath]);
 
@@ -597,25 +630,21 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             {/* Vehicle ▾ */}
             <div className="vp-crumb-anchor" ref={vehicleMenuRef}>
               <button type="button" className={`vp-crumb-chip ${!modelPath ? "vp-crumb-chip--empty" : ""}`}
-                onClick={() => setOpenMenu((m) => m === "vehicle" ? null : "vehicle")}
+                onClick={() => modelPath ? setOpenMenu((m) => m === "vehicle" ? null : "vehicle") : handleSelectModel()}
                 title={modelPath || "Load vehicle model"}>
                 <span className="vp-crumb-chip-label">Vehicle</span>
                 <span className="vp-crumb-chip-value">{modelFileName ? modelFileName.replace(/\.(yft|ydd)$/i, "") : "None"}</span>
-                <ChevronDown className="vp-crumb-chip-chevron" />
+                {modelPath && <ChevronDown className="vp-crumb-chip-chevron" />}
               </button>
-              {openMenu === "vehicle" && (
+              {openMenu === "vehicle" && modelPath && (
                 <div className="vp-dropdown-menu vp-dropdown-menu--crumb">
                   <button type="button" className="vp-dropdown-item" onClick={() => { handleSelectModel(); setOpenMenu(null); }}>
                     <Car className="w-3 h-3" /> Load vehicle
                   </button>
-                  {modelPath && (
-                    <>
-                      <div className="vp-dropdown-sep" />
-                      <button type="button" className="vp-dropdown-item vp-dropdown-item--danger" onClick={() => { setModelPath(""); setOpenMenu(null); }}>
-                        <X className="w-3 h-3" /> Unload vehicle
-                      </button>
-                    </>
-                  )}
+                  <div className="vp-dropdown-sep" />
+                  <button type="button" className="vp-dropdown-item vp-dropdown-item--danger" onClick={() => { setModelPath(""); setOpenMenu(null); }}>
+                    <X className="w-3 h-3" /> Unload vehicle
+                  </button>
                 </div>
               )}
             </div>
@@ -625,28 +654,24 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             {/* Template ▾ */}
             <div className="vp-crumb-anchor" ref={templateMenuRef}>
               <button type="button" className={`vp-crumb-chip ${!psdFileName ? "vp-crumb-chip--empty" : ""}`}
-                onClick={() => setOpenMenu((m) => m === "template" ? null : "template")}
+                onClick={() => psdPath ? setOpenMenu((m) => m === "template" ? null : "template") : handleSelectPsd()}
                 title={psdPath || "Import PSD/PDN/AI layer source"}>
                 <span className="vp-crumb-chip-label">Template</span>
                 <span className="vp-crumb-chip-value">{psdFileName ? psdFileName.replace(/\.(psd|pdn|ai)$/i, "") : "None"}</span>
-                <ChevronDown className="vp-crumb-chip-chevron" />
+                {psdPath && <ChevronDown className="vp-crumb-chip-chevron" />}
               </button>
-              {openMenu === "template" && (
+              {openMenu === "template" && psdPath && (
                 <div className="vp-dropdown-menu vp-dropdown-menu--crumb">
                   <button type="button" className="vp-dropdown-item" onClick={() => { handleSelectPsd(); setOpenMenu(null); }}>
                     <FileImage className="w-3 h-3" /> Import layer source
                   </button>
-                  {psdPath && (
-                    <>
-                      <button type="button" className="vp-dropdown-item" onClick={() => { setPsdPath(psdPath); setOpenMenu(null); }}>
-                        <RefreshCw className="w-3 h-3" /> Reload
-                      </button>
-                      <div className="vp-dropdown-sep" />
-                      <button type="button" className="vp-dropdown-item vp-dropdown-item--danger" onClick={() => { setPsdPath(""); setOpenMenu(null); }}>
-                        <X className="w-3 h-3" /> Unload template
-                      </button>
-                    </>
-                  )}
+                  <button type="button" className="vp-dropdown-item" onClick={() => { setPsdPath(psdPath); setOpenMenu(null); }}>
+                    <RefreshCw className="w-3 h-3" /> Reload
+                  </button>
+                  <div className="vp-dropdown-sep" />
+                  <button type="button" className="vp-dropdown-item vp-dropdown-item--danger" onClick={() => { setPsdPath(""); setOpenMenu(null); }}>
+                    <X className="w-3 h-3" /> Unload template
+                  </button>
                 </div>
               )}
             </div>
@@ -656,22 +681,20 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             {/* Output ▾ */}
             <div className="vp-crumb-anchor" ref={outputMenuRef}>
               <button type="button" className={`vp-crumb-chip ${!outputFolder ? "vp-crumb-chip--empty" : ""}`}
-                onClick={() => setOpenMenu((m) => m === "output" ? null : "output")}
+                onClick={() => outputFolder ? setOpenMenu((m) => m === "output" ? null : "output") : handleSelectOutput()}
                 title={outputFolder || "Set output folder"}>
                 <span className="vp-crumb-chip-label">Output</span>
                 <span className="vp-crumb-chip-value">{outputFolder ? `\u2026/${outputFolder.split(/[\\/]/).pop()}` : "None"}</span>
-                <ChevronDown className="vp-crumb-chip-chevron" />
+                {outputFolder && <ChevronDown className="vp-crumb-chip-chevron" />}
               </button>
-              {openMenu === "output" && (
+              {openMenu === "output" && outputFolder && (
                 <div className="vp-dropdown-menu vp-dropdown-menu--crumb">
                   <button type="button" className="vp-dropdown-item" onClick={() => { handleSelectOutput(); setOpenMenu(null); }}>
-                    <FolderOpen className="w-3 h-3" /> Set output folder
+                    <FolderOpen className="w-3 h-3" /> Change folder
                   </button>
-                  {outputFolder && (
-                    <button type="button" className="vp-dropdown-item" onClick={async () => { setOpenMenu(null); if (isTauriRuntime) { try { const { openPath } = await import("@tauri-apps/plugin-opener"); await openPath(outputFolder); } catch {} } }}>
-                      <FolderTree className="w-3 h-3" /> Open output folder
-                    </button>
-                  )}
+                  <button type="button" className="vp-dropdown-item" onClick={async () => { setOpenMenu(null); if (isTauriRuntime) { try { const { openPath } = await import("@tauri-apps/plugin-opener"); await openPath(outputFolder); } catch {} } }}>
+                    <FolderTree className="w-3 h-3" /> Open output folder
+                  </button>
                 </div>
               )}
             </div>
@@ -719,36 +742,32 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             </div>
           </nav>
 
-          {/* CENTER ZONE: High-frequency editing controls */}
-          <div className="ctx-bar-center">
-            <button type="button" className="vp-wf-btn" onClick={handleAddVariant} title="Add variant"><Plus className="w-3 h-3" /><span>Add</span></button>
-            <button type="button" className="vp-wf-btn" onClick={() => handleDuplicateVariant(selectedVariantId)} disabled={!selectedVariant} title="Duplicate variant"><Copy className="w-3 h-3" /><span>Dup</span></button>
-
-            <div className="ctx-bar-sep" />
-
+          {/* RIGHT ZONE: View toggles + Size + Status + Export — unified strip */}
+          <div className="ctx-bar-right">
             {/* View toggles */}
-            {modelPath && (
-              <button type="button" className={`vp-wf-toggle ${!viewerCollapsed ? "is-active" : ""}`} onClick={() => setViewerCollapsed((c) => !c)} title="Toggle 3D viewer">3D</button>
-            )}
-            {psdPath && (
-              <button type="button" className={`vp-wf-toggle ${!previewCollapsed ? "is-active" : ""}`} onClick={() => setPreviewCollapsed((c) => !c)} title="Toggle texture">Tex</button>
-            )}
-            <button type="button" className={`vp-wf-toggle ${inspectorOpen ? "is-active" : ""}`} onClick={() => setInspectorOpen((o) => !o)} title="Toggle layers (Ctrl+\)">
-              <Layers className="w-3 h-3" />
-            </button>
-
+            <div className="vp-view-toggles">
+              {modelPath && (
+                <button type="button" className={`vp-wf-toggle ${!viewerCollapsed ? "is-active" : ""}`} onClick={() => setViewerCollapsed((c) => !c)} title="Toggle 3D viewer">
+                  <Box className="w-2.5 h-2.5" /><span>3D</span>
+                </button>
+              )}
+              {psdPath && (
+                <button type="button" className={`vp-wf-toggle ${!previewCollapsed ? "is-active" : ""}`} onClick={() => setPreviewCollapsed((c) => !c)} title="Toggle texture">
+                  <FileImage className="w-2.5 h-2.5" /><span>Tex</span>
+                </button>
+              )}
+              <button type="button" className={`vp-wf-toggle ${inspectorOpen ? "is-active" : ""}`} onClick={() => setInspectorOpen((o) => !o)} title="Toggle layers (Ctrl+\)">
+                <Layers className="w-2.5 h-2.5" /><span>Layers</span>
+              </button>
+            </div>
             <div className="ctx-bar-sep" />
-
-            {/* Resolution dropdown */}
+            {/* Resolution selector */}
             <div className="vp-sizes vp-segmented">
               {DEFAULT_SIZES.map((s) => (
                 <button key={s.value} type="button" className={`vp-size ${exportSize === s.value ? "is-active" : ""}`} onClick={() => setExportSize(s.value)}>{s.label}</button>
               ))}
             </div>
-          </div>
-
-          {/* RIGHT ZONE: Status + Export */}
-          <div className="ctx-bar-right">
+            <div className="ctx-bar-sep" />
             {showSavedToast && <span className="vp-toast">Saved</span>}
             {!exporting && statusChip && (
               <button type="button" className={`vp-status-chip vp-status-chip--${statusChip.type}`}
@@ -794,11 +813,28 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       <div className="vp-workspace">
 
         {/* ── Left Sidebar: Variants ── */}
-        {sidebarOpen ? (
-          <div className="vp-sidebar">
+        <motion.div
+          style={{ overflow: "hidden", flexShrink: 0, display: "flex" }}
+          animate={{ width: sidebarOpen ? 260 : 28 }}
+          transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.8 }}
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            {sidebarOpen ? (
+              <motion.div
+                key="sidebar-open"
+                className="vp-sidebar"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.1 }}
+              >
             <div className="vp-sidebar-head">
               <span className="vp-sidebar-title">Variants</span>
               <span className="vp-sidebar-count">{variants.length}</span>
+              <div className="vp-sidebar-head-actions">
+                <button type="button" className="vp-sidebar-act" onClick={handleAddVariant} title="Add variant"><Plus className="w-3 h-3" /></button>
+                <button type="button" className="vp-sidebar-act" onClick={() => handleDuplicateVariant(selectedVariantId)} disabled={!selectedVariant} title="Duplicate variant"><Copy className="w-3 h-3" /></button>
+              </div>
               <button type="button" className="vp-sidebar-collapse" onClick={() => setSidebarOpen(false)} title="Collapse (Ctrl+B)"><PanelLeftOpen className="w-3.5 h-3.5" /></button>
             </div>
             <Ctx.Root><Ctx.Trigger>
@@ -846,12 +882,25 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                 </button>
               </div>
             )}
-          </div>
-        ) : (
-          <button type="button" className="vp-sidebar-expand" onClick={() => setSidebarOpen(true)} title="Show sidebar (Ctrl+B)">
-            <PanelRightOpen className="w-3.5 h-3.5" />
-          </button>
-        )}
+              </motion.div>
+            ) : (
+              <motion.button
+                key="sidebar-collapsed"
+                type="button"
+                className="vp-sidebar-expand"
+                onClick={() => setSidebarOpen(true)}
+                title="Show sidebar (Ctrl+B)"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.1 }}
+              >
+                <Palette className="w-3.5 h-3.5 vp-collpanel-icon" />
+                <span className="vp-collpanel-label">Variants</span>
+              </motion.button>
+            )}
+          </AnimatePresence>
+        </motion.div>
 
         {/* ── Center Canvas ── */}
         <div className="vp-canvas">
@@ -864,16 +913,16 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                 </div>
               </div>
               <div className="vp-empty-title">Start Building</div>
-              <div className="vp-empty-desc">Use the breadcrumbs above or click below to load your assets.</div>
+              <div className="vp-empty-desc">Use the breadcrumbs above or click a button below to load your assets.</div>
               <div className="vp-empty-actions">
-                <button type="button" className="vp-empty-btn" onClick={() => setOpenMenu("vehicle")}>
-                  <Car className="w-4 h-4" /><span>Vehicle &#x25BE;</span>
+                <button type="button" className="vp-empty-btn" onClick={handleSelectModel}>
+                  <Car className="w-4 h-4" /><span>Vehicle</span>
                 </button>
-                <button type="button" className="vp-empty-btn vp-empty-btn--primary" onClick={() => setOpenMenu("template")}>
-                  <FileImage className="w-4 h-4" /><span>Template &#x25BE;</span>
+                <button type="button" className="vp-empty-btn vp-empty-btn--primary" onClick={handleSelectPsd}>
+                  <FileImage className="w-4 h-4" /><span>Template</span>
                 </button>
-                <button type="button" className="vp-empty-btn" onClick={() => setOpenMenu("output")}>
-                  <FolderOpen className="w-4 h-4" /><span>Output &#x25BE;</span>
+                <button type="button" className="vp-empty-btn" onClick={handleSelectOutput}>
+                  <FolderOpen className="w-4 h-4" /><span>Output</span>
                 </button>
               </div>
               <div className="vp-empty-drop">
@@ -922,8 +971,9 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                     textureMode="livery" windowTexturePath="" windowTextureTarget="none" windowTextureReloadToken={0}
                     bodyColor="#e7ebf0" backgroundColor="#111214" lightIntensity={currentLighting.intensity} glossiness={0.5}
                     showGrid={false} showWireframe={showWireframe} wasdEnabled={false}
-                    onReady={(api) => { viewerApiRef.current = api; setViewerReady(true); }} onModelInfo={handleModelInfo}
-                    onTextureReload={() => {}} onTextureError={() => {}} onWindowTextureError={() => {}} onModelError={() => {}} onModelLoading={() => {}} onFormatWarning={() => {}} />
+                    isActive={isActive}
+                    onReady={handleViewerReady} onModelInfo={handleModelInfo}
+                    onTextureReload={NOOP} onTextureError={NOOP} onWindowTextureError={NOOP} onModelError={NOOP} onModelLoading={NOOP} onFormatWarning={NOOP} />
                 </div>
               )}
 
@@ -981,13 +1031,41 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
         </div>
 
         {/* ── Right Panel: Layers Inspector ── */}
-        {inspectorOpen && hasLayers && (
-          <div className={`vp-inspector ${activePanel === "layers" ? "is-focused" : ""}`} onClick={() => setActivePanel("layers")}>
+        {hasLayers && (
+          <motion.div
+            style={{ overflow: "hidden", flexShrink: 0, display: "flex" }}
+            animate={{ width: inspectorOpen ? 320 : 28 }}
+            transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.8 }}
+          >
+            <AnimatePresence mode="wait" initial={false}>
+              {!inspectorOpen ? (
+                <motion.button
+                  key="inspector-collapsed"
+                  type="button"
+                  className="vp-inspector-expand"
+                  onClick={() => setInspectorOpen(true)}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.1 }}
+                >
+                  <Layers className="w-3.5 h-3.5 vp-collpanel-icon" />
+                  <span className="vp-collpanel-label">Layers</span>
+                </motion.button>
+              ) : (
+                <motion.div
+                  key="inspector-open"
+                  className={`vp-inspector ${activePanel === "layers" ? "is-focused" : ""}`}
+                  onClick={() => setActivePanel("layers")}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.1 }}
+                >
             <div className="vp-inspector-head">
               <div className="vp-inspector-title">
                 <Layers className="w-3.5 h-3.5" />
                 <span>Layers</span>
-                <span className="vp-inspector-count">{psdData.allLayers?.length || 0}</span>
               </div>
               <button type="button" className="vp-inspector-close" onClick={() => setInspectorOpen(false)} title="Close (Ctrl+\\)">
                 <PanelRightOpen className="w-3 h-3" />
@@ -1149,7 +1227,10 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                 </div>
               </div>
             )}
-          </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
         )}
       </div>
 

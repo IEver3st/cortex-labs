@@ -10,9 +10,9 @@ import {
 } from "../lib/changelog";
 
 const TAG_META = {
-  new:      { label: "New",      icon: Sparkles },
-  improved: { label: "Improved", icon: Wrench },
-  fixed:    { label: "Fix",      icon: Bug },
+  new:      { label: "New",      icon: Sparkles, tag: "new"      },
+  improved: { label: "Improved", icon: Wrench,   tag: "improved" },
+  fixed:    { label: "Fix",      icon: Bug,       tag: "fixed"    },
 };
 
 const DEFAULT_VISIBLE = 6;
@@ -187,6 +187,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.1, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                 >
+                  <span className="cs-wn-hero-label">// release highlights</span>
                   <h3 className="cs-wn-hero-title">{entry.heroTitle}</h3>
                   {entry.heroDesc && (
                     <p className="cs-wn-hero-desc">{entry.heroDesc}</p>
@@ -208,6 +209,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                       {showHeader && (
                         <motion.div
                           className="cs-wn-section-header"
+                          data-tag={sectionHeaders[i]}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           transition={{ delay: 0.08 + i * 0.03, duration: 0.3 }}
@@ -225,7 +227,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                         style={{ cursor: item.desc ? "pointer" : "default" }}
                       >
                         <div className="cs-wn-row-main">
-                          <span className="cs-wn-tag">
+                          <span className="cs-wn-tag" data-tag={meta.tag}>
                             <Icon className="w-3 h-3" />
                             {meta.label}
                           </span>
