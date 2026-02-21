@@ -573,7 +573,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <div className="settings-panel-title">{category.label}</div>
                                     <div className="grid grid-cols-1 gap-1">
                                       {category.actions.map((action) => (
-                                <div className="settings-row hover:bg-white/[0.02] px-2 transition-colors gap-4 border-b last:border-none" style={{ borderColor: 'var(--mg-border)' }}>
+                                <div key={action} className="settings-row hover:bg-white/[0.02] px-2 transition-colors gap-4 border-b last:border-none" style={{ borderColor: 'var(--mg-border)' }}>
                                           <div className="flex-1 min-w-0 py-2">
                                             <div className="text-[10px] font-medium" style={{ color: 'oklch(0.985 0.002 286.375 / 80%)' }}>{HOTKEY_LABELS[action]}</div>
                                           </div>

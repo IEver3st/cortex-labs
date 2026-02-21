@@ -36,6 +36,7 @@ import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel, CyberTogg
 
 const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
+const MAX_BACKGROUND_IMAGE_BLUR = 32;
 const MIN_LOADER_MS = 650;
 
 const SUPPORTED_TEXTURE_EXTS = [
@@ -78,6 +79,12 @@ function isTextureFormatSupported(filePath) {
 function getFileExtension(filePath) {
   if (!filePath) return "";
   return filePath.split(".").pop().toLowerCase();
+}
+
+function clampBackgroundImageBlur(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(MAX_BACKGROUND_IMAGE_BLUR, Math.round(parsed)));
 }
 
 const BUILT_IN_DEFAULTS = {
@@ -179,6 +186,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
   const [backgroundImagePath, setBackgroundImagePath] = useState("");
+  const [backgroundImageBlur, setBackgroundImageBlur] = useState(0);
   const [backgroundImageReloadToken, setBackgroundImageReloadToken] = useState(0);
   const [showWireframe, setShowWireframe] = useState(false);
   const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
@@ -501,6 +509,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         bodyColor,
         backgroundColor,
         backgroundImagePath,
+        backgroundImageBlur,
         showWireframe,
         lightIntensity,
         lightAzimuth,
@@ -538,7 +547,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [
     isBooting, showOnboarding, textureMode,
     modelPath, modelSourcePath, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
-    liveryWindowOverride, bodyColor, backgroundColor, backgroundImagePath, showWireframe, lightIntensity, glossiness, liveryExteriorOnly,
+    liveryWindowOverride, bodyColor, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, lightIntensity, glossiness, liveryExteriorOnly,
     dualBodyColorA, dualBodyColorB,
     dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
     dualWindowTextureAPath, dualWindowTextureBPath,
@@ -743,6 +752,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     if (state.dualBodyColorB) setDualBodyColorB(state.dualBodyColorB);
     else if (state.bodyColor) setDualBodyColorB(state.bodyColor);
     if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
+    if (typeof state.backgroundImageBlur === "number") {
+      setBackgroundImageBlur(clampBackgroundImageBlur(state.backgroundImageBlur));
+    }
     if (typeof state.showWireframe === "boolean") setShowWireframe(state.showWireframe);
     if (typeof state.lightIntensity === "number") setLightIntensity(state.lightIntensity);
     if (typeof state.lightAzimuth === "number") setLightAzimuth(state.lightAzimuth);
@@ -1020,6 +1032,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   selectWindowTextureRef.current = selectWindowTexture;
 
   useEffect(() => {
+    if (!isActive) return undefined;
+
     const handleKeyDown = (event) => {
       const target = event.target;
       if (target instanceof Element) {
@@ -1043,6 +1057,24 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         case HOTKEY_ACTIONS.TOGGLE_PANEL:
           setPanelCollapsed((prev) => !prev);
           break;
+        case HOTKEY_ACTIONS.RESET_VIEW:
+          viewerApiRef.current?.reset?.();
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_FRONT:
+          viewerApiRef.current?.setPreset?.("front");
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_BACK:
+          viewerApiRef.current?.setPreset?.("back");
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_SIDE:
+          viewerApiRef.current?.setPreset?.("side");
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_ANGLE:
+          viewerApiRef.current?.setPreset?.("angle");
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_TOP:
+          viewerApiRef.current?.setPreset?.("top");
+          break;
         case HOTKEY_ACTIONS.SELECT_MODEL:
           selectModelRef.current?.();
           break;
@@ -1065,7 +1097,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hotkeys, experimentalSettings]);
+  }, [hotkeys, experimentalSettings, isActive]);
 
   const handleCenterCamera = () => {
     viewerApiRef.current?.reset?.();
@@ -2374,6 +2406,19 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       />
                     ) : null}
                   </div>
+                  {backgroundImagePath ? (
+                    <div className="mt-3">
+                      <MaterialSlider
+                        label="Blur"
+                        value={backgroundImageBlur}
+                        onChange={(nextValue) => setBackgroundImageBlur(clampBackgroundImageBlur(nextValue))}
+                        min={0}
+                        max={MAX_BACKGROUND_IMAGE_BLUR}
+                        step={1}
+                        unit="px"
+                      />
+                    </div>
+                  ) : null}
                 </div>
               </CyberCard>
 
@@ -2757,6 +2802,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             backgroundColor={backgroundColor}
             backgroundImagePath={backgroundImagePath}
             backgroundImageReloadToken={backgroundImageReloadToken}
+            backgroundImageBlur={backgroundImageBlur}
             lightIntensity={lightIntensity}
             lightAzimuth={lightAzimuth}
             lightElevation={lightElevation}
@@ -2794,6 +2840,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             backgroundColor={backgroundColor}
             backgroundImagePath={backgroundImagePath}
             backgroundImageReloadToken={backgroundImageReloadToken}
+            backgroundImageBlur={backgroundImageBlur}
             showGrid={showGrid}
             textureReloadToken={textureReloadToken}
             windowTextureReloadToken={windowTextureReloadToken}

@@ -14,28 +14,38 @@ import {
   ChevronLeft,
   Check,
   Command,
+  Eye,
+  Grid3x3,
+  Gamepad2,
+  LayoutPanelLeft,
+  SlidersHorizontal,
+  Zap,
+  Rocket,
+  ArrowRight,
 } from "lucide-react";
+import { loadPrefs, savePrefs } from "../lib/prefs";
 
+/* ─── Step definitions ────────────────────────────────────────────── */
 const STEPS = [
-  { id: "welcome", title: "Welcome" },
-  { id: "workspace", title: "Workspace" },
-  { id: "workflow", title: "Workflow" },
-  { id: "ready", title: "Ready" },
+  { id: "welcome", label: "Welcome" },
+  { id: "workspace", label: "Mode" },
+  { id: "preferences", label: "Setup" },
+  { id: "ready", label: "Launch" },
 ];
 
 const START_OPTIONS = [
   {
     id: "livery",
     label: "Livery",
-    desc: "Vehicle textures and paint",
+    desc: "Vehicle textures, paint jobs, and livery editing with real-time preview",
     icon: Car,
-    color: "#00d9ff",
+    color: "var(--mg-primary)",
     shortcut: "Alt + 1",
   },
   {
     id: "everything",
     label: "All",
-    desc: "Preview all meshes and materials",
+    desc: "Full mesh browser — preview every model, material, and texture in one view",
     icon: Layers,
     color: "#3b82f6",
     shortcut: "Alt + 2",
@@ -43,7 +53,7 @@ const START_OPTIONS = [
   {
     id: "eup",
     label: "EUP",
-    desc: "Uniforms and clothing textures",
+    desc: "Emergency uniforms — clothing textures and EUP outfit editing",
     icon: Shirt,
     color: "#f59e0b",
     shortcut: "Alt + 3",
@@ -51,89 +61,94 @@ const START_OPTIONS = [
   {
     id: "multi",
     label: "Multi",
-    desc: "Side-by-side model comparison",
+    desc: "Dual viewport for side-by-side model comparison and diffing",
     icon: Link2,
     color: "#ec4899",
     shortcut: "Alt + 4",
   },
   {
     id: "variants",
-    label: "Variant Builder",
-    desc: "PSD workflow and grouped exports",
+    label: "Variants",
+    desc: "PSD workflow — apply layer groups and export texture variants in bulk",
     icon: Palette,
     color: "#a855f7",
     shortcut: "Alt + 5",
   },
 ];
 
-const WORKFLOW_TIPS = [
-  {
-    id: "new-tab",
-    title: "Use quick launch tabs",
-    detail: "Use the + button in the toolbar to spin up mode-specific tabs instantly.",
-    icon: Sparkles,
-  },
-  {
-    id: "shortcuts",
-    title: "Keyboard-first workflow",
-    detail: "Default mode hotkeys are Alt+1 through Alt+5. Change them anytime in Shortcuts.",
-    icon: Keyboard,
-  },
-  {
-    id: "settings",
-    title: "Tune behavior in Settings",
-    detail: "UI scale, recents, viewer controls, and export paths all live in Settings.",
-    icon: Monitor,
-  },
-];
+/* ─── Settings that can be configured during onboarding ───────────── */
+function getInitialPrefs() {
+  const prefs = loadPrefs();
+  const d = prefs?.defaults ?? {};
+  return {
+    showGrid: d.showGrid ?? false,
+    showHints: d.showHints ?? true,
+    cameraWASD: d.cameraWASD ?? false,
+    legacyLayersLayout: d.legacyLayersLayout ?? false,
+    liveryExteriorOnly: d.liveryExteriorOnly ?? false,
+    showRecents: d.showRecents ?? true,
+    uiScale: d.uiScale ?? 1.0,
+  };
+}
 
+function persistPref(key, value) {
+  const prefs = loadPrefs() ?? {};
+  const defaults = prefs.defaults ?? {};
+  defaults[key] = value;
+  savePrefs({ ...prefs, defaults });
+}
+
+/* ─── Reusable toggle row ─────────────────────────────────────────── */
+function SettingToggle({ icon: Icon, label, hint, checked, onChange }) {
+  return (
+    <button
+      type="button"
+      className="onb-setting-row"
+      onClick={() => onChange(!checked)}
+    >
+      <div className="onb-setting-icon">
+        <Icon className="w-4 h-4" />
+      </div>
+      <div className="onb-setting-text">
+        <span className="onb-setting-label">{label}</span>
+        {hint && <span className="onb-setting-hint">{hint}</span>}
+      </div>
+      <div className={`onb-switch ${checked ? "is-on" : ""}`}>
+        <motion.div
+          className="onb-switch-thumb"
+          animate={{ x: checked ? 16 : 0 }}
+          transition={{ type: "spring", stiffness: 500, damping: 35 }}
+        />
+      </div>
+    </button>
+  );
+}
+
+/* ─── Step progress bar ───────────────────────────────────────────── */
 function StepIndicator({ current, total }) {
   return (
     <div className="onb-steps">
       {Array.from({ length: total }, (_, i) => (
-        <motion.div
-          key={i}
-          className={`onb-step-dot ${i === current ? "is-current" : i < current ? "is-done" : ""}`}
-          animate={{
-            scale: i === current ? 1.2 : 1,
-            backgroundColor: i <= current ? "var(--es-success)" : "rgba(255,255,255,0.12)",
-          }}
-          transition={{ duration: 0.25 }}
-        />
+        <div key={i} className="onb-step-track">
+          <motion.div
+            className="onb-step-fill"
+            initial={false}
+            animate={{
+              scaleX: i < current ? 1 : i === current ? 0.5 : 0,
+            }}
+            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          />
+        </div>
       ))}
     </div>
   );
 }
 
-function ColorPickerRow({ label, value, onChange }) {
-  return (
-    <div className="onb-color-row">
-      <span className="onb-color-label">{label}</span>
-      <div className="onb-color-control">
-        <div className="onb-color-swatch-wrap">
-          <div className="onb-color-swatch" style={{ background: value }} />
-          <input
-            type="color"
-            value={value}
-            onChange={(e) => onChange(e.currentTarget.value)}
-            className="onb-color-native"
-            aria-label={`${label} color picker`}
-          />
-        </div>
-        <input
-          type="text"
-          className="onb-color-hex"
-          value={value}
-          onChange={(e) => onChange(e.currentTarget.value)}
-        />
-      </div>
-    </div>
-  );
-}
-
+/* ═══════════════════════════════════════════════════════════════════ */
 export default function Onboarding({ onComplete }) {
   const [step, setStep] = useState(0);
   const [selectedStart, setSelectedStart] = useState("livery");
+  const [prefs, setPrefs] = useState(getInitialPrefs);
   const ease = useMemo(() => [0.22, 1, 0.36, 1], []);
 
   const next = useCallback(
@@ -147,19 +162,20 @@ export default function Onboarding({ onComplete }) {
     [onComplete],
   );
 
+  const togglePref = useCallback((key, value) => {
+    setPrefs((p) => ({ ...p, [key]: value }));
+    persistPref(key, value);
+  }, []);
+
   const selectedMeta = useMemo(
     () => START_OPTIONS.find((opt) => opt.id === selectedStart) ?? START_OPTIONS[0],
     [selectedStart],
   );
+  const SelectedStartIcon = selectedMeta.icon;
 
   const launchSelected = useCallback(
     () => complete({ type: "launch", target: selectedStart }),
     [complete, selectedStart],
-  );
-
-  const openSettings = useCallback(
-    (section) => complete({ type: "openSettings", section }),
-    [complete],
   );
 
   useEffect(() => {
@@ -173,95 +189,112 @@ export default function Onboarding({ onComplete }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [complete]);
 
+  /* ─── slide transition props ─── */
+  const slideMotion = {
+    initial: { opacity: 0, x: 40 },
+    animate: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: -40 },
+    transition: { duration: 0.28, ease },
+  };
+
   return (
     <motion.div
       className="onb-overlay"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.3, ease }}
+      transition={{ duration: 0.35, ease }}
     >
       <motion.div
         className="onb-container"
-        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+        initial={{ opacity: 0, y: 20, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 10, scale: 0.98 }}
-        transition={{ duration: 0.4, ease }}
+        exit={{ opacity: 0, y: 12, scale: 0.97 }}
+        transition={{ duration: 0.45, ease }}
       >
-        <div className="flex items-center justify-between gap-4">
+        {/* ─── Header bar ─── */}
+        <div className="onb-header">
           <StepIndicator current={step} total={STEPS.length} />
           <button
             type="button"
-            className="text-[10px] uppercase tracking-[0.12em] text-white/60 hover:text-white transition-colors"
+            className="onb-skip-btn"
             onClick={() => complete({ type: "home" })}
           >
             Skip
+            <ArrowRight className="w-3 h-3" />
           </button>
         </div>
 
+        {/* ─── Body ─── */}
         <div className="onb-body">
           <AnimatePresence mode="wait" initial={false}>
-            {/* Step 0: Welcome */}
-            {step === 0 && (
-              <motion.div
-                key="welcome"
-                className="onb-slide"
-                initial={{ opacity: 0, x: 30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -30 }}
-                transition={{ duration: 0.25, ease }}
-              >
-                <div className="onb-welcome-brand">Cortex Studio</div>
-                <div className="onb-welcome-sub">
-                  This walkthrough is now workflow-first. Launch faster, then tune settings when needed.
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-6">
-                  <div className="border border-white/10 bg-black/25 p-3">
-                    <div className="flex items-center gap-2 text-[#00d9ff] text-[11px] uppercase tracking-[0.12em]">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Fast Start</span>
-                    </div>
-                    <p className="text-[12px] text-white/70 mt-2">
-                      Pick a mode and open a working tab in one click.
-                    </p>
-                  </div>
-                  <div className="border border-white/10 bg-black/25 p-3">
-                    <div className="flex items-center gap-2 text-[#00ff9d] text-[11px] uppercase tracking-[0.12em]">
-                      <Command className="w-3.5 h-3.5" />
-                      <span>Hotkeys</span>
-                    </div>
-                    <p className="text-[12px] text-white/70 mt-2">
-                      Use Alt+1..Alt+5 to create mode tabs immediately.
-                    </p>
-                  </div>
-                  <div className="border border-white/10 bg-black/25 p-3">
-                    <div className="flex items-center gap-2 text-[#ffd700] text-[11px] uppercase tracking-[0.12em]">
-                      <Settings className="w-3.5 h-3.5" />
-                      <span>Settings</span>
-                    </div>
-                    <p className="text-[12px] text-white/70 mt-2">
-                      Tweak system, viewer, and export options after launch.
-                    </p>
-                  </div>
+            {/* ═══ Step 0: Welcome ═══ */}
+            {step === 0 && (
+              <motion.div key="welcome" className="onb-slide onb-slide--welcome" {...slideMotion}>
+                <motion.div
+                  className="onb-welcome-glow"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.6, delay: 0.1, ease }}
+                >
+                  <Zap className="w-8 h-8 text-[var(--mg-primary)]" />
+                </motion.div>
+
+                <motion.div
+                  className="onb-welcome-brand"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.15, ease }}
+                >
+                  Cortex Studio
+                </motion.div>
+
+                <motion.div
+                  className="onb-welcome-sub"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.4, delay: 0.25, ease }}
+                >
+                  A 3D livery previewer and texture workspace for FiveM modders.
+                  This guide helps you pick a workspace, configure your preferences, and launch.
+                </motion.div>
+
+                <div className="onb-feature-grid">
+                  {[
+                    { icon: Sparkles, color: "var(--mg-primary)", title: "Quick Launch", body: "Pick a mode and open a working tab in one click. No file setup needed." },
+                    { icon: Command, color: "#a78bfa", title: "Keyboard First", body: "Alt+1 through Alt+5 create mode tabs instantly from anywhere." },
+                    { icon: SlidersHorizontal, color: "#f59e0b", title: "Your Preferences", body: "Configure viewer, UI scale, and layout settings right in this wizard." },
+                  ].map((feat, i) => (
+                    <motion.div
+                      key={feat.title}
+                      className="onb-feature-card"
+                      initial={{ opacity: 0, y: 16 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.35, delay: 0.3 + i * 0.08, ease }}
+                    >
+                      <div className="onb-feature-icon" style={{ color: feat.color }}>
+                        <feat.icon className="w-5 h-5" />
+                      </div>
+                      <div className="onb-feature-title">{feat.title}</div>
+                      <div className="onb-feature-body">{feat.body}</div>
+                    </motion.div>
+                  ))}
                 </div>
               </motion.div>
             )}
 
-            {/* Step 1: Workspace */}
+            {/* ═══ Step 1: Pick Workspace ═══ */}
             {step === 1 && (
-              <motion.div
-                key="workspace"
-                className="onb-slide"
-                initial={{ opacity: 0, x: 30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -30 }}
-                transition={{ duration: 0.25, ease }}
-              >
-                <div className="onb-slide-title">Pick Your First Workspace</div>
-                <div className="onb-slide-hint">
-                  Choose what you want to open first. You can open additional modes anytime.
+              <motion.div key="workspace" className="onb-slide" {...slideMotion}>
+                <div className="onb-section-header">
+                  <div className="onb-section-badge">Step 2</div>
+                  <div className="onb-slide-title">Choose Your Workspace</div>
+                  <div className="onb-slide-hint">
+                    Select the mode you want to open first. You can add more tabs anytime via the toolbar.
+                  </div>
                 </div>
+
                 <div className="onb-mode-grid">
                   {START_OPTIONS.map((opt) => {
                     const Icon = opt.icon;
@@ -273,13 +306,9 @@ export default function Onboarding({ onComplete }) {
                         className={`onb-mode-card ${isActive ? "is-active" : ""}`}
                         style={{ "--mode-color": opt.color }}
                         onClick={() => setSelectedStart(opt.id)}
-                        whileHover={{ y: -2 }}
+                        whileHover={{ y: -3, transition: { duration: 0.15 } }}
                         whileTap={{ scale: 0.97 }}
                       >
-                        <Icon className="onb-mode-icon" />
-                        <span className="onb-mode-label">{opt.label}</span>
-                        <span className="onb-mode-desc">{opt.desc}</span>
-                        <span className="text-[10px] text-white/40 mt-1">{opt.shortcut}</span>
                         {isActive && (
                           <motion.div
                             className="onb-mode-check"
@@ -290,6 +319,12 @@ export default function Onboarding({ onComplete }) {
                             <Check className="w-3 h-3" />
                           </motion.div>
                         )}
+                        <div className="onb-mode-icon-wrap">
+                          <Icon className="onb-mode-icon" />
+                        </div>
+                        <span className="onb-mode-label">{opt.label}</span>
+                        <span className="onb-mode-desc">{opt.desc}</span>
+                        <span className="onb-mode-shortcut">{opt.shortcut}</span>
                       </motion.button>
                     );
                   })}
@@ -297,141 +332,180 @@ export default function Onboarding({ onComplete }) {
               </motion.div>
             )}
 
-            {/* Step 2: Workflow */}
+            {/* ═══ Step 2: Preferences ═══ */}
             {step === 2 && (
-              <motion.div
-                key="workflow"
-                className="onb-slide"
-                initial={{ opacity: 0, x: 30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -30 }}
-                transition={{ duration: 0.25, ease }}
-              >
-                <div className="onb-slide-title">Workflow Essentials</div>
-                <div className="onb-slide-hint">The core loop is quick launch, iterate, and export.</div>
-
-                <div className="space-y-3 mt-4">
-                  {WORKFLOW_TIPS.map((tip) => {
-                    const Icon = tip.icon;
-                    return (
-                      <div key={tip.id} className="border border-white/10 bg-black/25 p-3">
-                        <div className="flex items-center gap-2 text-[#00d9ff] text-[10px] uppercase tracking-[0.12em]">
-                          <Icon className="w-3.5 h-3.5" />
-                          <span>{tip.title}</span>
-                        </div>
-                        <p className="text-[12px] text-white/70 mt-1.5">{tip.detail}</p>
-                      </div>
-                    );
-                  })}
+              <motion.div key="preferences" className="onb-slide" {...slideMotion}>
+                <div className="onb-section-header">
+                  <div className="onb-section-badge">Step 3</div>
+                  <div className="onb-slide-title">Configure Preferences</div>
+                  <div className="onb-slide-hint">
+                    Customize the experience. These can all be changed later in Settings.
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 mt-5">
-                  <button
-                    type="button"
-                    className="onb-nav-btn onb-nav-next"
-                    onClick={() => openSettings("hotkeys")}
-                  >
-                    <Keyboard className="w-3.5 h-3.5" />
-                    <span>Edit Shortcuts</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="onb-nav-btn onb-nav-back"
-                    onClick={() => openSettings("viewer")}
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                    <span>Open Viewer Settings</span>
-                  </button>
+                <div className="onb-settings-grid">
+                  {/* ── Viewer group ── */}
+                  <div className="onb-settings-group">
+                    <div className="onb-settings-group-title">
+                      <Eye className="w-3.5 h-3.5" />
+                      Viewer
+                    </div>
+                    <SettingToggle
+                      icon={Grid3x3}
+                      label="Show Grid"
+                      hint="Display a ground-plane grid in the 3D viewport"
+                      checked={prefs.showGrid}
+                      onChange={(v) => togglePref("showGrid", v)}
+                    />
+                    <SettingToggle
+                      icon={Gamepad2}
+                      label="WASD Camera"
+                      hint="FPS-style camera controls instead of orbit mode"
+                      checked={prefs.cameraWASD}
+                      onChange={(v) => togglePref("cameraWASD", v)}
+                    />
+                    <SettingToggle
+                      icon={Car}
+                      label="Exterior Only"
+                      hint="Hide interior, glass, and wheel meshes in livery mode"
+                      checked={prefs.liveryExteriorOnly}
+                      onChange={(v) => togglePref("liveryExteriorOnly", v)}
+                    />
+                  </div>
+
+                  {/* ── UI group ── */}
+                  <div className="onb-settings-group">
+                    <div className="onb-settings-group-title">
+                      <Monitor className="w-3.5 h-3.5" />
+                      Interface
+                    </div>
+                    <SettingToggle
+                      icon={LayoutPanelLeft}
+                      label="Legacy Layers Layout"
+                      hint="Use the classic side-by-side variant builder panel"
+                      checked={prefs.legacyLayersLayout}
+                      onChange={(v) => togglePref("legacyLayersLayout", v)}
+                    />
+                    <SettingToggle
+                      icon={Sparkles}
+                      label="Show Hints"
+                      hint="Display contextual help text in the interface"
+                      checked={prefs.showHints}
+                      onChange={(v) => togglePref("showHints", v)}
+                    />
+                    <SettingToggle
+                      icon={Keyboard}
+                      label="Show Recents"
+                      hint="Show recently opened files on the home screen"
+                      checked={prefs.showRecents}
+                      onChange={(v) => togglePref("showRecents", v)}
+                    />
+                  </div>
+                </div>
+
+                {/* ── UI Scale slider ── */}
+                <div className="onb-scale-row">
+                  <div className="onb-scale-info">
+                    <span className="onb-setting-label">UI Scale</span>
+                    <span className="onb-scale-value">{(prefs.uiScale * 100).toFixed(0)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="1.4"
+                    step="0.05"
+                    value={prefs.uiScale}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      togglePref("uiScale", v);
+                    }}
+                    className="onb-slider"
+                  />
                 </div>
               </motion.div>
             )}
 
-            {/* Step 3: Ready */}
+            {/* ═══ Step 3: Ready ═══ */}
             {step === 3 && (
-              <motion.div
-                key="ready"
-                className="onb-slide onb-slide--ready"
-                initial={{ opacity: 0, x: 30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -30 }}
-                transition={{ duration: 0.25, ease }}
-              >
+              <motion.div key="ready" className="onb-slide onb-slide--ready" {...slideMotion}>
                 <motion.div
                   className="onb-ready-check"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 20, delay: 0.1 }}
+                  initial={{ scale: 0, rotate: -20 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 18, delay: 0.1 }}
                 >
-                  <Check className="w-6 h-6" />
+                  <Rocket className="w-7 h-7" />
                 </motion.div>
-                <div className="onb-slide-title">You're all set</div>
-                <div className="onb-slide-hint">
-                  Ready to launch <strong>{selectedMeta.label}</strong>. You can reopen this anytime from the toolbar info button.
-                </div>
 
-                <div className="grid grid-cols-1 gap-2 mt-6 w-full max-w-[440px]">
-                  <button
+                <motion.div
+                  className="onb-slide-title"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2, duration: 0.3, ease }}
+                >
+                  You're Ready
+                </motion.div>
+                <motion.div
+                  className="onb-slide-hint"
+                  style={{ textAlign: "center", maxWidth: 340 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.3, duration: 0.3, ease }}
+                >
+                  Your preferences are saved. Launch <strong style={{ color: "var(--mg-fg)" }}>{selectedMeta.label}</strong> to
+                  start working, or head to the home screen.
+                </motion.div>
+
+                <div className="onb-ready-actions">
+                  <motion.button
                     type="button"
-                    className="onb-nav-btn onb-nav-finish w-full justify-center"
+                    className="onb-launch-btn"
                     onClick={launchSelected}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.35, duration: 0.3, ease }}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                   >
-                    <selectedMeta.icon className="w-3.5 h-3.5" />
+                    <SelectedStartIcon className="w-4 h-4" />
                     <span>Launch {selectedMeta.label}</span>
-                  </button>
-                  <button
+                    <ArrowRight className="w-4 h-4 ml-auto opacity-50" />
+                  </motion.button>
+
+                  <motion.button
                     type="button"
-                    className="onb-nav-btn onb-nav-next w-full justify-center"
-                    onClick={() => openSettings("general")}
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                    <span>Open System Settings</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="onb-nav-btn onb-nav-back w-full justify-center"
+                    className="onb-nav-btn onb-nav-back onb-ready-secondary"
                     onClick={() => complete({ type: "home" })}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.45, duration: 0.3, ease }}
                   >
-                    <span>Go To Home</span>
-                  </button>
+                    Go to Home Screen
+                  </motion.button>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Navigation */}
-        {step < STEPS.length - 1 ? (
-          <div className="onb-nav">
-            {step > 0 ? (
-              <button type="button" className="onb-nav-btn onb-nav-back" onClick={prev}>
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>Back</span>
-              </button>
-            ) : (
-              <div />
-            )}
-
-            <button type="button" className="onb-nav-btn onb-nav-next" onClick={next}>
-              <span>{step === 0 ? "Get Started" : "Next"}</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ) : (
-          <div className="onb-nav">
+        {/* ─── Navigation footer ─── */}
+        <div className="onb-nav">
+          {step > 0 ? (
             <button type="button" className="onb-nav-btn onb-nav-back" onClick={prev}>
               <ChevronLeft className="w-3.5 h-3.5" />
               <span>Back</span>
             </button>
-            <button
-              type="button"
-              className="onb-nav-btn onb-nav-next"
-              onClick={() => complete({ type: "home" })}
-            >
-              <span>Finish</span>
+          ) : (
+            <div />
+          )}
+
+          {step < STEPS.length - 1 && (
+            <button type="button" className="onb-nav-btn onb-nav-next" onClick={next}>
+              <span>{step === 0 ? "Get Started" : "Next"}</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </motion.div>
     </motion.div>
   );

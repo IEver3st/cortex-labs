@@ -2,17 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import {
-  X, Sparkles, ArrowRight, Copy, Check, ChevronDown,
-  Wrench, Bug
+  X, ArrowRight, Copy, Check, ChevronDown
 } from "lucide-react";
+import { RiSparklingLine, RiArrowUpCircleLine, RiBugLine } from "react-icons/ri";
 import {
   getLatestChangelog, hasSeenWhatsNew, markWhatsNewSeen, toMarkdown, getAppVersion
 } from "../lib/changelog";
 
 const TAG_META = {
-  new:      { label: "New",      icon: Sparkles, tag: "new"      },
-  improved: { label: "Improved", icon: Wrench,   tag: "improved" },
-  fixed:    { label: "Fix",      icon: Bug,       tag: "fixed"    },
+  new:      { label: "New",      icon: RiSparklingLine,    tag: "new"      },
+  improved: { label: "Improved", icon: RiArrowUpCircleLine, tag: "improved" },
+  fixed:    { label: "Fix",      icon: RiBugLine,           tag: "fixed"    },
 };
 
 const DEFAULT_VISIBLE = 6;
@@ -30,7 +30,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
   const [visible, setVisible] = useState(false);
   const [entry, setEntry] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(true);
   const [expandedIdx, setExpandedIdx] = useState(-1);
   const modalRef = useRef(null);
   const primaryRef = useRef(null);
@@ -206,17 +206,26 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
 
                   return (
                     <div key={globalIdx}>
-                      {showHeader && (
-                        <motion.div
-                          className="cs-wn-section-header"
-                          data-tag={sectionHeaders[i]}
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ delay: 0.08 + i * 0.03, duration: 0.3 }}
-                        >
-                          {TAG_META[sectionHeaders[i]]?.label || "New"}
-                        </motion.div>
-                      )}
+                      {showHeader && (() => {
+                        const tag = sectionHeaders[i];
+                        const SectionIcon = TAG_META[tag]?.icon;
+                        return (
+                          <motion.div
+                            className="cs-wn-section-header"
+                            data-tag={tag}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.08 + i * 0.03, duration: 0.3 }}
+                          >
+                            {SectionIcon && (
+                              <span className="cs-wn-section-header-icon">
+                                <SectionIcon size={11} />
+                              </span>
+                            )}
+                            {TAG_META[tag]?.label || "New"}
+                          </motion.div>
+                        );
+                      })()}
 
                       <motion.div
                         className={`cs-wn-row ${isExpanded ? "is-expanded" : ""}`}
@@ -228,7 +237,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                       >
                         <div className="cs-wn-row-main">
                           <span className="cs-wn-tag" data-tag={meta.tag} title={meta.label}>
-                            <Icon className="w-3 h-3" />
+                            <Icon size={13} />
                           </span>
                           <span className="cs-wn-row-title">{item.title}</span>
                           {item.desc && (

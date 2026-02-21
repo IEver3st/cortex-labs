@@ -13,7 +13,6 @@
 - Background Image Support | Use custom images as scene backgrounds.
 - What's New Window | In-app changelog window now shows release notes directly inside the app.
 - Wireframe Toggle | Toggle wireframe mode for quick model inspection.
-- In-App Tutorials by Mode | Built-in tutorials are available for each mode.
 
 ## Improved
 
