@@ -1,5 +1,5 @@
 ## Cortex Studio v3.5
-![Cortex Studio UI](https://cdn.discordapp.com/attachments/698747360536297524/1470837930636345394/image.png?ex=698cc011&is=698b6e91&hm=2501340555264d6f7ad5d1839650945f806b88153d68620eef074fbd16be6f20&)
+![Cortex Studio UI](https://cdn.discordapp.com/attachments/1346902689744949270/1472021146311331871/image.png?ex=699af146&is=69999fc6&hm=6b2bf8b46a7498275f98db8eebed9bf07ec208901a893c1b59ddf2a89c0e56b0&)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C1C41TSVBX)
 
 # Cortex Studio
