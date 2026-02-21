@@ -3,6 +3,10 @@ import { motion } from "motion/react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "../../lib/utils";
+import {
+  DEFAULT_SIDE_OFFSET,
+  positionSelectPortal,
+} from "../../lib/portalPositionGuard";
 
 const Select = SelectPrimitive.Root;
 const SelectGroup = SelectPrimitive.Group;
@@ -48,37 +52,130 @@ const SelectScrollDownButton = React.forwardRef(({ className, ...props }, ref) =
 ));
 SelectScrollDownButton.displayName = SelectPrimitive.ScrollDownButton.displayName;
 
-const SelectContent = React.forwardRef(({ className, children, position = "popper", ...props }, ref) => (
-  <SelectPrimitive.Portal>
-    <SelectPrimitive.Content asChild position={position} {...props}>
-      <motion.div
-        ref={ref}
-        className={cn(
-          "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-[var(--es-radius-control)] border border-white/10 bg-[#0f1113] text-white shadow-md",
-          "font-hud",
-          position === "popper" &&
-            "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
-          className,
-        )}
-        initial={{ opacity: 0, y: -6, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-      >
-        <SelectScrollUpButton />
-        <SelectPrimitive.Viewport
-          className={cn(
-            "p-1",
-            position === "popper" &&
-              "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]",
-          )}
+function findTriggerForContent(contentEl) {
+  if (!contentEl || typeof document === "undefined") return null;
+  const contentId = contentEl.getAttribute("id");
+  if (!contentId) return null;
+
+  const candidates = document.querySelectorAll("[aria-controls]");
+  for (const node of candidates) {
+    if (node.getAttribute("aria-controls") !== contentId) continue;
+    if (node.getAttribute("aria-expanded") === "true") return node;
+  }
+
+  for (const node of candidates) {
+    if (node.getAttribute("aria-controls") === contentId) return node;
+  }
+
+  return null;
+}
+
+const SelectContent = React.forwardRef(
+  (
+    {
+      className,
+      children,
+      position = "popper",
+      side = "bottom",
+      align = "start",
+      avoidCollisions = false,
+      sideOffset = DEFAULT_SIDE_OFFSET,
+      ...props
+    },
+    forwardedRef,
+  ) => {
+    const contentRef = React.useRef(null);
+
+    const setContentRef = React.useCallback(
+      (node) => {
+        contentRef.current = node;
+        if (typeof forwardedRef === "function") {
+          forwardedRef(node);
+        } else if (forwardedRef) {
+          forwardedRef.current = node;
+        }
+      },
+      [forwardedRef],
+    );
+
+    React.useLayoutEffect(() => {
+      if (position !== "popper" || typeof window === "undefined") return undefined;
+
+      let rafOne = 0;
+      let rafTwo = 0;
+
+      const syncPosition = () => {
+        const contentNode = contentRef.current;
+        if (!contentNode) return;
+        const triggerNode = findTriggerForContent(contentNode);
+        if (!triggerNode) return;
+        positionSelectPortal({
+          contentEl: contentNode,
+          triggerEl: triggerNode,
+          sideOffset,
+        });
+      };
+
+      syncPosition();
+      rafOne = requestAnimationFrame(() => {
+        syncPosition();
+        rafTwo = requestAnimationFrame(syncPosition);
+      });
+
+      window.addEventListener("resize", syncPosition);
+      window.addEventListener("scroll", syncPosition, true);
+      window.addEventListener("cortex:ui-scale-changed", syncPosition);
+
+      return () => {
+        if (rafOne) cancelAnimationFrame(rafOne);
+        if (rafTwo) cancelAnimationFrame(rafTwo);
+        window.removeEventListener("resize", syncPosition);
+        window.removeEventListener("scroll", syncPosition, true);
+        window.removeEventListener("cortex:ui-scale-changed", syncPosition);
+      };
+    }, [position, sideOffset]);
+
+    return (
+      <SelectPrimitive.Portal>
+        <SelectPrimitive.Content
+          asChild
+          position={position}
+          side={side}
+          align={align}
+          avoidCollisions={avoidCollisions}
+          sideOffset={sideOffset}
+          {...props}
         >
-          {children}
-        </SelectPrimitive.Viewport>
-        <SelectScrollDownButton />
-      </motion.div>
-    </SelectPrimitive.Content>
-  </SelectPrimitive.Portal>
-));
+          <motion.div
+            ref={setContentRef}
+            className={cn(
+              "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-[var(--es-radius-control)] border border-white/10 bg-[#0f1113] text-white shadow-md",
+              "font-hud",
+              position === "popper" &&
+                "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
+              className,
+            )}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <SelectScrollUpButton />
+            <SelectPrimitive.Viewport
+              className={cn(
+                "p-1",
+                position === "popper" &&
+                  "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]",
+              )}
+            >
+              {children}
+            </SelectPrimitive.Viewport>
+            <SelectScrollDownButton />
+          </motion.div>
+        </SelectPrimitive.Content>
+      </SelectPrimitive.Portal>
+    );
+  },
+);
 SelectContent.displayName = SelectPrimitive.Content.displayName;
 
 const SelectLabel = React.forwardRef(({ className, ...props }, ref) => (

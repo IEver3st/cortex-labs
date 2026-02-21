@@ -1890,6 +1890,29 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   )}
                 </div>
               </CyberSection>
+              <CyberSection
+                title="Visibility"
+                caption={viewLabel}
+                open={panelOpen.view}
+                onToggle={() => togglePanel("view")}
+                contentId="panel-visibility"
+                icon={Eye}
+                color="blue"
+              >
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <CyberLabel className="mb-0">Exterior Only</CyberLabel>
+                    <button
+                      type="button"
+                      className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${liveryExteriorOnly ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
+                      onClick={() => setLiveryExteriorOnly((prev) => !prev)}
+                    >
+                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${liveryExteriorOnly ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
+                    </button>
+                  </div>
+                  <div className="text-[9px] text-[var(--mg-primary)]/50">Hides interior, glass, and wheel meshes.</div>
+                </div>
+              </CyberSection>
             </div>
           ) : null}
 
@@ -2849,7 +2872,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             textureMode={textureMode}
             showWireframe={showWireframe}
             wasdEnabled={cameraWASD}
-            liveryExteriorOnly={textureMode === "livery" && liveryExteriorOnly}
+            liveryExteriorOnly={(textureMode === "livery" || textureMode === "everything") && liveryExteriorOnly}
             lightIntensity={lightIntensity}
             lightAzimuth={lightAzimuth}
             lightElevation={lightElevation}

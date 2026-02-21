@@ -185,6 +185,9 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
     savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: hotkeysDraft });
     // Apply UI scale immediately
     document.documentElement.style.setProperty("--es-ui-scale", String(normalizedUiScale));
+    window.dispatchEvent(
+      new CustomEvent("cortex:ui-scale-changed", { detail: { scale: normalizedUiScale } }),
+    );
     setOpen(false);
     onSettingsSaved?.();
   }, [draft, hotkeysDraft, onSettingsSaved]);

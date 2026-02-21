@@ -96,6 +96,9 @@ export default function Shell() {
     const prefs = loadPrefs();
     const scale = clampUiScale(prefs?.defaults?.uiScale ?? 1.0);
     document.documentElement.style.setProperty("--es-ui-scale", String(scale));
+    window.dispatchEvent(
+      new CustomEvent("cortex:ui-scale-changed", { detail: { scale } }),
+    );
     
     const style = prefs?.defaults?.windowControlsStyle ?? "windows";
     document.documentElement.setAttribute("data-window-style", style);

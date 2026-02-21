@@ -2378,10 +2378,18 @@ function isGlassMaterial(child) {
 }
 
 function shouldShowExterior(child, textureTarget, matchesTarget) {
-  if (matchesTarget && textureTarget !== ALL_TARGET) return true;
   const meta = getMeshMeta(child);
-  if (matchesExteriorName(meta.meshLabel)) return true;
-  return meta.materialNames.some(matchesExteriorName);
+  if (meta.isGlass) return false;
+
+  const names = [meta.meshLabel, ...meta.materialNames];
+  const hasExcludedToken = names.some(matchesExteriorExcludedName);
+  if (hasExcludedToken) return false;
+
+  const hasIncludedToken = names.some(matchesExteriorIncludedName);
+  if (hasIncludedToken) return true;
+
+  if (matchesTarget && textureTarget !== ALL_TARGET) return true;
+  return false;
 }
 
 function shouldShowExteriorDual(
@@ -2391,19 +2399,25 @@ function shouldShowExteriorDual(
   windowTarget,
   matchesWindow,
 ) {
-  if (matchesWindow && windowTarget && windowTarget !== ALL_TARGET) return true;
+  if (matchesWindow && windowTarget && windowTarget !== ALL_TARGET) {
+    // Exterior-only must stay shell-only, even when a manual window target exists.
+    return false;
+  }
   return shouldShowExterior(child, vehicleTarget, matchesVehicle);
 }
 
-function matchesExteriorName(name) {
+function matchesExteriorIncludedName(name) {
   if (!name) return false;
   const raw = name.toString().trim().toLowerCase();
   if (!raw) return false;
-  const hasInclude = EXTERIOR_INCLUDE_TOKENS.some((token) => raw.includes(token));
-  if (hasInclude) return true;
-  const hasExclude = EXTERIOR_EXCLUDE_TOKENS.some((token) => raw.includes(token));
-  if (hasExclude) return false;
-  return false;
+  return EXTERIOR_INCLUDE_TOKENS.some((token) => raw.includes(token));
+}
+
+function matchesExteriorExcludedName(name) {
+  if (!name) return false;
+  const raw = name.toString().trim().toLowerCase();
+  if (!raw) return false;
+  return EXTERIOR_EXCLUDE_TOKENS.some((token) => raw.includes(token));
 }
 
 function collectTextureTargets(object) {
