@@ -754,7 +754,20 @@ function ViewerComponent({
     if (!sceneReady || !sceneRef.current) return;
 
     if (!modelPath) {
+      if (modelRef.current) {
+        sceneRef.current.remove(modelRef.current);
+        disposeObject(modelRef.current);
+        modelRef.current = null;
+      }
+      onModelInfoRef.current?.({
+        targets: [],
+        liveryTarget: "",
+        liveryLabel: "",
+        windowTarget: "",
+        windowLabel: "",
+      });
       onModelLoadingRef.current?.(false);
+      requestRender();
       return;
     }
 

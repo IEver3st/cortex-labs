@@ -8,7 +8,6 @@ All notable changes to Cortex Studio are documented here.
 
 ### Added
 - **Dual-slot window textures** — Per-slot window design textures in multi-model mode for independent A/B window templates
-- **Single-instance file-open** — Open `.yft`/`.ydd` files directly from Explorer/Finder; app focuses existing window instead of spawning new instances
 - **YDD model support in multi-viewer** — Drag-and-drop `.ydd` files into the side-by-side comparison mode
 - **Workspace state persistence** — Recent projects restore their full state (model paths, textures, colors, camera positions) on relaunch
 
@@ -21,13 +20,13 @@ All notable changes to Cortex Studio are documented here.
 ## [3.1.1] - 2026-02-10
 
 ### Added
-- **Variant export folder preference** — Set a default output folder for batch variant exports
-- **Unload buttons** — Quickly clear selected model/texture with dedicated unload controls
-- **Mode grid on home** — Redesigned launch area with clear mode selection cards
+- **Single-instance file-open & multi-model support** — Open `.yft`/`.ydd` files from Explorer; app focuses existing window instead of spawning a new instance; multi-model mode wired up accordingly
 
-### Changed
-- Improved select controls with better filename display and spacing
-- Mac-style titlebar controls support
+### Fixed
+- Elegant window mode not appearing in window controls selector
+- 3D Grid option not showing up in settings
+- Variant Builder errors on startup
+- Multi-model automatic livery updates not registering on either model slot
 
 ---
 

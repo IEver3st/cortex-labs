@@ -1,17 +1,90 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Car, Layers, Shirt, Eye, Palette, Monitor, ChevronRight, ChevronLeft, Check, FolderOpen } from "lucide-react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-
-const DEFAULT_BODY = "#e7ebf0";
-const DEFAULT_BG = "#141414";
+import {
+  Car,
+  Layers,
+  Shirt,
+  Link2,
+  Palette,
+  Monitor,
+  Keyboard,
+  Settings,
+  Sparkles,
+  ChevronRight,
+  ChevronLeft,
+  Check,
+  Command,
+} from "lucide-react";
 
 const STEPS = [
   { id: "welcome", title: "Welcome" },
-  { id: "mode", title: "Default Mode" },
-  { id: "appearance", title: "Appearance" },
-  { id: "export", title: "Export" },
+  { id: "workspace", title: "Workspace" },
+  { id: "workflow", title: "Workflow" },
   { id: "ready", title: "Ready" },
+];
+
+const START_OPTIONS = [
+  {
+    id: "livery",
+    label: "Livery",
+    desc: "Vehicle textures and paint",
+    icon: Car,
+    color: "#00d9ff",
+    shortcut: "Alt + 1",
+  },
+  {
+    id: "everything",
+    label: "All",
+    desc: "Preview all meshes and materials",
+    icon: Layers,
+    color: "#3b82f6",
+    shortcut: "Alt + 2",
+  },
+  {
+    id: "eup",
+    label: "EUP",
+    desc: "Uniforms and clothing textures",
+    icon: Shirt,
+    color: "#f59e0b",
+    shortcut: "Alt + 3",
+  },
+  {
+    id: "multi",
+    label: "Multi",
+    desc: "Side-by-side model comparison",
+    icon: Link2,
+    color: "#ec4899",
+    shortcut: "Alt + 4",
+  },
+  {
+    id: "variants",
+    label: "Variant Builder",
+    desc: "PSD workflow and grouped exports",
+    icon: Palette,
+    color: "#a855f7",
+    shortcut: "Alt + 5",
+  },
+];
+
+const WORKFLOW_TIPS = [
+  {
+    id: "new-tab",
+    title: "Use quick launch tabs",
+    detail: "Use the + button in the toolbar to spin up mode-specific tabs instantly.",
+    icon: Sparkles,
+  },
+  {
+    id: "shortcuts",
+    title: "Keyboard-first workflow",
+    detail: "Default mode hotkeys are Alt+1 through Alt+5. Change them anytime in Shortcuts.",
+    icon: Keyboard,
+  },
+  {
+    id: "settings",
+    title: "Tune behavior in Settings",
+    detail: "UI scale, recents, viewer controls, and export paths all live in Settings.",
+    icon: Monitor,
+  },
 ];
 
 function StepIndicator({ current, total }) {
@@ -60,63 +133,45 @@ function ColorPickerRow({ label, value, onChange }) {
 
 export default function Onboarding({ onComplete }) {
   const [step, setStep] = useState(0);
-  const [draft, setDraft] = useState({
-    textureMode: "livery",
-    liveryExteriorOnly: false,
-    windowTemplateEnabled: false,
-    windowTextureTarget: "auto",
-    cameraWASD: false,
-    bodyColor: DEFAULT_BODY,
-    backgroundColor: DEFAULT_BG,
-    experimentalSettings: false,
-    showHints: true,
-    hideRotText: false,
-    showGrid: false,
-    showRecents: true,
-    lightIntensity: 1.0,
-    glossiness: 0.5,
-    windowControlsStyle: "windows",
-    toolbarInTitlebar: false,
-    uiScale: 1.0,
-    previewFolder: "",
-    variantExportFolder: "",
-  });
-
-  const isTauriRuntime =
-    typeof window !== "undefined" &&
-    typeof window.__TAURI_INTERNALS__ !== "undefined";
-
-  const handleSelectPreviewFolder = useCallback(async () => {
-    if (!isTauriRuntime) return;
-    try {
-      const selected = await openDialog({ directory: true, title: "Select Preview Export Folder" });
-      if (typeof selected === "string") {
-        setDraft((p) => ({ ...p, previewFolder: selected }));
-      }
-    } catch {}
-  }, [isTauriRuntime]);
-
-  const handleSelectVariantExportFolder = useCallback(async () => {
-    if (!isTauriRuntime) return;
-    try {
-      const selected = await openDialog({ directory: true, title: "Select Variant Export Folder" });
-      if (typeof selected === "string") {
-        setDraft((p) => ({ ...p, variantExportFolder: selected }));
-      }
-    } catch {}
-  }, [isTauriRuntime]);
-
+  const [selectedStart, setSelectedStart] = useState("livery");
   const ease = useMemo(() => [0.22, 1, 0.36, 1], []);
 
-  const next = useCallback(() => setStep((s) => Math.min(s + 1, STEPS.length - 1)), []);
+  const next = useCallback(
+    () => setStep((s) => Math.min(s + 1, STEPS.length - 1)),
+    [],
+  );
   const prev = useCallback(() => setStep((s) => Math.max(s - 1, 0)), []);
-  const finish = useCallback(() => onComplete?.(draft), [draft, onComplete]);
 
-  const modeOptions = [
-    { id: "livery", label: "Livery", desc: "Auto-targets carpaint materials", icon: Car, color: "#7dd3fc" },
-    { id: "everything", label: "All", desc: "Texture applied to every mesh", icon: Layers, color: "#a78bfa" },
-    { id: "eup", label: "EUP", desc: "Uniform & clothing textures", icon: Shirt, color: "#f97316" },
-  ];
+  const complete = useCallback(
+    (payload = { type: "home" }) => onComplete?.(payload),
+    [onComplete],
+  );
+
+  const selectedMeta = useMemo(
+    () => START_OPTIONS.find((opt) => opt.id === selectedStart) ?? START_OPTIONS[0],
+    [selectedStart],
+  );
+
+  const launchSelected = useCallback(
+    () => complete({ type: "launch", target: selectedStart }),
+    [complete, selectedStart],
+  );
+
+  const openSettings = useCallback(
+    (section) => complete({ type: "openSettings", section }),
+    [complete],
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        complete({ type: "home" });
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [complete]);
 
   return (
     <motion.div
@@ -133,7 +188,16 @@ export default function Onboarding({ onComplete }) {
         exit={{ opacity: 0, y: 10, scale: 0.98 }}
         transition={{ duration: 0.4, ease }}
       >
-        <StepIndicator current={step} total={STEPS.length} />
+        <div className="flex items-center justify-between gap-4">
+          <StepIndicator current={step} total={STEPS.length} />
+          <button
+            type="button"
+            className="text-[10px] uppercase tracking-[0.12em] text-white/60 hover:text-white transition-colors"
+            onClick={() => complete({ type: "home" })}
+          >
+            Skip
+          </button>
+        </div>
 
         <div className="onb-body">
           <AnimatePresence mode="wait" initial={false}>
@@ -149,40 +213,73 @@ export default function Onboarding({ onComplete }) {
               >
                 <div className="onb-welcome-brand">Cortex Studio</div>
                 <div className="onb-welcome-sub">
-                  Configure your workspace defaults. Everything here can be changed later in Settings.
+                  This walkthrough is now workflow-first. Launch faster, then tune settings when needed.
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-6">
+                  <div className="border border-white/10 bg-black/25 p-3">
+                    <div className="flex items-center gap-2 text-[#00d9ff] text-[11px] uppercase tracking-[0.12em]">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Fast Start</span>
+                    </div>
+                    <p className="text-[12px] text-white/70 mt-2">
+                      Pick a mode and open a working tab in one click.
+                    </p>
+                  </div>
+                  <div className="border border-white/10 bg-black/25 p-3">
+                    <div className="flex items-center gap-2 text-[#00ff9d] text-[11px] uppercase tracking-[0.12em]">
+                      <Command className="w-3.5 h-3.5" />
+                      <span>Hotkeys</span>
+                    </div>
+                    <p className="text-[12px] text-white/70 mt-2">
+                      Use Alt+1..Alt+5 to create mode tabs immediately.
+                    </p>
+                  </div>
+                  <div className="border border-white/10 bg-black/25 p-3">
+                    <div className="flex items-center gap-2 text-[#ffd700] text-[11px] uppercase tracking-[0.12em]">
+                      <Settings className="w-3.5 h-3.5" />
+                      <span>Settings</span>
+                    </div>
+                    <p className="text-[12px] text-white/70 mt-2">
+                      Tweak system, viewer, and export options after launch.
+                    </p>
+                  </div>
                 </div>
               </motion.div>
             )}
 
-            {/* Step 1: Default Mode */}
+            {/* Step 1: Workspace */}
             {step === 1 && (
               <motion.div
-                key="mode"
+                key="workspace"
                 className="onb-slide"
                 initial={{ opacity: 0, x: 30 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -30 }}
                 transition={{ duration: 0.25, ease }}
               >
-                <div className="onb-slide-title">Default Texture Mode</div>
-                <div className="onb-slide-hint">Choose how textures are applied when you load a model.</div>
+                <div className="onb-slide-title">Pick Your First Workspace</div>
+                <div className="onb-slide-hint">
+                  Choose what you want to open first. You can open additional modes anytime.
+                </div>
                 <div className="onb-mode-grid">
-                  {modeOptions.map((opt) => {
+                  {START_OPTIONS.map((opt) => {
                     const Icon = opt.icon;
-                    const isActive = draft.textureMode === opt.id;
+                    const isActive = selectedStart === opt.id;
                     return (
                       <motion.button
                         key={opt.id}
                         type="button"
                         className={`onb-mode-card ${isActive ? "is-active" : ""}`}
                         style={{ "--mode-color": opt.color }}
-                        onClick={() => setDraft((p) => ({ ...p, textureMode: opt.id }))}
+                        onClick={() => setSelectedStart(opt.id)}
                         whileHover={{ y: -2 }}
                         whileTap={{ scale: 0.97 }}
                       >
                         <Icon className="onb-mode-icon" />
                         <span className="onb-mode-label">{opt.label}</span>
                         <span className="onb-mode-desc">{opt.desc}</span>
+                        <span className="text-[10px] text-white/40 mt-1">{opt.shortcut}</span>
                         {isActive && (
                           <motion.div
                             className="onb-mode-check"
@@ -197,188 +294,60 @@ export default function Onboarding({ onComplete }) {
                     );
                   })}
                 </div>
-
-                <div className="onb-toggle-row">
-                  <div className="onb-toggle-info">
-                    <span className="onb-toggle-label">Exterior Only</span>
-                    <span className="onb-toggle-hint">Hide interior, glass, and wheel meshes in livery mode</span>
-                  </div>
-                  <button
-                    type="button"
-                    className={`onb-switch ${draft.liveryExteriorOnly ? "is-on" : ""}`}
-                    onClick={() => setDraft((p) => ({ ...p, liveryExteriorOnly: !p.liveryExteriorOnly }))}
-                  >
-                    <motion.div
-                      className="onb-switch-thumb"
-                      animate={{ x: draft.liveryExteriorOnly ? 16 : 0 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    />
-                  </button>
-                </div>
-
-                <div className="onb-toggle-row">
-                  <div className="onb-toggle-info">
-                    <span className="onb-toggle-label">Show Hints</span>
-                    <span className="onb-toggle-hint">Display mouse control hints in the viewer</span>
-                  </div>
-                  <button
-                    type="button"
-                    className={`onb-switch ${draft.showHints ? "is-on" : ""}`}
-                    onClick={() => setDraft((p) => ({ ...p, showHints: !p.showHints }))}
-                  >
-                    <motion.div
-                      className="onb-switch-thumb"
-                      animate={{ x: draft.showHints ? 16 : 0 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    />
-                  </button>
-                </div>
               </motion.div>
             )}
 
-            {/* Step 2: Appearance */}
+            {/* Step 2: Workflow */}
             {step === 2 && (
               <motion.div
-                key="appearance"
+                key="workflow"
                 className="onb-slide"
                 initial={{ opacity: 0, x: 30 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -30 }}
                 transition={{ duration: 0.25, ease }}
               >
-                <div className="onb-slide-title">Appearance</div>
-                <div className="onb-slide-hint">Set your preferred viewer colors and lighting.</div>
+                <div className="onb-slide-title">Workflow Essentials</div>
+                <div className="onb-slide-hint">The core loop is quick launch, iterate, and export.</div>
 
-                <ColorPickerRow
-                  label="Body Color"
-                  value={draft.bodyColor}
-                  onChange={(v) => setDraft((p) => ({ ...p, bodyColor: v }))}
-                />
-                <ColorPickerRow
-                  label="Background"
-                  value={draft.backgroundColor}
-                  onChange={(v) => setDraft((p) => ({ ...p, backgroundColor: v }))}
-                />
-
-                <div className="onb-slider-row">
-                  <div className="onb-slider-head">
-                    <span className="onb-toggle-label">Light Intensity</span>
-                    <span className="onb-slider-value">{draft.lightIntensity.toFixed(1)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="2.0"
-                    step="0.1"
-                    value={draft.lightIntensity}
-                    onChange={(e) => setDraft((p) => ({ ...p, lightIntensity: parseFloat(e.target.value) }))}
-                    className="onb-slider"
-                  />
+                <div className="space-y-3 mt-4">
+                  {WORKFLOW_TIPS.map((tip) => {
+                    const Icon = tip.icon;
+                    return (
+                      <div key={tip.id} className="border border-white/10 bg-black/25 p-3">
+                        <div className="flex items-center gap-2 text-[#00d9ff] text-[10px] uppercase tracking-[0.12em]">
+                          <Icon className="w-3.5 h-3.5" />
+                          <span>{tip.title}</span>
+                        </div>
+                        <p className="text-[12px] text-white/70 mt-1.5">{tip.detail}</p>
+                      </div>
+                    );
+                  })}
                 </div>
 
-                <div className="onb-slider-row">
-                  <div className="onb-slider-head">
-                    <span className="onb-toggle-label">Glossiness</span>
-                    <span className="onb-slider-value">{Math.round(draft.glossiness * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={draft.glossiness}
-                    onChange={(e) => setDraft((p) => ({ ...p, glossiness: parseFloat(e.target.value) }))}
-                    className="onb-slider"
-                  />
-                </div>
-
-                <div className="onb-toggle-row">
-                  <div className="onb-toggle-info">
-                    <span className="onb-toggle-label">Show Grid</span>
-                    <span className="onb-toggle-hint">Display ground grid in the 3D viewer</span>
-                  </div>
+                <div className="flex flex-wrap gap-2 mt-5">
                   <button
                     type="button"
-                    className={`onb-switch ${draft.showGrid ? "is-on" : ""}`}
-                    onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
+                    className="onb-nav-btn onb-nav-next"
+                    onClick={() => openSettings("hotkeys")}
                   >
-                    <motion.div
-                      className="onb-switch-thumb"
-                      animate={{ x: draft.showGrid ? 16 : 0 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    />
+                    <Keyboard className="w-3.5 h-3.5" />
+                    <span>Edit Shortcuts</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="onb-nav-btn onb-nav-back"
+                    onClick={() => openSettings("viewer")}
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Open Viewer Settings</span>
                   </button>
                 </div>
               </motion.div>
             )}
 
-            {/* Step 3: Export */}
+            {/* Step 3: Ready */}
             {step === 3 && (
-              <motion.div
-                key="export"
-                className="onb-slide"
-                initial={{ opacity: 0, x: 30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -30 }}
-                transition={{ duration: 0.25, ease }}
-              >
-                <div className="onb-slide-title">Storage & Exports</div>
-                <div className="onb-slide-hint">Configure default paths for your exports. You can change these later in Settings.</div>
-
-                <div className="space-y-4 mt-6">
-                  <div className="onb-export-folder">
-                    <div className="text-[10px] uppercase tracking-widest text-white/40 mb-2 px-1">Preview Screenshots</div>
-                    <button
-                      type="button"
-                      className="onb-export-folder-btn"
-                      onClick={handleSelectPreviewFolder}
-                    >
-                      <FolderOpen className="w-5 h-5" style={{ opacity: 0.5 }} />
-                      <div className="onb-export-folder-text">
-                        <span className="onb-export-folder-label">
-                          {draft.previewFolder
-                            ? draft.previewFolder.split(/[\\/]/).pop()
-                            : "Select preview folder"}
-                        </span>
-                        {draft.previewFolder && (
-                          <span className="onb-export-folder-path">{draft.previewFolder}</span>
-                        )}
-                      </div>
-                    </button>
-                  </div>
-
-                  <div className="onb-export-folder">
-                    <div className="text-[10px] uppercase tracking-widest text-white/40 mb-2 px-1">Variant Builder Exports</div>
-                    <button
-                      type="button"
-                      className="onb-export-folder-btn"
-                      onClick={handleSelectVariantExportFolder}
-                    >
-                      <Palette className="w-5 h-5" style={{ opacity: 0.5 }} />
-                      <div className="onb-export-folder-text">
-                        <span className="onb-export-folder-label">
-                          {draft.variantExportFolder
-                            ? draft.variantExportFolder.split(/[\\/]/).pop()
-                            : "Select variant export folder"}
-                        </span>
-                        {draft.variantExportFolder && (
-                          <span className="onb-export-folder-path">{draft.variantExportFolder}</span>
-                        )}
-                      </div>
-                    </button>
-                  </div>
-                </div>
-
-                {!draft.previewFolder && !draft.variantExportFolder && (
-                  <div className="onb-export-folder-skip">
-                    You can skip this step — you'll be prompted when you first export.
-                  </div>
-                )}
-              </motion.div>
-            )}
-
-            {/* Step 4: Ready */}
-            {step === 4 && (
               <motion.div
                 key="ready"
                 className="onb-slide onb-slide--ready"
@@ -396,41 +365,73 @@ export default function Onboarding({ onComplete }) {
                   <Check className="w-6 h-6" />
                 </motion.div>
                 <div className="onb-slide-title">You're all set</div>
-                <div className="onb-slide-hint">Your defaults have been configured. Start creating liveries.</div>
+                <div className="onb-slide-hint">
+                  Ready to launch <strong>{selectedMeta.label}</strong>. You can reopen this anytime from the toolbar info button.
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 mt-6 w-full max-w-[440px]">
+                  <button
+                    type="button"
+                    className="onb-nav-btn onb-nav-finish w-full justify-center"
+                    onClick={launchSelected}
+                  >
+                    <selectedMeta.icon className="w-3.5 h-3.5" />
+                    <span>Launch {selectedMeta.label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="onb-nav-btn onb-nav-next w-full justify-center"
+                    onClick={() => openSettings("general")}
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Open System Settings</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="onb-nav-btn onb-nav-back w-full justify-center"
+                    onClick={() => complete({ type: "home" })}
+                  >
+                    <span>Go To Home</span>
+                  </button>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
         {/* Navigation */}
-        <div className="onb-nav">
-          {step > 0 ? (
-            <button type="button" className="onb-nav-btn onb-nav-back" onClick={prev}>
-              <ChevronLeft className="w-3.5 h-3.5" />
-              <span>Back</span>
-            </button>
-          ) : (
-            <div />
-          )}
+        {step < STEPS.length - 1 ? (
+          <div className="onb-nav">
+            {step > 0 ? (
+              <button type="button" className="onb-nav-btn onb-nav-back" onClick={prev}>
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Back</span>
+              </button>
+            ) : (
+              <div />
+            )}
 
-          {step < STEPS.length - 1 ? (
             <button type="button" className="onb-nav-btn onb-nav-next" onClick={next}>
               <span>{step === 0 ? "Get Started" : "Next"}</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
-          ) : (
-            <motion.button
+          </div>
+        ) : (
+          <div className="onb-nav">
+            <button type="button" className="onb-nav-btn onb-nav-back" onClick={prev}>
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Back</span>
+            </button>
+            <button
               type="button"
-              className="onb-nav-btn onb-nav-finish"
-              onClick={finish}
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
+              className="onb-nav-btn onb-nav-next"
+              onClick={() => complete({ type: "home" })}
             >
-              <span>Start Building</span>
+              <span>Finish</span>
               <ChevronRight className="w-3.5 h-3.5" />
-            </motion.button>
-          )}
-        </div>
+            </button>
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );

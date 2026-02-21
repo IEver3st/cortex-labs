@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, PanelLeft } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Info } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
@@ -22,7 +22,7 @@ import {
   renameWorkspace,
   addRecent,
 } from "./lib/workspace";
-import { loadOnboarded, setOnboarded, loadPrefs, savePrefs } from "./lib/prefs";
+import { loadOnboarded, setOnboarded, loadPrefs } from "./lib/prefs";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_ACTIONS,
@@ -306,18 +306,35 @@ export default function Shell() {
   }, [tabs]);
 
   // Onboarding
-  const handleOnboardingComplete = useCallback((defaults) => {
-    const prefs = loadPrefs() || {};
-    const normalizedDefaults = {
-      ...defaults,
-      uiScale: clampUiScale(defaults?.uiScale ?? 1.0),
-    };
-    savePrefs({ ...prefs, defaults: normalizedDefaults });
+  const handleOnboardingComplete = useCallback((action) => {
     setOnboarded();
     setShowOnboarding(false);
-    // Apply UI scale
-    document.documentElement.style.setProperty("--es-ui-scale", String(normalizedDefaults.uiScale));
-  }, []);
+
+    if (!action || typeof action !== "object") return;
+
+    if (action.type === "launch") {
+      const target = action.target;
+      if (target === "variants") {
+        handleNavigate("variants");
+        return;
+      }
+
+      const mode = ["livery", "everything", "eup", "multi"].includes(target)
+        ? target
+        : "livery";
+      handleNavigate("viewer", null, mode);
+      return;
+    }
+
+    if (action.type === "openSettings") {
+      window.dispatchEvent(new CustomEvent("cortex:open-settings"));
+      if (typeof action.section === "string" && action.section) {
+        window.dispatchEvent(
+          new CustomEvent("cortex:nav-settings", { detail: { section: action.section } }),
+        );
+      }
+    }
+  }, [handleNavigate]);
 
   // Settings saved callback
   const handleSettingsSaved = useCallback(() => {
@@ -416,6 +433,7 @@ export default function Shell() {
   const [whatsNewManual, setWhatsNewManual] = useState(false);
   const handleOpenReleaseNotes = useCallback(() => setWhatsNewManual(true), []);
   const handleCloseWhatsNew = useCallback(() => setWhatsNewManual(false), []);
+  const handleOpenOnboarding = useCallback(() => setShowOnboarding(true), []);
 
   // New-tab dropdown option data for DRY rendering
   const newTabOptions = useMemo(() => [
@@ -431,6 +449,11 @@ export default function Shell() {
 
       {booted && <WhatsNew />}
       {whatsNewManual && <WhatsNew forceOpen isManual onClose={handleCloseWhatsNew} />}
+      <AnimatePresence>
+        {booted && showOnboarding ? (
+          <Onboarding onComplete={handleOnboardingComplete} />
+        ) : null}
+      </AnimatePresence>
 
       {booted && (
         <>
@@ -447,19 +470,6 @@ export default function Shell() {
               <img src={cortexLogo} alt="" className="shell-brand-logo" draggable={false} />
               <span className="shell-brand-name">CORTEX</span>
             </div>
-
-            {/* Sidebar toggle */}
-            <motion.button
-              type="button"
-              className="shell-sidebar-toggle"
-              data-tauri-drag-region="false"
-              aria-label="Toggle sidebar"
-              whileHover={{ backgroundColor: "rgba(255,255,255,0.06)" }}
-              whileTap={{ scale: 0.88 }}
-              transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            >
-              <PanelLeft className="shell-sidebar-toggle-icon" />
-            </motion.button>
 
             <div className="shell-toolbar-sep" />
 
@@ -654,6 +664,21 @@ export default function Shell() {
                 </Ctx.Item>
               </Ctx.Content>
             </Ctx.Root>
+
+            {/* Getting started / tutorial */}
+            <div className="settings-anchor">
+              <motion.button
+                type="button"
+                className="settings-cog"
+                aria-label="Getting Started"
+                title="Getting Started"
+                onClick={handleOpenOnboarding}
+              >
+                <span className="settings-cog-icon">
+                  <Info className="settings-cog-svg" />
+                </span>
+              </motion.button>
+            </div>
 
             {/* Settings */}
             <SettingsMenu onSettingsSaved={handleSettingsSaved} onOpenReleaseNotes={handleOpenReleaseNotes} />

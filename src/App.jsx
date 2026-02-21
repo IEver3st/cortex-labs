@@ -55,6 +55,20 @@ const SUPPORTED_TEXTURE_EXTS = [
   "pdn",
 ];
 
+const PREVIEW_CAPTURE_PRESETS = [
+  { key: "front", label: "Front" },
+  { key: "back", label: "Back" },
+  { key: "side", label: "Side" },
+  { key: "angle", label: "3/4" },
+  { key: "top", label: "Top" },
+];
+
+const PREVIEW_CAPTURE_PRESET_KEYS = PREVIEW_CAPTURE_PRESETS.map((preset) => preset.key);
+const PREVIEW_CAPTURE_PRESET_LABELS = PREVIEW_CAPTURE_PRESETS.reduce((acc, preset) => {
+  acc[preset.key] = preset.label;
+  return acc;
+}, {});
+
 function isTextureFormatSupported(filePath) {
   if (!filePath) return true;
   const ext = filePath.split(".").pop().toLowerCase();
@@ -263,10 +277,83 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [previewPromptOpen, setPreviewPromptOpen] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomDraft, setPreviewZoomDraft] = useState(1);
+  const [previewCapturePresets, setPreviewCapturePresets] = useState(() => [...PREVIEW_CAPTURE_PRESET_KEYS]);
   const [previewZoomPreview, setPreviewZoomPreview] = useState("");
   const [previewZoomLoading, setPreviewZoomLoading] = useState(false);
   const [dualModelAPos, setDualModelAPos] = useState([0, 0, 0]);
   const [dualModelBPos, setDualModelBPos] = useState([0, 0, 3]);
+  const lightIntensityRafRef = useRef(0);
+  const pendingLightIntensityRef = useRef(null);
+  const lightDirectionRafRef = useRef(0);
+  const pendingLightDirectionRef = useRef(null);
+
+  const scheduleLightDirectionUpdate = useCallback((nextDirection) => {
+    pendingLightDirectionRef.current = nextDirection;
+    if (lightDirectionRafRef.current) return;
+    lightDirectionRafRef.current = requestAnimationFrame(() => {
+      lightDirectionRafRef.current = 0;
+      const pending = pendingLightDirectionRef.current;
+      pendingLightDirectionRef.current = null;
+      if (!pending) return;
+      setLightAzimuth((prev) => (prev === pending.azimuth ? prev : pending.azimuth));
+      setLightElevation((prev) => (prev === pending.elevation ? prev : pending.elevation));
+    });
+  }, []);
+
+  const handleLightIntensityChange = useCallback((nextValue) => {
+    const parsed = Number(nextValue);
+    const clamped = Math.max(0, Math.min(3, Math.round((Number.isFinite(parsed) ? parsed : 1) * 100) / 100));
+    pendingLightIntensityRef.current = clamped;
+    if (lightIntensityRafRef.current) return;
+    lightIntensityRafRef.current = requestAnimationFrame(() => {
+      lightIntensityRafRef.current = 0;
+      const pending = pendingLightIntensityRef.current;
+      pendingLightIntensityRef.current = null;
+      if (typeof pending !== "number") return;
+      setLightIntensity((prev) => (Math.abs(prev - pending) < 0.0001 ? prev : pending));
+    });
+  }, []);
+
+  const handleLightAzimuthChange = useCallback((nextValue) => {
+    const parsed = Number(nextValue);
+    const nextAzimuth = Math.max(0, Math.min(360, Math.round(Number.isFinite(parsed) ? parsed : 54)));
+    const pending = pendingLightDirectionRef.current;
+    scheduleLightDirectionUpdate({
+      azimuth: nextAzimuth,
+      elevation: pending?.elevation ?? lightElevation,
+    });
+  }, [lightElevation, scheduleLightDirectionUpdate]);
+
+  const handleLightElevationChange = useCallback((nextValue) => {
+    const parsed = Number(nextValue);
+    const nextElevation = Math.max(0, Math.min(90, Math.round(Number.isFinite(parsed) ? parsed : 46)));
+    const pending = pendingLightDirectionRef.current;
+    scheduleLightDirectionUpdate({
+      azimuth: pending?.azimuth ?? lightAzimuth,
+      elevation: nextElevation,
+    });
+  }, [lightAzimuth, scheduleLightDirectionUpdate]);
+
+  const resetLighting = useCallback(() => {
+    if (lightIntensityRafRef.current) {
+      cancelAnimationFrame(lightIntensityRafRef.current);
+      lightIntensityRafRef.current = 0;
+    }
+    if (lightDirectionRafRef.current) {
+      cancelAnimationFrame(lightDirectionRafRef.current);
+      lightDirectionRafRef.current = 0;
+    }
+    pendingLightIntensityRef.current = null;
+    pendingLightDirectionRef.current = null;
+    setLightIntensity(1.0);
+    setLightAzimuth(54);
+    setLightElevation(46);
+  }, []);
+
+  useEffect(() => () => {
+    if (lightIntensityRafRef.current) cancelAnimationFrame(lightIntensityRafRef.current);
+    if (lightDirectionRafRef.current) cancelAnimationFrame(lightDirectionRafRef.current);
+  }, []);
 
   // Re-read prefs when settings are saved from the Shell-level SettingsMenu
   useEffect(() => {
@@ -291,6 +378,28 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [settingsVersion]);
 
   const isBooting = !booted;
+  const selectedPreviewPresetCount = previewCapturePresets.length;
+  const allPreviewPresetsSelected = selectedPreviewPresetCount === PREVIEW_CAPTURE_PRESET_KEYS.length;
+  const previewCaptureTooltip = allPreviewPresetsSelected
+    ? "Generate preview screenshots from all 5 angles"
+    : selectedPreviewPresetCount > 0
+      ? `Generate preview screenshots from ${selectedPreviewPresetCount} selected angle${selectedPreviewPresetCount === 1 ? "" : "s"}`
+      : "Generate preview screenshots";
+
+  const togglePreviewCapturePreset = useCallback((presetKey) => {
+    setPreviewCapturePresets((current) =>
+      current.includes(presetKey)
+        ? current.filter((value) => value !== presetKey)
+        : PREVIEW_CAPTURE_PRESET_KEYS.filter((key) => key === presetKey || current.includes(key)),
+    );
+  }, []);
+
+  const toggleAllPreviewCapturePresets = useCallback(() => {
+    setPreviewCapturePresets((current) =>
+      current.length === PREVIEW_CAPTURE_PRESET_KEYS.length ? [] : [...PREVIEW_CAPTURE_PRESET_KEYS],
+    );
+  }, []);
+
   const modelExtensions =
     textureMode === "eup" || textureMode === "multi"
       ? ["yft", "clmesh", "dff", "ydd"]
@@ -1006,8 +1115,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [viewerReady]);
 
   // Generate Preview — cycle through camera presets and capture screenshots
-  const handleGeneratePreview = useCallback(async (zoomLevel = 1) => {
+  const handleGeneratePreview = useCallback(async (zoomLevel = 1, requestedPresets = PREVIEW_CAPTURE_PRESET_KEYS) => {
     if (!viewerApiRef.current || !modelPath || generatingPreview) return;
+    const presetKeys = PREVIEW_CAPTURE_PRESET_KEYS.filter((key) => requestedPresets.includes(key));
+    if (!presetKeys.length) return;
 
     // Get preview folder from prefs or prompt
     const prefs = loadPrefs() || {};
@@ -1027,8 +1138,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     if (!folder) return;
 
-    const presetKeys = ["front", "back", "side", "angle", "top"];
-    const presetLabels = { front: "Front", back: "Back", side: "Side", angle: "3-4 Angle", top: "Top" };
     const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "preview";
 
     // Create a subfolder named after the model to keep exports tidy
@@ -1064,7 +1173,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     try {
       for (let i = 0; i < presetKeys.length; i++) {
         const preset = presetKeys[i];
-        setPreviewProgress({ current: i, total: presetKeys.length, preset: presetLabels[preset] || preset });
+        setPreviewProgress({ current: i, total: presetKeys.length, preset: PREVIEW_CAPTURE_PRESET_LABELS[preset] || preset });
 
         viewerApiRef.current.setPreset(preset);
         viewerApiRef.current.setZoom?.(zoomLevel);
@@ -1330,15 +1439,23 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const selectedDualTargets = dualSelectedSlot === "A" ? dualTextureTargetsA : dualTextureTargetsB;
   const selectedDualWindowAutoTarget = dualSelectedSlot === "A" ? dualWindowAutoTargetA : dualWindowAutoTargetB;
   const selectedDualWindowAutoLabel = dualSelectedSlot === "A" ? dualWindowAutoLabelA : dualWindowAutoLabelB;
+  const activeMaterialTexturePath = materialTextures.length
+    ? materialTextures[materialTextures.length - 1]?.path || ""
+    : "";
   const hasModel = Boolean(modelPath);
-  const liveryStatusLabel = liveryLabel || "No livery material found";
+  const liveryTargetLabel = (liveryLabel || "").replace(/^(material|mesh):\s*/i, "").trim();
+  const liveryTargetMessage = !hasModel
+    ? "Load a model to enable automatic targeting."
+    : liveryTargetLabel
+      ? `Automatically targeting ${liveryTargetLabel}`
+      : "No paint material detected. Applying to all meshes.";
+  const liveryTargetToneClass = !hasModel
+    ? " is-empty"
+    : liveryTargetLabel
+      ? ""
+      : " is-fallback";
   const windowStatusLabel = windowLiveryLabel || "No window material found";
   const usingWindowOverride = textureMode === "livery" && liveryWindowOverride;
-  const liveryHint = !hasModel
-    ? "Load a model to detect livery materials."
-    : liveryTarget
-      ? "Auto-targeting carpaint/livery materials (carpaint, livery, sign_1, sign_2)."
-      : "No livery material found. Falling back to all meshes.";
   const windowHint = !hasModel
     ? "Load a model to detect window materials."
     : usingWindowOverride
@@ -1365,6 +1482,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
   const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
   const currentModeLabel = modeLabels[textureMode] || "Preview";
+  const previewExportCount = previewProgress.total > 0 ? previewProgress.total : PREVIEW_CAPTURE_PRESET_KEYS.length;
 
   return (
     <motion.div
@@ -1492,7 +1610,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   {modelPath ? (
                     <UnloadButton
                       className="flex-1"
-                      onClick={() => { setModelPath(""); setModelError(""); }}
+                      onClick={() => { setModelPath(""); setModelSourcePath(""); setDialogError(""); }}
                       title="Unload model"
                     />
                   ) : null}
@@ -1531,13 +1649,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       ) : null}
                     </div>
                 </div>
-                <CyberCard className="mt-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[9px] uppercase text-[var(--mg-primary)] shrink-0">Target</span>
-                    <span className="px-1 py-0.5 bg-[oklch(0.648_0.116_182.503_/_0.2)] text-[var(--mg-primary)] rounded text-[8px] shrink-0">AUTO</span>
-                    <span className="font-mono text-[10px] text-[var(--mg-muted)] truncate min-w-0">{liveryStatusLabel}</span>
+                <CyberCard className={`mt-2 cs-livery-target-card${liveryTargetToneClass}`}>
+                  <div className="cs-livery-target-row">
+                    <span className="cs-livery-target-tag">AUTO</span>
+                    <span className="cs-livery-target-message">{liveryTargetMessage}</span>
                   </div>
-                  <div className="text-[9px] text-[var(--mg-primary)]/50 mt-1 leading-tight">{liveryHint}</div>
                 </CyberCard>
               </CyberSection>
 
@@ -2259,17 +2375,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     ) : null}
                   </div>
                 </div>
-                <div className="flex items-center justify-between mt-2">
-                  <CyberLabel className="mb-0">Wireframe</CyberLabel>
-                  <button
-                    type="button"
-                    className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${showWireframe ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
-                    onClick={() => setShowWireframe((prev) => !prev)}
-                    title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
-                  >
-                    <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${showWireframe ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
-                  </button>
-                </div>
               </CyberCard>
 
             </div>
@@ -2356,47 +2461,146 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               icon={Sun}
               color="yellow"
             >
-              <div className="space-y-3">
-                <MaterialSlider
-                  label="Intensity"
-                  value={lightIntensity}
-                  onChange={(v) => setLightIntensity(Math.round(v * 100) / 100)}
-                  min={0}
-                  max={3}
-                  step={0.05}
-                />
-                <MaterialSlider
-                  label="Azimuth"
-                  value={lightAzimuth}
-                  onChange={(v) => setLightAzimuth(Math.round(v))}
-                  min={0}
-                  max={360}
-                  step={1}
-                  unit="°"
-                />
-                <MaterialSlider
-                  label="Elevation"
-                  value={lightElevation}
-                  onChange={(v) => setLightElevation(Math.round(v))}
-                  min={0}
-                  max={90}
-                  step={1}
-                  unit="°"
-                />
-                <button
-                  type="button"
-                  className="panel-cam-action-btn w-full mt-1"
-                  onClick={() => {
-                    setLightIntensity(1.0);
-                    setLightAzimuth(54);
-                    setLightElevation(46);
-                  }}
-                  title="Reset lighting to defaults"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  Reset
-                </button>
-              </div>
+              {(() => {
+                const elRad = lightElevation * (Math.PI / 180);
+                const elRadius = 35;
+                const elX = 50 + elRadius * Math.cos(elRad); 
+                const elY = 40 - elRadius * Math.sin(elRad);
+
+                const azRad = lightAzimuth * (Math.PI / 180);
+                const azRadius = 24;
+                const azX = 50 + azRadius * Math.sin(azRad);
+                const azY = 30 - azRadius * Math.cos(azRad);
+
+                return (
+                  <div className="space-y-4">
+                    {/* === THE HUD VISUALS === */}
+                    <div className="flex space-x-2">
+                      {/* Azimuth HUD (Top-Down View) */}
+                      <div className="flex-1 bg-[#0a0c0f] border border-gray-800/60 rounded p-2 relative group">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[9px] font-bold text-gray-500 tracking-widest uppercase">Azimuth</span>
+                          <span className="text-[9px] font-mono text-[#00d9ff]">{lightAzimuth}°</span>
+                        </div>
+                        
+                        <div className="w-full aspect-video relative flex items-center justify-center">
+                          <svg viewBox="0 0 100 60" className="w-full h-full overflow-visible">
+                            {/* Orbital Ring (Full Circle) */}
+                            <circle cx="50" cy="30" r="24" fill="none" stroke="#374151" strokeWidth="1" strokeDasharray="2 2" />
+                            
+                            {/* Top-Down Car Silhouette */}
+                            <g className="text-[#1a2026] stroke-[#2d3748] stroke-[0.5]">
+                              {/* Tires */}
+                              <rect x="39" y="19" width="3" height="7" rx="1" fill="#050709" stroke="none" />
+                              <rect x="58" y="19" width="3" height="7" rx="1" fill="#050709" stroke="none" />
+                              <rect x="39" y="34" width="3" height="7" rx="1" fill="#050709" stroke="none" />
+                              <rect x="58" y="34" width="3" height="7" rx="1" fill="#050709" stroke="none" />
+                              
+                              {/* Body */}
+                              <rect x="42" y="15" width="16" height="30" rx="4" fill="currentColor" />
+                              
+                              {/* Windshield */}
+                              <path d="M 44 23 Q 50 20 56 23 L 55 27 L 45 27 Z" fill="#222b36" stroke="none" />
+                              
+                              {/* Rear Window */}
+                              <path d="M 45 34 L 55 34 L 54 37 Q 50 39 46 37 Z" fill="#222b36" stroke="none" />
+                              
+                              {/* Headlight Hints */}
+                              <path d="M 44 16 L 47 16 L 46 17 L 44 17 Z" fill="#00d9ff" opacity="0.3" stroke="none" />
+                              <path d="M 53 16 L 56 16 L 56 17 L 54 17 Z" fill="#00d9ff" opacity="0.3" stroke="none" />
+                            </g>
+
+                            {/* Sun Dot (Azimuth) */}
+                            <g style={{ transform: `translate(${azX}px, ${azY}px)`, transition: 'all 0.1s ease-out' }}>
+                              <circle cx="0" cy="0" r="3.5" fill="#00d9ff" />
+                              <circle cx="0" cy="0" r="8" fill="#00d9ff" opacity="0.3" />
+                            </g>
+                          </svg>
+                        </div>
+                      </div>
+
+                      {/* Elevation HUD (Side View) */}
+                      <div className="flex-1 bg-[#0a0c0f] border border-gray-800/60 rounded p-2 relative group">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[9px] font-bold text-gray-500 tracking-widest uppercase">Elevation</span>
+                          <span className="text-[9px] font-mono text-[#00d9ff]">{lightElevation}°</span>
+                        </div>
+                        
+                        <div className="w-full aspect-video relative flex items-center justify-center">
+                          <svg viewBox="0 0 100 60" className="w-full h-full overflow-visible">
+                            {/* Dome Arc */}
+                            <path d="M 15 40 A 35 35 0 0 1 85 40" fill="none" stroke="#374151" strokeWidth="1" strokeDasharray="2 2" />
+                            
+                            {/* Ground Line */}
+                            <line x1="5" y1="45" x2="95" y2="45" stroke="#1f2937" strokeWidth="1" />
+
+                            {/* Side Car Silhouette */}
+                            <g className="text-[#1a2026] stroke-[#2d3748] stroke-[0.5]">
+                              {/* Tires */}
+                              <circle cx="34" cy="41" r="4" fill="#050709" stroke="none" />
+                              <circle cx="66" cy="41" r="4" fill="#050709" stroke="none" />
+                              
+                              {/* Body */}
+                              <path d="M 26 38 L 26 30 L 36 22 L 54 22 L 66 30 L 76 30 L 76 38 Z" fill="currentColor" />
+                              
+                              {/* Windows */}
+                              <path d="M 38 30 L 44 24 L 48 24 L 48 30 Z" fill="#222b36" stroke="none" />
+                              <path d="M 50 30 L 50 24 L 58 30 Z" fill="#222b36" stroke="none" />
+                              
+                              {/* Headlight Hint */}
+                              <path d="M 74 32 L 76 32 L 76 34 L 74 34 Z" fill="#00d9ff" opacity="0.2" stroke="none" />
+                            </g>
+
+                            {/* Sun Dot (Elevation) */}
+                            <g style={{ transform: `translate(${elX}px, ${elY}px)`, transition: 'all 0.1s ease-out' }}>
+                              <circle cx="0" cy="0" r="3.5" fill="#00d9ff" />
+                              <circle cx="0" cy="0" r="8" fill="#00d9ff" opacity="0.3" />
+                            </g>
+                          </svg>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <MaterialSlider
+                        label="Intensity"
+                        value={lightIntensity}
+                        onChange={handleLightIntensityChange}
+                        min={0}
+                        max={3}
+                        step={0.05}
+                      />
+                      <MaterialSlider
+                        label="Azimuth"
+                        value={lightAzimuth}
+                        onChange={handleLightAzimuthChange}
+                        min={0}
+                        max={360}
+                        step={1}
+                        unit="°"
+                      />
+                      <MaterialSlider
+                        label="Elevation"
+                        value={lightElevation}
+                        onChange={handleLightElevationChange}
+                        min={0}
+                        max={90}
+                        step={1}
+                        unit="°"
+                      />
+                      <button
+                        type="button"
+                        className="panel-cam-action-btn w-full mt-1"
+                        onClick={resetLighting}
+                        title="Reset lighting to defaults"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </CyberSection>
           )}
 
@@ -2501,7 +2705,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   setPreviewZoomPreview("");
                 }}
                 disabled={generatingPreview || !viewerReady || !hasModel}
-                title="Generate preview screenshots from all angles"
+                title={previewCaptureTooltip}
               >
                 <Camera className="panel-capture-icon" />
                 <span className="panel-capture-label">
@@ -2603,6 +2807,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             lightAzimuth={lightAzimuth}
             lightElevation={lightElevation}
             glossiness={glossiness}
+            materialType={materialType}
+            materialLightIntensity={matLightIntensity}
+            materialGlossiness={matGlossiness}
+            materialRoughness={matRoughness}
+            materialClearcoat={matClearcoat}
+            materialTexturePath={activeMaterialTexturePath}
             onModelInfo={handleModelInfo}
             onModelError={handleModelError}
             onModelLoading={handleModelLoading}
@@ -2928,6 +3138,44 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 />
               </div>
 
+              <div className="preview-angles-section">
+                <div className="preview-angles-header">
+                  <div className="preview-angles-label">
+                    <Aperture className="w-3.5 h-3.5" />
+                    <span>Capture Angles</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="preview-angles-toggle-all"
+                    onClick={toggleAllPreviewCapturePresets}
+                  >
+                    {allPreviewPresetsSelected ? "Clear" : "All"}
+                  </button>
+                </div>
+                <div className="preview-angles-grid">
+                  {PREVIEW_CAPTURE_PRESETS.map((preset) => {
+                    const isActive = previewCapturePresets.includes(preset.key);
+                    return (
+                      <button
+                        key={preset.key}
+                        type="button"
+                        className={`preview-angle-btn${isActive ? " is-active" : ""}`}
+                        onClick={() => togglePreviewCapturePreset(preset.key)}
+                        aria-pressed={isActive}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="preview-angles-count">
+                  {selectedPreviewPresetCount} / {PREVIEW_CAPTURE_PRESET_KEYS.length} selected
+                </div>
+                {selectedPreviewPresetCount === 0 ? (
+                  <div className="preview-angles-help">Select at least one angle to continue.</div>
+                ) : null}
+              </div>
+
               <div className="preview-zoom-actions">
                 <button
                   type="button"
@@ -2939,13 +3187,16 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <button
                   type="button"
                   className="preview-zoom-btn preview-zoom-btn--confirm"
+                  disabled={selectedPreviewPresetCount === 0}
                   onClick={() => {
                     setPreviewZoom(previewZoomDraft);
                     setPreviewPromptOpen(false);
-                    handleGeneratePreview(previewZoomDraft);
+                    handleGeneratePreview(previewZoomDraft, previewCapturePresets);
                   }}
                 >
-                  Generate Preview
+                  {selectedPreviewPresetCount > 0
+                    ? `Capture ${selectedPreviewPresetCount} Angle${selectedPreviewPresetCount === 1 ? "" : "s"}`
+                    : "Select Angles"}
                 </button>
               </div>
             </motion.div>
@@ -3012,7 +3263,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <Check className="w-6 h-6" />
               </motion.div>
               <div className="gen-preview-title">Preview Complete</div>
-              <div className="gen-preview-sub">5 screenshots exported successfully</div>
+              <div className="gen-preview-sub">
+                {previewExportCount} screenshot{previewExportCount === 1 ? "" : "s"} exported successfully
+              </div>
               <div className="gen-preview-actions">
                 <button
                   type="button"

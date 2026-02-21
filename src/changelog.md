@@ -1,23 +1,28 @@
-# Faster Updates and Clearer Release Notes
+# Complete UX Redesign and Workflow Expansion
 
-> This release makes texture iteration faster in Multi mode and introduces a cleaner, always-available What’s New experience.
+> This release is an end-to-end redesign focused on usability, visual control, and faster day-to-day workflow.
 
 ## New
 
-- Multi Texture Auto-Reload | In Multi mode, both texture slots now hot-reload when their source files change.
-- Release Notes in Settings | Open What’s New anytime from Settings → About, even after dismissing it.
-- Copy Markdown Button | Copy a Discord-friendly summary of this version’s notes with one click.
+- Full Application Redesign | Entire interface redesigned for improved user experience.
+- Native PDN Support | .pdn files are now supported natively.
+- Scene Lighting Controls | New controls let you adjust lighting directly in the scene.
+- Vehicle Material Controls | Customize material behavior for glass, metal, plastic, and more.
+- Automatic Updates | App updates can now be delivered automatically in-app.
+- Capture Preview Angle Selection | Select the exact angles used when snapping capture previews.
+- Background Image Support | Use custom images as scene backgrounds.
+- What's New Window | In-app changelog window now shows release notes directly inside the app.
+- Wireframe Toggle | Toggle wireframe mode for quick model inspection.
+- In-App Tutorials by Mode | Built-in tutorials are available for each mode.
 
 ## Improved
 
-- Centered What’s New Modal | The dialog now opens centered consistently across different window sizes.
-- Cleaner Change Layout | Notes are grouped into New, Improved, and Fix cards for faster scanning.
-- Better Keyboard Flow | Press Esc to close quickly and use keyboard focus for primary actions.
+- UI Scaling Settings | UI scaling options were improved for better readability and consistency.
+- Background Performance Optimizations | General background performance and rendering were optimized.
+- Updated Color Presets | Presets for body colors and background colors were refreshed.
+- Legacy Layers Layout Setting | Added a legacy layers layout option for compatibility workflows.
 
 ## Fixed
 
-- Watcher Mode Conflicts | Switching between single-texture and Multi watch modes no longer causes watcher overlap.
-- Version Display Reliability | What’s New is shown once per version by default, with manual reopen still available.
-
----
+- Variant Window Resize Flashing | Fixed flashing in the Variant window while resizing.
 
