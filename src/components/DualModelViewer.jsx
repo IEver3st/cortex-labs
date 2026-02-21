@@ -35,6 +35,8 @@ export default function DualModelViewer({
   backgroundImageReloadToken = 0,
   backgroundImageBlur = 0,
   lightIntensity = 1.0,
+  lightAzimuth = 54,
+  lightElevation = 46,
   glossiness = 0.5,
   showWireframe = false,
   selectedSlot,
@@ -425,6 +427,20 @@ export default function DualModelViewer({
     if (rim) rim.intensity = 0.35 * lightIntensity;
     requestRender();
   }, [lightIntensity, requestRender]);
+
+  useEffect(() => {
+    const { key } = lightsRef.current;
+    if (!key) return;
+    const aziRad = (lightAzimuth * Math.PI) / 180;
+    const elevRad = (lightElevation * Math.PI) / 180;
+    const r = 8;
+    key.position.set(
+      r * Math.cos(elevRad) * Math.sin(aziRad),
+      r * Math.sin(elevRad),
+      r * Math.cos(elevRad) * Math.cos(aziRad),
+    );
+    requestRender();
+  }, [lightAzimuth, lightElevation, requestRender]);
 
   useEffect(() => {
     if (!sceneReady) return;

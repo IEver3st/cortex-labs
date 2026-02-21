@@ -1,0 +1,440 @@
+﻿diff --git a/src/App.jsx b/src/App.jsx
+index 63dfa2b..28285e6 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -118,7 +118,6 @@ function getFileLabel(path, emptyLabel) {
+ function UnloadButton({ onClick, title, className }) {
+   return (
+     <CyberButton variant="danger" className={className} onClick={onClick} title={title}>
+-      <X className="h-3 w-3 shrink-0 opacity-70" />
+       <span className="font-bold tracking-[0.2em] text-[9px]">UNLOAD</span>
+     </CyberButton>
+   );
+@@ -1467,27 +1466,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+               color="blue"
+             >
+               <div className="flex flex-col gap-0">
+-                <div className="flex gap-0">
++                <div className="flex gap-2">
+                   <CyberButton
+                     onClick={selectModel}
+                     variant="blue"
+-                    className={modelPath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                    className="flex-1"
+                   >
+-                    Select Model
++                    {modelPath ? "Change Model" : "Select Model"}
+                   </CyberButton>
+                   {modelPath ? (
+                     <UnloadButton
+-                      className="flex-1 rounded-none border-b-0 border-l-0"
++                      className="flex-1"
+                       onClick={() => { setModelPath(""); setModelError(""); }}
+                       title="Unload model"
+                     />
+                   ) : null}
+                 </div>
+-                {modelPath ? (
+-                  <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                    {getFileLabel(modelPath, "")}
+-                  </div>
+-                ) : null}
+                 {modelLoading ? <div className="text-[10px] text-[var(--mg-primary)] animate-pulse mt-2">Initializing construct...</div> : null}
+               </div>
+             </CyberSection>
+@@ -1505,27 +1499,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                 color="blue"
+               >
+                 <div className="flex flex-col gap-0">
+-                    <div className="flex gap-0">
++                    <div className="flex gap-2">
+                       <CyberButton
+                         onClick={selectTexture}
+                         variant="blue"
+-                        className={texturePath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                        className="flex-1"
+                       >
+-                        Select Livery
+-                      </CyberButton>
++                    {texturePath ? "Change Livery" : "Select Livery"}
++                  </CyberButton>
+                       {texturePath ? (
+                         <UnloadButton
+-                          className="flex-1 rounded-none border-b-0 border-l-0"
++                          className="flex-1"
+                           onClick={() => setTexturePath("")}
+                           title="Unload texture"
+                         />
+                       ) : null}
+                     </div>
+-                    {texturePath ? (
+-                      <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                        {getFileLabel(texturePath, "")}
+-                      </div>
+-                    ) : null}
+                 </div>
+                 <CyberCard className="mt-2">
+                   <div className="flex items-center gap-2">
+@@ -1560,27 +1549,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                   {windowTemplateEnabled ? (
+                     <>
+                       <div className="flex flex-col gap-0">
+-                        <div className="flex gap-0">
++                        <div className="flex gap-2">
+                           <CyberButton
+                             onClick={selectWindowTexture}
+                             variant="blue"
+-                            className={windowTexturePath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                            className="flex-1"
+                           >
+-                            Select Glass
+-                          </CyberButton>
++                    {windowTexturePath ? "Change Glass" : "Select Glass"}
++                  </CyberButton>
+                           {windowTexturePath ? (
+                             <UnloadButton
+-                              className="flex-1 rounded-none border-b-0 border-l-0"
++                              className="flex-1"
+                               onClick={() => setWindowTexturePath("")}
+                               title="Unload window template"
+                             />
+                           ) : null}
+                         </div>
+-                        {windowTexturePath ? (
+-                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                            {getFileLabel(windowTexturePath, "")}
+-                          </div>
+-                        ) : null}
+                       </div>
+                       <div className="mt-1">
+                         <CyberLabel>Override Target</CyberLabel>
+@@ -1647,27 +1631,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                 color="blue"
+               >
+                 <div className="flex flex-col gap-0">
+-                    <div className="flex gap-0">
++                    <div className="flex gap-2">
+                       <CyberButton
+                         onClick={selectTexture}
+                         variant="blue"
+-                        className={texturePath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                        className="flex-1"
+                       >
+-                        Select Texture
+-                      </CyberButton>
++                    {texturePath ? "Change Texture" : "Select Texture"}
++                  </CyberButton>
+                       {texturePath ? (
+                         <UnloadButton
+-                          className="flex-1 rounded-none border-b-0 border-l-0"
++                          className="flex-1"
+                           onClick={() => setTexturePath("")}
+                           title="Unload texture"
+                         />
+                       ) : null}
+                     </div>
+-                    {texturePath ? (
+-                      <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                        {getFileLabel(texturePath, "")}
+-                      </div>
+-                    ) : null}
+                 </div>
+                 <CyberCard className="mt-2">
+                   <CyberLabel>Apply To</CyberLabel>
+@@ -1710,27 +1689,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                   {windowTemplateEnabled ? (
+                     <>
+                         <div className="flex flex-col gap-0">
+-                          <div className="flex gap-0">
++                          <div className="flex gap-2">
+                             <CyberButton
+                               onClick={selectWindowTexture}
+                               variant="blue"
+-                              className={windowTexturePath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                              className="flex-1"
+                             >
+-                              Select Secondary
+-                            </CyberButton>
++                    {windowTexturePath ? "Change Secondary" : "Select Secondary"}
++                  </CyberButton>
+                             {windowTexturePath ? (
+                               <UnloadButton
+-                                className="flex-1 rounded-none border-b-0 border-l-0"
++                                className="flex-1"
+                                 onClick={() => setWindowTexturePath("")}
+                                 title="Unload secondary texture"
+                               />
+                             ) : null}
+                           </div>
+-                          {windowTexturePath ? (
+-                            <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                              {getFileLabel(windowTexturePath, "")}
+-                            </div>
+-                          ) : null}
+                         </div>
+                       <Select value={windowTextureTarget} onValueChange={setWindowTextureTarget}>
+                         <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+@@ -1768,27 +1742,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                 color="blue"
+               >
+                 <div className="flex flex-col gap-0">
+-                    <div className="flex gap-0">
++                    <div className="flex gap-2">
+                       <CyberButton
+                         onClick={selectTexture}
+                         variant="blue"
+-                        className={texturePath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                        className="flex-1"
+                       >
+-                        Select Uniform
+-                      </CyberButton>
++                    {texturePath ? "Change Uniform" : "Select Uniform"}
++                  </CyberButton>
+                       {texturePath ? (
+                         <UnloadButton
+-                          className="flex-1 rounded-none border-b-0 border-l-0"
++                          className="flex-1"
+                           onClick={() => setTexturePath("")}
+                           title="Unload texture"
+                         />
+                       ) : null}
+                     </div>
+-                    {texturePath ? (
+-                      <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                        {getFileLabel(texturePath, "")}
+-                      </div>
+-                    ) : null}
+                 </div>
+                 <CyberCard className="mt-2">
+                   <CyberLabel>Apply To</CyberLabel>
+@@ -1909,27 +1878,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                     <CyberCard>
+                       <CyberLabel>Model</CyberLabel>
+                       <div className="flex flex-col gap-0">
+-                        <div className="flex gap-0">
++                        <div className="flex gap-2">
+                           <CyberButton
+                             variant="secondary"
+-                            className={dualModelAPath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                            className="flex-1"
+                             onClick={() => selectDualModel("A")}
+                           >
+-                            Select Model A
+-                          </CyberButton>
++                    {dualModelAPath ? "Change Model A" : "Select Model A"}
++                  </CyberButton>
+                           {dualModelAPath ? (
+                             <UnloadButton
+-                              className="flex-1 rounded-none border-b-0 border-l-0"
++                              className="flex-1"
+                               onClick={() => { setDualModelAPath(""); setDualModelAError(""); }}
+                               title="Unload model A"
+                             />
+                           ) : null}
+                         </div>
+-                        {dualModelAPath ? (
+-                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                            {getFileLabel(dualModelAPath, "")}
+-                          </div>
+-                        ) : null}
+                       </div>
+                       {dualModelALoading ? <div className="text-[9px] text-[var(--mg-primary)] animate-pulse mt-1">Loading...</div> : null}
+                       {dualModelAError ? <div className="text-[9px] text-red-400 mt-1">{dualModelAError}</div> : null}
+@@ -1937,54 +1901,44 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                     <CyberCard>
+                       <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
+                       <div className="flex flex-col gap-0">
+-                        <div className="flex gap-0">
++                        <div className="flex gap-2">
+                           <CyberButton
+                             variant="secondary"
+-                            className={dualTextureAPath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                            className="flex-1"
+                             onClick={() => selectDualTexture("A")}
+                           >
+-                            {dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
+-                          </CyberButton>
++                    {dualTextureAPath ? dualTextureMode === "eup" ? "Change Uniform A" : "Change Livery A" : dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
++                  </CyberButton>
+                           {dualTextureAPath ? (
+                             <UnloadButton
+-                              className="flex-1 rounded-none border-b-0 border-l-0"
++                              className="flex-1"
+                               onClick={() => setDualTextureAPath("")}
+                               title="Unload texture A"
+                             />
+                           ) : null}
+                         </div>
+-                        {dualTextureAPath ? (
+-                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                            {getFileLabel(dualTextureAPath, "")}
+-                          </div>
+-                        ) : null}
+                       </div>
+                     </CyberCard>
+                     {dualTextureMode === "livery" ? (
+                       <CyberCard>
+                         <CyberLabel>Window Design</CyberLabel>
+                         <div className="flex flex-col gap-0">
+-                          <div className="flex gap-0">
++                          <div className="flex gap-2">
+                             <CyberButton
+                               variant="secondary"
+-                              className={dualWindowTextureAPath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                              className="flex-1"
+                               onClick={selectWindowTexture}
+                             >
+-                              Select Window A
+-                            </CyberButton>
++                    {dualWindowTextureAPath ? "Change Window A" : "Select Window A"}
++                  </CyberButton>
+                             {dualWindowTextureAPath ? (
+                               <UnloadButton
+-                                className="flex-1 rounded-none border-b-0 border-l-0"
++                                className="flex-1"
+                                 onClick={() => setDualWindowTextureAPath("")}
+                                 title="Unload window design A"
+                               />
+                             ) : null}
+                           </div>
+-                          {dualWindowTextureAPath ? (
+-                            <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                              {getFileLabel(dualWindowTextureAPath, "")}
+-                            </div>
+-                          ) : null}
+                         </div>
+                         <div className="mt-2">
+                           <CyberLabel>Apply To</CyberLabel>
+@@ -2016,27 +1970,22 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                     <CyberCard>
+                       <CyberLabel>Model</CyberLabel>
+                       <div className="flex flex-col gap-0">
+-                        <div className="flex gap-0">
++                        <div className="flex gap-2">
+                           <CyberButton
+                             variant="secondary"
+-                            className={dualModelBPath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                            className="flex-1"
+                             onClick={() => selectDualModel("B")}
+                           >
+-                            Select Model B
+-                          </CyberButton>
++                    {dualModelBPath ? "Change Model B" : "Select Model B"}
++                  </CyberButton>
+                           {dualModelBPath ? (
+                             <UnloadButton
+-                              className="flex-1 rounded-none border-b-0 border-l-0"
++                              className="flex-1"
+                               onClick={() => { setDualModelBPath(""); setDualModelBError(""); }}
+                               title="Unload model B"
+                             />
+                           ) : null}
+                         </div>
+-                        {dualModelBPath ? (
+-                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                            {getFileLabel(dualModelBPath, "")}
+-                          </div>
+-                        ) : null}
+                       </div>
+                       {dualModelBLoading ? <div className="text-[9px] text-[#a78bfa] animate-pulse mt-1">Loading...</div> : null}
+                       {dualModelBError ? <div className="text-[9px] text-red-400 mt-1">{dualModelBError}</div> : null}
+@@ -2044,54 +1993,44 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                     <CyberCard>
+                       <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
+                       <div className="flex flex-col gap-0">
+-                        <div className="flex gap-0">
++                        <div className="flex gap-2">
+                           <CyberButton
+                             variant="secondary"
+-                            className={dualTextureBPath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                            className="flex-1"
+                             onClick={() => selectDualTexture("B")}
+                           >
+-                            {dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
+-                          </CyberButton>
++                    {dualTextureBPath ? dualTextureMode === "eup" ? "Change Uniform B" : "Change Livery B" : dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
++                  </CyberButton>
+                           {dualTextureBPath ? (
+                             <UnloadButton
+-                              className="flex-1 rounded-none border-b-0 border-l-0"
++                              className="flex-1"
+                               onClick={() => setDualTextureBPath("")}
+                               title="Unload texture B"
+                             />
+                           ) : null}
+                         </div>
+-                        {dualTextureBPath ? (
+-                          <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                            {getFileLabel(dualTextureBPath, "")}
+-                          </div>
+-                        ) : null}
+                       </div>
+                     </CyberCard>
+                     {dualTextureMode === "livery" ? (
+                       <CyberCard>
+                         <CyberLabel>Window Design</CyberLabel>
+                         <div className="flex flex-col gap-0">
+-                          <div className="flex gap-0">
++                          <div className="flex gap-2">
+                             <CyberButton
+                               variant="secondary"
+-                              className={dualWindowTextureBPath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                              className="flex-1"
+                               onClick={selectWindowTexture}
+                             >
+-                              Select Window B
+-                            </CyberButton>
++                    {dualWindowTextureBPath ? "Change Window B" : "Select Window B"}
++                  </CyberButton>
+                             {dualWindowTextureBPath ? (
+                               <UnloadButton
+-                                className="flex-1 rounded-none border-b-0 border-l-0"
++                                className="flex-1"
+                                 onClick={() => setDualWindowTextureBPath("")}
+                                 title="Unload window design B"
+                               />
+                             ) : null}
+                           </div>
+-                          {dualWindowTextureBPath ? (
+-                            <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                              {getFileLabel(dualWindowTextureBPath, "")}
+-                            </div>
+-                          ) : null}
+                         </div>
+                         <div className="mt-2">
+                           <CyberLabel>Apply To</CyberLabel>
+@@ -2285,17 +2224,17 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+               <CyberCard>
+                 <CyberLabel>Background Image</CyberLabel>
+                 <div className="flex flex-col gap-0">
+-                  <div className="flex gap-0">
++                  <div className="flex gap-2">
+                     <CyberButton
+                       onClick={selectBackgroundImage}
+                       variant="secondary"
+-                      className={backgroundImagePath ? "flex-1 rounded-none border-b-0" : "w-full"}
++                      className="flex-1"
+                     >
+-                      Select Background
+-                    </CyberButton>
++                    {backgroundImagePath ? "Change Background" : "Select Background"}
++                  </CyberButton>
+                     {backgroundImagePath ? (
+                       <UnloadButton
+-                        className="flex-1 rounded-none border-b-0 border-l-0"
++                        className="flex-1"
+                         onClick={() => {
+                           setBackgroundImagePath("");
+                           setBackgroundImageReloadToken((token) => token + 1);
+@@ -2304,11 +2243,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
+                       />
+                     ) : null}
+                   </div>
+-                  {backgroundImagePath ? (
+-                    <div className="px-2 py-1 bg-[var(--mg-surface)] border border-[var(--mg-border)] border-t-0 rounded-[var(--mg-radius)] text-[9px] font-mono text-[var(--mg-muted)] truncate">
+-                      {getFileLabel(backgroundImagePath, "")}
+-                    </div>
+-                  ) : null}
+                 </div>
+                 <div className="flex items-center justify-between mt-2">
+                   <CyberLabel className="mb-0">Wireframe</CyberLabel>

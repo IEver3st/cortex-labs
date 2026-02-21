@@ -14,6 +14,8 @@ import Onboarding from "./components/Onboarding";
 // SettingsMenu now rendered by Shell
 import Viewer from "./components/Viewer";
 import DualModelViewer from "./components/DualModelViewer";
+import Walkthrough from "./components/Walkthrough";
+import { TUTORIAL_MAP } from "./lib/tutorials";
 import { loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession } from "./lib/prefs";
 import { updateWorkspace } from "./lib/workspace";
 import {
@@ -80,8 +82,6 @@ const BUILT_IN_DEFAULTS = {
   showGrid: false,
   showRecents: true,
   lightIntensity: 1.0,
-  lightAzimuth: 54,
-  lightElevation: 46,
   glossiness: 0.5,
   windowControlsStyle: "windows",
   toolbarInTitlebar: false,
@@ -125,6 +125,116 @@ function UnloadButton({ onClick, title, className }) {
   );
 }
 
+// ── Light Direction Picker ──────────────────────────────────────────────────
+const LIGHT_PRESETS = [
+  { label: "F", title: "Front-lit",  azimuth: 180, elevation: 35 },
+  { label: "B", title: "Back-lit",   azimuth: 0,   elevation: 35 },
+  { label: "L", title: "Left-lit",   azimuth: 270, elevation: 35 },
+  { label: "R", title: "Right-lit",  azimuth: 90,  elevation: 35 },
+  { label: "⊤", title: "Top-lit",    azimuth: 0,   elevation: 82 },
+];
+
+function LightDirectionPicker({ azimuth, elevation, onChange }) {
+  const svgRef = useRef(null);
+  const draggingRef = useRef(false);
+
+  const updateFromPointer = useCallback((clientX, clientY) => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const dx = clientX - rect.left - cx;
+    const dy = clientY - rect.top - cy;
+    let angle = Math.atan2(dx, -dy) * (180 / Math.PI);
+    if (angle < 0) angle += 360;
+    onChange({ azimuth: Math.round(angle) % 360, elevation });
+  }, [elevation, onChange]);
+
+  const onPointerDown = useCallback((e) => {
+    draggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    updateFromPointer(e.clientX, e.clientY);
+  }, [updateFromPointer]);
+
+  const onPointerMove = useCallback((e) => {
+    if (!draggingRef.current) return;
+    updateFromPointer(e.clientX, e.clientY);
+  }, [updateFromPointer]);
+
+  const onPointerUp = useCallback(() => { draggingRef.current = false; }, []);
+
+  const aziRad = (azimuth * Math.PI) / 180;
+  const R = 42;
+  const cx = 60, cy = 60;
+  const dotX = cx + R * Math.sin(aziRad);
+  const dotY = cy - R * Math.cos(aziRad);
+  // Ray from center to dot
+  const rayX1 = cx, rayY1 = cy;
+
+  // Cardinal labels: top=Back(0°), right=Right(90°), bottom=Front(180°), left=Left(270°)
+  const cardinals = [
+    { label: "B", x: cx,    y: cy - R - 10, anchor: "middle" },
+    { label: "R", x: cx + R + 12, y: cy + 4, anchor: "middle" },
+    { label: "F", x: cx,    y: cy + R + 14, anchor: "middle" },
+    { label: "L", x: cx - R - 12, y: cy + 4, anchor: "middle" },
+  ];
+
+  return (
+    <div className="light-picker-wrap">
+      <svg
+        ref={svgRef}
+        width="120"
+        height="120"
+        className="light-picker-svg"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        style={{ cursor: "crosshair", touchAction: "none", display: "block" }}
+      >
+        {/* outer ring */}
+        <circle cx={cx} cy={cy} r={R} fill="rgba(0,217,255,0.04)" stroke="rgba(0,217,255,0.18)" strokeWidth="1" />
+        {/* inner ring */}
+        <circle cx={cx} cy={cy} r={R * 0.5} fill="none" stroke="rgba(0,217,255,0.08)" strokeWidth="0.5" strokeDasharray="2 3" />
+        {/* crosshair */}
+        <line x1={cx} y1={cy - R} x2={cx} y2={cy + R} stroke="rgba(0,217,255,0.1)" strokeWidth="0.5" />
+        <line x1={cx - R} y1={cy} x2={cx + R} y2={cy} stroke="rgba(0,217,255,0.1)" strokeWidth="0.5" />
+        {/* light ray */}
+        <line x1={rayX1} y1={rayY1} x2={dotX} y2={dotY} stroke="rgba(0,217,255,0.35)" strokeWidth="1" strokeDasharray="3 2" />
+        {/* center origin */}
+        <circle cx={cx} cy={cy} r={3} fill="rgba(255,255,255,0.25)" />
+        {/* light dot */}
+        <circle cx={dotX} cy={dotY} r={6} fill="#00d9ff" opacity="0.9" />
+        <circle cx={dotX} cy={dotY} r={3} fill="#fff" opacity="0.8" />
+        {/* cardinal labels */}
+        {cardinals.map(c => (
+          <text key={c.label} x={c.x} y={c.y} textAnchor={c.anchor} fontSize="8" fill="rgba(0,217,255,0.45)" fontFamily="var(--font-hud)" letterSpacing="0.5">{c.label}</text>
+        ))}
+      </svg>
+
+      {/* Elevation slider */}
+      <div className="light-picker-elev">
+        <div className="light-picker-elev-label">
+          <span>ELEV</span>
+          <span>{elevation}°</span>
+        </div>
+        <input
+          type="range" min="5" max="85" step="1"
+          value={elevation}
+          onChange={e => onChange({ azimuth, elevation: parseInt(e.target.value, 10) })}
+          className="light-picker-range"
+        />
+      </div>
+
+      {/* Azimuth readout */}
+      <div className="light-picker-readout">
+        <span className="light-picker-readout-label">AZI</span>
+        <span className="light-picker-readout-value">{azimuth}°</span>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null, contextBarTarget = null }) {
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef({ primary: null, window: null, dualA: null, dualB: null });
@@ -138,6 +248,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [defaults, setDefaults] = useState(() => getInitialDefaults());
   const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
+  const [showTutorial, setShowTutorial] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
   // Toast notification system
@@ -168,10 +279,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [backgroundImageReloadToken, setBackgroundImageReloadToken] = useState(0);
   const [showWireframe, setShowWireframe] = useState(false);
   const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
-  const [lightAzimuth, setLightAzimuth] = useState(() => getInitialDefaults().lightAzimuth ?? 54);
-  const [lightElevation, setLightElevation] = useState(() => getInitialDefaults().lightElevation ?? 46);
-  const [lightingOpen, setLightingOpen] = useState(true);
   const [glossiness, setGlossiness] = useState(() => getInitialDefaults().glossiness ?? 0.5);
+  const [lightAzimuth, setLightAzimuth] = useState(54);
+  const [lightElevation, setLightElevation] = useState(46);
+  const [sceneLightingOpen, setSceneLightingOpen] = useState(false);
+  const lightIntensityRafRef = useRef(0);
+  const pendingLightIntensityRef = useRef(null);
+  const lightDirectionRafRef = useRef(0);
+  const pendingLightDirectionRef = useRef(null);
   const [experimentalSettings, setExperimentalSettings] = useState(() => Boolean(getInitialDefaults().experimentalSettings));
 
   // Vehicle Materials state
@@ -268,6 +383,54 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [dualModelAPos, setDualModelAPos] = useState([0, 0, 0]);
   const [dualModelBPos, setDualModelBPos] = useState([0, 0, 3]);
 
+  const handleLightIntensityChange = useCallback((nextValue) => {
+    const clamped = Math.max(0.5, Math.min(2.0, Number(nextValue) || 1));
+    pendingLightIntensityRef.current = clamped;
+    if (lightIntensityRafRef.current) return;
+    lightIntensityRafRef.current = requestAnimationFrame(() => {
+      lightIntensityRafRef.current = 0;
+      const pending = pendingLightIntensityRef.current;
+      pendingLightIntensityRef.current = null;
+      if (typeof pending !== "number") return;
+      setLightIntensity((prev) => (Math.abs(prev - pending) < 0.0001 ? prev : pending));
+    });
+  }, []);
+
+  const handleLightDirectionChange = useCallback(({ azimuth, elevation }) => {
+    const normalizedAzimuth = ((Math.round(azimuth) % 360) + 360) % 360;
+    const normalizedElevation = Math.max(5, Math.min(85, Math.round(elevation)));
+    pendingLightDirectionRef.current = { azimuth: normalizedAzimuth, elevation: normalizedElevation };
+    if (lightDirectionRafRef.current) return;
+    lightDirectionRafRef.current = requestAnimationFrame(() => {
+      lightDirectionRafRef.current = 0;
+      const pending = pendingLightDirectionRef.current;
+      pendingLightDirectionRef.current = null;
+      if (!pending) return;
+      setLightAzimuth((prev) => (prev === pending.azimuth ? prev : pending.azimuth));
+      setLightElevation((prev) => (prev === pending.elevation ? prev : pending.elevation));
+    });
+  }, []);
+
+  const handleViewerReady = useCallback((api) => {
+    viewerApiRef.current = api;
+    setViewerReady(true);
+  }, []);
+
+  const handleDualViewerReady = useCallback((api) => {
+    dualViewerApiRef.current = api;
+    setViewerReady((prev) => (prev ? prev : true));
+  }, []);
+
+  const handleDualPositionChange = useCallback((posA, posB) => {
+    setDualModelAPos(posA);
+    setDualModelBPos(posB);
+  }, []);
+
+  useEffect(() => () => {
+    if (lightIntensityRafRef.current) cancelAnimationFrame(lightIntensityRafRef.current);
+    if (lightDirectionRafRef.current) cancelAnimationFrame(lightDirectionRafRef.current);
+  }, []);
+
   // Re-read prefs when settings are saved from the Shell-level SettingsMenu
   useEffect(() => {
     if (!settingsVersion) return;
@@ -362,6 +525,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     bootTimerRef.current = setTimeout(() => {
       setBooted(true);
+      // Automatically trigger the tutorial for the current mode if we haven't seen it yet
+      const prefs = loadPrefs() || {};
+      if (TUTORIAL_MAP[textureMode] && !prefs[`${textureMode}TutorialSeen`]) {
+        setShowTutorial(true);
+      }
     }, remaining);
 
     return () => {
@@ -369,7 +537,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         clearTimeout(bootTimerRef.current);
       }
     };
-  }, [viewerReady]);
+  }, [viewerReady, textureMode]);
+
+  const handleTutorialClose = useCallback(() => {
+    setShowTutorial(false);
+    const prefs = loadPrefs() || {};
+    savePrefs({ ...prefs, [`${textureMode}TutorialSeen`]: true });
+  }, [textureMode]);
 
   const sessionSaveTimerRef = useRef(null);
   useEffect(() => {
@@ -394,8 +568,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         backgroundImagePath,
         showWireframe,
         lightIntensity,
-        lightAzimuth,
-        lightElevation,
         glossiness,
         liveryExteriorOnly,
         dualBodyColorA,
@@ -636,8 +808,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
     if (typeof state.showWireframe === "boolean") setShowWireframe(state.showWireframe);
     if (typeof state.lightIntensity === "number") setLightIntensity(state.lightIntensity);
-    if (typeof state.lightAzimuth === "number") setLightAzimuth(state.lightAzimuth);
-    if (typeof state.lightElevation === "number") setLightElevation(state.lightElevation);
     if (typeof state.glossiness === "number") setGlossiness(state.glossiness);
     if (typeof state.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(state.liveryExteriorOnly);
     if (state.dualSelectedSlot) setDualSelectedSlot(state.dualSelectedSlot);
@@ -1386,7 +1556,37 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             >
               <PanelLeft className="w-3.5 h-3.5" />
             </button>
-
+            <div className="ctx-bar-sep" />
+            <span className="ctx-bar-badge" style={{ color: textureMode === "livery" ? "var(--mg-primary)" : textureMode === "eup" ? "oklch(0.714 0.203 305.504)" : textureMode === "multi" ? "var(--mg-primary)" : "var(--es-success)" }}>
+              {currentModeLabel}
+            </span>
+            {modelPath && (
+              <>
+                <div className="ctx-bar-sep" />
+                <span className="ctx-bar-file" title={modelSourcePath || modelPath}>
+                  {modelLabel}
+                </span>
+              </>
+            )}
+            <div className="ctx-bar-sep" />
+            <span className={`ctx-bar-dot ${watchStatus === "watching" ? "is-watching" : watchStatus === "error" ? "is-error" : ""}`} />
+            <div className="ctx-bar-sep" />
+            <span className="ctx-bar-status-text">
+              {watchStatus === "watching" ? "Watching" : watchStatus === "error" ? "Error" : "Idle"}
+            </span>
+            {TUTORIAL_MAP[textureMode] && (
+              <>
+                <div className="ctx-bar-sep" />
+                <button 
+                  className="ctx-bar-btn flex items-center gap-1.5 px-2 font-semibold text-[var(--mg-primary)]" 
+                  onClick={() => setShowTutorial(true)}
+                  title="Show Mode Getting Started Guide"
+                  style={{ background: 'transparent' }}
+                >
+                  <Info className="w-3.5 h-3.5" /> Getting Started
+                </button>
+              </>
+            )}
           </div>
 
           <div className="ctx-bar-center">
@@ -1448,28 +1648,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           <span className="cs-status-timestamp">{lastUpdate}</span>
         </div>
       }>
-          {textureMode !== "multi" && (textureError || windowTextureError) ? (
-            <CyberCard className="mb-3 border border-[var(--mg-border)]">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="h-3.5 w-3.5 text-[var(--mg-warning)] mt-0.5 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  {textureError ? (
-                    <div className="text-[10px] text-[var(--mg-muted)] leading-snug break-words">
-                      <span className="text-[var(--mg-warning)] mr-1">Texture:</span>
-                      {textureError}
-                    </div>
-                  ) : null}
-                  {windowTextureError ? (
-                    <div className="text-[10px] text-[var(--mg-muted)] leading-snug break-words mt-1">
-                      <span className="text-[var(--mg-warning)] mr-1">Window:</span>
-                      {windowTextureError}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </CyberCard>
-          ) : null}
-
           {textureMode !== "multi" ? (
             <CyberSection
               title="Model"
@@ -1481,17 +1659,19 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               color="blue"
             >
               <div className="flex flex-col gap-0">
-                <div className="flex gap-2">
+                                <div className="flex gap-2">
                   <CyberButton
                     onClick={selectModel}
                     variant="blue"
                     className="flex-1"
+                    
                   >
                     {modelPath ? "Change Model" : "Select Model"}
                   </CyberButton>
                   {modelPath ? (
                     <UnloadButton
                       className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                       onClick={() => { setModelPath(""); setModelError(""); }}
                       title="Unload model"
                     />
@@ -1514,22 +1694,24 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 color="blue"
               >
                 <div className="flex flex-col gap-0">
-                    <div className="flex gap-2">
-                      <CyberButton
-                        onClick={selectTexture}
+                                    <div className="flex gap-2">
+                  <CyberButton
+                    onClick={selectTexture}
                         variant="blue"
-                        className="flex-1"
-                      >
+                    className="flex-1"
+                    
+                  >
                     {texturePath ? "Change Livery" : "Select Livery"}
                   </CyberButton>
-                      {texturePath ? (
-                        <UnloadButton
-                          className="flex-1"
+                  {texturePath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                           onClick={() => setTexturePath("")}
                           title="Unload texture"
-                        />
-                      ) : null}
-                    </div>
+                    />
+                  ) : null}
+                </div>
                 </div>
                 <CyberCard className="mt-2">
                   <div className="flex items-center gap-2">
@@ -1564,22 +1746,24 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   {windowTemplateEnabled ? (
                     <>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
-                          <CyberButton
-                            onClick={selectWindowTexture}
+                                        <div className="flex gap-2">
+                  <CyberButton
+                    onClick={selectWindowTexture}
                             variant="blue"
-                            className="flex-1"
-                          >
+                    className="flex-1"
+                    
+                  >
                     {windowTexturePath ? "Change Glass" : "Select Glass"}
                   </CyberButton>
-                          {windowTexturePath ? (
-                            <UnloadButton
-                              className="flex-1"
+                  {windowTexturePath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                               onClick={() => setWindowTexturePath("")}
                               title="Unload window template"
-                            />
-                          ) : null}
-                        </div>
+                    />
+                  ) : null}
+                </div>
                       </div>
                       <div className="mt-1">
                         <CyberLabel>Override Target</CyberLabel>
@@ -1646,22 +1830,24 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 color="blue"
               >
                 <div className="flex flex-col gap-0">
-                    <div className="flex gap-2">
-                      <CyberButton
-                        onClick={selectTexture}
+                                    <div className="flex gap-2">
+                  <CyberButton
+                    onClick={selectTexture}
                         variant="blue"
-                        className="flex-1"
-                      >
+                    className="flex-1"
+                    
+                  >
                     {texturePath ? "Change Texture" : "Select Texture"}
                   </CyberButton>
-                      {texturePath ? (
-                        <UnloadButton
-                          className="flex-1"
+                  {texturePath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                           onClick={() => setTexturePath("")}
                           title="Unload texture"
-                        />
-                      ) : null}
-                    </div>
+                    />
+                  ) : null}
+                </div>
                 </div>
                 <CyberCard className="mt-2">
                   <CyberLabel>Apply To</CyberLabel>
@@ -1704,22 +1890,24 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   {windowTemplateEnabled ? (
                     <>
                         <div className="flex flex-col gap-0">
-                          <div className="flex gap-2">
-                            <CyberButton
-                              onClick={selectWindowTexture}
+                                          <div className="flex gap-2">
+                  <CyberButton
+                    onClick={selectWindowTexture}
                               variant="blue"
-                              className="flex-1"
-                            >
+                    className="flex-1"
+                    
+                  >
                     {windowTexturePath ? "Change Secondary" : "Select Secondary"}
                   </CyberButton>
-                            {windowTexturePath ? (
-                              <UnloadButton
-                                className="flex-1"
+                  {windowTexturePath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                                 onClick={() => setWindowTexturePath("")}
                                 title="Unload secondary texture"
-                              />
-                            ) : null}
-                          </div>
+                    />
+                  ) : null}
+                </div>
                         </div>
                       <Select value={windowTextureTarget} onValueChange={setWindowTextureTarget}>
                         <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
@@ -1757,22 +1945,24 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 color="blue"
               >
                 <div className="flex flex-col gap-0">
-                    <div className="flex gap-2">
-                      <CyberButton
-                        onClick={selectTexture}
+                                    <div className="flex gap-2">
+                  <CyberButton
+                    onClick={selectTexture}
                         variant="blue"
-                        className="flex-1"
-                      >
+                    className="flex-1"
+                    
+                  >
                     {texturePath ? "Change Uniform" : "Select Uniform"}
                   </CyberButton>
-                      {texturePath ? (
-                        <UnloadButton
-                          className="flex-1"
+                  {texturePath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                           onClick={() => setTexturePath("")}
                           title="Unload texture"
-                        />
-                      ) : null}
-                    </div>
+                    />
+                  ) : null}
+                </div>
                 </div>
                 <CyberCard className="mt-2">
                   <CyberLabel>Apply To</CyberLabel>
@@ -1893,22 +2083,27 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberCard>
                       <CyberLabel>Model</CyberLabel>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
-                          <CyberButton
-                            variant="secondary"
-                            className="flex-1"
-                            onClick={() => selectDualModel("A")}
+                                        <div className="flex gap-2">
+                  <CyberButton
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() =
+                  >
+                    {dualModelAPath ? "selectDualModel("A")}
                           >
-                    {dualModelAPath ? "Change Model A" : "Select Model A"}
+                            Change Model A" : "selectDualModel("A")}
+                          >
+                            Select Model A"}
                   </CyberButton>
-                          {dualModelAPath ? (
-                            <UnloadButton
-                              className="flex-1"
+                  {dualModelAPath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                               onClick={() => { setDualModelAPath(""); setDualModelAError(""); }}
                               title="Unload model A"
-                            />
-                          ) : null}
-                        </div>
+                    />
+                  ) : null}
+                </div>
                       </div>
                       {dualModelALoading ? <div className="text-[9px] text-[var(--mg-primary)] animate-pulse mt-1">Loading...</div> : null}
                       {dualModelAError ? <div className="text-[9px] text-red-400 mt-1">{dualModelAError}</div> : null}
@@ -1916,44 +2111,50 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberCard>
                       <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
-                          <CyberButton
-                            variant="secondary"
-                            className="flex-1"
-                            onClick={() => selectDualTexture("A")}
+                                        <div className="flex gap-2">
+                  <CyberButton
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() =
+                  >
+                    {dualTextureAPath ? "selectDualTexture("A")}
                           >
-                    {dualTextureAPath ? dualTextureMode === "eup" ? "Change Uniform A" : "Change Livery A" : dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
+                            {dualTextureMode === "eup" ? "Change Uniform A" : "Change Livery A"}" : "selectDualTexture("A")}
+                          >
+                            {dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}"}
                   </CyberButton>
-                          {dualTextureAPath ? (
-                            <UnloadButton
-                              className="flex-1"
+                  {dualTextureAPath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                               onClick={() => setDualTextureAPath("")}
                               title="Unload texture A"
-                            />
-                          ) : null}
-                        </div>
+                    />
+                  ) : null}
+                </div>
                       </div>
                     </CyberCard>
                     {dualTextureMode === "livery" ? (
                       <CyberCard>
                         <CyberLabel>Window Design</CyberLabel>
                         <div className="flex flex-col gap-0">
-                          <div className="flex gap-2">
-                            <CyberButton
-                              variant="secondary"
-                              className="flex-1"
-                              onClick={selectWindowTexture}
-                            >
+                                          <div className="flex gap-2">
+                  <CyberButton
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={selectWindowTexture}
+                  >
                     {dualWindowTextureAPath ? "Change Window A" : "Select Window A"}
                   </CyberButton>
-                            {dualWindowTextureAPath ? (
-                              <UnloadButton
-                                className="flex-1"
+                  {dualWindowTextureAPath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                                 onClick={() => setDualWindowTextureAPath("")}
                                 title="Unload window design A"
-                              />
-                            ) : null}
-                          </div>
+                    />
+                  ) : null}
+                </div>
                         </div>
                         <div className="mt-2">
                           <CyberLabel>Apply To</CyberLabel>
@@ -1985,22 +2186,27 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberCard>
                       <CyberLabel>Model</CyberLabel>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
-                          <CyberButton
-                            variant="secondary"
-                            className="flex-1"
-                            onClick={() => selectDualModel("B")}
+                                        <div className="flex gap-2">
+                  <CyberButton
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() =
+                  >
+                    {dualModelBPath ? "selectDualModel("B")}
                           >
-                    {dualModelBPath ? "Change Model B" : "Select Model B"}
+                            Change Model B" : "selectDualModel("B")}
+                          >
+                            Select Model B"}
                   </CyberButton>
-                          {dualModelBPath ? (
-                            <UnloadButton
-                              className="flex-1"
+                  {dualModelBPath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                               onClick={() => { setDualModelBPath(""); setDualModelBError(""); }}
                               title="Unload model B"
-                            />
-                          ) : null}
-                        </div>
+                    />
+                  ) : null}
+                </div>
                       </div>
                       {dualModelBLoading ? <div className="text-[9px] text-[#a78bfa] animate-pulse mt-1">Loading...</div> : null}
                       {dualModelBError ? <div className="text-[9px] text-red-400 mt-1">{dualModelBError}</div> : null}
@@ -2008,44 +2214,50 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberCard>
                       <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
-                          <CyberButton
-                            variant="secondary"
-                            className="flex-1"
-                            onClick={() => selectDualTexture("B")}
+                                        <div className="flex gap-2">
+                  <CyberButton
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() =
+                  >
+                    {dualTextureBPath ? "selectDualTexture("B")}
                           >
-                    {dualTextureBPath ? dualTextureMode === "eup" ? "Change Uniform B" : "Change Livery B" : dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
+                            {dualTextureMode === "eup" ? "Change Uniform B" : "Change Livery B"}" : "selectDualTexture("B")}
+                          >
+                            {dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}"}
                   </CyberButton>
-                          {dualTextureBPath ? (
-                            <UnloadButton
-                              className="flex-1"
+                  {dualTextureBPath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                               onClick={() => setDualTextureBPath("")}
                               title="Unload texture B"
-                            />
-                          ) : null}
-                        </div>
+                    />
+                  ) : null}
+                </div>
                       </div>
                     </CyberCard>
                     {dualTextureMode === "livery" ? (
                       <CyberCard>
                         <CyberLabel>Window Design</CyberLabel>
                         <div className="flex flex-col gap-0">
-                          <div className="flex gap-2">
-                            <CyberButton
-                              variant="secondary"
-                              className="flex-1"
-                              onClick={selectWindowTexture}
-                            >
+                                          <div className="flex gap-2">
+                  <CyberButton
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={selectWindowTexture}
+                  >
                     {dualWindowTextureBPath ? "Change Window B" : "Select Window B"}
                   </CyberButton>
-                            {dualWindowTextureBPath ? (
-                              <UnloadButton
-                                className="flex-1"
+                  {dualWindowTextureBPath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                                 onClick={() => setDualWindowTextureBPath("")}
                                 title="Unload window design B"
-                              />
-                            ) : null}
-                          </div>
+                    />
+                  ) : null}
+                </div>
                         </div>
                         <div className="mt-2">
                           <CyberLabel>Apply To</CyberLabel>
@@ -2239,25 +2451,27 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               <CyberCard>
                 <CyberLabel>Background Image</CyberLabel>
                 <div className="flex flex-col gap-0">
-                  <div className="flex gap-2">
-                    <CyberButton
-                      onClick={selectBackgroundImage}
+                                  <div className="flex gap-2">
+                  <CyberButton
+                    onClick={selectBackgroundImage}
                       variant="secondary"
-                      className="flex-1"
-                    >
+                    className="flex-1"
+                    
+                  >
                     {backgroundImagePath ? "Change Background" : "Select Background"}
                   </CyberButton>
-                    {backgroundImagePath ? (
-                      <UnloadButton
-                        className="flex-1"
+                  {backgroundImagePath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      rounded-none border-b-0 border-l-0"
                         onClick={() => {
                           setBackgroundImagePath("");
                           setBackgroundImageReloadToken((token) => token + 1);
                         }}
                         title="Remove background image"
-                      />
-                    ) : null}
-                  </div>
+                    />
+                  ) : null}
+                </div>
                 </div>
                 <div className="flex items-center justify-between mt-2">
                   <CyberLabel className="mb-0">Wireframe</CyberLabel>
@@ -2275,10 +2489,68 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             </div>
           </CyberSection>
 
+          {/* ── Scene Lighting Section ── */}
+          <CyberSection
+            title="Scene Lighting"
+            caption="Direction & intensity"
+            open={sceneLightingOpen}
+            onToggle={() => setSceneLightingOpen((prev) => !prev)}
+            contentId="panel-scene-lighting"
+            icon={Sun}
+            color="blue"
+          >
+            <div className="space-y-3">
+              <MaterialSlider
+                label="Intensity"
+                value={lightIntensity}
+                onChange={handleLightIntensityChange}
+                min={0.5}
+                max={2.0}
+                step={0.1}
+              />
+              <MaterialSlider
+                label="Glossiness"
+                value={glossiness}
+                onChange={setGlossiness}
+                min={0}
+                max={1}
+                step={0.05}
+                unit="%"
+              />
+              <div>
+                <CyberLabel>Light Direction</CyberLabel>
+                <div className="flex justify-between items-start gap-2 mt-1.5">
+                  <LightDirectionPicker
+                    azimuth={lightAzimuth}
+                    elevation={lightElevation}
+                    onChange={handleLightDirectionChange}
+                  />
+                  <div className="light-presets">
+                    {LIGHT_PRESETS.map(p => (
+                      <button
+                        key={p.label}
+                        type="button"
+                        className={`light-preset-btn${lightAzimuth === p.azimuth && lightElevation === p.elevation ? " is-active" : ""}`}
+                        title={p.title}
+                        onClick={() => handleLightDirectionChange({ azimuth: p.azimuth, elevation: p.elevation })}
+                      >{p.label}</button>
+                    ))}
+                    <button
+                      type="button"
+                      className="light-preset-btn light-preset-btn--reset"
+                      title="Reset to default"
+                      onClick={() => handleLightDirectionChange({ azimuth: 54, elevation: 46 })}
+                    ><RotateCcw className="w-2.5 h-2.5" /></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CyberSection>
+
           {/* ── Vehicle Materials Section ── */}
           <CyberSection
             title="Materials"
-            caption={`${materialType.charAt(0).toUpperCase() + materialType.slice(1)} & Surface`}
+            caption={`${materialType.charAt(0).toUpperCase() + materialType.slice(1)} & surface`}
             open={materialsOpen}
             onToggle={() => setMaterialsOpen((prev) => !prev)}
             contentId="panel-materials"
@@ -2286,7 +2558,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             color="blue"
             badge="NEW"
           >
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div>
                 <CyberLabel>Surface Type</CyberLabel>
                 <MaterialTypeSelector value={materialType} onChange={setMaterialType} />
@@ -2294,7 +2566,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
               <div>
                 <CyberLabel>Properties</CyberLabel>
-                <div className="flex flex-col gap-3">
+                <div className="space-y-3 mt-1.5">
                   <MaterialSlider
                     label="Light Int"
                     value={matLightIntensity}
@@ -2344,61 +2616,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               </div>
             </div>
           </CyberSection>
-
-          {/* ── Scene Lighting ── */}
-          {textureMode !== "multi" && (
-            <CyberSection
-              title="Lighting"
-              caption="Scene illumination"
-              open={lightingOpen}
-              onToggle={() => setLightingOpen((prev) => !prev)}
-              contentId="panel-lighting"
-              icon={Sun}
-              color="yellow"
-            >
-              <div className="space-y-3">
-                <MaterialSlider
-                  label="Intensity"
-                  value={lightIntensity}
-                  onChange={(v) => setLightIntensity(Math.round(v * 100) / 100)}
-                  min={0}
-                  max={3}
-                  step={0.05}
-                />
-                <MaterialSlider
-                  label="Azimuth"
-                  value={lightAzimuth}
-                  onChange={(v) => setLightAzimuth(Math.round(v))}
-                  min={0}
-                  max={360}
-                  step={1}
-                  unit="°"
-                />
-                <MaterialSlider
-                  label="Elevation"
-                  value={lightElevation}
-                  onChange={(v) => setLightElevation(Math.round(v))}
-                  min={0}
-                  max={90}
-                  step={1}
-                  unit="°"
-                />
-                <button
-                  type="button"
-                  className="panel-cam-action-btn w-full mt-1"
-                  onClick={() => {
-                    setLightIntensity(1.0);
-                    setLightAzimuth(54);
-                    setLightElevation(46);
-                  }}
-                  title="Reset lighting to defaults"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  Reset
-                </button>
-              </div>
-            </CyberSection>
-          )}
 
           {/* ── Camera Controls in Panel ── */}
           {cameraControlsInPanel && textureMode !== "multi" && (
@@ -2554,8 +2771,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             backgroundImagePath={backgroundImagePath}
             backgroundImageReloadToken={backgroundImageReloadToken}
             lightIntensity={lightIntensity}
-            lightAzimuth={lightAzimuth}
-            lightElevation={lightElevation}
             glossiness={glossiness}
             showWireframe={showWireframe}
             selectedSlot={dualSelectedSlot}
@@ -2565,14 +2780,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             initialPosA={dualModelAPos}
             initialPosB={dualModelBPos}
             onSelectSlot={setDualSelectedSlot}
-            onPositionChange={(posA, posB) => {
-              setDualModelAPos(posA);
-              setDualModelBPos(posB);
-            }}
-            onReady={(api) => {
-              dualViewerApiRef.current = api;
-              if (!viewerReady) setViewerReady(true);
-            }}
+            onPositionChange={handleDualPositionChange}
+            onReady={handleDualViewerReady}
             onModelAError={setDualModelAError}
             onModelBError={setDualModelBError}
             onModelALoading={setDualModelALoading}
@@ -2606,10 +2815,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             onModelInfo={handleModelInfo}
             onModelError={handleModelError}
             onModelLoading={handleModelLoading}
-            onReady={(api) => {
-              viewerApiRef.current = api;
-              setViewerReady(true);
-            }}
+            onReady={handleViewerReady}
             onTextureReload={onTextureReload}
             onTextureError={handleTextureError}
             onWindowTextureError={handleWindowTextureError}
@@ -2683,11 +2889,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               </div>
             </motion.div>
           ) : null}
-        </AnimatePresence>
+      </AnimatePresence>
 
-        {/* Action toasts */}
-        <div className="cs-toast-stack">
-          <AnimatePresence>
+      {/* Action toasts */}
+      <div className="cs-toast-stack">
+        <AnimatePresence>
             {toasts.map(t => (
               <motion.div
                 key={t.id}
@@ -2707,6 +2913,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
       <AnimatePresence>{isBooting ? <AppLoader /> : null}</AnimatePresence>
       {/* Onboarding handled by Shell */}
+      
+      <Walkthrough 
+        steps={TUTORIAL_MAP[textureMode] || TUTORIAL_MAP.everything} 
+        isOpen={showTutorial} 
+        onClose={handleTutorialClose} 
+      />
 
       {/* Format Warning Modal */}
       <AnimatePresence>

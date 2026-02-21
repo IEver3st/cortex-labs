@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
+import cortexLogo from "../../src-tauri/icons/cortex-logo.svg";
 
 const GRID = 32;
 const SEGMENTS = 16;
 
 const BOOT_LINES = [
-  "CORTEX.SYS loaded",
   "renderer.init() → ok",
   "workspace.mount() → ok",
   "shaders compiled",
@@ -92,34 +92,18 @@ const CUBE_DELAYS = (() => {
 })();
 
 export function LoadingGlyph({ className, animate: doAnimate = false, ...props }) {
+  const classes = [className || "loader-glyph", doAnimate ? "loader-glyph-animated" : ""]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <svg
-      className={className || "loader-glyph"}
-      viewBox={`0 0 ${GRID} ${GRID}`}
-      role="img"
-      aria-label="Cortex Studio logo"
-      shapeRendering="crispEdges"
+    <img
+      src={cortexLogo}
+      className={classes}
+      alt="Cortex Studio logo"
+      draggable={false}
       {...props}
-    >
-      {CUBE_POINTS.map((point, i) => (
-        <rect
-          key={`${point.x}-${point.y}`}
-          x={point.x}
-          y={point.y}
-          width={0.92}
-          height={0.92}
-          rx={0.18}
-          fill="currentColor"
-          opacity={point.alpha}
-          className={doAnimate ? "loader-dot" : undefined}
-          style={
-            doAnimate
-              ? { animationDelay: `${CUBE_DELAYS[i].toFixed(3)}s` }
-              : undefined
-          }
-        />
-      ))}
-    </svg>
+    />
   );
 }
 
@@ -216,32 +200,7 @@ export default function AppLoader({ variant = "boot" }) {
           ))}
         </motion.div>
 
-        {/* Segmented progress bar */}
-        <motion.div
-          className="loader-seg-track"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.55, duration: 0.3 }}
-        >
-          {Array.from({ length: SEGMENTS }, (_, i) => (
-            <div
-              key={i}
-              className="loader-seg"
-              style={{
-                opacity: i < litSegments ? 1 : 0.08,
-                background:
-                  i < litSegments
-                    ? "oklch(0.72 0.13 182)"
-                    : "oklch(0.72 0.13 182 / 15%)",
-                boxShadow:
-                  i < litSegments && i === litSegments - 1
-                    ? "0 0 6px 1px oklch(0.72 0.13 182 / 60%)"
-                    : "none",
-                transition: `opacity 0.15s ease ${i * 0.02}s, box-shadow 0.3s ease`,
-              }}
-            />
-          ))}
-        </motion.div>
+
       </div>
     </motion.div>
   );

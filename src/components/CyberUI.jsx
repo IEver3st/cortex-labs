@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import { ChevronRight, Upload, X, Plus } from "lucide-react";
 function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -33,7 +33,7 @@ export function CyberPanel({ children, collapsed, isBooting, statusBar }) {
 export function CyberSection({ title, caption, open, onToggle, contentId, children, icon, color, badge }) {
   const Icon = icon;
   return (
-    <div className={safeCn("cyber-section", open && "cyber-section--open")}>
+    <div className={safeCn("cyber-section", open && "cyber-section--open")} data-open={open || undefined}>
       <button
         type="button"
         onClick={onToggle}
@@ -60,22 +60,17 @@ export function CyberSection({ title, caption, open, onToggle, contentId, childr
         </div>
       </button>
 
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            id={contentId}
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            style={{ overflow: "hidden" }}
-          >
-            <div className="cyber-section-content">
-              {children}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* CSS Grid accordion — 0fr→1fr requires NO JS height measurement,
+          handles dynamic content of any size, never races against renders. */}
+      <div
+        id={contentId}
+        className="cyber-section-body"
+        aria-hidden={!open}
+      >
+        <div className="cyber-section-content">
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
@@ -153,13 +148,14 @@ export function MaterialTypeSelector({ value, onChange }) {
 
 /* ── Material Slider ── */
 export function MaterialSlider({ label, value, onChange, min = 0, max = 1, step = 0.01, unit = "", onReset }) {
-  const displayVal = unit === "%" ? `${Math.round(value * 100)}%` : value.toFixed(2);
+  const displayVal = unit === "%"
+    ? `${Math.round(value * 100)}%`
+    : step >= 1
+      ? `${Math.round(value)}${unit}`
+      : `${value.toFixed(2)}${unit}`;
   return (
     <div className="cs-mat-slider">
-      <div className="cs-mat-slider-header">
-        <span className="cs-mat-slider-label">{label}</span>
-        <span className="cs-mat-slider-readout">{displayVal}</span>
-      </div>
+      <span className="cs-mat-slider-label">{label}</span>
       <div className="cs-mat-slider-track-wrap">
         <input
           type="range"
@@ -172,6 +168,7 @@ export function MaterialSlider({ label, value, onChange, min = 0, max = 1, step 
         />
         <div className="cs-mat-slider-fill" style={{ width: `${((value - min) / (max - min)) * 100}%` }} />
       </div>
+      <span className="cs-mat-slider-readout">{displayVal}</span>
     </div>
   );
 }
@@ -207,9 +204,9 @@ export function TextureUploadGrid({ textures, onAdd, onRemove, maxSlots = 6 }) {
         </div>
       ))}
       {textures.length < maxSlots && (
-        <button type="button" className="cs-tex-slot cs-tex-slot--add" onClick={handleFileSelect}>
+        <button type="button" className={`cs-tex-slot cs-tex-slot--add ${textures.length === 0 ? "cs-tex-slot--add-full" : ""}`} onClick={handleFileSelect}>
           <Plus size={16} />
-          <span>Add</span>
+          <span>{textures.length === 0 ? "ADD TEXTURE MAP" : "Add"}</span>
         </button>
       )}
     </div>

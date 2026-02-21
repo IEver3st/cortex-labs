@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, PanelLeft } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
@@ -13,6 +13,7 @@ import SettingsMenu from "./components/SettingsMenu";
 import WhatsNew from "./components/WhatsNew";
 import * as Ctx from "./components/ContextMenu";
 import appMeta from "../package.json";
+import cortexLogo from "../src-tauri/icons/cortex-logo.svg";
 import {
   setActiveWorkspaceId,
   updateWorkspace,
@@ -433,7 +434,7 @@ export default function Shell() {
 
       {booted && (
         <>
-          {/* ━━━ UNIFIED TOOLBAR ━━━ */}
+          {/* ━━━ UNIFIED TOOLBAR (single row) ━━━ */}
           <motion.div
             className="shell-toolbar"
             data-tauri-drag-region
@@ -443,13 +444,26 @@ export default function Shell() {
           >
             {/* Brand mark */}
             <div className="shell-brand" data-tauri-drag-region>
-              <span className="shell-brand-dot" />
+              <img src={cortexLogo} alt="" className="shell-brand-logo" draggable={false} />
               <span className="shell-brand-name">CORTEX</span>
             </div>
 
+            {/* Sidebar toggle */}
+            <motion.button
+              type="button"
+              className="shell-sidebar-toggle"
+              data-tauri-drag-region="false"
+              aria-label="Toggle sidebar"
+              whileHover={{ backgroundColor: "rgba(255,255,255,0.06)" }}
+              whileTap={{ scale: 0.88 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            >
+              <PanelLeft className="shell-sidebar-toggle-icon" />
+            </motion.button>
+
             <div className="shell-toolbar-sep" />
 
-            {/* Tab strip */}
+            {/* Tab strip — inline in the single row */}
             <div className="shell-tabs" data-tauri-drag-region>
               <AnimatePresence initial={false}>
                 {tabs.map((tab, index) => {
@@ -513,13 +527,9 @@ export default function Shell() {
                         </motion.button>
                       )}
 
-                      {/* Active indicator line */}
+                      {/* Seamless tab: paint over the bottom border with content bg */}
                       {isTabActive && (
-                        <motion.div
-                          className="shell-tab-indicator"
-                          layoutId="tab-indicator"
-                          transition={{ type: "spring", stiffness: 500, damping: 35 }}
-                        />
+                        <div className="shell-tab-seamless" />
                       )}
                     </motion.div>
                   );
@@ -551,8 +561,8 @@ export default function Shell() {
                 })}
               </AnimatePresence>
 
-              {/* + New tab button */}
-              <div className="shell-new-tab-wrap" ref={newTabBtnRef}>
+            {/* + New tab button (inside tabs flex row, at end) */}
+            <div className="shell-new-tab-wrap" ref={newTabBtnRef} data-tauri-drag-region="false">
                 <motion.button
                   type="button"
                   className="shell-new-tab-btn"
@@ -606,10 +616,8 @@ export default function Shell() {
                     </motion.div>
                   )}
                 </AnimatePresence>
-              </div>
             </div>
-
-            <div className="shell-toolbar-sep" />
+            </div>
 
             {/* Context bar — page-specific controls portaled here */}
             <div

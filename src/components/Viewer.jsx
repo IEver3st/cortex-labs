@@ -105,6 +105,10 @@ const MATERIAL_TYPE_PRESETS = {
   metal: { metalness: 0.82, transparency: 0, transmission: 0, depthWrite: true },
   glass: { metalness: 0.0, transparency: 0.62, transmission: 0.9, depthWrite: false },
 };
+const FIT_SAMPLE_LIMIT = 12000;
+const FIT_TRIM_PERCENT = 0.02;
+const FIT_MIN_SAMPLES = 96;
+const FIT_MIN_SIZE_RATIO = 0.35;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -253,6 +257,8 @@ function ViewerComponent({
   wasdEnabled = false,
   showGrid = false,
   lightIntensity = 1.0,
+  lightAzimuth = 54,
+  lightElevation = 46,
   glossiness = 0.5,
   materialType = "paint",
   materialLightIntensity = 1.0,
@@ -602,6 +608,20 @@ function ViewerComponent({
   }, [lightIntensity]);
 
   useEffect(() => {
+    const { key } = lightsRef.current;
+    if (!key) return;
+    const aziRad = (lightAzimuth * Math.PI) / 180;
+    const elevRad = (lightElevation * Math.PI) / 180;
+    const r = 8;
+    key.position.set(
+      r * Math.cos(elevRad) * Math.sin(aziRad),
+      r * Math.sin(elevRad),
+      r * Math.cos(elevRad) * Math.cos(aziRad),
+    );
+    requestRenderRef.current?.();
+  }, [lightAzimuth, lightElevation]);
+
+  useEffect(() => {
     if (!modelRef.current) return;
     const factor = 2 - 2 * glossiness;
     const meshes = getMeshList(modelRef.current);
@@ -903,16 +923,18 @@ function ViewerComponent({
         const size = new THREE.Vector3();
         const center = new THREE.Vector3();
         box.getSize(size);
-        box.getCenter(center);
 
         if (object?.userData?.sourceFormat === "yft") {
           const didFix = maybeAutoFixYftUpAxis(object, size);
           if (didFix) {
             box.setFromObject(object);
             box.getSize(size);
-            box.getCenter(center);
           }
         }
+
+        const fitBox = computeFocusedBounds(object, box);
+        fitBox.getSize(size);
+        fitBox.getCenter(center);
 
         const isBoundsValid =
           Number.isFinite(size.x) &&
@@ -1856,6 +1878,83 @@ function getMeshList(object) {
   });
   object.userData.meshList = meshes;
   return meshes;
+}
+
+function computeFocusedBounds(object, fallbackBounds) {
+  if (!object) return fallbackBounds?.clone?.() || new THREE.Box3();
+  const fallback = fallbackBounds?.clone?.() || new THREE.Box3().setFromObject(object);
+  if (!isFiniteBounds(fallback)) return fallback;
+
+  object.updateMatrixWorld(true);
+  const meshes = getMeshList(object);
+  if (!meshes.length) return fallback;
+
+  const samples = [];
+  let totalVertexCount = 0;
+  for (const mesh of meshes) {
+    const positions = mesh.geometry?.attributes?.position;
+    if (!positions?.count) continue;
+    totalVertexCount += positions.count;
+    samples.push({ mesh, positions });
+  }
+  if (!totalVertexCount || !samples.length) return fallback;
+
+  const xs = [];
+  const ys = [];
+  const zs = [];
+  const point = new THREE.Vector3();
+
+  for (const { mesh, positions } of samples) {
+    const desired = Math.max(1, Math.round((positions.count / totalVertexCount) * FIT_SAMPLE_LIMIT));
+    const step = Math.max(1, Math.floor(positions.count / desired));
+    for (let i = 0; i < positions.count; i += step) {
+      point.set(positions.getX(i), positions.getY(i), positions.getZ(i));
+      point.applyMatrix4(mesh.matrixWorld);
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) continue;
+      xs.push(point.x);
+      ys.push(point.y);
+      zs.push(point.z);
+    }
+  }
+
+  if (xs.length < FIT_MIN_SAMPLES) return fallback;
+  xs.sort((a, b) => a - b);
+  ys.sort((a, b) => a - b);
+  zs.sort((a, b) => a - b);
+
+  const trimCount = Math.floor(xs.length * FIT_TRIM_PERCENT);
+  const lowIndex = Math.min(trimCount, xs.length - 1);
+  const highIndex = Math.max(lowIndex, xs.length - trimCount - 1);
+  const min = new THREE.Vector3(xs[lowIndex], ys[lowIndex], zs[lowIndex]);
+  const max = new THREE.Vector3(xs[highIndex], ys[highIndex], zs[highIndex]);
+  if (
+    !Number.isFinite(min.x) || !Number.isFinite(min.y) || !Number.isFinite(min.z) ||
+    !Number.isFinite(max.x) || !Number.isFinite(max.y) || !Number.isFinite(max.z)
+  ) {
+    return fallback;
+  }
+  if (max.x <= min.x || max.y <= min.y || max.z <= min.z) return fallback;
+
+  const focused = new THREE.Box3(min, max);
+  const fallbackSize = fallback.getSize(new THREE.Vector3());
+  const focusedSize = focused.getSize(new THREE.Vector3());
+  const fallbackMax = Math.max(fallbackSize.x, fallbackSize.y, fallbackSize.z);
+  const focusedMax = Math.max(focusedSize.x, focusedSize.y, focusedSize.z);
+  if (!Number.isFinite(focusedMax) || focusedMax <= 0) return fallback;
+  if (focusedMax < fallbackMax * FIT_MIN_SIZE_RATIO) return fallback;
+  return focused;
+}
+
+function isFiniteBounds(box) {
+  if (!box) return false;
+  return (
+    Number.isFinite(box.min.x) &&
+    Number.isFinite(box.min.y) &&
+    Number.isFinite(box.min.z) &&
+    Number.isFinite(box.max.x) &&
+    Number.isFinite(box.max.y) &&
+    Number.isFinite(box.max.z)
+  );
 }
 
 function getPrimaryMaterial(material) {

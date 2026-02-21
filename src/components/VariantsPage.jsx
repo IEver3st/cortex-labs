@@ -115,6 +115,29 @@ const HResizer = memo(function HResizer({ onResize }) {
   );
 });
 
+/* --- Vertical drag handle for legacy bottom layers panel --- */
+const VResizer = memo(function VResizer({ onResize }) {
+  const dragging = useRef(false);
+  const startY = useRef(0);
+  const onPointerDown = useCallback((e) => {
+    dragging.current = true; startY.current = e.clientY;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    document.body.style.cursor = "row-resize"; document.body.style.userSelect = "none";
+  }, []);
+  const onPointerMove = useCallback((e) => {
+    if (!dragging.current) return;
+    const dy = startY.current - e.clientY; startY.current = e.clientY; onResize(dy);
+  }, [onResize]);
+  const onPointerUp = useCallback(() => {
+    dragging.current = false; document.body.style.cursor = ""; document.body.style.userSelect = "";
+  }, []);
+  return (
+    <div className="vp-resizer vp-resizer--v" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+      <div className="vp-resizer-grip vp-resizer-grip--v" />
+    </div>
+  );
+});
+
 /* --- Opacity slider with double-click number entry --- */
 function OpacitySlider({ value, onChange }) {
   const [editing, setEditing] = useState(false);
@@ -203,6 +226,15 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const [compactLayers, setCompactLayers] = useState(false);
   const [selectedLayerId, setSelectedLayerId] = useState(null);
 
+  /* Legacy bottom layers layout (read from prefs, reloaded on settingsVersion) */
+  const [legacyLayersLayout, setLegacyLayersLayout] = useState(() => {
+    const prefs = loadPrefs();
+    return prefs?.defaults?.legacyLayersLayout ?? false;
+  });
+  const [legacyLayersHeight, setLegacyLayersHeight] = useState(220);
+  const pendingVResizeDyRef = useRef(0);
+  const legacyLayersRafRef = useRef(0);
+
   /* New layout state */
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -270,10 +302,13 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   useEffect(() => {
     if (!settingsVersion) return;
     setOutputFolder((prev) => prev || getDefaultVariantExportFolder());
+    const prefs = loadPrefs();
+    setLegacyLayersLayout(prefs?.defaults?.legacyLayersLayout ?? false);
   }, [settingsVersion]);
 
   useEffect(() => () => {
     if (hResizeRafRef.current) cancelAnimationFrame(hResizeRafRef.current);
+    if (legacyLayersRafRef.current) cancelAnimationFrame(legacyLayersRafRef.current);
   }, []);
 
   /* ── Load PSD ── */
@@ -477,6 +512,17 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     });
   }, []);
 
+  const handleVResize = useCallback((dy) => {
+    pendingVResizeDyRef.current += dy;
+    if (legacyLayersRafRef.current) return;
+    legacyLayersRafRef.current = requestAnimationFrame(() => {
+      legacyLayersRafRef.current = 0;
+      const batchedDy = pendingVResizeDyRef.current;
+      pendingVResizeDyRef.current = 0;
+      setLegacyLayersHeight((h) => Math.max(120, Math.min(600, h + batchedDy)));
+    });
+  }, []);
+
   /* ── Model info ── */
   const handleViewerReady = useCallback((api) => { viewerApiRef.current = api; setViewerReady(true); }, []);
   const handleModelInfo = useCallback((info) => { setLiveryTarget(info.liveryTarget || ""); setLiveryTargetReady(true); }, []);
@@ -615,6 +661,171 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     if (!selectedLayerId || !psdData?.allLayers) return null;
     return psdData.allLayers.find(l => l.id === selectedLayerId) || null;
   }, [selectedLayerId, psdData]);
+
+  /* ── Layers panel inner content — shared between right and legacy-bottom panels ── */
+  const renderLayersContent = () => (
+    <>
+      <div className="vp-inspector-head">
+        <div className="vp-inspector-title">
+          <Layers className="w-3.5 h-3.5" />
+          <span>Layers</span>
+        </div>
+        <button type="button" className="vp-inspector-close" onClick={() => setInspectorOpen(false)} title="Close (Ctrl+\\)">
+          <PanelRightOpen className="w-3 h-3" />
+        </button>
+      </div>
+
+      {/* Search + Filters */}
+      <div className="vp-inspector-toolbar">
+        <div className="vp-inspector-search">
+          <Search className="w-3 h-3 vp-inspector-search-icon" />
+          <input type="text" className="vp-inspector-search-input" placeholder="Search layers..." value={layerSearch} onChange={(e) => setLayerSearch(e.target.value)} />
+        </div>
+        <div className="vp-inspector-filters">
+          {["all", "visible", "modified"].map((f) => (
+            <button key={f} type="button" className={`vp-filter-btn ${layerFilter === f ? "is-active" : ""}`} onClick={() => setLayerFilter(f)}>
+              {f === "all" ? "All" : f === "visible" ? "Visible" : "Modified"}
+            </button>
+          ))}
+          <button type="button" className={`vp-filter-btn vp-compact-toggle ${compactLayers ? "is-active" : ""}`} onClick={() => setCompactLayers(c => !c)} title={compactLayers ? "Comfortable view" : "Compact view"}>
+            {compactLayers ? "Dense" : "Comfy"}
+          </button>
+        </div>
+      </div>
+
+      {/* Layer list */}
+      <div className="vp-inspector-body">
+        {layerSections.topLevel.length > 0 && (
+          <div className="vp-layer-section">
+            <div className="vp-layer-section-head">
+              <span>Layers</span>
+              <span className="vp-layer-section-count">{layerSections.topLevel.length}</span>
+            </div>
+            {layerSections.topLevel.map((layer) => {
+              const isOn = layerVisibility[layer.id] ?? layer.visible;
+              const isLocked = layerLocks[layer.id] || false;
+              const opacity = layerOpacities[layer.id] ?? layer.opacity;
+              const bm = layerBlendModes[layer.id] || "Normal";
+              const isSel = selectedLayerId === layer.id;
+              return (
+                <div key={layer.id} className={`vp-layer-row ${isOn ? "is-on" : ""} ${isLocked ? "is-locked" : ""} ${compactLayers ? "vp-layer-row--compact" : ""} ${isSel ? "is-selected" : ""}`}
+                  onClick={() => setSelectedLayerId(layer.id)}>
+                  <button type="button" className="vp-layer-vis-btn" onClick={(e) => { e.stopPropagation(); handleToggleLayerById(layer.id); }}>
+                    {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                  </button>
+                  <span className="vp-layer-name">{layer.name}</span>
+                  <div className="vp-layer-props">
+                    <select className="vp-layer-blend" value={bm} onChange={(e) => { e.stopPropagation(); handleSetBlendMode(layer.id, e.target.value); }} onClick={(e) => e.stopPropagation()}>
+                      {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <OpacitySlider value={opacity} onChange={(v) => handleSetOpacity(layer.id, v)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {layerSections.groups.map((group) => {
+          const collapsed = collapsedGroups.has(group.id);
+          const children = getGroupChildren(group.id);
+          const allIds = psdData.allLayers.find((l) => l.id === group.id)?.childIds || [];
+          const enCt = allIds.filter((id) => { const l = psdData.allLayers.find((x) => x.id === id); return layerVisibility[id] ?? l?.visible; }).length;
+          const allOn = enCt === allIds.length && allIds.length > 0;
+          const someOn = enCt > 0 && !allOn;
+          return (
+            <div key={group.id} className="vp-layer-section">
+              <div className="vp-layer-section-head vp-layer-section-head--group">
+                <button type="button" className="vp-layer-collapse-btn" onClick={() => handleToggleGroupCollapse(group.id)}>
+                  {collapsed ? <ChevronRight className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+                </button>
+                <button type="button" className={`vp-layer-group-check ${allOn ? "is-all" : someOn ? "is-partial" : ""}`}
+                  onClick={() => allOn ? handleDisableAllInGroup(group.id) : handleEnableAllInGroup(group.id)}>
+                  {allOn ? <Check className="vp-layer-group-check-icon" /> : <div className="vp-layer-group-check-inner" />}
+                </button>
+                <FolderTree className="w-3 h-3" style={{ opacity: 0.35, flexShrink: 0 }} />
+                <span className="vp-layer-section-name">{group.name}</span>
+                <span className="vp-layer-section-count">{enCt}/{allIds.length}</span>
+                <div className="vp-layer-group-actions">
+                  <button type="button" className="vp-layer-group-act" onClick={() => handleEnableAllInGroup(group.id)}>All</button>
+                  <button type="button" className="vp-layer-group-act" onClick={() => handleDisableAllInGroup(group.id)}>None</button>
+                </div>
+              </div>
+              {!collapsed && children.map((child) => {
+                const isOn = layerVisibility[child.id] ?? child.visible;
+                const isLocked = layerLocks[child.id] || false;
+                const opacity = layerOpacities[child.id] ?? child.opacity;
+                const bm = layerBlendModes[child.id] || "Normal";
+                const isSel = selectedLayerId === child.id;
+                return (
+                  <div key={child.id} className={`vp-layer-row vp-layer-row--child ${isOn ? "is-on" : ""} ${isLocked ? "is-locked" : ""} ${compactLayers ? "vp-layer-row--compact" : ""} ${isSel ? "is-selected" : ""}`}
+                    onClick={() => setSelectedLayerId(child.id)}
+                    onDoubleClick={() => handleSoloLayer(child.id)} title="Double-click to solo">
+                    <button type="button" className="vp-layer-vis-btn" onClick={(e) => { e.stopPropagation(); handleToggleLayerById(child.id); }}>
+                      {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                    </button>
+                    <span className="vp-layer-name">{child.name}</span>
+                    <div className="vp-layer-props">
+                      <select className="vp-layer-blend" value={bm} onChange={(e) => { e.stopPropagation(); handleSetBlendMode(child.id, e.target.value); }} onClick={(e) => e.stopPropagation()}>
+                        {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                      <OpacitySlider value={opacity} onChange={(v) => handleSetOpacity(child.id, v)} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+        {layerSections.locked.length > 0 && (
+          <div className="vp-layer-section vp-layer-section--locked">
+            <div className="vp-layer-section-head">
+              <Lock className="w-2.5 h-2.5" /><span>Base Layers</span>
+              <span className="vp-layer-section-count">{layerSections.locked.length}</span>
+            </div>
+            {layerSections.locked.map((layer) => {
+              const isOn = layerVisibility[layer.id] ?? layer.visible;
+              return (
+                <div key={layer.id} className={`vp-layer-row vp-layer-row--locked ${isOn ? "is-on" : ""}`}>
+                  <button type="button" className="vp-layer-vis-btn" onClick={() => handleToggleLayerById(layer.id)}>
+                    {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                  </button>
+                  <Lock className="w-2.5 h-2.5 vp-layer-lock-icon" />
+                  <span className="vp-layer-name">{layer.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {selectedLayerInfo && (
+        <div className="vp-layer-inspector">
+          <div className="vp-layer-inspector-head">
+            <span className="vp-layer-inspector-name">{selectedLayerInfo.name}</span>
+            <button type="button" className="vp-layer-inspector-close" onClick={() => setSelectedLayerId(null)}><X className="w-3 h-3" /></button>
+          </div>
+          <div className="vp-layer-inspector-body">
+            <div className="vp-layer-inspector-row">
+              <span className="vp-layer-inspector-label">Blend</span>
+              <select className="vp-layer-blend" value={layerBlendModes[selectedLayerInfo.id] || "Normal"} onChange={(e) => handleSetBlendMode(selectedLayerInfo.id, e.target.value)}>
+                {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div className="vp-layer-inspector-row">
+              <span className="vp-layer-inspector-label">Opacity</span>
+              <OpacitySlider value={layerOpacities[selectedLayerInfo.id] ?? selectedLayerInfo.opacity} onChange={(v) => handleSetOpacity(selectedLayerInfo.id, v)} />
+            </div>
+            {selectedLayerInfo.isGroup && (
+              <div className="vp-layer-inspector-row">
+                <span className="vp-layer-inspector-label">Children</span>
+                <span className="vp-layer-inspector-val">{selectedLayerInfo.childIds?.length || 0}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
 
   /* ══════════════════════════════════════════════════════════
      RENDER
@@ -902,7 +1113,8 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           </AnimatePresence>
         </motion.div>
 
-        {/* ── Center Canvas ── */}
+        {/* ── Center Canvas + Legacy Bottom Layers ── */}
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div className="vp-canvas">
           {!hasContent ? (
             /* Empty state */
@@ -1030,11 +1242,31 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           )}
         </div>
 
+          {/* ── Legacy Bottom Layers Panel ── */}
+          {legacyLayersLayout && hasLayers && (
+            <>
+              {inspectorOpen && <VResizer onResize={handleVResize} />}
+              <div className="vp-legacy-layers" style={{ height: inspectorOpen ? legacyLayersHeight : 28, flexShrink: 0 }}>
+                {!inspectorOpen ? (
+                  <button type="button" className="vp-legacy-layers-expand" onClick={() => setInspectorOpen(true)}>
+                    <Layers className="w-3.5 h-3.5 vp-collpanel-icon" />
+                    <span className="vp-collpanel-label">Layers</span>
+                  </button>
+                ) : (
+                  <div className={`vp-inspector ${activePanel === "layers" ? "is-focused" : ""}`} onClick={() => setActivePanel("layers")}>
+                    {renderLayersContent()}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
         {/* ── Right Panel: Layers Inspector ── */}
         {hasLayers && (
           <motion.div
             style={{ overflow: "hidden", flexShrink: 0, display: "flex" }}
-            animate={{ width: inspectorOpen ? 320 : 28 }}
+            animate={{ width: legacyLayersLayout ? 0 : (inspectorOpen ? 320 : 28) }}
             transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.8 }}
           >
             <AnimatePresence mode="wait" initial={false}>
@@ -1062,171 +1294,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.1 }}
                 >
-            <div className="vp-inspector-head">
-              <div className="vp-inspector-title">
-                <Layers className="w-3.5 h-3.5" />
-                <span>Layers</span>
-              </div>
-              <button type="button" className="vp-inspector-close" onClick={() => setInspectorOpen(false)} title="Close (Ctrl+\\)">
-                <PanelRightOpen className="w-3 h-3" />
-              </button>
-            </div>
-
-            {/* Search + Filters */}
-            <div className="vp-inspector-toolbar">
-              <div className="vp-inspector-search">
-                <Search className="w-3 h-3 vp-inspector-search-icon" />
-                <input type="text" className="vp-inspector-search-input" placeholder="Search layers..." value={layerSearch} onChange={(e) => setLayerSearch(e.target.value)} />
-              </div>
-              <div className="vp-inspector-filters">
-                {["all", "visible", "modified"].map((f) => (
-                  <button key={f} type="button" className={`vp-filter-btn ${layerFilter === f ? "is-active" : ""}`} onClick={() => setLayerFilter(f)}>
-                    {f === "all" ? "All" : f === "visible" ? "Visible" : "Modified"}
-                  </button>
-                ))}
-                <button type="button" className={`vp-filter-btn vp-compact-toggle ${compactLayers ? "is-active" : ""}`} onClick={() => setCompactLayers(c => !c)} title={compactLayers ? "Comfortable view" : "Compact view"}>
-                  {compactLayers ? "Dense" : "Comfy"}
-                </button>
-              </div>
-            </div>
-
-            {/* Layer list */}
-            <div className="vp-inspector-body">
-              {/* Top-level layers */}
-              {layerSections.topLevel.length > 0 && (
-                <div className="vp-layer-section">
-                  <div className="vp-layer-section-head">
-                    <span>Layers</span>
-                    <span className="vp-layer-section-count">{layerSections.topLevel.length}</span>
-                  </div>
-                  {layerSections.topLevel.map((layer) => {
-                    const isOn = layerVisibility[layer.id] ?? layer.visible;
-                    const isLocked = layerLocks[layer.id] || false;
-                    const opacity = layerOpacities[layer.id] ?? layer.opacity;
-                    const bm = layerBlendModes[layer.id] || "Normal";
-                    const isSel = selectedLayerId === layer.id;
-                    return (
-                      <div key={layer.id} className={`vp-layer-row ${isOn ? "is-on" : ""} ${isLocked ? "is-locked" : ""} ${compactLayers ? "vp-layer-row--compact" : ""} ${isSel ? "is-selected" : ""}`}
-                        onClick={() => setSelectedLayerId(layer.id)}>
-                        <button type="button" className="vp-layer-vis-btn" onClick={(e) => { e.stopPropagation(); handleToggleLayerById(layer.id); }}>
-                          {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                        </button>
-                        <span className="vp-layer-name">{layer.name}</span>
-                        <div className="vp-layer-props">
-                          <select className="vp-layer-blend" value={bm} onChange={(e) => { e.stopPropagation(); handleSetBlendMode(layer.id, e.target.value); }} onClick={(e) => e.stopPropagation()}>
-                            {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-                          </select>
-                          <OpacitySlider value={opacity} onChange={(v) => handleSetOpacity(layer.id, v)} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Groups */}
-              {layerSections.groups.map((group) => {
-                const collapsed = collapsedGroups.has(group.id);
-                const children = getGroupChildren(group.id);
-                const allIds = psdData.allLayers.find((l) => l.id === group.id)?.childIds || [];
-                const enCt = allIds.filter((id) => { const l = psdData.allLayers.find((x) => x.id === id); return layerVisibility[id] ?? l?.visible; }).length;
-                const allOn = enCt === allIds.length && allIds.length > 0;
-                const someOn = enCt > 0 && !allOn;
-                return (
-                  <div key={group.id} className="vp-layer-section">
-                    <div className="vp-layer-section-head vp-layer-section-head--group">
-                      <button type="button" className="vp-layer-collapse-btn" onClick={() => handleToggleGroupCollapse(group.id)}>
-                        {collapsed ? <ChevronRight className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
-                      </button>
-                      <button type="button" className={`vp-layer-group-check ${allOn ? "is-all" : someOn ? "is-partial" : ""}`}
-                        onClick={() => allOn ? handleDisableAllInGroup(group.id) : handleEnableAllInGroup(group.id)}>
-                        {allOn ? <Check className="vp-layer-group-check-icon" /> : <div className="vp-layer-group-check-inner" />}
-                      </button>
-                      <FolderTree className="w-3 h-3" style={{ opacity: 0.35, flexShrink: 0 }} />
-                      <span className="vp-layer-section-name">{group.name}</span>
-                      <span className="vp-layer-section-count">{enCt}/{allIds.length}</span>
-                      <div className="vp-layer-group-actions">
-                        <button type="button" className="vp-layer-group-act" onClick={() => handleEnableAllInGroup(group.id)}>All</button>
-                        <button type="button" className="vp-layer-group-act" onClick={() => handleDisableAllInGroup(group.id)}>None</button>
-                      </div>
-                    </div>
-                    {!collapsed && children.map((child) => {
-                      const isOn = layerVisibility[child.id] ?? child.visible;
-                      const isLocked = layerLocks[child.id] || false;
-                      const opacity = layerOpacities[child.id] ?? child.opacity;
-                      const bm = layerBlendModes[child.id] || "Normal";
-                      const isSel = selectedLayerId === child.id;
-                      return (
-                        <div key={child.id} className={`vp-layer-row vp-layer-row--child ${isOn ? "is-on" : ""} ${isLocked ? "is-locked" : ""} ${compactLayers ? "vp-layer-row--compact" : ""} ${isSel ? "is-selected" : ""}`}
-                          onClick={() => setSelectedLayerId(child.id)}
-                          onDoubleClick={() => handleSoloLayer(child.id)} title="Double-click to solo">
-                          <button type="button" className="vp-layer-vis-btn" onClick={(e) => { e.stopPropagation(); handleToggleLayerById(child.id); }}>
-                            {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                          </button>
-                          <span className="vp-layer-name">{child.name}</span>
-                          <div className="vp-layer-props">
-                            <select className="vp-layer-blend" value={bm} onChange={(e) => { e.stopPropagation(); handleSetBlendMode(child.id, e.target.value); }} onClick={(e) => e.stopPropagation()}>
-                              {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-                            </select>
-                            <OpacitySlider value={opacity} onChange={(v) => handleSetOpacity(child.id, v)} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-
-              {/* Base/Locked layers */}
-              {layerSections.locked.length > 0 && (
-                <div className="vp-layer-section vp-layer-section--locked">
-                  <div className="vp-layer-section-head">
-                    <Lock className="w-2.5 h-2.5" /><span>Base Layers</span>
-                    <span className="vp-layer-section-count">{layerSections.locked.length}</span>
-                  </div>
-                  {layerSections.locked.map((layer) => {
-                    const isOn = layerVisibility[layer.id] ?? layer.visible;
-                    return (
-                      <div key={layer.id} className={`vp-layer-row vp-layer-row--locked ${isOn ? "is-on" : ""}`}>
-                        <button type="button" className="vp-layer-vis-btn" onClick={() => handleToggleLayerById(layer.id)}>
-                          {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                        </button>
-                        <Lock className="w-2.5 h-2.5 vp-layer-lock-icon" />
-                        <span className="vp-layer-name">{layer.name}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Selected layer inspector */}
-            {selectedLayerInfo && (
-              <div className="vp-layer-inspector">
-                <div className="vp-layer-inspector-head">
-                  <span className="vp-layer-inspector-name">{selectedLayerInfo.name}</span>
-                  <button type="button" className="vp-layer-inspector-close" onClick={() => setSelectedLayerId(null)}><X className="w-3 h-3" /></button>
-                </div>
-                <div className="vp-layer-inspector-body">
-                  <div className="vp-layer-inspector-row">
-                    <span className="vp-layer-inspector-label">Blend</span>
-                    <select className="vp-layer-blend" value={layerBlendModes[selectedLayerInfo.id] || "Normal"} onChange={(e) => handleSetBlendMode(selectedLayerInfo.id, e.target.value)}>
-                      {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </div>
-                  <div className="vp-layer-inspector-row">
-                    <span className="vp-layer-inspector-label">Opacity</span>
-                    <OpacitySlider value={layerOpacities[selectedLayerInfo.id] ?? selectedLayerInfo.opacity} onChange={(v) => handleSetOpacity(selectedLayerInfo.id, v)} />
-                  </div>
-                  {selectedLayerInfo.isGroup && (
-                    <div className="vp-layer-inspector-row">
-                      <span className="vp-layer-inspector-label">Children</span>
-                      <span className="vp-layer-inspector-val">{selectedLayerInfo.childIds?.length || 0}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+                  {renderLayersContent()}
                 </motion.div>
               )}
             </AnimatePresence>

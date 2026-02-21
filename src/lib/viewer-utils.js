@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { DDSLoader } from "three/examples/jsm/loaders/DDSLoader";
 import { TGALoader } from "three/examples/jsm/loaders/TGALoader";
 import { DFFLoader } from "dff-loader";
+import { invoke } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "./yft";
 import { parseDDS } from "./dds";
@@ -885,29 +886,295 @@ export function detectPsdBitDepth(bytes) {
   return view.getUint16(22, false);
 }
 
+function createPdnDataTexture(result, sourceKind = "pdn") {
+  const texture = new THREE.DataTexture(
+    result.data,
+    result.width,
+    result.height,
+    THREE.RGBAFormat,
+  );
+  texture.premultiplyAlpha = false;
+  texture.userData = texture.userData || {};
+  texture.userData.sourceKind = sourceKind;
+  return texture;
+}
+
+function pdnLog(level, message, details) {
+  const payload = details && typeof details === "object" ? details : undefined;
+  if (level === "error") {
+    if (payload) console.error(`[PDN] ${message}`, payload);
+    else console.error(`[PDN] ${message}`);
+    return;
+  }
+  if (level === "warn") {
+    if (payload) console.warn(`[PDN] ${message}`, payload);
+    else console.warn(`[PDN] ${message}`);
+    return;
+  }
+  if (payload) console.debug(`[PDN] ${message}`, payload);
+  else console.debug(`[PDN] ${message}`);
+}
+
+function hasVisiblePdnPixels(data) {
+  if (!data || data.length < 4) return false;
+  for (let index = 3; index < data.length; index += 4) {
+    if (data[index] !== 0) return true;
+  }
+  return false;
+}
+
+function isUsablePdnDecode(result, visiblePixels) {
+  if (!result || !result.data || result.width <= 0 || result.height <= 0) return false;
+  const expected = result.width * result.height * 4;
+  if (result.data.length < expected) return false;
+  if (typeof visiblePixels === "boolean") return visiblePixels;
+  return hasVisiblePdnPixels(result.data);
+}
+
+function isTauriRuntimeAvailable() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__ !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__?.invoke === "function"
+  );
+}
+
+function yieldToMainThread() {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
+async function decodeBase64ToUint8Array(base64Value) {
+  if (!base64Value || typeof base64Value !== "string") return null;
+  const binary = atob(base64Value);
+  const bytes = new Uint8Array(binary.length);
+  const chunkSize = 1024 * 1024;
+  for (let start = 0; start < binary.length; start += chunkSize) {
+    const end = Math.min(start + chunkSize, binary.length);
+    for (let index = start; index < end; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    if (end < binary.length) {
+      await yieldToMainThread();
+    }
+  }
+  return bytes;
+}
+
+async function decodePdnViaWorker(bytes) {
+  if (typeof Worker === "undefined" || !bytes || bytes.length === 0) return null;
+
+  const workerBytes = bytes.slice(0);
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./pdn-worker.js", import.meta.url), { type: "module" });
+    let settled = false;
+
+    const cleanUp = () => {
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.terminate();
+    };
+
+    const finish = (isError, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      cleanUp();
+      if (isError) reject(value);
+      else resolve(value);
+    };
+
+    const timeoutId = setTimeout(() => {
+      finish(true, new Error("PDN worker decode timed out."));
+    }, 45_000);
+
+    worker.onmessage = (event) => {
+      const payload = event?.data || {};
+      if (payload?.error) {
+        finish(true, new Error(payload.error));
+        return;
+      }
+
+      const width = Number(payload?.width || 0);
+      const height = Number(payload?.height || 0);
+      const data = payload?.data instanceof Uint8Array
+        ? payload.data
+        : payload?.data instanceof ArrayBuffer
+          ? new Uint8Array(payload.data)
+          : null;
+
+      if (!data || width <= 0 || height <= 0) {
+        finish(false, null);
+        return;
+      }
+
+      finish(false, { width, height, data });
+    };
+
+    worker.onerror = (event) => {
+      finish(true, new Error(event?.message || "PDN worker decode failed."));
+    };
+
+    worker.postMessage({ bytes: workerBytes }, [workerBytes.buffer]);
+  });
+}
+
+async function decodePdnViaTauri(filePath) {
+  const isTauriRuntime = isTauriRuntimeAvailable();
+
+  if (!isTauriRuntime || !filePath || typeof filePath !== "string") {
+    pdnLog("debug", "Skipping Tauri decode fallback", {
+      isTauriRuntime,
+      hasFilePath: typeof filePath === "string" && filePath.length > 0,
+    });
+    return null;
+  }
+
+  pdnLog("debug", "Attempting Tauri decode fallback", { filePath });
+  const payload = await invoke("decode_pdn", { path: filePath });
+  const width = Number(payload?.width || 0);
+  const height = Number(payload?.height || 0);
+  const rgba = await decodeBase64ToUint8Array(payload?.rgba_base64);
+
+  pdnLog("debug", "Tauri decode response received", {
+    width,
+    height,
+    rgbaLength: rgba?.length || 0,
+  });
+
+  if (!rgba || width <= 0 || height <= 0) return null;
+  return { width, height, data: rgba };
+}
+
 /**
  * Load a Paint.NET (.pdn) file as a Three.js texture.
  *
  * @param {Uint8Array} bytes  Raw file bytes
- * @param {string} [filePath]  Original file path (unused)
+ * @param {string} [filePath]  Original file path
  * @returns {Promise<THREE.DataTexture>}
  */
 export async function loadPdnTexture(bytes, filePath) {
-  void filePath;
-  const { decodePdn } = await import("./pdn");
-  const jsResult = decodePdn(bytes);
-  if (jsResult && jsResult.width > 0 && jsResult.height > 0 && jsResult.data) {
-    const texture = new THREE.DataTexture(
-      jsResult.data,
-      jsResult.width,
-      jsResult.height,
-      THREE.RGBAFormat,
-    );
-    texture.premultiplyAlpha = false;
-    texture.userData = texture.userData || {};
-    texture.userData.sourceKind = "pdn";
-    return texture;
+  const isDesktopTauriDecode =
+    isTauriRuntimeAvailable() &&
+    typeof filePath === "string" &&
+    filePath.length > 0;
+
+  let jsDecodeError = null;
+  let tauriDecodeError = null;
+  let workerDecodeError = null;
+  pdnLog("debug", "Starting PDN texture load", {
+    filePath: filePath || null,
+    byteLength: bytes?.length || 0,
+    preferTauriDecode: isDesktopTauriDecode,
+    workerSupported: typeof Worker !== "undefined",
+    magic: bytes && bytes.length >= 4 ? String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) : null,
+  });
+
+  try {
+    const workerResult = await decodePdnViaWorker(bytes);
+    const workerVisiblePixels = hasVisiblePdnPixels(workerResult?.data);
+    pdnLog("debug", "Worker decode result", {
+      hasResult: Boolean(workerResult),
+      width: workerResult?.width || 0,
+      height: workerResult?.height || 0,
+      dataLength: workerResult?.data?.length || 0,
+      visiblePixels: workerVisiblePixels,
+    });
+
+    if (isUsablePdnDecode(workerResult, workerVisiblePixels)) {
+      pdnLog("debug", "Using worker PDN decode result", {
+        width: workerResult.width,
+        height: workerResult.height,
+      });
+      return createPdnDataTexture(workerResult, "pdn-js-worker");
+    }
+    if (workerResult && !workerVisiblePixels) {
+      workerDecodeError = new Error("Worker PDN decode produced a fully transparent image.");
+    }
+  } catch (error) {
+    workerDecodeError = error;
+    pdnLog("warn", "Worker PDN decode failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 
-  throw new Error("Failed to decode Paint.NET (.pdn) file. Try re-saving in Paint.NET or exporting to PNG.");
+  if (isDesktopTauriDecode) {
+    try {
+      const tauriResult = await decodePdnViaTauri(filePath);
+      const tauriVisiblePixels = hasVisiblePdnPixels(tauriResult?.data);
+      pdnLog("debug", "Tauri decode result", {
+        hasResult: Boolean(tauriResult),
+        width: tauriResult?.width || 0,
+        height: tauriResult?.height || 0,
+        dataLength: tauriResult?.data?.length || 0,
+        visiblePixels: tauriVisiblePixels,
+      });
+
+      if (isUsablePdnDecode(tauriResult, tauriVisiblePixels)) {
+        pdnLog("debug", "Using Tauri PDN decode result", {
+          width: tauriResult.width,
+          height: tauriResult.height,
+        });
+        return createPdnDataTexture(tauriResult, "pdn-tauri");
+      }
+
+      if (tauriResult && !tauriVisiblePixels) {
+        tauriDecodeError = new Error("Tauri PDN decode produced a fully transparent image.");
+      }
+    } catch (error) {
+      tauriDecodeError = error;
+      pdnLog("warn", "Tauri decode failed after worker path", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const { decodePdn } = await import("./pdn");
+  try {
+    const jsResult = decodePdn(bytes, { fast: true });
+    const jsVisiblePixels = hasVisiblePdnPixels(jsResult?.data);
+    pdnLog("debug", "JS main-thread decode result", {
+      hasResult: Boolean(jsResult),
+      width: jsResult?.width || 0,
+      height: jsResult?.height || 0,
+      dataLength: jsResult?.data?.length || 0,
+      visiblePixels: jsVisiblePixels,
+    });
+
+    if (isUsablePdnDecode(jsResult, jsVisiblePixels)) {
+      pdnLog("debug", "Using JS main-thread PDN decode result", {
+        width: jsResult.width,
+        height: jsResult.height,
+      });
+      return createPdnDataTexture(jsResult, "pdn-js");
+    }
+    if (jsResult && !jsVisiblePixels) {
+      jsDecodeError = new Error("PDN decode produced a fully transparent image.");
+      pdnLog("warn", "JS decode produced fully transparent image", {
+        width: jsResult.width,
+        height: jsResult.height,
+        dataLength: jsResult.data?.length || 0,
+      });
+    }
+  } catch (error) {
+    jsDecodeError = error;
+    pdnLog("warn", "JS decode threw error", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const finalError = jsDecodeError || tauriDecodeError || workerDecodeError;
+  const detail = finalError instanceof Error && finalError.message
+    ? ` (${finalError.message})`
+    : "";
+  pdnLog("error", "PDN texture load failed", {
+    filePath: filePath || null,
+    reason: finalError instanceof Error ? finalError.message : "Unknown decode failure",
+  });
+  throw new Error(`Failed to decode Paint.NET (.pdn) file${detail}. Try re-saving in Paint.NET or exporting to PNG.`);
 }

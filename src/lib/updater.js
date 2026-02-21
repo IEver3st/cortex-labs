@@ -1,9 +1,34 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 const CHECK_INTERVAL = 30 * 60 * 1000;
 const INITIAL_DELAY_MS = 5000;
+const IS_DEV = typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
+
+const INITIAL_STATE = {
+  available: false,
+  latest: null,
+  notes: "",
+  installing: false,
+  checking: false,
+  progressPercent: 0,
+  error: "",
+  lastChecked: null,
+  dismissed: false,
+};
+
+const store = {
+  state: { ...INITIAL_STATE },
+  listeners: new Set(),
+  initialized: false,
+  timerId: null,
+  initialDelayId: null,
+  update: null,
+  downloadedBytes: 0,
+  totalBytes: 0,
+  checkInFlight: false,
+};
 
 function isTauriRuntime() {
   return (
@@ -13,146 +38,199 @@ function isTauriRuntime() {
   );
 }
 
-export function useUpdateChecker() {
-  const [state, setState] = useState({
-    available: false,
-    latest: null,
-    notes: "",
-    installing: false,
-    checking: false,
-    progressPercent: 0,
-    error: "",
-    lastChecked: null,
-  });
-  const [dismissed, setDismissed] = useState(false);
-  const timerRef = useRef(null);
-  const updateRef = useRef(null);
-  const downloadedBytesRef = useRef(0);
-  const totalBytesRef = useRef(0);
+function emit(nextState) {
+  store.state = nextState;
+  store.listeners.forEach((listener) => listener(store.state));
+}
 
-  const runCheck = useCallback(async () => {
-    if (!isTauriRuntime()) return;
-    setState((prev) => ({ ...prev, checking: true, error: "" }));
-    try {
-      const update = await checkForAppUpdate();
-      updateRef.current = update;
+function setStoreState(updater) {
+  const nextState =
+    typeof updater === "function"
+      ? updater(store.state)
+      : { ...store.state, ...updater };
+  emit(nextState);
+}
 
-      if (update) {
-        setState({
-          available: true,
-          latest: update.version ?? null,
-          notes: update.body ?? "",
-          installing: false,
-          checking: false,
-          progressPercent: 0,
-          error: "",
-          lastChecked: Date.now(),
-        });
-      } else {
-        setState((prev) => ({
-          ...prev,
-          available: false,
-          latest: null,
-          notes: "",
-          installing: false,
-          checking: false,
-          progressPercent: 0,
-          error: "",
-          lastChecked: Date.now(),
-        }));
-      }
-    } catch (error) {
-      console.error("Failed to check for updates:", error);
-      setState((prev) => ({
-        ...prev,
+function subscribe(listener) {
+  store.listeners.add(listener);
+  return () => {
+    store.listeners.delete(listener);
+  };
+}
+
+function mapUpdateCheckError(error) {
+  const message = String(error || "").toLowerCase();
+  if (message.includes("valid release json")) {
+    return "Update feed is unavailable right now.";
+  }
+  return "Unable to reach update server.";
+}
+
+function isInvalidReleaseJsonError(error) {
+  const message = String(error || "").toLowerCase();
+  return message.includes("valid release json");
+}
+
+async function runCheck({ manual = false } = {}) {
+  if (!isTauriRuntime()) return;
+  if (store.checkInFlight) return;
+
+  store.checkInFlight = true;
+  setStoreState((prev) => ({
+    ...prev,
+    checking: true,
+    error: manual ? "" : prev.error,
+  }));
+
+  try {
+    const update = await checkForAppUpdate();
+    store.update = update;
+
+    if (update) {
+      emit({
+        ...store.state,
+        available: true,
+        latest: update.version ?? null,
+        notes: update.body ?? "",
+        installing: false,
         checking: false,
-        error: "Unable to reach update server.",
+        progressPercent: 0,
+        error: "",
         lastChecked: Date.now(),
-      }));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isTauriRuntime()) return undefined;
-
-    const initialDelay = setTimeout(runCheck, INITIAL_DELAY_MS);
-    timerRef.current = setInterval(runCheck, CHECK_INTERVAL);
-
-    return () => {
-      clearTimeout(initialDelay);
-      clearInterval(timerRef.current);
-    };
-  }, [runCheck]);
-
-  const dismiss = () => setDismissed(true);
-  const checkNow = () => runCheck();
-
-  const install = async () => {
-    if (!isTauriRuntime()) return false;
-
-    const update = updateRef.current;
-    if (!update) return false;
-
-    downloadedBytesRef.current = 0;
-    totalBytesRef.current = 0;
-
-    setState((prev) => ({
-      ...prev,
-      installing: true,
-      progressPercent: 0,
-      error: "",
-    }));
-
-    try {
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started") {
-          downloadedBytesRef.current = 0;
-          totalBytesRef.current = Number(event.data?.contentLength || 0);
-          setState((prev) => ({ ...prev, progressPercent: 0 }));
-          return;
-        }
-
-        if (event.event === "Progress") {
-          downloadedBytesRef.current += Number(event.data?.chunkLength || 0);
-          const nextTotal = Number(event.data?.contentLength || totalBytesRef.current || 0);
-          if (nextTotal > 0) {
-            totalBytesRef.current = nextTotal;
-            const ratio = downloadedBytesRef.current / nextTotal;
-            const percent = Math.max(0, Math.min(100, Math.round(ratio * 100)));
-            setState((prev) => ({ ...prev, progressPercent: percent }));
-          }
-          return;
-        }
-
-        if (event.event === "Finished") {
-          setState((prev) => ({ ...prev, progressPercent: 100 }));
-        }
       });
-
-      updateRef.current = null;
-      setDismissed(true);
-      setState((prev) => ({
+    } else {
+      emit({
+        ...store.state,
         available: false,
         latest: null,
         notes: "",
         installing: false,
         checking: false,
-        progressPercent: 100,
+        progressPercent: 0,
         error: "",
-        lastChecked: prev.lastChecked,
-      }));
-      await relaunch();
-      return true;
-    } catch (error) {
-      console.error("Failed to install update:", error);
-      setState((prev) => ({
-        ...prev,
-        installing: false,
-        error: "Update installed but relaunch failed. Please restart Cortex Studio manually.",
-      }));
-      return false;
+        lastChecked: Date.now(),
+      });
     }
-  };
+  } catch (error) {
+    if (manual && !isInvalidReleaseJsonError(error)) {
+      console.error("Failed to check for updates:", error);
+    }
+    setStoreState((prev) => ({
+      ...prev,
+      checking: false,
+      error: manual ? mapUpdateCheckError(error) : prev.error,
+      lastChecked: Date.now(),
+    }));
+  } finally {
+    store.checkInFlight = false;
+  }
+}
 
-  return { ...state, dismissed, dismiss, install, checkNow };
+function ensureUpdaterInitialized() {
+  if (store.initialized || !isTauriRuntime()) return;
+  store.initialized = true;
+
+  if (IS_DEV) return;
+
+  store.initialDelayId = setTimeout(() => {
+    runCheck({ manual: false });
+  }, INITIAL_DELAY_MS);
+
+  store.timerId = setInterval(() => {
+    runCheck({ manual: false });
+  }, CHECK_INTERVAL);
+}
+
+function dismissUpdateNotice() {
+  setStoreState((prev) => ({ ...prev, dismissed: true }));
+}
+
+async function installUpdate() {
+  if (!isTauriRuntime()) return false;
+
+  const update = store.update;
+  if (!update) return false;
+
+  store.downloadedBytes = 0;
+  store.totalBytes = 0;
+
+  setStoreState((prev) => ({
+    ...prev,
+    installing: true,
+    progressPercent: 0,
+    error: "",
+  }));
+
+  try {
+    await update.downloadAndInstall((event) => {
+      if (event.event === "Started") {
+        store.downloadedBytes = 0;
+        store.totalBytes = Number(event.data?.contentLength || 0);
+        setStoreState((prev) => ({ ...prev, progressPercent: 0 }));
+        return;
+      }
+
+      if (event.event === "Progress") {
+        store.downloadedBytes += Number(event.data?.chunkLength || 0);
+        const nextTotal = Number(event.data?.contentLength || store.totalBytes || 0);
+        if (nextTotal > 0) {
+          store.totalBytes = nextTotal;
+          const ratio = store.downloadedBytes / nextTotal;
+          const percent = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+          setStoreState((prev) => ({ ...prev, progressPercent: percent }));
+        }
+        return;
+      }
+
+      if (event.event === "Finished") {
+        setStoreState((prev) => ({ ...prev, progressPercent: 100 }));
+      }
+    });
+
+    store.update = null;
+    setStoreState((prev) => ({
+      ...prev,
+      available: false,
+      latest: null,
+      notes: "",
+      installing: false,
+      checking: false,
+      progressPercent: 100,
+      error: "",
+      dismissed: true,
+    }));
+    await relaunch();
+    return true;
+  } catch (error) {
+    console.error("Failed to install update:", error);
+    setStoreState((prev) => ({
+      ...prev,
+      installing: false,
+      error: "Update installed but relaunch failed. Please restart Cortex Studio manually.",
+    }));
+    return false;
+  }
+}
+
+export function useUpdateChecker() {
+  const [state, setState] = useState(store.state);
+
+  useEffect(() => {
+    ensureUpdaterInitialized();
+    return subscribe(setState);
+  }, []);
+
+  const dismiss = useCallback(() => {
+    dismissUpdateNotice();
+  }, []);
+
+  const checkNow = useCallback(() => {
+    runCheck({ manual: true });
+  }, []);
+
+  const install = useCallback(async () => {
+    return installUpdate();
+  }, []);
+
+  return { ...state, dismiss, install, checkNow };
 }

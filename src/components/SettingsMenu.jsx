@@ -36,6 +36,7 @@ const BUILT_IN_DEFAULTS = {
   previewFolder: "",
   variantExportFolder: "",
   cameraControlsInPanel: false,
+  legacyLayersLayout: false,
 };
 
 const MIN_UI_SCALE = 0.5;
@@ -130,7 +131,11 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        // Don't close if walkthrough is controlling this dialog
+        if (document.querySelector(".settings-page.is-walkthrough-elevated")) return;
+        setOpen(false);
+      }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
@@ -139,6 +144,24 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   useEffect(() => {
     if (typeof document === "undefined") return;
     setPortalNode(document.body);
+  }, []);
+
+  useEffect(() => {
+    const handleOpen = () => setOpen(true);
+    const handleClose = () => setOpen(false);
+    const handleNav = (e) => {
+      if (e.detail?.section) setActiveSection(e.detail.section);
+    };
+    
+    window.addEventListener("cortex:open-settings", handleOpen);
+    window.addEventListener("cortex:close-settings", handleClose);
+    window.addEventListener("cortex:nav-settings", handleNav);
+    
+    return () => {
+      window.removeEventListener("cortex:open-settings", handleOpen);
+      window.removeEventListener("cortex:close-settings", handleClose);
+      window.removeEventListener("cortex:nav-settings", handleNav);
+    };
   }, []);
 
   const sections = useMemo(
@@ -255,7 +278,11 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                  onClick={() => setOpen(false)}
+                  onClick={(e) => {
+                    // Don't close if walkthrough is controlling this dialog
+                    if (e.currentTarget.classList.contains("is-walkthrough-elevated")) return;
+                    setOpen(false);
+                  }}
                 >
                   <motion.div
                     className="settings-dialog"
@@ -460,6 +487,20 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     type="button"
                                     className={`settings-toggle ${draft.cameraControlsInPanel ? "is-on" : ""}`}
                                     onClick={() => setDraft((p) => ({ ...p, cameraControlsInPanel: !p.cameraControlsInPanel }))}
+                                  >
+                                    <span className="settings-toggle-dot" />
+                                  </button>
+                                </div>
+
+                                <div className="settings-row">
+                                  <div className="settings-row-label">
+                                    <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Legacy Layers Layout</div>
+                                    <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Place the layers panel at the bottom instead of the right side</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className={`settings-toggle ${draft.legacyLayersLayout ? "is-on" : ""}`}
+                                    onClick={() => setDraft((p) => ({ ...p, legacyLayersLayout: !p.legacyLayersLayout }))}
                                   >
                                     <span className="settings-toggle-dot" />
                                   </button>

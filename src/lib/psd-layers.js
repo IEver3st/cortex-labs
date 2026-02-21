@@ -12,7 +12,7 @@
 
 import { readPsd } from "ag-psd";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { decodePdn } from "./pdn";
+import { decodePdn, decodePdnLayers, getPdnBlendCanvasOp } from "./pdn";
 import { detectPsdBitDepth, getFileExtension } from "./viewer-utils";
 
 const FLAT_LAYER_ID = "__layer_source__/image";
@@ -185,7 +185,11 @@ function categorizeLayer(layer, useColorLabels) {
 }
 
 function isFlatLayerSourceExtension(extension) {
-  return extension === "pdn" || extension === "ai";
+  return extension === "ai";
+}
+
+function isPdnExtension(extension) {
+  return extension === "pdn";
 }
 
 function buildFlatLayerSourceData(width, height, name = FLAT_LAYER_NAME) {
@@ -260,13 +264,6 @@ async function decodeAiCanvas(bytes) {
 
 async function decodeFlatLayerSourceCanvas(extension, bytes, filePath = "") {
   void filePath;
-  if (extension === "pdn") {
-    const pdn = decodePdn(bytes);
-    if (pdn?.width && pdn?.height && pdn?.data) {
-      return canvasFromRgba(pdn.width, pdn.height, pdn.data);
-    }
-    throw new Error("Failed to decode Paint.NET layer source.");
-  }
 
   if (extension === "ai") {
     try {
@@ -290,6 +287,160 @@ function isFlatLayerVisible(layerVisibility) {
   return true;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   PDN Layer-Aware Processing
+   ═══════════════════════════════════════════════════════════ */
+
+/**
+ * Parse a Paint.NET (.pdn) file into the standard layer structure
+ * used by the variant builder. Format matches parsePsdLayers output.
+ */
+function parsePdnLayerSource(bytes) {
+  const result = decodePdnLayers(bytes);
+
+  // If layer-aware decoding failed, fall back to flat composite
+  if (!result || !result.layers || result.layers.length === 0) {
+    const flat = decodePdn(bytes);
+    if (flat?.width && flat?.height && flat?.data) {
+      return buildFlatLayerSourceData(flat.width, flat.height);
+    }
+    throw new Error("Failed to decode Paint.NET file.");
+  }
+
+  const { width, height, layers: pdnLayers } = result;
+
+  // Build the walked layer tree (same shape as PSD walkLayers output)
+  const layers = pdnLayers.map((pdnLayer) => ({
+    name: pdnLayer.name || "Unnamed",
+    visible: pdnLayer.visible !== false,
+    opacity: (pdnLayer.opacity ?? 255) / 255,
+    colorLabel: "none",
+    isGroup: false,
+    depth: 0,
+  }));
+
+  // Build flat layer list with unique IDs
+  const allLayers = layers.map((layer) => ({
+    id: layer.name,
+    name: layer.name,
+    path: layer.name,
+    visible: layer.visible,
+    opacity: layer.opacity,
+    colorLabel: "none",
+    isGroup: false,
+    depth: 0,
+    parentId: null,
+    childIds: [],
+    category: isLockedName(layer.name) ? "locked" : "toggleable",
+  }));
+
+  // Build legacy categorized buckets
+  const toggleable = [];
+  const locked = [];
+
+  for (const layer of layers) {
+    if (isLockedName(layer.name)) {
+      locked.push({ name: layer.name, colorLabel: "none" });
+    } else {
+      toggleable.push({
+        name: layer.name,
+        enabled: layer.visible,
+        colorLabel: "none",
+      });
+    }
+  }
+
+  return {
+    width,
+    height,
+    layers,
+    allLayers,
+    toggleable,
+    variantGroups: [],
+    locked,
+  };
+}
+
+/**
+ * Composite a PDN file with specific layer visibility into a canvas.
+ * Per-layer compositing with blend modes, opacity, and visibility control.
+ */
+function compositePdnVariant(bytes, layerVisibility, targetWidth, targetHeight) {
+  const result = decodePdnLayers(bytes);
+
+  // Fallback to flat composite
+  if (!result || !result.layers || result.layers.length === 0) {
+    const flat = decodePdn(bytes);
+    if (!flat?.width || !flat?.height || !flat?.data) {
+      throw new Error("Failed to decode Paint.NET file.");
+    }
+    const srcCanvas = canvasFromRgba(flat.width, flat.height, flat.data);
+    const outW = targetWidth || flat.width;
+    const outH = targetHeight || flat.height;
+    const outCanvas = document.createElement("canvas");
+    outCanvas.width = outW;
+    outCanvas.height = outH;
+    const outCtx = outCanvas.getContext("2d");
+    if (!outCtx) throw new Error("Canvas 2D context unavailable.");
+    outCtx.drawImage(srcCanvas, 0, 0, outW, outH);
+    return outCanvas;
+  }
+
+  const { width, height, layers: pdnLayers } = result;
+
+  // Create work canvas at native PDN dimensions
+  const workCanvas = document.createElement("canvas");
+  workCanvas.width = width;
+  workCanvas.height = height;
+  const workCtx = workCanvas.getContext("2d");
+  if (!workCtx) throw new Error("Canvas 2D context unavailable.");
+
+  // Draw each layer bottom-to-top with visibility/blend/opacity
+  for (const pdnLayer of pdnLayers) {
+    const layerName = pdnLayer.name || "";
+
+    // Check visibility map (by name, matching the allLayers id format)
+    let isVisible;
+    if (Object.prototype.hasOwnProperty.call(layerVisibility, layerName)) {
+      isVisible = Boolean(layerVisibility[layerName]);
+    } else {
+      isVisible = pdnLayer.visible !== false;
+    }
+
+    if (!isVisible) continue;
+
+    const opacity = (pdnLayer.opacity ?? 255) / 255;
+    if (opacity <= 0) continue;
+
+    if (!pdnLayer.image || pdnLayer.image.length === 0) continue;
+
+    // Create a temporary canvas for this layer's pixel data
+    const layerCanvas = canvasFromRgba(width, height, pdnLayer.image);
+
+    // Apply blend mode and opacity
+    workCtx.save();
+    workCtx.globalAlpha = opacity;
+    workCtx.globalCompositeOperation = pdnLayer.blendModeCanvas || "source-over";
+    workCtx.drawImage(layerCanvas, 0, 0);
+    workCtx.restore();
+  }
+
+  // Scale to target dimensions if needed
+  const outW = targetWidth || width;
+  const outH = targetHeight || height;
+
+  if (outW === width && outH === height) {
+    return workCanvas;
+  }
+
+  const outCanvas = document.createElement("canvas");
+  outCanvas.width = outW;
+  outCanvas.height = outH;
+  const outCtx = outCanvas.getContext("2d");
+  outCtx.drawImage(workCanvas, 0, 0, outW, outH);
+  return outCanvas;
+}
+
 /**
  * Parse a PSD file and extract layer structure for the variant builder.
  * Returns both the legacy categorized buckets AND a full flat layer list.
@@ -297,6 +448,10 @@ function isFlatLayerVisible(layerVisibility) {
 export async function parsePsdLayers(filePath) {
   const bytes = await readFile(filePath);
   const extension = getFileExtension(filePath);
+
+  if (isPdnExtension(extension)) {
+    return parsePdnLayerSource(bytes);
+  }
 
   if (isFlatLayerSourceExtension(extension)) {
     const canvas = await decodeFlatLayerSourceCanvas(extension, bytes, filePath);
@@ -475,6 +630,10 @@ function getCompositeOp(blendMode) {
 export async function compositePsdVariant(filePath, layerVisibility = {}, targetWidth, targetHeight) {
   const bytes = await readFile(filePath);
   const extension = getFileExtension(filePath);
+
+  if (isPdnExtension(extension)) {
+    return compositePdnVariant(bytes, layerVisibility, targetWidth, targetHeight);
+  }
 
   if (isFlatLayerSourceExtension(extension)) {
     const sourceCanvas = await decodeFlatLayerSourceCanvas(extension, bytes, filePath);
