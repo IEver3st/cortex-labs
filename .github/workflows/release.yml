@@ -37,6 +37,13 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Clean stale bundle artifacts
+        shell: pwsh
+        run: |
+          if (Test-Path "src-tauri/target/release/bundle") {
+            Remove-Item "src-tauri/target/release/bundle" -Recurse -Force
+          }
+
       - name: Install frontend dependencies
         run: bun install
 

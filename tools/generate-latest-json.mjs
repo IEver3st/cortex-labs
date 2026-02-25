@@ -24,14 +24,36 @@ function newestFile(files) {
   return sorted[0] || "";
 }
 
-function selectInstaller() {
+function selectInstaller(version) {
   const preferred = (process.env.TAURI_UPDATER_WINDOWS_ARTIFACT || "nsis").toLowerCase();
   const nsisInstallers = listFiles(NSIS_DIR).filter((file) => file.toLowerCase().endsWith(".exe") && !file.toLowerCase().endsWith(".exe.sig"));
   const msiInstallers = listFiles(MSI_DIR).filter((file) => file.toLowerCase().endsWith(".msi") && !file.toLowerCase().endsWith(".msi.sig"));
 
-  const primary = preferred === "msi" ? newestFile(msiInstallers) : newestFile(nsisInstallers);
+  const versionToken = `_${String(version || "").toLowerCase()}_`;
+  const matchesVersion = (file) => path.basename(file).toLowerCase().includes(versionToken);
+
+  const nsisForVersion = nsisInstallers.filter(matchesVersion);
+  const msiForVersion = msiInstallers.filter(matchesVersion);
+
+  const primary = preferred === "msi" ? newestFile(msiForVersion) : newestFile(nsisForVersion);
   if (primary) return primary;
-  return preferred === "msi" ? newestFile(nsisInstallers) : newestFile(msiInstallers);
+
+  const secondary = preferred === "msi" ? newestFile(nsisForVersion) : newestFile(msiForVersion);
+  if (secondary) return secondary;
+
+  const preferredPool = preferred === "msi" ? msiInstallers : nsisInstallers;
+  const fallbackPool = preferred === "msi" ? nsisInstallers : msiInstallers;
+  const available = [...preferredPool, ...fallbackPool]
+    .map((file) => path.basename(file))
+    .join(", ");
+
+  console.error(
+    `[updater] No installer artifact matches app version "${version}" in bundle directory.`
+  );
+  if (available) {
+    console.error(`[updater] Found artifacts: ${available}`);
+  }
+  return "";
 }
 
 function detectArch(fileName) {
@@ -58,6 +80,30 @@ function deriveBaseUrl(config) {
   return withoutLatest.replace(/\/+$/, "");
 }
 
+function resolveReleaseAssetName(installerFileName, baseUrl) {
+  if (process.env.TAURI_UPDATER_ASSET_NAME) {
+    return process.env.TAURI_UPDATER_ASSET_NAME;
+  }
+
+  // GitHub release assets are commonly uploaded with spaces normalized to dots.
+  if (/^https:\/\/github\.com\//i.test(baseUrl) && installerFileName.includes(" ")) {
+    return installerFileName.replace(/ /g, ".");
+  }
+
+  return installerFileName;
+}
+
+function signatureMatchesInstaller(signature, installerFileNames) {
+  if (!signature || !installerFileNames.length) return false;
+
+  try {
+    const decoded = Buffer.from(signature, "base64").toString("utf8");
+    return installerFileNames.some((name) => decoded.includes(`file:${name}`));
+  } catch {
+    return false;
+  }
+}
+
 function main() {
   if (!fs.existsSync(CONFIG_PATH)) {
     console.error("[updater] Skipped latest.json generation: missing src-tauri/tauri.conf.json.");
@@ -65,7 +111,7 @@ function main() {
   }
 
   const config = readJson(CONFIG_PATH);
-  const installerPath = selectInstaller();
+  const installerPath = selectInstaller(config.version);
   if (!installerPath) {
     console.error("[updater] Skipped latest.json generation: no installer found in src-tauri/target/release/bundle.");
     return 0;
@@ -90,6 +136,16 @@ function main() {
   }
 
   const signature = fs.readFileSync(sigPath, "utf8").trim();
+  const releaseAssetName = resolveReleaseAssetName(installerFileName, baseUrl);
+  if (!signatureMatchesInstaller(signature, [installerFileName, releaseAssetName])) {
+    console.error("[updater] Signature content does not match installer filename.");
+    console.error(`[updater] Installer: ${installerFileName}`);
+    console.error(`[updater] Release asset: ${releaseAssetName}`);
+    console.error(`[updater] Signature file: ${sigPath}`);
+    console.error("[updater] Clean old bundle artifacts and rebuild with signing enabled.");
+    return 1;
+  }
+
   const latest = {
     version: config.version,
     notes: process.env.TAURI_UPDATER_NOTES || "",
@@ -97,7 +153,7 @@ function main() {
     platforms: {
       [platformKey]: {
         signature,
-        url: `${baseUrl}/${installerFileName}`,
+        url: `${baseUrl}/${releaseAssetName}`,
       },
     },
   };

@@ -7,6 +7,7 @@ import { DFFLoader } from "dff-loader";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "../lib/yft";
 import { parseDDS } from "../lib/dds";
+import { buildYftTemplateMap, buildYftTemplatePsdSource } from "../lib/template-map";
 import {
   getFileExtension,
   getFileNameWithoutExtension,
@@ -15,6 +16,7 @@ import {
   heightToFootprintRatio,
   maybeAutoFixYftUpAxis,
   setupLiveryShader,
+
   buildDrawableObject,
   hasRenderableMeshes,
   disposeObject,
@@ -275,6 +277,7 @@ function ViewerComponent({
   onWindowTextureError,
   onFormatWarning,
   isActive = true,
+  includeTemplateGeometry = false,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -765,6 +768,10 @@ function ViewerComponent({
         liveryLabel: "",
         windowTarget: "",
         windowLabel: "",
+        templateMap: null,
+        templateMapError: "",
+        templatePsdSource: null,
+        templatePsdSourceError: "",
       });
       onModelLoadingRef.current?.(false);
       requestRender();
@@ -924,12 +931,48 @@ function ViewerComponent({
         const targets = collectTextureTargets(object);
         const liveryTarget = findLiveryTarget(object);
         const windowTarget = findWindowTemplateTarget(object);
+        let templateMap = null;
+        let templateMapError = "";
+        let templatePsdSource = null;
+        let templatePsdSourceError = "";
+
+        if (object?.userData?.sourceFormat === "yft") {
+          try {
+            templateMap = buildYftTemplateMap({
+              object,
+              modelPath,
+              liveryTarget: liveryTarget?.value || "",
+              windowTarget: windowTarget?.value || "",
+            });
+          } catch (error) {
+            templateMapError = "Failed to generate template map.";
+            console.error("[TemplateMap] Generation failed:", error);
+          }
+
+          if (includeTemplateGeometry) {
+            try {
+              templatePsdSource = buildYftTemplatePsdSource({
+                object,
+                modelPath,
+                preferUv2: true,
+              });
+            } catch (error) {
+              templatePsdSourceError = "Failed to generate UV template source.";
+              console.error("[TemplatePSD] Source generation failed:", error);
+            }
+          }
+        }
+
         onModelInfoRef.current?.({
           targets,
           liveryTarget: liveryTarget?.value || "",
           liveryLabel: liveryTarget?.label || "",
           windowTarget: windowTarget?.value || "",
           windowLabel: windowTarget?.label || "",
+          templateMap,
+          templateMapError,
+          templatePsdSource,
+          templatePsdSourceError,
         });
 
         const box = new THREE.Box3().setFromObject(object);
@@ -1011,7 +1054,7 @@ function ViewerComponent({
       cancelled = true;
       onModelLoadingRef.current?.(false);
     };
-  }, [modelPath, sceneReady]);
+  }, [modelPath, sceneReady, includeTemplateGeometry]);
 
   useEffect(() => {
     if (!modelRef.current) return;

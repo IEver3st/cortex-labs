@@ -8437,6 +8437,216 @@ label {
   font-weight: 700;
 }
 
+/* Template generator workspace */
+.tg-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  overflow: hidden;
+}
+
+.tg-workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: calc(12px * var(--es-ui-scale));
+  padding: calc(12px * var(--es-ui-scale));
+}
+
+.tg-pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--mg-surface);
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius);
+  overflow: hidden;
+}
+
+.tg-pane-head {
+  min-height: calc(34px * var(--es-ui-scale));
+  padding: 0 calc(10px * var(--es-ui-scale));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(8px * var(--es-ui-scale));
+  border-bottom: 1px solid var(--mg-border);
+  background: var(--panel-surface-strong);
+}
+
+.tg-pane-title {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px * var(--es-ui-scale));
+  min-width: 0;
+  color: var(--mg-primary);
+  font-size: calc(9.5px * var(--es-ui-scale));
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.tg-pane-meta {
+  min-width: 0;
+  max-width: 65%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mg-muted);
+  opacity: 0.9;
+  font-size: calc(9px * var(--es-ui-scale));
+  letter-spacing: 0.05em;
+}
+
+.tg-pane-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  background: var(--panel-surface-strong);
+}
+
+.tg-pane-body > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tg-template-preview {
+  flex: 1;
+  min-height: calc(280px * var(--es-ui-scale));
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  background: var(--panel-surface-strong);
+}
+
+.tg-preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: oklch(0.17 0.005 285.85);
+}
+
+.tg-placeholder {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: calc(10px * var(--es-ui-scale));
+  padding: calc(18px * var(--es-ui-scale));
+  color: var(--mg-muted);
+  font-size: calc(10px * var(--es-ui-scale));
+  letter-spacing: 0.04em;
+}
+
+.tg-placeholder--error {
+  color: var(--mg-destructive);
+  background: oklch(0.704 0.191 22.216 / 8%);
+}
+
+.tg-spinner {
+  width: calc(24px * var(--es-ui-scale));
+  height: calc(24px * var(--es-ui-scale));
+  border-radius: 999px;
+  border: 2px solid oklch(1 0 0 / 10%);
+  border-top-color: var(--mg-primary);
+}
+
+.tg-template-footer {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8px * var(--es-ui-scale));
+  padding: calc(9px * var(--es-ui-scale)) calc(10px * var(--es-ui-scale));
+  border-top: 1px solid var(--mg-border);
+  background: oklch(1 0 0 / 2%);
+}
+
+.tg-template-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(6px * var(--es-ui-scale));
+}
+
+.tg-stat-pill {
+  height: calc(20px * var(--es-ui-scale));
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px * var(--es-ui-scale));
+  padding: 0 calc(8px * var(--es-ui-scale));
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius);
+  color: var(--mg-muted);
+  background: oklch(1 0 0 / 3%);
+  font-size: calc(8.5px * var(--es-ui-scale));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tg-autosave-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mg-primary);
+  opacity: 0.85;
+  font-size: calc(8.5px * var(--es-ui-scale));
+  letter-spacing: 0.04em;
+}
+
+.tg-ctx-value {
+  min-width: calc(26px * var(--es-ui-scale));
+  text-align: center;
+  color: var(--mg-fg);
+  font-size: calc(9px * var(--es-ui-scale));
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.tg-ctx-status {
+  display: inline-block;
+  max-width: min(36vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mg-muted);
+  font-size: calc(8.5px * var(--es-ui-scale));
+  letter-spacing: 0.04em;
+  margin-right: calc(6px * var(--es-ui-scale));
+}
+
+.tg-ctx-status.is-error {
+  color: var(--mg-destructive);
+}
+
+@media (max-width: 1260px) {
+  .tg-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .tg-ctx-status {
+    display: none;
+  }
+
+  .tg-pane-meta {
+    max-width: 54%;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    VARIANTS PAGE — PSD Variant Builder (v5 · Industrial Code Editor)
    Tokens: --mg-bg, --mg-surface, --mg-fg, --mg-primary, --mg-secondary,

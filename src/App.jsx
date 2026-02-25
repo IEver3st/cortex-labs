@@ -138,6 +138,16 @@ function getFileLabel(path, emptyLabel) {
   return path.split(/[\\/]/).pop();
 }
 
+function sanitizeFileStem(value) {
+  if (!value) return "model";
+  const sanitized = value
+    .toString()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return sanitized || "model";
+}
+
 function UnloadButton({ onClick, title, className }) {
   return (
     <CyberButton variant="danger" className={className} onClick={onClick} title={title}>
@@ -147,6 +157,7 @@ function UnloadButton({ onClick, title, className }) {
 }
 
 function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null, contextBarTarget = null }) {
+
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef({ primary: null, window: null, dualA: null, dualB: null });
   const isTauriRuntime =
@@ -180,6 +191,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
   const [modelPath, setModelPath] = useState("");
   const [modelSourcePath, setModelSourcePath] = useState("");
+  const [generatedTemplateMap, setGeneratedTemplateMap] = useState(null);
+  const [templateMapError, setTemplateMapError] = useState("");
   const [texturePath, setTexturePath] = useState("");
   const [windowTemplateEnabled, setWindowTemplateEnabled] = useState(() => Boolean(getInitialDefaults().windowTemplateEnabled));
   const [windowTexturePath, setWindowTexturePath] = useState("");
@@ -433,6 +446,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       }
 
       setDialogError("");
+      setGeneratedTemplateMap(null);
+      setTemplateMapError("");
       setTextureTargets([]);
       setTextureTarget("all");
       setLiveryTarget("");
@@ -440,7 +455,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       setWindowTextureTarget("none");
       setWindowLiveryTarget("");
       setWindowLiveryLabel("");
-
       setModelSourcePath(path);
       setModelLoading(true);
 
@@ -448,6 +462,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         setModelPath(path);
         // Auto-rename the tab to the loaded filename
         const fileName = path.split(/[\\/]/).pop();
+
         if (fileName && onRenameTab) onRenameTab(fileName);
       } catch (error) {
         const message =
@@ -583,6 +598,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const handleModelInfo = useCallback((info) => {
     const targets = info?.targets ?? [];
     setTextureTargets(targets);
+    setGeneratedTemplateMap(info?.templateMap || null);
+    setTemplateMapError(info?.templateMapError || "");
     setLiveryTarget(info?.liveryTarget || "");
     setLiveryLabel(info?.liveryLabel || "");
     setWindowLiveryTarget(info?.windowTarget || "");
@@ -594,6 +611,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setTextureTarget((prev) => {
       if (prev === "all") return prev;
       return targets.some((target) => target.value === prev) ? prev : "all";
+
     });
     setWindowTextureTarget((prev) => {
       if (prev === "all" || prev === "none" || prev === "auto") return prev;
@@ -673,8 +691,40 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
   const handleModelError = useCallback((message) => {
     setDialogError(message || "Failed to load model.");
+    setGeneratedTemplateMap(null);
+    setTemplateMapError("");
     setModelPath("");
   }, []);
+
+  const handleDownloadTemplateMap = useCallback(() => {
+    if (!generatedTemplateMap) {
+      showToast("No template map available yet.");
+      return;
+    }
+
+    const sourceName =
+      generatedTemplateMap?.source?.fileName ||
+      getFileLabel(modelSourcePath || modelPath, "model");
+    const stem = sanitizeFileStem(sourceName);
+    const fileName = `${stem}.template-map.v1.json`;
+
+    try {
+      const json = JSON.stringify(generatedTemplateMap, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+      showToast(`Downloaded ${fileName}`);
+    } catch (error) {
+      console.error("Template map download failed:", error);
+      showToast("Template map download failed.");
+    }
+  }, [generatedTemplateMap, modelPath, modelSourcePath, showToast]);
 
   const applyAndPersistDefaults = useCallback((next) => {
     const merged = { ...BUILT_IN_DEFAULTS, ...(next || {}) };
@@ -682,6 +732,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
     setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
     setWindowTextureTarget(merged.windowTextureTarget || "auto");
+
 
     setCameraWASD(Boolean(merged.cameraWASD));
     setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
@@ -1475,6 +1526,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     ? materialTextures[materialTextures.length - 1]?.path || ""
     : "";
   const hasModel = Boolean(modelPath);
+  const activeModelPath = modelSourcePath || modelPath;
+  const isYftModel = activeModelPath.toLowerCase().endsWith(".yft");
+  const hasTemplateMap = Boolean(generatedTemplateMap);
+  const templateStatusLabel = !hasModel
+    ? "Load a .yft model to auto-generate a template map."
+    : !isYftModel
+      ? "Template map generation is available for .yft models only."
+      : templateMapError
+        ? templateMapError
+        : hasTemplateMap
+          ? "Template map ready for download."
+          : "Generating template map...";
   const liveryTargetLabel = (liveryLabel || "").replace(/^(material|mesh):\s*/i, "").trim();
   const liveryTargetMessage = !hasModel
     ? "Load a model to enable automatic targeting."
@@ -1630,7 +1693,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               icon={Car}
               color="blue"
             >
-              <div className="flex flex-col gap-0">
+              <div className="flex flex-col gap-2">
                 <div className="flex gap-2">
                   <CyberButton
                     onClick={selectModel}
@@ -1642,12 +1705,30 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   {modelPath ? (
                     <UnloadButton
                       className="flex-1"
-                      onClick={() => { setModelPath(""); setModelSourcePath(""); setDialogError(""); }}
+                      onClick={() => {
+                        setModelPath("");
+                        setModelSourcePath("");
+                        setDialogError("");
+                        setGeneratedTemplateMap(null);
+                        setTemplateMapError("");
+                      }}
                       title="Unload model"
                     />
                   ) : null}
                 </div>
-                {modelLoading ? <div className="text-[10px] text-[var(--mg-primary)] animate-pulse mt-2">Initializing construct...</div> : null}
+                <CyberButton
+                  onClick={handleDownloadTemplateMap}
+                  variant="secondary"
+                  className="flex-1"
+                  disabled={!hasTemplateMap}
+                  title={hasTemplateMap ? "Download generated template map JSON" : "Load a .yft model to generate a template map"}
+                >
+                  Download Template
+                </CyberButton>
+                <div className={`text-[9px] ${templateMapError ? "text-[var(--mg-destructive)]" : "text-[var(--mg-muted)]"}`}>
+                  {templateStatusLabel}
+                </div>
+                {modelLoading ? <div className="text-[10px] text-[var(--mg-primary)] animate-pulse">Initializing construct...</div> : null}
               </div>
             </CyberSection>
           ) : null}
@@ -1657,6 +1738,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               <CyberSection
                 title="Livery"
                 caption={primaryTemplateLabel}
+
                 open={panelOpen.templates}
                 onToggle={() => togglePanel("templates")}
                 contentId="panel-templates"

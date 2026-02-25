@@ -3,12 +3,14 @@ import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Info } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Info, Sparkles } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
 import VariantsPage from "./components/VariantsPage";
+import TemplateGenerationPage from "./components/TemplateGenerationPage";
 import Onboarding from "./components/Onboarding";
+
 import SettingsMenu from "./components/SettingsMenu";
 import WhatsNew from "./components/WhatsNew";
 import * as Ctx from "./components/ContextMenu";
@@ -40,7 +42,9 @@ const TAB_ICONS = {
   home: Home,
   viewer: Eye,
   variants: Layers,
+  templategen: Sparkles,
 };
+
 
 const MIN_UI_SCALE = 0.5;
 const MAX_UI_SCALE = 1.4;
@@ -72,8 +76,10 @@ export default function Shell() {
 
   // Per-tab variant state cache
   const [variantStates, setVariantStates] = useState({});
+  const [templateGenStates, setTemplateGenStates] = useState({});
 
   // Settings change counter — bumped when settings are saved so children re-read prefs
+
   const [settingsVersion, setSettingsVersion] = useState(0);
 
   // Map of tabId -> pane element for focus management
@@ -125,10 +131,16 @@ export default function Shell() {
       }
 
       const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
+      const fallbackLabel =
+        type === "viewer"
+          ? modeLabels[defaultMode] || "Preview"
+          : type === "templategen"
+            ? "Template Gen"
+            : "Variants";
       const newTab = {
         id: generateTabId(),
         type,
-        label: label || (type === "viewer" ? (modeLabels[defaultMode] || "Preview") : "Variants"),
+        label: label || fallbackLabel,
         workspaceId: workspaceId || null,
         closable: true,
         defaultMode: defaultMode || null,
@@ -138,6 +150,10 @@ export default function Shell() {
       if (state && type === "variants") {
         setVariantStates((s) => ({ ...s, [newTab.id]: state }));
       }
+      if (state && type === "templategen") {
+        setTemplateGenStates((s) => ({ ...s, [newTab.id]: state }));
+      }
+
 
       pendingActiveRef.current = newTab.id;
       return [...prev, newTab];
@@ -234,7 +250,13 @@ export default function Shell() {
       delete next[tabId];
       return next;
     });
+    setTemplateGenStates((s) => {
+      const next = { ...s };
+      delete next[tabId];
+      return next;
+    });
   }, [activeTabId]);
+
 
   // Close other tabs
   const closeOtherTabs = useCallback((keepTabId) => {
@@ -283,7 +305,13 @@ export default function Shell() {
   const handleNavigate = useCallback((type, workspaceId, defaultMode) => {
     const ws = workspaceId ? loadWorkspaces()[workspaceId] : null;
     const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
-    const label = ws?.name || (type === "viewer" ? (modeLabels[defaultMode] || "Preview") : "Variants");
+    const fallbackLabel =
+      type === "viewer"
+        ? modeLabels[defaultMode] || "Preview"
+        : type === "templategen"
+          ? "Template Gen"
+          : "Variants";
+    const label = ws?.name || fallbackLabel;
     openTab(type, label, workspaceId, ws?.state, defaultMode);
     if (workspaceId) {
       setActiveWorkspaceId(workspaceId);
@@ -291,12 +319,19 @@ export default function Shell() {
     }
   }, [openTab]);
 
+
   const handleOpenWorkspace = useCallback((ws) => {
     if (!ws?.id) return;
     const latestWs = loadWorkspaces()[ws.id] || ws;
     const defaultMode = latestWs?.state?.textureMode || "livery";
-    const page = latestWs.page === "variants" ? "variants" : "viewer";
+    const page =
+      latestWs.page === "variants"
+        ? "variants"
+        : latestWs.page === "templategen"
+          ? "templategen"
+          : "viewer";
     openTab(page, latestWs.name, latestWs.id, latestWs.state, defaultMode);
+
     setActiveWorkspaceId(latestWs.id);
     addRecent(latestWs.id, latestWs.name, page);
   }, [openTab]);
@@ -308,7 +343,14 @@ export default function Shell() {
     if (tab?.workspaceId) updateWorkspace(tab.workspaceId, { state, page: "variants" });
   }, [tabs]);
 
+  const handleTemplateGenStateChange = useCallback((tabId, state) => {
+    setTemplateGenStates((s) => ({ ...s, [tabId]: state }));
+    const tab = tabs.find((t) => t.id === tabId);
+    if (tab?.workspaceId) updateWorkspace(tab.workspaceId, { state, page: "templategen" });
+  }, [tabs]);
+
   // Onboarding
+
   const handleOnboardingComplete = useCallback((action) => {
     setOnboarded();
     setShowOnboarding(false);
@@ -319,6 +361,10 @@ export default function Shell() {
       const target = action.target;
       if (target === "variants") {
         handleNavigate("variants");
+        return;
+      }
+      if (target === "templategen") {
+        handleNavigate("templategen");
         return;
       }
 
@@ -444,7 +490,9 @@ export default function Shell() {
     { mode: "everything", icon: Layers, label: "All", type: "viewer" },
     { mode: "eup", icon: Shirt, label: "EUP", type: "viewer" },
     { mode: "multi", icon: Link2, label: "Multi", type: "viewer" },
+    { mode: "templategen", icon: Sparkles, label: "Template Gen", type: "templategen" },
   ], []);
+
 
   return (
     <div className="shell-root">
@@ -665,6 +713,10 @@ export default function Shell() {
                 <Ctx.Item onSelect={() => handleNavigate("variants")}>
                   <Palette className="w-3 h-3" /> New Variant Builder
                 </Ctx.Item>
+                <Ctx.Item onSelect={() => handleNavigate("templategen")}>
+                  <Sparkles className="w-3 h-3" /> New Template Generator
+                </Ctx.Item>
+
               </Ctx.Content>
             </Ctx.Root>
 
@@ -775,6 +827,17 @@ export default function Shell() {
                       contextBarTarget={contextBarRef.current}
                     />
                   )}
+                  {tab.type === "templategen" && (
+                    <TemplateGenerationPage
+                      workspaceState={templateGenStates[tab.id] || tab.initialState || {}}
+                      onStateChange={(state) => handleTemplateGenStateChange(tab.id, state)}
+                      onRenameTab={(label) => renameTab(tab.id, label)}
+                      settingsVersion={settingsVersion}
+                      isActive={isActive}
+                      contextBarTarget={contextBarRef.current}
+                    />
+                  )}
+
                 </div>
               );
             })}

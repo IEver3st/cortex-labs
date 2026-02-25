@@ -60,7 +60,8 @@ export function saveWorkspaces(workspaces) {
 /**
  * Create a new workspace.
  * @param {string} name
- * @param {"viewer"|"variants"} page
+ * @param {"viewer"|"variants"|"templategen"} page
+
  * @param {Object} state — serializable state snapshot
  * @returns {string} The new workspace ID
  */
@@ -193,7 +194,12 @@ export function addRecent(workspaceId, name, page) {
     recent.unshift({
       workspaceId,
       name: typeof name === "string" && name.trim() ? name.trim() : "Untitled",
-      page: page === "variants" ? "variants" : "viewer",
+      page:
+        page === "variants"
+          ? "variants"
+          : page === "templategen"
+            ? "templategen"
+            : "viewer",
       openedAt: Date.now(),
     });
     if (recent.length > MAX_RECENT) recent = recent.slice(0, MAX_RECENT);

@@ -66,6 +66,25 @@ function mapUpdateCheckError(error) {
   return "Unable to reach update server.";
 }
 
+function mapInstallError(error) {
+  const message = String(error || "").toLowerCase();
+
+  if (message.includes("404")) {
+    return "Update download failed (404). The release asset URL in latest.json is missing.";
+  }
+  if (message.includes("403")) {
+    return "Update download was denied (403). Check release visibility and asset permissions.";
+  }
+  if (message.includes("signature")) {
+    return "Update package signature verification failed.";
+  }
+  if (message.includes("download request failed")) {
+    return "Update download failed. Check latest.json URL and release assets.";
+  }
+
+  return "Update installed but relaunch failed. Please restart Cortex Studio manually.";
+}
+
 function isInvalidReleaseJsonError(error) {
   const message = String(error || "").toLowerCase();
   return message.includes("valid release json");
@@ -206,7 +225,7 @@ async function installUpdate() {
     setStoreState((prev) => ({
       ...prev,
       installing: false,
-      error: "Update installed but relaunch failed. Please restart Cortex Studio manually.",
+      error: mapInstallError(error),
     }));
     return false;
   }

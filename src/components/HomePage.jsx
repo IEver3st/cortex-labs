@@ -84,6 +84,15 @@ const MODES = [
     shortcut: "Alt+5",
     keyLabel: ["Alt", "5"],
   },
+  {
+    id: "templategen",
+    label: "Template Gen",
+    desc: "Auto-generate layered PSD templates from .yft",
+    icon: Zap,
+    accent: "#14b8a6",
+    shortcut: "Alt+6",
+    keyLabel: ["Alt", "6"],
+  },
 ];
 
 const FILTER_TABS = [
@@ -92,6 +101,7 @@ const FILTER_TABS = [
   { id: "eup", label: "EUP" },
   { id: "multi", label: "Multi" },
   { id: "variants", label: "Variants" },
+  { id: "templategen", label: "Templates" },
 ];
 
 const SORT_OPTIONS = [
@@ -118,6 +128,7 @@ function savePinned(ids) {
 
 function getModeTag(entry, ws) {
   if (entry.page === "variants") return "Variant";
+  if (entry.page === "templategen") return "Template";
   const mode = ws?.state?.textureMode || "livery";
   if (mode === "livery") return "Livery";
   if (mode === "everything") return "All";
@@ -256,6 +267,7 @@ export default function HomePage({
       list = list.filter((entry) => {
         const ws = workspaces[entry.workspaceId];
         if (activeSection === "variants") return entry.page === "variants";
+        if (activeSection === "templategen") return entry.page === "templategen";
         return ws.state?.textureMode === activeSection;
       });
     }
@@ -326,10 +338,23 @@ export default function HomePage({
     onNavigate("variants", id);
   }, [onNavigate]);
 
+  const handleLaunchTemplateGen = useCallback(() => {
+    const id = createWorkspace("Template Generator", "templategen");
+    onNavigate("templategen", id);
+  }, [onNavigate]);
+
   const handleCreateProject = useCallback(() => {
     const name = projectName.trim() || "Untitled Project";
-    const id = createWorkspace(name, "viewer", { textureMode: selectedMode });
-    onNavigate("viewer", id, selectedMode);
+    if (selectedMode === "variants") {
+      const id = createWorkspace(name, "variants");
+      onNavigate("variants", id);
+    } else if (selectedMode === "templategen") {
+      const id = createWorkspace(name, "templategen");
+      onNavigate("templategen", id);
+    } else {
+      const id = createWorkspace(name, "viewer", { textureMode: selectedMode });
+      onNavigate("viewer", id, selectedMode);
+    }
     setShowNewProject(false);
     setProjectName("");
   }, [projectName, selectedMode, onNavigate]);
@@ -356,6 +381,7 @@ export default function HomePage({
     const ws = workspaces[entry.workspaceId];
     const mode = ws?.state?.textureMode || "livery";
     if (entry.page === "variants") return Palette;
+    if (entry.page === "templategen") return Zap;
     if (mode === "everything") return Layers;
     if (mode === "eup") return Shirt;
     if (mode === "multi") return Link2;
@@ -537,6 +563,7 @@ export default function HomePage({
                     style={{ "--mode-color": mode.accent }}
                     onClick={() => {
                       if (mode.id === "variants") handleLaunchVariants();
+                      else if (mode.id === "templategen") handleLaunchTemplateGen();
                       else handleLaunchMode(mode.id);
                     }}
                     initial={{ opacity: 0, x: -8 }}
@@ -655,6 +682,8 @@ export default function HomePage({
                             const ws = workspaces[entry.workspaceId];
                             if (filter.id === "variants")
                               return entry.page === "variants";
+                            if (filter.id === "templategen")
+                              return entry.page === "templategen";
                             return ws.state?.textureMode === filter.id;
                           }).length;
                     return (
