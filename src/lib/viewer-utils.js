@@ -374,11 +374,31 @@ export function createFloorGrid() {
 const CAGE_EDGE_CREASE_ANGLE = 15;
 const CAGE_EDGE_COLOR = 0x3dbaa3; // teal — matches --es-success
 const CAGE_BOX_COLOR = 0x5a5a5a; // subtle gray for bounding-box cubes
+const CAGE_SMALL_MESH_MAX_DIM_RATIO = 0.075;
+const CAGE_SMALL_MESH_MAX_ASPECT = 4.8;
+const CAGE_SIZE_EPSILON = 1e-5;
+
+function isSmallCageMesh(worldSize, modelMaxDimension) {
+  if (!worldSize || !Number.isFinite(modelMaxDimension) || modelMaxDimension <= CAGE_SIZE_EPSILON) {
+    return false;
+  }
+
+  const dims = [worldSize.x, worldSize.y, worldSize.z]
+    .map((value) => (Number.isFinite(value) ? Math.abs(value) : 0))
+    .filter((value) => value > CAGE_SIZE_EPSILON);
+  if (dims.length === 0) return false;
+
+  const maxDim = Math.max(...dims);
+  const minDim = Math.max(CAGE_SIZE_EPSILON, Math.min(...dims));
+  const dimRatio = maxDim / modelMaxDimension;
+  const aspect = maxDim / minDim;
+  return dimRatio <= CAGE_SMALL_MESH_MAX_DIM_RATIO && aspect <= CAGE_SMALL_MESH_MAX_ASPECT;
+}
 
 /**
- * Build a cage-style wireframe overlay for every mesh in `object`:
+ * Build a cage-style wireframe overlay for meshes in `object`:
  *  - Clean edge lines via THREE.EdgesGeometry (no internal triangle edges)
- *  - A wireframe bounding-box cube per sub-mesh
+ *  - A wireframe bounding-box cube only for meshes classified as small
  *
  * All created objects are tagged with `userData.isCageOverlay = true` and
  * parented inside a single THREE.Group that is added to the scene root,
@@ -389,9 +409,6 @@ const CAGE_BOX_COLOR = 0x5a5a5a; // subtle gray for bounding-box cubes
  */
 export function buildCageOverlay(object, scene) {
   if (!object || !scene) return null;
-
-  // Clean up any previous overlay first
-  disposeCageOverlay(scene);
 
   const overlayGroup = new THREE.Group();
   overlayGroup.name = "__cageOverlay";
@@ -411,6 +428,21 @@ export function buildCageOverlay(object, scene) {
     depthTest: true,
   });
 
+  object.updateWorldMatrix(true, true);
+
+  const modelBounds = new THREE.Box3().setFromObject(object);
+  const modelSize = new THREE.Vector3();
+  modelBounds.getSize(modelSize);
+  const modelMaxDimension = Math.max(
+    CAGE_SIZE_EPSILON,
+    modelSize.x || 0,
+    modelSize.y || 0,
+    modelSize.z || 0,
+  );
+
+  const worldBounds = new THREE.Box3();
+  const worldSize = new THREE.Vector3();
+
   object.traverse((child) => {
     if (!child.isMesh || !child.geometry) return;
 
@@ -429,10 +461,14 @@ export function buildCageOverlay(object, scene) {
 
     overlayGroup.add(edgeLines);
 
-    // --- Bounding-box cube ---
+    // --- Bounding-box cube (small meshes only) ---
     child.geometry.computeBoundingBox();
     const bb = child.geometry.boundingBox;
     if (bb && !bb.isEmpty()) {
+      worldBounds.copy(bb).applyMatrix4(child.matrixWorld);
+      worldBounds.getSize(worldSize);
+      if (!isSmallCageMesh(worldSize, modelMaxDimension)) return;
+
       const size = new THREE.Vector3();
       const center = new THREE.Vector3();
       bb.getSize(size);

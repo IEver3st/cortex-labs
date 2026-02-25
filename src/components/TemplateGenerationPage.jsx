@@ -262,6 +262,15 @@ export default function TemplateGenerationPage({
 
   const modelFileName = getFileLabel(modelPath, "No model loaded");
   const outputFolderName = outputFolder ? outputFolder.split(/[\\/]/).pop() : "No output folder";
+  const compactStatusLabel = generationError
+    ? "Needs attention"
+    : generating
+      ? "Generating"
+      : psdBytes
+        ? "Ready"
+        : modelPath
+          ? "Analyzing"
+          : "Idle";
 
   const statusLabel = generationError
     ? generationError
@@ -276,71 +285,88 @@ export default function TemplateGenerationPage({
     <div className="tg-root">
       {isActive && contextBarTarget &&
         createPortal(
-          <div className="ctx-bar-inner">
-            <div className="ctx-bar-left">
-              <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={handleSelectModel}>
-                <Car className="w-3 h-3" />
-                {modelPath ? "Change Model" : "Load Model"}
-              </button>
-              {modelPath ? (
-                <button type="button" className="ctx-bar-btn" onClick={handleUnloadModel}>
-                  <X className="w-3 h-3" />
-                  Unload
+          <div className="ctx-bar-inner tg-context-dock">
+            <div className="tg-dock-row tg-dock-row--top">
+              <div className="tg-dock-actions">
+                <button type="button" className="tg-dock-btn tg-dock-btn--primary" onClick={handleSelectModel}>
+                  <Car className="w-3 h-3" />
+                  {modelPath ? "Change Model" : "Load Model"}
                 </button>
-              ) : null}
-              <div className="ctx-bar-sep" />
-              <button type="button" className="ctx-bar-btn" onClick={handleSelectOutputFolder}>
-                <FolderOpen className="w-3 h-3" />
-                {outputFolder ? `Output: ${outputFolderName}` : "Set Output"}
-              </button>
-              {outputFolder ? (
-                <button type="button" className="ctx-bar-btn" onClick={handleOpenOutputFolder}>
-                  Open
+                {modelPath ? (
+                  <button type="button" className="tg-dock-btn" onClick={handleUnloadModel}>
+                    <X className="w-3 h-3" />
+                    Unload
+                  </button>
+                ) : null}
+                <button type="button" className="tg-dock-btn" onClick={handleSelectOutputFolder}>
+                  <FolderOpen className="w-3 h-3" />
+                  {outputFolder ? `Output: ${outputFolderName}` : "Set Output"}
                 </button>
-              ) : null}
+                {outputFolder ? (
+                  <button type="button" className="tg-dock-btn" onClick={handleOpenOutputFolder}>
+                    Open Folder
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="tg-dock-primary">
+                <span className={`tg-dock-state ${generationError ? "is-error" : ""}`}>
+                  {compactStatusLabel}
+                </span>
+                <button
+                  type="button"
+                  className="tg-dock-btn tg-dock-btn--accent"
+                  onClick={handleDownloadPsd}
+                  disabled={!psdBytes || generating}
+                  title={psdFileName}
+                >
+                  <Download className="w-3 h-3" />
+                  Download PSD
+                </button>
+              </div>
             </div>
 
-            <div className="ctx-bar-center">
-              <span className="ctx-bar-group-label">PSD Size</span>
-              {SIZE_OPTIONS.map((size) => (
-                <button
-                  key={size}
-                  type="button"
-                  className={`ctx-bar-btn ${exportSize === size ? "ctx-bar-action" : ""}`}
-                  onClick={() => setExportSize(size)}
-                >
-                  {size}
-                </button>
-              ))}
-              <div className="ctx-bar-sep" />
-              <span className="ctx-bar-group-label">Targets</span>
-              <span className="tg-ctx-value">{targetCount}</span>
-              <span className="ctx-bar-group-label">Layers</span>
-              <span className="tg-ctx-value">{layerCount}</span>
-              <div className="ctx-bar-sep" />
+            <div className="tg-dock-row tg-dock-row--bottom">
+              <div className="tg-dock-pill" title={modelPath || "No model loaded"}>
+                <Car className="w-3 h-3" />
+                <span className="tg-dock-pill-label">Model</span>
+                <span className="tg-dock-pill-value">{modelFileName}</span>
+              </div>
+              <div className="tg-dock-size">
+                <span className="tg-dock-pill-label">PSD Size</span>
+                {SIZE_OPTIONS.map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    className={`tg-dock-size-btn ${exportSize === size ? "is-active" : ""}`}
+                    onClick={() => setExportSize(size)}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
-                className={`ctx-bar-btn ${exteriorOnly ? "ctx-bar-action" : ""}`}
+                className={`tg-dock-toggle ${exteriorOnly ? "is-active" : ""}`}
                 onClick={() => setExteriorOnly((value) => !value)}
                 aria-pressed={exteriorOnly}
                 title="Show only exterior bodyshell geometry"
               >
                 Exterior Only
               </button>
-            </div>
-
-            <div className="ctx-bar-right">
-              <span className={`tg-ctx-status ${generationError ? "is-error" : ""}`}>{statusLabel}</span>
-              <button
-                type="button"
-                className="ctx-bar-btn ctx-bar-action"
-                onClick={handleDownloadPsd}
-                disabled={!psdBytes || generating}
-                title={psdFileName}
-              >
-                <Download className="w-3 h-3" />
-                Download PSD
-              </button>
+              <span className="tg-dock-metric">
+                <FileImage className="w-3 h-3" />
+                {targetCount} targets
+              </span>
+              <span className="tg-dock-metric">
+                <Layers className="w-3 h-3" />
+                {layerCount} layers
+              </span>
+              <div className="tg-dock-pill" title={outputFolder || "No output folder"}>
+                <FolderOpen className="w-3 h-3" />
+                <span className="tg-dock-pill-label">Output</span>
+                <span className="tg-dock-pill-value">{outputFolderName}</span>
+              </div>
             </div>
           </div>,
           contextBarTarget,
@@ -399,6 +425,20 @@ export default function TemplateGenerationPage({
               </div>
             )}
           </div>
+          <div className="tg-pane-foot">
+            <span className="tg-stat-pill">
+              <Car className="w-3 h-3" />
+              {modelPath ? "Model loaded" : "No model"}
+            </span>
+            <span className="tg-stat-pill">
+              <Sparkles className="w-3 h-3" />
+              {exportSize}px PSD
+            </span>
+            <span className="tg-stat-pill">
+              <Layers className="w-3 h-3" />
+              {exteriorOnly ? "Exterior mesh only" : "All template targets"}
+            </span>
+          </div>
         </motion.section>
 
         <motion.section
@@ -441,27 +481,37 @@ export default function TemplateGenerationPage({
           </div>
 
           <div className="tg-template-footer">
-            <div className="tg-template-stats">
-              <span className="tg-stat-pill">
-                <Layers className="w-3 h-3" />
-                {layerCount} layers
-              </span>
-              <span className="tg-stat-pill">
-                <FileImage className="w-3 h-3" />
-                {targetCount} targets
-              </span>
-              {lastGeneratedAt ? (
+            <div className="tg-template-footer-row">
+              <div className="tg-template-stats">
                 <span className="tg-stat-pill">
-                  <Check className="w-3 h-3" />
-                  {lastGeneratedAt.toLocaleTimeString()}
+                  <Layers className="w-3 h-3" />
+                  {layerCount} layers
+                </span>
+                <span className="tg-stat-pill">
+                  <FileImage className="w-3 h-3" />
+                  {targetCount} targets
+                </span>
+                {lastGeneratedAt ? (
+                  <span className="tg-stat-pill">
+                    <Check className="w-3 h-3" />
+                    {lastGeneratedAt.toLocaleTimeString()}
+                  </span>
+                ) : null}
+              </div>
+              <span className={`tg-template-status ${generationError ? "is-error" : ""}`}>
+                {statusLabel}
+              </span>
+            </div>
+            <div className="tg-template-footer-row tg-template-footer-row--meta">
+              <span className="tg-autosave-note" title={outputFolder || "No output folder selected"}>
+                {outputFolder ? `Output: ${outputFolder}` : "Output folder not selected"}
+              </span>
+              {autoSavedPath ? (
+                <span className="tg-autosave-note" title={autoSavedPath}>
+                  Auto-saved: {autoSavedPath}
                 </span>
               ) : null}
             </div>
-            {autoSavedPath ? (
-              <div className="tg-autosave-note" title={autoSavedPath}>
-                Auto-saved to: {autoSavedPath}
-              </div>
-            ) : null}
           </div>
 
         </motion.section>

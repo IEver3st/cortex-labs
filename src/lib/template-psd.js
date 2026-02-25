@@ -45,7 +45,6 @@ function clamp01(value) {
 
 const UV_EPSILON = 1e-8;
 const VERTEX_KEY_SCALE = 1e6;
-const CLEAN_AXIS_ALIGNMENT_THRESHOLD = 0.93;
 const SMALL_SHELL_MAX_TRIANGLES = 180;
 const SMALL_SHELL_MAX_ASPECT = 4.8;
 const SMALL_SHELL_MAX_DIM_RATIO = 96 / 2048;
@@ -216,6 +215,47 @@ function computeUvBounds(points) {
     spanU: Math.max(UV_EPSILON, maxU - minU),
     spanV: Math.max(UV_EPSILON, maxV - minV),
   };
+}
+
+function resolveShellUvBounds(shell, triangles) {
+  const bounds = shell?.bounds;
+  if (
+    bounds &&
+    Number.isFinite(bounds.minU) &&
+    Number.isFinite(bounds.minV) &&
+    Number.isFinite(bounds.maxU) &&
+    Number.isFinite(bounds.maxV)
+  ) {
+    return {
+      minU: bounds.minU,
+      minV: bounds.minV,
+      maxU: bounds.maxU,
+      maxV: bounds.maxV,
+      spanU: Math.max(UV_EPSILON, bounds.maxU - bounds.minU),
+      spanV: Math.max(UV_EPSILON, bounds.maxV - bounds.minV),
+    };
+  }
+
+  const uvPoints = collectShellUvPoints(triangles);
+  return computeUvBounds(uvPoints);
+}
+
+function isSmallUvShell(shell, size, topology = null) {
+  const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
+  const triangleCount = Number.isFinite(shell?.triangleCount)
+    ? shell.triangleCount
+    : Number.isFinite(topology?.triangleCount)
+      ? topology.triangleCount
+      : Math.floor(triangles.length / 6);
+  if (triangleCount <= 0 || triangleCount > SMALL_SHELL_MAX_TRIANGLES) return false;
+
+  const bounds = resolveShellUvBounds(shell, triangles);
+  const maxSpan = Math.max(bounds.spanU, bounds.spanV);
+  const minSpan = Math.max(UV_EPSILON, Math.min(bounds.spanU, bounds.spanV));
+  const aspect = maxSpan / minSpan;
+  if (!Number.isFinite(aspect) || aspect > SMALL_SHELL_MAX_ASPECT) return false;
+
+  return maxSpan <= SMALL_SHELL_MAX_DIM_RATIO;
 }
 
 function normalizeLocalUvPoint(u, v, bounds) {
@@ -840,20 +880,14 @@ function appendLoopSegments(segments, loopPoints) {
   }
 }
 
-function normalizeDirection(u0, v0, u1, v1) {
-  const dx = u1 - u0;
-  const dy = v1 - v0;
-  const length = Math.hypot(dx, dy);
-  if (!Number.isFinite(length) || length <= UV_EPSILON) return null;
-  return { dx: dx / length, dy: dy / length, length };
-}
-
 function dot2(ax, ay, bx, by) {
   return ax * bx + ay * by;
 }
 
-function buildOrientedBoxSegments(points, principalAxis) {
+function buildOrientedBoxSegments(points, principalAxis, options = {}) {
   if (!Array.isArray(points) || points.length < 2) return [];
+  const pixelScale = Math.max(1, options.pixelScale || 1);
+  const minInteriorLengthPx = Math.max(0, options.minInteriorLengthPx || 0);
 
   let centerU = 0;
   let centerV = 0;
@@ -925,6 +959,11 @@ function buildOrientedBoxSegments(points, principalAxis) {
     appendLoopSegments(segments, innerLoop);
 
     for (let i = 0; i < outerLoop.length; i += 1) {
+      const lengthPx = Math.hypot(
+        (outerLoop[i][0] - innerLoop[i][0]) * pixelScale,
+        (outerLoop[i][1] - innerLoop[i][1]) * pixelScale,
+      );
+      if (lengthPx < minInteriorLengthPx) continue;
       appendSegment(
         segments,
         outerLoop[i][0],
@@ -962,6 +1001,17 @@ function buildCleanWireSegments(shell, size) {
   if (triangles.length < 6) return [];
 
   const pixelScale = Math.max(1, size - 1);
+  const topology = extractShellTopology(triangles);
+  const topoVertices = Array.isArray(topology?.vertices) ? topology.vertices : [];
+  const principalAxis = computePrincipalAxis(topoVertices) || [1, 0];
+  const orientedBoxOptions = {
+    pixelScale,
+    minInteriorLengthPx: MIN_INTERIOR_EDGE_LENGTH_PX,
+  };
+
+  if (isSmallUvShell(shell, size, topology)) {
+    return buildOrientedBoxSegments(topoVertices, principalAxis, orientedBoxOptions);
+  }
 
   /* ── 1.  Parse triangles into indexed vertex / face lists ────── */
   const vertices = [];
@@ -995,14 +1045,12 @@ function buildCleanWireSegments(shell, size) {
 
   if (triList.length === 0) return [];
   if (vertices.length < 3) {
-    const principalAxis = computePrincipalAxis(vertices) || [1, 0];
-    return buildOrientedBoxSegments(vertices, principalAxis);
+    return buildOrientedBoxSegments(vertices, principalAxis, orientedBoxOptions);
   }
 
   /* Degenerate shell — fall back to oriented bounding box */
   if (triList.length <= 2) {
-    const principalAxis = computePrincipalAxis(vertices) || [1, 0];
-    return buildOrientedBoxSegments(vertices, principalAxis);
+    return buildOrientedBoxSegments(vertices, principalAxis, orientedBoxOptions);
   }
 
   /* ── 2.  Build edge → triangle adjacency ─────────────────────── */
@@ -1112,8 +1160,7 @@ function buildCleanWireSegments(shell, size) {
   if (segments.length >= 4) return segments;
 
   /* Fallback — oriented bounding box for degenerate shells */
-  const principalAxis = computePrincipalAxis(vertices) || [1, 0];
-  return buildOrientedBoxSegments(vertices, principalAxis);
+  return buildOrientedBoxSegments(vertices, principalAxis, orientedBoxOptions);
 }
 
 function buildRenderShellsWithCleanWire(shells, size) {
@@ -1134,32 +1181,12 @@ function paintWireframeLayer(canvas, shells, mapper) {
   const baseWidth = Math.max(0.52, canvas.width * 0.00042);
 
   shells.forEach((shell, index) => {
-    const shellRects = Array.isArray(shell?.rectangles) ? shell.rectangles : [];
     const shellSegments = Array.isArray(shell?.wireSegments) ? shell.wireSegments : [];
-    if (shellRects.length === 0 && shellSegments.length < 4) return;
+    if (shellSegments.length < 4) return;
 
     const bounds = mapper.mapBounds(index);
     const shellSize = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
     ctx.lineWidth = shellSize < 56 ? baseWidth * 1.28 : baseWidth;
-
-    for (const rect of shellRects) {
-      const [ax, ay] = mapper.toPoint(index, rect.minU, rect.minV);
-      const [bx, by] = mapper.toPoint(index, rect.maxU, rect.maxV);
-      const minX = Math.min(ax, bx);
-      const maxX = Math.max(ax, bx);
-      const minY = Math.min(ay, by);
-      const maxY = Math.max(ay, by);
-
-      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-        continue;
-      }
-
-      const width = Math.max(0, maxX - minX);
-      const height = Math.max(0, maxY - minY);
-      if (width < 0.25 || height < 0.25) continue;
-
-      ctx.strokeRect(minX, minY, width, height);
-    }
 
     for (let i = 0; i + 3 < shellSegments.length; i += 4) {
       const [x0, y0] = mapper.toPoint(index, shellSegments[i], shellSegments[i + 1]);
