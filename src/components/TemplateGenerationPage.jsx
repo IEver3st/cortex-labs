@@ -285,88 +285,75 @@ export default function TemplateGenerationPage({
     <div className="tg-root">
       {isActive && contextBarTarget &&
         createPortal(
-          <div className="ctx-bar-inner tg-context-dock">
-            <div className="tg-dock-row tg-dock-row--top">
-              <div className="tg-dock-actions">
-                <button type="button" className="tg-dock-btn tg-dock-btn--primary" onClick={handleSelectModel}>
-                  <Car className="w-3 h-3" />
-                  {modelPath ? "Change Model" : "Load Model"}
-                </button>
-                {modelPath ? (
-                  <button type="button" className="tg-dock-btn" onClick={handleUnloadModel}>
-                    <X className="w-3 h-3" />
-                    Unload
-                  </button>
-                ) : null}
-                <button type="button" className="tg-dock-btn" onClick={handleSelectOutputFolder}>
-                  <FolderOpen className="w-3 h-3" />
-                  {outputFolder ? `Output: ${outputFolderName}` : "Set Output"}
-                </button>
-                {outputFolder ? (
-                  <button type="button" className="tg-dock-btn" onClick={handleOpenOutputFolder}>
-                    Open Folder
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="tg-dock-primary">
-                <span className={`tg-dock-state ${generationError ? "is-error" : ""}`}>
-                  {compactStatusLabel}
-                </span>
-                <button
-                  type="button"
-                  className="tg-dock-btn tg-dock-btn--accent"
-                  onClick={handleDownloadPsd}
-                  disabled={!psdBytes || generating}
-                  title={psdFileName}
-                >
-                  <Download className="w-3 h-3" />
-                  Download PSD
-                </button>
-              </div>
-            </div>
-
-            <div className="tg-dock-row tg-dock-row--bottom">
-              <div className="tg-dock-pill" title={modelPath || "No model loaded"}>
+          <div className="ctx-bar-inner tg-context-inline">
+            <div className="tg-inline-left">
+              <button type="button" className="ctx-bar-btn ctx-bar-action tg-inline-action" onClick={handleSelectModel}>
                 <Car className="w-3 h-3" />
-                <span className="tg-dock-pill-label">Model</span>
-                <span className="tg-dock-pill-value">{modelFileName}</span>
-              </div>
-              <div className="tg-dock-size">
-                <span className="tg-dock-pill-label">PSD Size</span>
-                {SIZE_OPTIONS.map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    className={`tg-dock-size-btn ${exportSize === size ? "is-active" : ""}`}
-                    onClick={() => setExportSize(size)}
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
+                {modelPath ? "Change Model" : "Load Model"}
+              </button>
+              {modelPath ? (
+                <button type="button" className="ctx-bar-btn tg-inline-action" onClick={handleUnloadModel}>
+                  <X className="w-3 h-3" />
+                  Unload
+                </button>
+              ) : null}
+              <div className="ctx-bar-sep" />
               <button
                 type="button"
-                className={`tg-dock-toggle ${exteriorOnly ? "is-active" : ""}`}
+                className="ctx-bar-btn tg-inline-action"
+                onClick={handleSelectOutputFolder}
+                title={outputFolder || "No output folder selected"}
+              >
+                <FolderOpen className="w-3 h-3" />
+                {outputFolder ? `Output: ${outputFolderName}` : "Set Output"}
+              </button>
+              {outputFolder ? (
+                <button type="button" className="ctx-bar-btn tg-inline-action" onClick={handleOpenOutputFolder}>
+                  Open
+                </button>
+              ) : null}
+            </div>
+
+            <div className="tg-inline-center">
+              <span className="tg-inline-label">PSD</span>
+              {SIZE_OPTIONS.map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  className={`ctx-bar-btn tg-inline-size-btn ${exportSize === size ? "is-active" : ""}`}
+                  onClick={() => setExportSize(size)}
+                >
+                  {size}
+                </button>
+              ))}
+              <div className="ctx-bar-sep" />
+              <button
+                type="button"
+                className={`ctx-bar-btn tg-inline-toggle ${exteriorOnly ? "is-active" : ""}`}
                 onClick={() => setExteriorOnly((value) => !value)}
                 aria-pressed={exteriorOnly}
                 title="Show only exterior bodyshell geometry"
               >
-                Exterior Only
+                Exterior
               </button>
-              <span className="tg-dock-metric">
-                <FileImage className="w-3 h-3" />
-                {targetCount} targets
+              <span className="tg-inline-metric">{targetCount}T</span>
+              <span className="tg-inline-metric">{layerCount}L</span>
+            </div>
+
+            <div className="tg-inline-right">
+              <span className={`tg-inline-state ${generationError ? "is-error" : ""}`}>
+                {compactStatusLabel}
               </span>
-              <span className="tg-dock-metric">
-                <Layers className="w-3 h-3" />
-                {layerCount} layers
-              </span>
-              <div className="tg-dock-pill" title={outputFolder || "No output folder"}>
-                <FolderOpen className="w-3 h-3" />
-                <span className="tg-dock-pill-label">Output</span>
-                <span className="tg-dock-pill-value">{outputFolderName}</span>
-              </div>
+              <button
+                type="button"
+                className="ctx-bar-btn ctx-bar-action tg-inline-download"
+                onClick={handleDownloadPsd}
+                disabled={!psdBytes || generating}
+                title={psdFileName}
+              >
+                <Download className="w-3 h-3" />
+                <span className="tg-inline-download-label">Download PSD</span>
+              </button>
             </div>
           </div>,
           contextBarTarget,

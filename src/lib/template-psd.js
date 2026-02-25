@@ -241,6 +241,9 @@ function resolveShellUvBounds(shell, triangles) {
 }
 
 function isSmallUvShell(shell, size, topology = null) {
+  const safeSize = Number.isFinite(size) ? size : DEFAULT_SIZE;
+  if (safeSize <= 0) return false;
+
   const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
   const triangleCount = Number.isFinite(shell?.triangleCount)
     ? shell.triangleCount
