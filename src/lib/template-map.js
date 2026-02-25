@@ -5,6 +5,9 @@ const MATERIAL_TARGET_PREFIX = "material:";
 const MESH_TARGET_PREFIX = "mesh:";
 const UV_AREA_EPSILON = 1e-10;
 const UV_WRAP_EPSILON = 1e-8;
+const POSITION_AREA_EPSILON = 1e-12;
+const NORMAL_EPSILON = 1e-12;
+const UV_ISLAND_MISSING = -1;
 
 /**
  * Minimum UV-space area for a shell to be included in the output.
@@ -78,6 +81,59 @@ function readUvAt(uvAttribute, index) {
   const v = uvAttribute.getY(index);
   if (!Number.isFinite(u) || !Number.isFinite(v)) return null;
   return [u, v];
+}
+
+function readPositionAt(positionAttribute, index) {
+  const x = positionAttribute.getX(index);
+  const y = positionAttribute.getY(index);
+  const z = positionAttribute.getZ(index);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+  return [x, y, z];
+}
+
+function normalizeVec3(x, y, z) {
+  const length = Math.hypot(x, y, z);
+  if (!Number.isFinite(length) || length <= NORMAL_EPSILON) return null;
+  return [x / length, y / length, z / length];
+}
+
+function computeTriangleNormal(p0, p1, p2) {
+  const ax = p1[0] - p0[0];
+  const ay = p1[1] - p0[1];
+  const az = p1[2] - p0[2];
+  const bx = p2[0] - p0[0];
+  const by = p2[1] - p0[1];
+  const bz = p2[2] - p0[2];
+  const nx = ay * bz - az * by;
+  const ny = az * bx - ax * bz;
+  const nz = ax * by - ay * bx;
+  return normalizeVec3(nx, ny, nz);
+}
+
+function resolveMaterialNameFromIndex(material, materialIndex) {
+  if (Array.isArray(material)) {
+    const indexed = material[Math.max(0, materialIndex)] || material[0] || null;
+    const name = indexed?.name?.trim();
+    return name || "";
+  }
+
+  const singleName = material?.name?.trim();
+  return singleName || "";
+}
+
+function findMaterialIndexForDrawOffset(groups, drawOffset) {
+  if (!Array.isArray(groups) || groups.length === 0) return 0;
+
+  for (const group of groups) {
+    const start = Number(group?.start) || 0;
+    const count = Number(group?.count) || 0;
+    if (drawOffset >= start && drawOffset < start + count) {
+      const materialIndex = Number(group?.materialIndex);
+      return Number.isInteger(materialIndex) ? materialIndex : 0;
+    }
+  }
+
+  return 0;
 }
 
 function hasUvVariation(attribute) {
@@ -491,6 +547,152 @@ function extractMeshUvShells(mesh, fallbackIndex, options = {}) {
   return shells;
 }
 
+function extractMeshProxyGeometry(mesh, fallbackIndex, options = {}) {
+  const geometry = mesh?.geometry;
+  const attributes = geometry?.attributes;
+  const positionAttribute = attributes?.position;
+  if (!positionAttribute) return null;
+
+  const uvAttribute = chooseTemplateUvAttribute(geometry, options);
+  const uvCount = uvAttribute?.count || 0;
+  const indexArray = geometry?.index?.array || null;
+  const indexCount = indexArray ? indexArray.length : positionAttribute.count || 0;
+  if (indexCount < 3) return null;
+
+  const meshName = resolveMeshName(mesh, fallbackIndex);
+  const baseMaterial = mesh?.userData?.baseMaterial || mesh?.material;
+  const materialNames = getMaterialNames(baseMaterial);
+  const defaultMaterialName = materialNames[0] || "";
+  const groups = Array.isArray(geometry?.groups) ? geometry.groups : [];
+
+  const triangles = [];
+  const uvTriangles = [];
+  const uvTriangleToProxy = [];
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let drawOffset = 0; drawOffset + 2 < indexCount; drawOffset += 3) {
+    const i0 = indexArray ? indexArray[drawOffset] : drawOffset;
+    const i1 = indexArray ? indexArray[drawOffset + 1] : drawOffset + 1;
+    const i2 = indexArray ? indexArray[drawOffset + 2] : drawOffset + 2;
+
+    if (i0 >= positionAttribute.count || i1 >= positionAttribute.count || i2 >= positionAttribute.count) continue;
+
+    const p0 = readPositionAt(positionAttribute, i0);
+    const p1 = readPositionAt(positionAttribute, i1);
+    const p2 = readPositionAt(positionAttribute, i2);
+    if (!p0 || !p1 || !p2) continue;
+
+    const ax = p1[0] - p0[0];
+    const ay = p1[1] - p0[1];
+    const az = p1[2] - p0[2];
+    const bx = p2[0] - p0[0];
+    const by = p2[1] - p0[1];
+    const bz = p2[2] - p0[2];
+    const cx = ay * bz - az * by;
+    const cy = az * bx - ax * bz;
+    const cz = ax * by - ay * bx;
+    const twiceArea = Math.hypot(cx, cy, cz);
+    if (!Number.isFinite(twiceArea) || twiceArea <= POSITION_AREA_EPSILON) continue;
+
+    const normal = normalizeVec3(cx, cy, cz) || computeTriangleNormal(p0, p1, p2);
+    if (!normal) continue;
+
+    const materialIndex = findMaterialIndexForDrawOffset(groups, drawOffset);
+    const materialName = resolveMaterialNameFromIndex(baseMaterial, materialIndex) || defaultMaterialName;
+
+    let uvValues = null;
+    if (uvAttribute && i0 < uvCount && i1 < uvCount && i2 < uvCount) {
+      const uv0 = readUvAt(uvAttribute, i0);
+      const uv1 = readUvAt(uvAttribute, i1);
+      const uv2 = readUvAt(uvAttribute, i2);
+      if (uv0 && uv1 && uv2) {
+        const u0 = uv0[0];
+        const v0 = uv0[1];
+        const u1 = uv1[0];
+        const v1 = uv1[1];
+        const u2 = uv2[0];
+        const v2 = uv2[1];
+        const uvTwiceArea = (u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0);
+        const uvArea = Math.abs(uvTwiceArea) * 0.5;
+        if (Number.isFinite(uvArea) && uvArea > UV_AREA_EPSILON) {
+          uvValues = [u0, v0, u1, v1, u2, v2];
+        }
+      }
+    }
+
+    minX = Math.min(minX, p0[0], p1[0], p2[0]);
+    minY = Math.min(minY, p0[1], p1[1], p2[1]);
+    minZ = Math.min(minZ, p0[2], p1[2], p2[2]);
+    maxX = Math.max(maxX, p0[0], p1[0], p2[0]);
+    maxY = Math.max(maxY, p0[1], p1[1], p2[1]);
+    maxZ = Math.max(maxZ, p0[2], p1[2], p2[2]);
+
+    const proxyIndex = triangles.length;
+    triangles.push({
+      i0,
+      i1,
+      i2,
+      meshName,
+      materialIndex,
+      materialName,
+      normal,
+      positions: [
+        p0[0],
+        p0[1],
+        p0[2],
+        p1[0],
+        p1[1],
+        p1[2],
+        p2[0],
+        p2[1],
+        p2[2],
+      ],
+      uv: uvValues,
+      uvIslandId: UV_ISLAND_MISSING,
+    });
+
+    if (uvValues) {
+      uvTriangles.push({ i0, i1, i2 });
+      uvTriangleToProxy.push(proxyIndex);
+    }
+  }
+
+  if (triangles.length === 0) return null;
+
+  if (uvTriangles.length > 0) {
+    const uvComponents = buildTriangleComponents(uvTriangles, Boolean(indexArray));
+    uvComponents.forEach((component, componentIndex) => {
+      for (const uvTriangleIndex of component) {
+        const proxyIndex = uvTriangleToProxy[uvTriangleIndex];
+        if (!Number.isInteger(proxyIndex)) continue;
+        if (!triangles[proxyIndex]) continue;
+        triangles[proxyIndex].uvIslandId = componentIndex;
+      }
+    });
+  }
+
+  return {
+    meshName,
+    materialName: defaultMaterialName,
+    triangleCount: triangles.length,
+    bounds: {
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+    },
+    triangles,
+  };
+}
+
 /* ── Public API: Template Map ────────────────────────────────────── */
 
 export function buildYftTemplateMap({ object, modelPath = "", liveryTarget = "", windowTarget = "" }) {
@@ -553,15 +755,20 @@ export function buildYftTemplateMap({ object, modelPath = "", liveryTarget = "",
 export function buildYftTemplatePsdSource({ object, modelPath = "", preferUv2 = true }) {
   if (!object) return null;
 
-  let rawShells = [];
+  const rawShells = [];
+  const proxyMeshes = [];
   let meshCounter = 0;
 
   object.traverse((child) => {
     if (!child?.isMesh) return;
+
     const meshShells = extractMeshUvShells(child, meshCounter, { preferUv2 });
+    if (meshShells.length > 0) rawShells.push(...meshShells);
+
+    const proxyGeometry = extractMeshProxyGeometry(child, meshCounter, { preferUv2 });
+    if (proxyGeometry?.triangleCount) proxyMeshes.push(proxyGeometry);
+
     meshCounter += 1;
-    if (!meshShells.length) return;
-    rawShells.push(...meshShells);
   });
 
   if (rawShells.length === 0) return null;
@@ -576,6 +783,12 @@ export function buildYftTemplatePsdSource({ object, modelPath = "", preferUv2 = 
     const meshCompare = a.meshName.localeCompare(b.meshName);
     if (meshCompare !== 0) return meshCompare;
     return a.shellIndex - b.shellIndex;
+  });
+
+  proxyMeshes.sort((a, b) => {
+    const meshCompare = a.meshName.localeCompare(b.meshName);
+    if (meshCompare !== 0) return meshCompare;
+    return (a.materialName || "").localeCompare(b.materialName || "");
   });
 
   let minU = Infinity;
@@ -612,5 +825,7 @@ export function buildYftTemplatePsdSource({ object, modelPath = "", preferUv2 = 
     meshCount: shells.length,
     triangleCount,
     meshes: shells,
+    proxyMeshCount: proxyMeshes.length,
+    proxyMeshes,
   };
 }

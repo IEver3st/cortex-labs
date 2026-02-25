@@ -8635,6 +8635,7 @@ label {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
+
 }
 
 @media (max-width: 980px) {

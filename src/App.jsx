@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
-import { AlertTriangle, ArrowUpRight, Box, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Box, Boxes, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
 import { openPath } from "@tauri-apps/plugin-opener";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
@@ -202,6 +202,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [backgroundImageBlur, setBackgroundImageBlur] = useState(0);
   const [backgroundImageReloadToken, setBackgroundImageReloadToken] = useState(0);
   const [showWireframe, setShowWireframe] = useState(false);
+  const [showCageWireframe, setShowCageWireframe] = useState(false);
   const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
   const [lightAzimuth, setLightAzimuth] = useState(() => getInitialDefaults().lightAzimuth ?? 54);
   const [lightElevation, setLightElevation] = useState(() => getInitialDefaults().lightElevation ?? 46);
@@ -526,6 +527,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         backgroundImagePath,
         backgroundImageBlur,
         showWireframe,
+        showCageWireframe,
         lightIntensity,
         lightAzimuth,
         lightElevation,
@@ -807,6 +809,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       setBackgroundImageBlur(clampBackgroundImageBlur(state.backgroundImageBlur));
     }
     if (typeof state.showWireframe === "boolean") setShowWireframe(state.showWireframe);
+    if (typeof state.showCageWireframe === "boolean") setShowCageWireframe(state.showCageWireframe);
     if (typeof state.lightIntensity === "number") setLightIntensity(state.lightIntensity);
     if (typeof state.lightAzimuth === "number") setLightAzimuth(state.lightAzimuth);
     if (typeof state.lightElevation === "number") setLightElevation(state.lightElevation);
@@ -2808,6 +2811,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <Box className="w-3 h-3" />
                     Wire
                   </button>
+                  <button
+                    type="button"
+                    className={`panel-cam-action-btn ${showCageWireframe ? "is-active" : ""}`}
+                    onClick={() => setShowCageWireframe((prev) => !prev)}
+                    title={showCageWireframe ? "Disable cage wireframe" : "Enable cage wireframe"}
+                  >
+                    <Boxes className="w-3 h-3" />
+                    Cage
+                  </button>
                 </div>
                 <div>
                   <CyberLabel>Rotate Model</CyberLabel>
@@ -2913,6 +2925,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             lightElevation={lightElevation}
             glossiness={glossiness}
             showWireframe={showWireframe}
+            showCageWireframe={showCageWireframe}
             selectedSlot={dualSelectedSlot}
             gizmoVisible={dualGizmoVisible}
             showGrid={showGrid}
@@ -2953,6 +2966,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             windowTextureTarget={resolvedWindowTextureTarget}
             textureMode={textureMode}
             showWireframe={showWireframe}
+            showCageWireframe={showCageWireframe}
             wasdEnabled={cameraWASD}
             liveryExteriorOnly={(textureMode === "livery" || textureMode === "everything") && liveryExteriorOnly}
             lightIntensity={lightIntensity}

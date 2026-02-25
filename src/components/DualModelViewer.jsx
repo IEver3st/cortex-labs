@@ -13,6 +13,8 @@ import {
   normalizeLoadedMeshes,
   setupWasdControls,
   setupWheelWhileDragging,
+  buildCageOverlay,
+  disposeCageOverlay,
 } from "../lib/viewer-utils";
 
 export default function DualModelViewer({
@@ -39,6 +41,7 @@ export default function DualModelViewer({
   lightElevation = 46,
   glossiness = 0.5,
   showWireframe = false,
+  showCageWireframe = false,
   selectedSlot,
   gizmoVisible = true,
   showGrid = true,
@@ -101,6 +104,7 @@ export default function DualModelViewer({
   const initialPosBRef = useRef(initialPosB);
   const glossinessRef = useRef(glossiness);
   const showWireframeRef = useRef(showWireframe);
+  const showCageWireframeRef = useRef(showCageWireframe);
   const isActiveRef = useRef(isActive);
 
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
@@ -116,6 +120,7 @@ export default function DualModelViewer({
   useEffect(() => { textureModeRef.current = textureMode; }, [textureMode]);
   useEffect(() => { glossinessRef.current = glossiness; }, [glossiness]);
   useEffect(() => { showWireframeRef.current = showWireframe; }, [showWireframe]);
+  useEffect(() => { showCageWireframeRef.current = showCageWireframe; }, [showCageWireframe]);
   useEffect(() => {
     isActiveRef.current = isActive;
     if (isActive) requestRenderRef.current?.();
@@ -455,6 +460,18 @@ export default function DualModelViewer({
     applyGlossinessToObject(modelBRef.current);
     requestRender();
   }, [sceneReady, showWireframe, applyGlossinessToObject, requestRender]);
+
+  // Cage wireframe overlay for both dual-model slots
+  useEffect(() => {
+    if (!sceneReady || !sceneRef.current) return;
+    // Dispose first, then rebuild if enabled
+    disposeCageOverlay(sceneRef.current);
+    if (showCageWireframe) {
+      if (modelARef.current) buildCageOverlay(modelARef.current, sceneRef.current);
+      if (modelBRef.current) buildCageOverlay(modelBRef.current, sceneRef.current);
+    }
+    requestRender();
+  }, [sceneReady, showCageWireframe, modelAVersion, modelBVersion, requestRender]);
 
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;

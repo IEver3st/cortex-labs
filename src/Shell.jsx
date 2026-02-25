@@ -442,6 +442,39 @@ export default function Shell() {
   }, [hotkeys, openTab]);
 
   // Window controls
+  const isWindowDragGestureTarget = useCallback((target) => {
+    if (!(target instanceof Element)) return false;
+    if (target.closest('[data-tauri-drag-region="false"]')) return false;
+    if (target.closest(".shell-tab")) return false;
+    if (
+      target.closest(
+        "button, input, textarea, select, option, a, [role='button'], [role='menuitem'], [contenteditable='true']",
+      )
+    ) {
+      return false;
+    }
+    return true;
+  }, []);
+
+  const handleToolbarMouseDown = useCallback(async (event) => {
+    if (!isTauriRuntime || event.button !== 0) return;
+    if (!isWindowDragGestureTarget(event.target)) return;
+    try {
+      await getCurrentWindow().startDragging();
+    } catch {
+      // no-op: keep the UI responsive if dragging is unavailable
+    }
+  }, [isTauriRuntime, isWindowDragGestureTarget]);
+
+  const handleToolbarDoubleClick = useCallback(async (event) => {
+    if (!isTauriRuntime) return;
+    if (!isWindowDragGestureTarget(event.target)) return;
+    event.preventDefault();
+    const win = getCurrentWindow();
+    if (await win.isMaximized()) await win.unmaximize();
+    else await win.maximize();
+  }, [isTauriRuntime, isWindowDragGestureTarget]);
+
   const handleMinimize = async () => {
     if (!isTauriRuntime) return;
     await getCurrentWindow().minimize();
@@ -512,6 +545,8 @@ export default function Shell() {
           <motion.div
             className="shell-toolbar"
             data-tauri-drag-region
+            onMouseDown={handleToolbarMouseDown}
+            onDoubleClick={handleToolbarDoubleClick}
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}

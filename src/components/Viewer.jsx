@@ -25,6 +25,8 @@ import {
   normalizeLoadedMeshes,
   setupWasdControls,
   setupWheelWhileDragging,
+  buildCageOverlay,
+  disposeCageOverlay,
   loadTextureFromPath as loadTextureFromPathShared,
   loadPsdTexture,
   loadPdnTexture,
@@ -255,6 +257,7 @@ function ViewerComponent({
   textureMode = "everything",
   liveryExteriorOnly = false,
   showWireframe = false,
+  showCageWireframe = false,
   flipTextureY = true,
   wasdEnabled = false,
   showGrid = false,
@@ -363,6 +366,7 @@ function ViewerComponent({
       textureMode,
       glossiness,
       showWireframe,
+      showCageWireframe,
       materialConfig,
     };
     if (modelRef.current) {
@@ -378,6 +382,7 @@ function ViewerComponent({
     textureMode,
     glossiness,
     showWireframe,
+    showCageWireframe,
     materialType,
     materialLightIntensity,
     materialGlossiness,
@@ -904,6 +909,7 @@ function ViewerComponent({
         }
 
         if (modelRef.current) {
+          disposeCageOverlay(sceneRef.current);
           sceneRef.current.remove(modelRef.current);
           disposeObject(modelRef.current);
         }
@@ -1035,6 +1041,10 @@ function ViewerComponent({
           glossiness,
           showWireframe,
         );
+        // Rebuild cage overlay if it was enabled
+        if (materialStateRef.current.showCageWireframe) {
+          buildCageOverlay(object, sceneRef.current);
+        }
         requestRender();
       } catch (error) {
         const message =
@@ -1081,12 +1091,24 @@ function ViewerComponent({
     liveryExteriorOnly,
     textureMode,
     showWireframe,
+    showCageWireframe,
     materialType,
     materialLightIntensity,
     materialGlossiness,
     materialRoughness,
     materialClearcoat,
   ]);
+
+  // Cage wireframe overlay — builds/disposes EdgesGeometry + bounding-box cubes
+  useEffect(() => {
+    if (!sceneReady || !modelRef.current || !sceneRef.current) return;
+    if (showCageWireframe) {
+      buildCageOverlay(modelRef.current, sceneRef.current);
+    } else {
+      disposeCageOverlay(sceneRef.current);
+    }
+    requestRender();
+  }, [showCageWireframe, sceneReady]);
 
   useEffect(() => {
     let cancelled = false;

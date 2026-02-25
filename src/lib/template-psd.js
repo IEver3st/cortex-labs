@@ -6,6 +6,7 @@ const DEFAULT_SIZE = 2048;
 const MIN_SIZE = 256;
 const MAX_SIZE = 8192;
 const MIN_TRIANGLE_AREA_PIXELS = 0.005;
+const AUTO_TEMPLATE_FILL_COLOR = "rgb(201, 216, 238)";
 
 /* ── Utility ─────────────────────────────────────────────────────── */
 
@@ -42,265 +43,338 @@ function clamp01(value) {
   return Math.max(0, Math.min(1, value));
 }
 
-function resolveGradientAxis(bounds, axis = "diag") {
-  const minX = bounds.minX;
-  const minY = bounds.minY;
-  const maxX = Math.max(minX + 1, bounds.maxX);
-  const maxY = Math.max(minY + 1, bounds.maxY);
-  const midX = (minX + maxX) * 0.5;
-  const midY = (minY + maxY) * 0.5;
+const UV_EPSILON = 1e-8;
+const VERTEX_KEY_SCALE = 1e6;
+const CLEAN_AXIS_ALIGNMENT_THRESHOLD = 0.93;
+const SMALL_SHELL_MAX_TRIANGLES = 180;
+const SMALL_SHELL_MAX_ASPECT = 4.8;
+const SMALL_SHELL_MAX_DIM_RATIO = 96 / 2048;
+const SMALL_SHELL_INNER_BOX_RATIO = 0.16;
+const MIN_INTERIOR_EDGE_LENGTH_PX = 5;
 
-  switch (axis) {
-    case "x":
-      return [minX, midY, maxX, midY];
-    case "x-reverse":
-      return [maxX, midY, minX, midY];
-    case "y":
-      return [midX, minY, midX, maxY];
-    case "y-reverse":
-      return [midX, maxY, midX, minY];
-    case "diag-reverse":
-      return [maxX, minY, minX, maxY];
-    case "diag":
-    default:
-      return [minX, minY, maxX, maxY];
+
+/* ── Per-island palette + gradient helpers ───────────────────────── */
+
+const ISLAND_PALETTES = [
+  {
+    left: { h: 274, s: 0.58, v: 0.92 },
+    right: { h: 214, s: 0.56, v: 0.94 },
+  },
+  {
+    left: { h: 326, s: 0.64, v: 0.92 },
+    right: { h: 28, s: 0.64, v: 0.93 },
+  },
+  {
+    left: { h: 188, s: 0.69, v: 0.89 },
+    right: { h: 132, s: 0.62, v: 0.92 },
+  },
+  {
+    left: { h: 314, s: 0.67, v: 0.9 },
+    right: { h: 272, s: 0.66, v: 0.89 },
+  },
+];
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function stableHash64(value) {
+  const input = String(value ?? "");
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  const mask = 0xffffffffffffffffn;
+
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * prime) & mask;
   }
+
+  return hash;
 }
 
-function createGradientFromStops(ctx, bounds, axis, stops) {
-  const [x0, y0, x1, y1] = resolveGradientAxis(bounds, axis);
-  const gradient = ctx.createLinearGradient(x0, y0, x1, y1);
-  const safeStops = Array.isArray(stops) && stops.length > 0 ? stops : [{ t: 0, color: "#c9d8ee" }, { t: 1, color: "#8ccfd1" }];
-  safeStops.forEach((stop, index) => {
-    const t = clamp01(Number.isFinite(stop?.t) ? stop.t : index / Math.max(1, safeStops.length - 1));
-    gradient.addColorStop(t, stop?.color || "#c9d8ee");
-  });
-  return gradient;
+function hashSliceUnit(hash, shiftBits) {
+  const shifted = hash >> BigInt(shiftBits);
+  const sample = Number(shifted & 0xffffn);
+  return sample / 65535;
 }
 
-/* ── Color palette ───────────────────────────────────────────────── */
+function buildIslandKey(shell, shellIndex) {
+  const meshName = shell?.meshName || "mesh";
+  const shellName = shell?.shellName;
+  if (shellName && typeof shellName === "string") return shellName;
+  const localIndex = Number.isFinite(shell?.shellIndex) ? shell.shellIndex : shellIndex;
+  return `${meshName}::${localIndex}`;
+}
 
-const ROLE_PALETTE = {
-  bodyUpper: {
-    wire: "rgba(16, 20, 42, 0.52)",
-    primaryAxis: "x",
-    primaryStops: [
-      { t: 0, color: "#c48cf0" },
-      { t: 0.18, color: "#e0a0d8" },
-      { t: 0.44, color: "#f4b0c4" },
-      { t: 0.70, color: "#f6c4a8" },
-      { t: 0.90, color: "#f4d098" },
-      { t: 1, color: "#93f47b" },
-    ],
-    secondaryAxis: "y",
-    secondaryStops: [
-      { t: 0, color: "rgba(178, 219, 255, 0.28)" },
-      { t: 0.48, color: "rgba(255, 255, 255, 0.03)" },
-      { t: 1, color: "rgba(255, 200, 230, 0.24)" },
-    ],
-    secondaryAlpha: 0.55,
-  },
-  bodyLower: {
-    wire: "rgba(14, 20, 42, 0.50)",
-    primaryAxis: "x-reverse",
-    primaryStops: [
-      { t: 0, color: "#5c8ef4" },
-      { t: 0.10, color: "#48b8e8" },
-      { t: 0.34, color: "#38d4d8" },
-      { t: 0.58, color: "#2cccc0" },
-      { t: 0.82, color: "#40dcaa" },
-      { t: 1, color: "#7fee8e" },
-    ],
-    secondaryAxis: "y",
-    secondaryStops: [
-      { t: 0, color: "rgba(140, 210, 255, 0.22)" },
-      { t: 0.54, color: "rgba(255, 255, 255, 0.03)" },
-      { t: 1, color: "rgba(100, 248, 210, 0.22)" },
-    ],
-    secondaryAlpha: 0.50,
-  },
-  topPanel: {
-    wire: "rgba(16, 22, 48, 0.46)",
-    primaryAxis: "diag",
-    primaryStops: [
-      { t: 0, color: "#c2daff" },
-      { t: 0.45, color: "#c4c8fa" },
-      { t: 1, color: "#d6baf6" },
-    ],
-    secondaryAxis: "x",
-    secondaryStops: [
-      { t: 0, color: "rgba(120, 231, 217, 0.20)" },
-      { t: 1, color: "rgba(220, 170, 230, 0.18)" },
-    ],
-    secondaryAlpha: 0.45,
-  },
-  frontClip: {
-    wire: "rgba(16, 28, 38, 0.46)",
-    primaryAxis: "x",
-    primaryStops: [
-      { t: 0, color: "#c8f8a8" },
-      { t: 0.36, color: "#98f47c" },
-      { t: 0.72, color: "#6ce8b8" },
-      { t: 1, color: "#5ce0c4" },
-    ],
-    secondaryAxis: "diag",
-    secondaryStops: [
-      { t: 0, color: "rgba(255, 250, 210, 0.20)" },
-      { t: 1, color: "rgba(120, 244, 210, 0.18)" },
-    ],
-    secondaryAlpha: 0.55,
-  },
-  rearPanel: {
-    wire: "rgba(20, 16, 42, 0.52)",
-    primaryAxis: "x",
-    primaryStops: [
-      { t: 0, color: "#c458e8" },
-      { t: 0.40, color: "#d850d8" },
-      { t: 0.75, color: "#e44cc8" },
-      { t: 1, color: "#e060b8" },
-    ],
-    secondaryAxis: "diag-reverse",
-    secondaryStops: [
-      { t: 0, color: "rgba(180, 140, 255, 0.24)" },
-      { t: 1, color: "rgba(245, 120, 210, 0.22)" },
-    ],
-    secondaryAlpha: 0.50,
-  },
-  trim: {
-    wire: "rgba(18, 22, 44, 0.50)",
-    primaryAxis: "x",
-    primaryStops: [
-      { t: 0, color: "#9df57a" },
-      { t: 0.32, color: "#60dfcf" },
-      { t: 0.68, color: "#dca2e6" },
-      { t: 1, color: "#a56af1" },
-    ],
-    secondaryAxis: "y",
-    secondaryStops: [
-      { t: 0, color: "rgba(212, 230, 255, 0.20)" },
-      { t: 1, color: "rgba(250, 217, 236, 0.20)" },
-    ],
-    secondaryAlpha: 0.45,
-  },
-  accent: {
-    wire: "rgba(18, 24, 44, 0.46)",
-    primaryAxis: "diag",
-    primaryStops: [
-      { t: 0, color: "#a5eef4" },
-      { t: 0.38, color: "#6cd8d8" },
-      { t: 0.74, color: "#e0a7e8" },
-      { t: 1, color: "#b06af2" },
-    ],
-    secondaryAxis: "x",
-    secondaryStops: [
-      { t: 0, color: "rgba(152, 245, 123, 0.20)" },
-      { t: 1, color: "rgba(243, 169, 218, 0.20)" },
-    ],
-    secondaryAlpha: 0.42,
-  },
-};
+function hueLerp(h0, h1, t) {
+  const dh = (((h1 - h0) % 360) + 540) % 360 - 180;
+  return (h0 + dh * t + 360) % 360;
+}
 
-function deriveGlobalUvBounds(shells) {
+function hsvToRgb(h, s, v) {
+  const hue = ((h % 360) + 360) % 360;
+  const sat = clamp(s, 0, 1);
+  const val = clamp(v, 0, 1);
+
+  const c = val * sat;
+  const hp = hue / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const m = val - c;
+
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+
+  if (hp >= 0 && hp < 1) {
+    r1 = c;
+    g1 = x;
+  } else if (hp < 2) {
+    r1 = x;
+    g1 = c;
+  } else if (hp < 3) {
+    g1 = c;
+    b1 = x;
+  } else if (hp < 4) {
+    g1 = x;
+    b1 = c;
+  } else if (hp < 5) {
+    r1 = x;
+    b1 = c;
+  } else {
+    r1 = c;
+    b1 = x;
+  }
+
+  return {
+    r: Math.round((r1 + m) * 255),
+    g: Math.round((g1 + m) * 255),
+    b: Math.round((b1 + m) * 255),
+  };
+}
+
+function hsvToCss(h, s, v) {
+  const rgb = hsvToRgb(h, s, v);
+  return `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+}
+
+function getIslandPalette(shell, shellIndex) {
+  const islandKey = buildIslandKey(shell, shellIndex);
+  const hash = stableHash64(islandKey);
+  const paletteIndex = Number(hash % BigInt(ISLAND_PALETTES.length));
+  const base = ISLAND_PALETTES[paletteIndex];
+
+  const hueOffset = hashSliceUnit(hash, 8) * 16 - 8;
+  const satOffset = hashSliceUnit(hash, 24) * 0.06 - 0.03;
+  const valOffset = hashSliceUnit(hash, 40) * 0.04 - 0.02;
+
+  const left = {
+    h: (base.left.h + hueOffset + 360) % 360,
+    s: clamp(base.left.s + satOffset, 0.55, 0.75),
+    v: clamp(base.left.v + valOffset, 0.85, 0.95),
+  };
+  const right = {
+    h: (base.right.h + hueOffset + 360) % 360,
+    s: clamp(base.right.s + satOffset, 0.55, 0.75),
+    v: clamp(base.right.v + valOffset, 0.85, 0.95),
+  };
+
+  return { left, right };
+}
+
+function collectShellUvPoints(triangles) {
+  const points = [];
+  for (let i = 0; i + 5 < triangles.length; i += 6) {
+    points.push([triangles[i], triangles[i + 1]]);
+    points.push([triangles[i + 2], triangles[i + 3]]);
+    points.push([triangles[i + 4], triangles[i + 5]]);
+  }
+  return points;
+}
+
+function computeUvBounds(points) {
   let minU = Infinity;
   let minV = Infinity;
   let maxU = -Infinity;
   let maxV = -Infinity;
 
-  for (const shell of shells) {
-    const bounds = shell?.bounds;
-    if (!bounds) continue;
-    minU = Math.min(minU, bounds.minU);
-    minV = Math.min(minV, bounds.minV);
-    maxU = Math.max(maxU, bounds.maxU);
-    maxV = Math.max(maxV, bounds.maxV);
+  for (const [u, v] of points) {
+    minU = Math.min(minU, u);
+    minV = Math.min(minV, v);
+    maxU = Math.max(maxU, u);
+    maxV = Math.max(maxV, v);
   }
 
   if (!Number.isFinite(minU) || !Number.isFinite(minV) || !Number.isFinite(maxU) || !Number.isFinite(maxV)) {
-    return {
-      minU: 0,
-      minV: 0,
-      maxU: 1,
-      maxV: 1,
-      spanU: 1,
-      spanV: 1,
-    };
+    return { minU: 0, minV: 0, maxU: 1, maxV: 1, spanU: 1, spanV: 1 };
   }
 
-  const spanU = Math.max(1e-6, maxU - minU);
-  const spanV = Math.max(1e-6, maxV - minV);
-  return { minU, minV, maxU, maxV, spanU, spanV };
-}
-
-function normalizeShellBounds(bounds, globalBounds) {
-  const minX = (bounds.minU - globalBounds.minU) / globalBounds.spanU;
-  const maxX = (bounds.maxU - globalBounds.minU) / globalBounds.spanU;
-  const minY = (globalBounds.maxV - bounds.maxV) / globalBounds.spanV;
-  const maxY = (globalBounds.maxV - bounds.minV) / globalBounds.spanV;
-
-  const width = Math.max(1e-6, maxX - minX);
-  const height = Math.max(1e-6, maxY - minY);
-
   return {
-    minX,
-    maxX,
-    minY,
-    maxY,
-    width,
-    height,
-    area: width * height,
-    centerX: (minX + maxX) * 0.5,
-    centerY: (minY + maxY) * 0.5,
+    minU,
+    minV,
+    maxU,
+    maxV,
+    spanU: Math.max(UV_EPSILON, maxU - minU),
+    spanV: Math.max(UV_EPSILON, maxV - minV),
   };
 }
 
-function assignShellRoles(shells) {
-  if (!Array.isArray(shells) || shells.length === 0) return [];
-
-  const globalBounds = deriveGlobalUvBounds(shells);
-  const shellStats = shells.map((shell, index) => ({
-    index,
-    ...normalizeShellBounds(shell.bounds || globalBounds, globalBounds),
-  }));
-
-  const roles = new Array(shells.length).fill("accent");
-
-  const sidePanels = shellStats
-    .filter((entry) => entry.width >= 0.35 && entry.area >= 0.035)
-    .sort((a, b) => b.area - a.area)
-    .slice(0, 2)
-    .sort((a, b) => a.centerY - b.centerY);
-
-  if (sidePanels[0]) roles[sidePanels[0].index] = "bodyUpper";
-  if (sidePanels[1]) roles[sidePanels[1].index] = "bodyLower";
-
-  const remainingByArea = shellStats
-    .filter((entry) => roles[entry.index] === "accent")
-    .sort((a, b) => b.area - a.area);
-
-  for (const entry of remainingByArea) {
-    if (roles[entry.index] !== "accent") continue;
-    if (entry.centerY < 0.28 && entry.area >= 0.025) {
-      roles[entry.index] = "topPanel";
-      continue;
-    }
-    if (entry.centerX < 0.5 && entry.centerY < 0.5 && entry.area >= 0.015) {
-      roles[entry.index] = "frontClip";
-      continue;
-    }
-    if (entry.centerX >= 0.5 && entry.centerY < 0.52 && entry.area >= 0.015) {
-      roles[entry.index] = "rearPanel";
-      continue;
-    }
-    if (entry.width >= 0.2 && entry.height <= 0.11) {
-      roles[entry.index] = "trim";
-    }
-  }
-
-  return roles;
+function normalizeLocalUvPoint(u, v, bounds) {
+  return {
+    uL: (u - bounds.minU) / bounds.spanU,
+    vL: (v - bounds.minV) / bounds.spanV,
+  };
 }
 
-function getMeshPalette(role) {
-  return ROLE_PALETTE[role] || ROLE_PALETTE.accent;
+function computePrincipalAxis(points) {
+  if (!Array.isArray(points) || points.length < 2) return null;
+
+  let meanU = 0;
+  let meanV = 0;
+  for (const [u, v] of points) {
+    meanU += u;
+    meanV += v;
+  }
+  meanU /= points.length;
+  meanV /= points.length;
+
+  let covUU = 0;
+  let covUV = 0;
+  let covVV = 0;
+  for (const [u, v] of points) {
+    const du = u - meanU;
+    const dv = v - meanV;
+    covUU += du * du;
+    covUV += du * dv;
+    covVV += dv * dv;
+  }
+
+  covUU /= Math.max(1, points.length);
+  covUV /= Math.max(1, points.length);
+  covVV /= Math.max(1, points.length);
+
+  const trace = covUU + covVV;
+  const det = covUU * covVV - covUV * covUV;
+  const disc = Math.max(0, trace * trace - 4 * det);
+  const lambda = (trace + Math.sqrt(disc)) * 0.5;
+
+  let axisU = 0;
+  let axisV = 0;
+  if (Math.abs(covUV) > UV_EPSILON) {
+    axisU = lambda - covVV;
+    axisV = covUV;
+  } else if (covUU >= covVV) {
+    axisU = 1;
+    axisV = 0;
+  } else {
+    axisU = 0;
+    axisV = 1;
+  }
+
+  const axisLength = Math.hypot(axisU, axisV);
+  if (!Number.isFinite(axisLength) || axisLength < UV_EPSILON) return null;
+
+  axisU /= axisLength;
+  axisV /= axisLength;
+
+  if (Math.abs(axisU) >= Math.abs(axisV)) {
+    if (axisU < 0) {
+      axisU *= -1;
+      axisV *= -1;
+    }
+  } else if (axisV < 0) {
+    axisU *= -1;
+    axisV *= -1;
+  }
+
+  return [axisU, axisV];
+}
+
+function buildIslandGradient(ctx, shell, shellIndex, triangles, mapper) {
+  const uvPoints = collectShellUvPoints(triangles);
+  const uvBounds = computeUvBounds(uvPoints);
+  if (uvPoints.length === 0) {
+    return "rgb(201, 216, 238)";
+  }
+
+  let sumU = 0;
+  let sumV = 0;
+  let localMinU = Infinity;
+  let localMinV = Infinity;
+  let localMaxU = -Infinity;
+  let localMaxV = -Infinity;
+
+  for (const [u, v] of uvPoints) {
+    sumU += u;
+    sumV += v;
+    const local = normalizeLocalUvPoint(u, v, uvBounds);
+    localMinU = Math.min(localMinU, local.uL);
+    localMinV = Math.min(localMinV, local.vL);
+    localMaxU = Math.max(localMaxU, local.uL);
+    localMaxV = Math.max(localMaxV, local.vL);
+  }
+
+  const centerU = sumU / uvPoints.length;
+  const centerV = sumV / uvPoints.length;
+
+  let axis = computePrincipalAxis(uvPoints);
+  if (!axis) {
+    const localSpanU = Math.max(UV_EPSILON, localMaxU - localMinU);
+    const localSpanV = Math.max(UV_EPSILON, localMaxV - localMinV);
+    axis = localSpanU >= localSpanV ? [1, 0] : [0, 1];
+  }
+
+  const axisPxRaw = [axis[0], -axis[1]];
+  const axisPxLength = Math.hypot(axisPxRaw[0], axisPxRaw[1]);
+  const axisPx = axisPxLength > UV_EPSILON
+    ? [axisPxRaw[0] / axisPxLength, axisPxRaw[1] / axisPxLength]
+    : [1, 0];
+
+  const [centerX, centerY] = mapper.toPoint(shellIndex, centerU, centerV);
+
+  let minProj = Infinity;
+  let maxProj = -Infinity;
+  for (const [u, v] of uvPoints) {
+    const [px, py] = mapper.toPoint(shellIndex, u, v);
+    const projection = (px - centerX) * axisPx[0] + (py - centerY) * axisPx[1];
+    minProj = Math.min(minProj, projection);
+    maxProj = Math.max(maxProj, projection);
+  }
+
+  if (!Number.isFinite(minProj) || !Number.isFinite(maxProj) || maxProj - minProj < 1) {
+    const horizontal = uvBounds.spanU >= uvBounds.spanV;
+    const shellBounds = mapper.mapBounds(shellIndex);
+    const x0 = shellBounds.minX;
+    const x1 = horizontal ? shellBounds.maxX : shellBounds.minX;
+    const y0 = horizontal ? shellBounds.minY : shellBounds.maxY;
+    const y1 = shellBounds.minY;
+
+    const fallbackPalette = getIslandPalette(shell, shellIndex);
+    const fallbackGradient = ctx.createLinearGradient(x0, y0, x1, y1);
+    fallbackGradient.addColorStop(0, hsvToCss(fallbackPalette.left.h, fallbackPalette.left.s, fallbackPalette.left.v));
+    fallbackGradient.addColorStop(1, hsvToCss(fallbackPalette.right.h, fallbackPalette.right.s, fallbackPalette.right.v));
+    return fallbackGradient;
+  }
+
+  const startX = centerX + axisPx[0] * minProj;
+  const startY = centerY + axisPx[1] * minProj;
+  const endX = centerX + axisPx[0] * maxProj;
+  const endY = centerY + axisPx[1] * maxProj;
+
+  const palette = getIslandPalette(shell, shellIndex);
+
+  const gradient = ctx.createLinearGradient(startX, startY, endX, endY);
+  gradient.addColorStop(0, hsvToCss(palette.left.h, palette.left.s, palette.left.v));
+  gradient.addColorStop(
+    0.5,
+    hsvToCss(
+      hueLerp(palette.left.h, palette.right.h, 0.5),
+      palette.left.s + (palette.right.s - palette.left.s) * 0.5,
+      palette.left.v + (palette.right.v - palette.left.v) * 0.5,
+    ),
+  );
+  gradient.addColorStop(1, hsvToCss(palette.right.h, palette.right.s, palette.right.v));
+
+  return gradient;
 }
 
 /* ── Target scoring & selection ──────────────────────────────────── */
@@ -374,6 +448,7 @@ function selectTemplateMeshes(templateMap, templatePsdSource, options = {}) {
   const filtered = meshes.filter((mesh) => meshNames.has(mesh.meshName));
   return filtered.length > 0 ? filtered : meshes;
 }
+
 
 /* ── MaxRects bin packing ────────────────────────────────────────── */
 
@@ -664,42 +739,389 @@ function paintMeshFillLayer(canvas, shells, mapper) {
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
 
-  const shellRoles = assignShellRoles(shells);
-
   shells.forEach((shell, index) => {
     const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
     if (triangles.length < 6) return;
 
-    const role = shellRoles[index] || "accent";
-    const palette = getMeshPalette(role);
-    const shellBounds = mapper.mapBounds(index);
-
-    ctx.fillStyle = createGradientFromStops(
-      ctx,
-      shellBounds,
-      palette.primaryAxis || "diag",
-      palette.primaryStops,
-    );
+    ctx.fillStyle = AUTO_TEMPLATE_FILL_COLOR;
     fillShellTriangles(ctx, triangles, mapper, index, 0);
-
-    if (Array.isArray(palette.secondaryStops) && palette.secondaryStops.length > 0) {
-      ctx.save();
-      ctx.globalCompositeOperation = "screen";
-      ctx.globalAlpha = clamp01(
-        Number.isFinite(palette.secondaryAlpha) ? palette.secondaryAlpha : 0.5,
-      );
-      ctx.fillStyle = createGradientFromStops(
-        ctx,
-        shellBounds,
-        palette.secondaryAxis || "y",
-        palette.secondaryStops,
-      );
-      fillShellTriangles(ctx, triangles, mapper, index, 0);
-      ctx.restore();
-    }
   });
 
   return canvas;
+}
+
+function quantizeUvKey(u, v) {
+  return `${Math.round(u * VERTEX_KEY_SCALE)},${Math.round(v * VERTEX_KEY_SCALE)}`;
+}
+
+function extractShellTopology(triangles) {
+  const vertices = [];
+  const vertexLookup = new Map();
+  const edgesByKey = new Map();
+  let triangleCount = 0;
+
+  const getVertexId = (u, v) => {
+    const key = quantizeUvKey(u, v);
+    const existing = vertexLookup.get(key);
+    if (Number.isInteger(existing)) return existing;
+    const id = vertices.length;
+    vertices.push([u, v]);
+    vertexLookup.set(key, id);
+    return id;
+  };
+
+  const addEdge = (a, b) => {
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a === b) return;
+    const low = Math.min(a, b);
+    const high = Math.max(a, b);
+    const key = `${low}:${high}`;
+    const existing = edgesByKey.get(key);
+    if (existing) {
+      existing.count += 1;
+      return;
+    }
+
+    const va = vertices[low];
+    const vb = vertices[high];
+    if (!va || !vb) return;
+
+    edgesByKey.set(key, {
+      a: low,
+      b: high,
+      count: 1,
+      u0: va[0],
+      v0: va[1],
+      u1: vb[0],
+      v1: vb[1],
+    });
+  };
+
+  for (let i = 0; i + 5 < triangles.length; i += 6) {
+    const u0 = triangles[i];
+    const v0 = triangles[i + 1];
+    const u1 = triangles[i + 2];
+    const v1 = triangles[i + 3];
+    const u2 = triangles[i + 4];
+    const v2 = triangles[i + 5];
+
+    if (![u0, v0, u1, v1, u2, v2].every((value) => Number.isFinite(value))) {
+      continue;
+    }
+
+    const a = getVertexId(u0, v0);
+    const b = getVertexId(u1, v1);
+    const c = getVertexId(u2, v2);
+
+    triangleCount += 1;
+    addEdge(a, b);
+    addEdge(b, c);
+    addEdge(c, a);
+  }
+
+  return {
+    triangleCount,
+    vertices,
+    edges: [...edgesByKey.values()],
+  };
+}
+
+function appendSegment(segments, u0, v0, u1, v1) {
+  if (![u0, v0, u1, v1].every((value) => Number.isFinite(value))) return;
+  segments.push(u0, v0, u1, v1);
+}
+
+function appendLoopSegments(segments, loopPoints) {
+  if (!Array.isArray(loopPoints) || loopPoints.length < 2) return;
+  for (let i = 0; i < loopPoints.length; i += 1) {
+    const current = loopPoints[i];
+    const next = loopPoints[(i + 1) % loopPoints.length];
+    if (!current || !next) continue;
+    appendSegment(segments, current[0], current[1], next[0], next[1]);
+  }
+}
+
+function normalizeDirection(u0, v0, u1, v1) {
+  const dx = u1 - u0;
+  const dy = v1 - v0;
+  const length = Math.hypot(dx, dy);
+  if (!Number.isFinite(length) || length <= UV_EPSILON) return null;
+  return { dx: dx / length, dy: dy / length, length };
+}
+
+function dot2(ax, ay, bx, by) {
+  return ax * bx + ay * by;
+}
+
+function buildOrientedBoxSegments(points, principalAxis) {
+  if (!Array.isArray(points) || points.length < 2) return [];
+
+  let centerU = 0;
+  let centerV = 0;
+  for (const [u, v] of points) {
+    centerU += u;
+    centerV += v;
+  }
+  centerU /= points.length;
+  centerV /= points.length;
+
+  const axis = principalAxis || [1, 0];
+  const axisU = [axis[0], axis[1]];
+  const axisV = [-axisU[1], axisU[0]];
+
+  let minProjU = Infinity;
+  let minProjV = Infinity;
+  let maxProjU = -Infinity;
+  let maxProjV = -Infinity;
+
+  for (const [u, v] of points) {
+    const du = u - centerU;
+    const dv = v - centerV;
+    const projU = dot2(du, dv, axisU[0], axisU[1]);
+    const projV = dot2(du, dv, axisV[0], axisV[1]);
+    minProjU = Math.min(minProjU, projU);
+    minProjV = Math.min(minProjV, projV);
+    maxProjU = Math.max(maxProjU, projU);
+    maxProjV = Math.max(maxProjV, projV);
+  }
+
+  if (![minProjU, minProjV, maxProjU, maxProjV].every((value) => Number.isFinite(value))) {
+    return [];
+  }
+
+  const spanU = maxProjU - minProjU;
+  const spanV = maxProjV - minProjV;
+  if (spanU <= UV_EPSILON || spanV <= UV_EPSILON) return [];
+
+  const toWorld = (projU, projV) => [
+    centerU + axisU[0] * projU + axisV[0] * projV,
+    centerV + axisU[1] * projU + axisV[1] * projV,
+  ];
+
+  const outerLoop = [
+    toWorld(minProjU, minProjV),
+    toWorld(maxProjU, minProjV),
+    toWorld(maxProjU, maxProjV),
+    toWorld(minProjU, maxProjV),
+  ];
+
+  const segments = [];
+  appendLoopSegments(segments, outerLoop);
+
+  const insetU = spanU * SMALL_SHELL_INNER_BOX_RATIO;
+  const insetV = spanV * SMALL_SHELL_INNER_BOX_RATIO;
+  const innerMinU = minProjU + insetU;
+  const innerMaxU = maxProjU - insetU;
+  const innerMinV = minProjV + insetV;
+  const innerMaxV = maxProjV - insetV;
+
+  if (innerMaxU - innerMinU > UV_EPSILON && innerMaxV - innerMinV > UV_EPSILON) {
+    const innerLoop = [
+      toWorld(innerMinU, innerMinV),
+      toWorld(innerMaxU, innerMinV),
+      toWorld(innerMaxU, innerMaxV),
+      toWorld(innerMinU, innerMaxV),
+    ];
+
+    appendLoopSegments(segments, innerLoop);
+
+    for (let i = 0; i < outerLoop.length; i += 1) {
+      appendSegment(
+        segments,
+        outerLoop[i][0],
+        outerLoop[i][1],
+        innerLoop[i][0],
+        innerLoop[i][1],
+      );
+    }
+  }
+
+  return segments;
+}
+
+/**
+ * Reconstruct quad-cage wireframe from a triangulated UV shell.
+ *
+ * Vehicle .yft meshes are originally quad SubD cages that get
+ * triangulated for rendering.  Each original quad becomes two
+ * triangles sharing a diagonal edge.  This function greedily pairs
+ * adjacent triangles back into quads and removes the diagonal,
+ * keeping only the quad perimeter edges — producing the clean,
+ * boxy wireframe expected by livery artists.
+ *
+ * Algorithm:
+ *  1. Build vertex + triangle lists from the flat UV array.
+ *  2. Build edge → triangle adjacency.
+ *  3. For every interior edge shared by exactly 2 triangles,
+ *     evaluate the quad they would form (convexity + aspect).
+ *  4. Greedily match best-quality pairs first; mark shared edge
+ *     as a diagonal to be hidden.
+ *  5. Emit all non-diagonal edges as line segments.
+ */
+function buildCleanWireSegments(shell, size) {
+  const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
+  if (triangles.length < 6) return [];
+
+  const pixelScale = Math.max(1, size - 1);
+
+  /* ── 1.  Parse triangles into indexed vertex / face lists ────── */
+  const vertices = [];
+  const vertexLookup = new Map();
+  const triList = []; // [[vId0, vId1, vId2], …]
+
+  const getVertexId = (u, v) => {
+    const key = quantizeUvKey(u, v);
+    const existing = vertexLookup.get(key);
+    if (Number.isInteger(existing)) return existing;
+    const id = vertices.length;
+    vertices.push([u, v]);
+    vertexLookup.set(key, id);
+    return id;
+  };
+
+  for (let i = 0; i + 5 < triangles.length; i += 6) {
+    const u0 = triangles[i];
+    const v0 = triangles[i + 1];
+    const u1 = triangles[i + 2];
+    const v1 = triangles[i + 3];
+    const u2 = triangles[i + 4];
+    const v2 = triangles[i + 5];
+    if (![u0, v0, u1, v1, u2, v2].every((val) => Number.isFinite(val))) continue;
+    const a = getVertexId(u0, v0);
+    const b = getVertexId(u1, v1);
+    const c = getVertexId(u2, v2);
+    if (a === b || b === c || a === c) continue;
+    triList.push([a, b, c]);
+  }
+
+  if (triList.length === 0) return [];
+  if (vertices.length < 3) {
+    const principalAxis = computePrincipalAxis(vertices) || [1, 0];
+    return buildOrientedBoxSegments(vertices, principalAxis);
+  }
+
+  /* Degenerate shell — fall back to oriented bounding box */
+  if (triList.length <= 2) {
+    const principalAxis = computePrincipalAxis(vertices) || [1, 0];
+    return buildOrientedBoxSegments(vertices, principalAxis);
+  }
+
+  /* ── 2.  Build edge → triangle adjacency ─────────────────────── */
+  const makeEdgeKey = (a, b) => {
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    return (lo << 20) | hi; // safe for meshes with < ~1 M unique verts
+  };
+
+  const edgeTriMap = new Map();   // edgeKey → { lo, hi, tris: [triIdx…] }
+
+  for (let ti = 0; ti < triList.length; ti += 1) {
+    const [a, b, c] = triList[ti];
+    for (const [p, q] of [[a, b], [b, c], [c, a]]) {
+      const key = makeEdgeKey(p, q);
+      let entry = edgeTriMap.get(key);
+      if (!entry) {
+        entry = { lo: Math.min(p, q), hi: Math.max(p, q), tris: [] };
+        edgeTriMap.set(key, entry);
+      }
+      entry.tris.push(ti);
+    }
+  }
+
+  /* ── 3.  Score candidate quad pairs ──────────────────────────── */
+  const candidates = [];
+
+  for (const edge of edgeTriMap.values()) {
+    if (edge.tris.length !== 2) continue;
+    const [ti0, ti1] = edge.tris;
+    const tri0 = triList[ti0];
+    const tri1 = triList[ti1];
+
+    const lo = edge.lo;
+    const hi = edge.hi;
+    const opp0 = tri0.find((v) => v !== lo && v !== hi);
+    const opp1 = tri1.find((v) => v !== lo && v !== hi);
+    if (opp0 === undefined || opp1 === undefined || opp0 === opp1) continue;
+
+    /* Quad vertex ring: opp0 → lo → opp1 → hi */
+    const qp = [vertices[opp0], vertices[lo], vertices[opp1], vertices[hi]];
+
+    /* Convexity — count cross-product signs around the ring */
+    let positiveCount = 0;
+    for (let i = 0; i < 4; i += 1) {
+      const prev = qp[(i + 3) & 3];
+      const curr = qp[i];
+      const next = qp[(i + 1) & 3];
+      const cross =
+        (curr[0] - prev[0]) * (next[1] - curr[1]) -
+        (curr[1] - prev[1]) * (next[0] - curr[0]);
+      if (cross > 0) positiveCount += 1;
+    }
+    const sameSignCount = Math.max(positiveCount, 4 - positiveCount);
+    if (sameSignCount < 3) continue; // reject badly non-convex
+
+    /* Side-length regularity */
+    const s0 = Math.hypot(qp[1][0] - qp[0][0], qp[1][1] - qp[0][1]);
+    const s1 = Math.hypot(qp[2][0] - qp[1][0], qp[2][1] - qp[1][1]);
+    const s2 = Math.hypot(qp[3][0] - qp[2][0], qp[3][1] - qp[2][1]);
+    const s3 = Math.hypot(qp[0][0] - qp[3][0], qp[0][1] - qp[3][1]);
+    const maxSide = Math.max(s0, s1, s2, s3);
+    const minSide = Math.min(s0, s1, s2, s3);
+    const sideRatio = minSide / Math.max(maxSide, UV_EPSILON);
+
+    const quality =
+      (sameSignCount === 4 ? 1.0 : 0.5) * (0.3 + 0.7 * sideRatio);
+
+    candidates.push({ key: makeEdgeKey(lo, hi), ti0, ti1, quality });
+  }
+
+  /* Best-quality pairs first for greedy matching */
+  candidates.sort((a, b) => b.quality - a.quality);
+
+  /* ── 4.  Greedy triangle → quad matching ─────────────────────── */
+  const matchedTri = new Set();
+  const diagonalEdges = new Set();
+
+  for (const cand of candidates) {
+    if (matchedTri.has(cand.ti0) || matchedTri.has(cand.ti1)) continue;
+    matchedTri.add(cand.ti0);
+    matchedTri.add(cand.ti1);
+    diagonalEdges.add(cand.key);
+  }
+
+  /* ── 5.  Emit all non-diagonal edges ─────────────────────────── */
+  const segments = [];
+
+  for (const edge of edgeTriMap.values()) {
+    const key = makeEdgeKey(edge.lo, edge.hi);
+    if (diagonalEdges.has(key)) continue;
+
+    const va = vertices[edge.lo];
+    const vb = vertices[edge.hi];
+    if (!va || !vb) continue;
+
+    /* Skip sub-pixel edges */
+    const lengthPx = Math.hypot(
+      (vb[0] - va[0]) * pixelScale,
+      (vb[1] - va[1]) * pixelScale,
+    );
+    if (lengthPx < 0.5) continue;
+
+    appendSegment(segments, va[0], va[1], vb[0], vb[1]);
+  }
+
+  if (segments.length >= 4) return segments;
+
+  /* Fallback — oriented bounding box for degenerate shells */
+  const principalAxis = computePrincipalAxis(vertices) || [1, 0];
+  return buildOrientedBoxSegments(vertices, principalAxis);
+}
+
+function buildRenderShellsWithCleanWire(shells, size) {
+  if (!Array.isArray(shells)) return [];
+  return shells.map((shell) => ({
+    ...shell,
+    wireSegments: buildCleanWireSegments(shell, size),
+  }));
 }
 
 function paintWireframeLayer(canvas, shells, mapper) {
@@ -707,41 +1129,56 @@ function paintWireframeLayer(canvas, shells, mapper) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(16, 20, 42, 0.52)";
 
-  const shellRoles = assignShellRoles(shells);
   const baseWidth = Math.max(0.52, canvas.width * 0.00042);
 
   shells.forEach((shell, index) => {
-    const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
-    if (triangles.length < 6) return;
-
-    const role = shellRoles[index] || "accent";
-    const palette = getMeshPalette(role);
-    ctx.strokeStyle = palette.wire;
+    const shellRects = Array.isArray(shell?.rectangles) ? shell.rectangles : [];
+    const shellSegments = Array.isArray(shell?.wireSegments) ? shell.wireSegments : [];
+    if (shellRects.length === 0 && shellSegments.length < 4) return;
 
     const bounds = mapper.mapBounds(index);
     const shellSize = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
     ctx.lineWidth = shellSize < 56 ? baseWidth * 1.28 : baseWidth;
 
-    for (let i = 0; i + 5 < triangles.length; i += 6) {
-      const [x0, y0] = mapper.toPoint(index, triangles[i], triangles[i + 1]);
-      const [x1, y1] = mapper.toPoint(index, triangles[i + 2], triangles[i + 3]);
-      const [x2, y2] = mapper.toPoint(index, triangles[i + 4], triangles[i + 5]);
+    for (const rect of shellRects) {
+      const [ax, ay] = mapper.toPoint(index, rect.minU, rect.minV);
+      const [bx, by] = mapper.toPoint(index, rect.maxU, rect.maxV);
+      const minX = Math.min(ax, bx);
+      const maxX = Math.max(ax, bx);
+      const minY = Math.min(ay, by);
+      const maxY = Math.max(ay, by);
 
-      const area = Math.abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)) * 0.5;
-      if (!Number.isFinite(area) || area < MIN_TRIANGLE_AREA_PIXELS) continue;
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+        continue;
+      }
+
+      const width = Math.max(0, maxX - minX);
+      const height = Math.max(0, maxY - minY);
+      if (width < 0.25 || height < 0.25) continue;
+
+      ctx.strokeRect(minX, minY, width, height);
+    }
+
+    for (let i = 0; i + 3 < shellSegments.length; i += 4) {
+      const [x0, y0] = mapper.toPoint(index, shellSegments[i], shellSegments[i + 1]);
+      const [x1, y1] = mapper.toPoint(index, shellSegments[i + 2], shellSegments[i + 3]);
+
+      if (![x0, y0, x1, y1].every((value) => Number.isFinite(value))) continue;
+      const length = Math.hypot(x1 - x0, y1 - y0);
+      if (length < 0.25) continue;
 
       ctx.beginPath();
       ctx.moveTo(x0, y0);
       ctx.lineTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.closePath();
       ctx.stroke();
     }
   });
 
   return canvas;
 }
+
 
 function paintAnnotationLayer(canvas, modelName, targetCount, meshCount) {
   const ctx = canvas.getContext("2d");
@@ -973,15 +1410,18 @@ export function buildAutoTemplatePsd(templateMap, options = {}) {
     throw new Error("Template UV source has no eligible shell geometry.");
   }
 
-  const mapper = createShellMapper(size, selectedMeshes);
+  const renderMeshes = buildRenderShellsWithCleanWire(selectedMeshes, size);
+
+
+  const mapper = createShellMapper(size, renderMeshes);
   if (!mapper) {
     throw new Error("Failed to layout UV shells for template export.");
   }
 
   const backgroundCanvas = paintBackgroundLayer(createCanvas(size));
-  const fillCanvas = paintMeshFillLayer(createCanvas(size), selectedMeshes, mapper);
-  const wireCanvas = paintWireframeLayer(createCanvas(size), selectedMeshes, mapper);
-  const annotationCanvas = paintAnnotationLayer(createCanvas(size), modelName, targetCount, selectedMeshes.length);
+  const fillCanvas = paintMeshFillLayer(createCanvas(size), renderMeshes, mapper);
+  const wireCanvas = paintWireframeLayer(createCanvas(size), renderMeshes, mapper);
+  const annotationCanvas = paintAnnotationLayer(createCanvas(size), modelName, targetCount, renderMeshes.length);
   const plateCanvas = paintLicencePlateLayer(createCanvas(size));
   const swatchCanvas = paintColorSwatchLayer(createCanvas(size), templateMap);
 
@@ -989,6 +1429,7 @@ export function buildAutoTemplatePsd(templateMap, options = {}) {
     { name: "_BG_BLACK", canvas: backgroundCanvas },
     { name: "_UV_FILL", canvas: fillCanvas },
     { name: "_UV_WIREFRAME", canvas: wireCanvas },
+
     { name: "_ANNOTATIONS", canvas: annotationCanvas, hidden: true },
     { name: "_LICENCE_PLATES", canvas: plateCanvas, hidden: true },
     { name: "_COLOR_REFS", canvas: swatchCanvas, hidden: true },

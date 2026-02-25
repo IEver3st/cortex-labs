@@ -32,16 +32,6 @@ function getFileLabel(path, fallback = "") {
   return parts[parts.length - 1] || fallback;
 }
 
-function sanitizeStem(value) {
-  if (!value) return "template";
-  const stem = value
-    .toString()
-    .replace(/\.[^.]+$/, "")
-    .replace(/[^a-zA-Z0-9_-]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return stem || "template";
-}
-
 export default function TemplateGenerationPage({
   workspaceState,
   onStateChange,
@@ -59,6 +49,8 @@ export default function TemplateGenerationPage({
     workspaceState?.outputFolder || getDefaultOutputFolder(),
   );
   const [exportSize, setExportSize] = useState(workspaceState?.exportSize || 2048);
+  const [exteriorOnly, setExteriorOnly] = useState(Boolean(workspaceState?.exteriorOnly));
+
   const [templateMap, setTemplateMap] = useState(null);
   const [templateMapError, setTemplateMapError] = useState("");
   const [templatePsdSource, setTemplatePsdSource] = useState(null);
@@ -87,13 +79,20 @@ export default function TemplateGenerationPage({
         modelPath,
         outputFolder,
         exportSize,
+        exteriorOnly,
       });
     }, 140);
 
     return () => {
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     };
-  }, [modelPath, outputFolder, exportSize, onStateChange]);
+  }, [
+    modelPath,
+    outputFolder,
+    exportSize,
+    exteriorOnly,
+    onStateChange,
+  ]);
 
   const clearGeneratedState = useCallback(() => {
     setTemplateMap(null);
@@ -273,7 +272,6 @@ export default function TemplateGenerationPage({
         : modelPath
           ? "Analyzing UV shell geometry..."
           : "Load a .yft model to begin.";
-
   return (
     <div className="tg-root">
       {isActive && contextBarTarget &&
@@ -319,6 +317,16 @@ export default function TemplateGenerationPage({
               <span className="tg-ctx-value">{targetCount}</span>
               <span className="ctx-bar-group-label">Layers</span>
               <span className="tg-ctx-value">{layerCount}</span>
+              <div className="ctx-bar-sep" />
+              <button
+                type="button"
+                className={`ctx-bar-btn ${exteriorOnly ? "ctx-bar-action" : ""}`}
+                onClick={() => setExteriorOnly((value) => !value)}
+                aria-pressed={exteriorOnly}
+                title="Show only exterior bodyshell geometry"
+              >
+                Exterior Only
+              </button>
             </div>
 
             <div className="ctx-bar-right">
@@ -371,6 +379,7 @@ export default function TemplateGenerationPage({
                 glossiness={0.5}
                 showGrid={false}
                 showWireframe={false}
+                liveryExteriorOnly={exteriorOnly}
                 wasdEnabled={false}
                 isActive={isActive}
                 includeTemplateGeometry

@@ -366,6 +366,130 @@ export function createFloorGrid() {
   return grid;
 }
 
+// ---------------------------------------------------------------------------
+// Cage Wireframe Overlay
+// ---------------------------------------------------------------------------
+// Crease angle (degrees) for EdgesGeometry — edges between faces whose dihedral
+// angle is less than this are discarded (removes internal triangle diagonals).
+const CAGE_EDGE_CREASE_ANGLE = 15;
+const CAGE_EDGE_COLOR = 0x3dbaa3; // teal — matches --es-success
+const CAGE_BOX_COLOR = 0x5a5a5a; // subtle gray for bounding-box cubes
+
+/**
+ * Build a cage-style wireframe overlay for every mesh in `object`:
+ *  - Clean edge lines via THREE.EdgesGeometry (no internal triangle edges)
+ *  - A wireframe bounding-box cube per sub-mesh
+ *
+ * All created objects are tagged with `userData.isCageOverlay = true` and
+ * parented inside a single THREE.Group that is added to the scene root,
+ * NOT inside the model hierarchy (so it won't interfere with materials /
+ * applyMaterials traversals).
+ *
+ * Returns the overlay group (caller can keep a ref if needed).
+ */
+export function buildCageOverlay(object, scene) {
+  if (!object || !scene) return null;
+
+  // Clean up any previous overlay first
+  disposeCageOverlay(scene);
+
+  const overlayGroup = new THREE.Group();
+  overlayGroup.name = "__cageOverlay";
+  overlayGroup.userData.isCageOverlay = true;
+
+  const edgeMaterial = new THREE.LineBasicMaterial({
+    color: CAGE_EDGE_COLOR,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: true,
+  });
+
+  const boxMaterial = new THREE.LineBasicMaterial({
+    color: CAGE_BOX_COLOR,
+    transparent: true,
+    opacity: 0.45,
+    depthTest: true,
+  });
+
+  object.traverse((child) => {
+    if (!child.isMesh || !child.geometry) return;
+
+    // --- Edge lines ---
+    const thresholdAngle = CAGE_EDGE_CREASE_ANGLE;
+    const edgesGeo = new THREE.EdgesGeometry(child.geometry, thresholdAngle);
+    const edgeLines = new THREE.LineSegments(edgesGeo, edgeMaterial.clone());
+    edgeLines.userData.isCageOverlay = true;
+    edgeLines.renderOrder = 1;
+
+    // Copy the mesh's world transform so the edges sit exactly on top
+    child.updateWorldMatrix(true, false);
+    edgeLines.matrixAutoUpdate = false;
+    edgeLines.matrix.copy(child.matrixWorld);
+    edgeLines.matrixWorldNeedsUpdate = true;
+
+    overlayGroup.add(edgeLines);
+
+    // --- Bounding-box cube ---
+    child.geometry.computeBoundingBox();
+    const bb = child.geometry.boundingBox;
+    if (bb && !bb.isEmpty()) {
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      bb.getSize(size);
+      bb.getCenter(center);
+
+      const boxGeo = new THREE.BoxGeometry(size.x, size.y, size.z);
+      const boxEdges = new THREE.EdgesGeometry(boxGeo);
+      const boxLines = new THREE.LineSegments(boxEdges, boxMaterial.clone());
+      boxLines.userData.isCageOverlay = true;
+      boxLines.renderOrder = 1;
+
+      // Position the box in world space using the mesh's transform
+      const m = child.matrixWorld.clone();
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scl = new THREE.Vector3();
+      m.decompose(pos, quat, scl);
+
+      // The center is in local geometry space — transform to world
+      center.applyMatrix4(child.matrixWorld);
+      boxLines.position.copy(center);
+      boxLines.quaternion.copy(quat);
+      boxLines.scale.copy(scl);
+
+      overlayGroup.add(boxLines);
+      boxGeo.dispose(); // intermediate geo no longer needed
+    }
+  });
+
+  scene.add(overlayGroup);
+  return overlayGroup;
+}
+
+/**
+ * Remove and dispose all cage overlay objects from `root`.
+ */
+export function disposeCageOverlay(root) {
+  if (!root) return;
+  const toRemove = [];
+  root.traverse((child) => {
+    if (child.userData?.isCageOverlay) {
+      toRemove.push(child);
+    }
+  });
+  for (const obj of toRemove) {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      if (Array.isArray(obj.material)) {
+        obj.material.forEach((m) => m.dispose());
+      } else {
+        obj.material.dispose();
+      }
+    }
+    obj.parent?.remove(obj);
+  }
+}
+
 export function applyLiveryToModel(object, bodyColor, texture) {
   if (!object) return;
   const color = new THREE.Color(bodyColor || "#e7ebf0");
