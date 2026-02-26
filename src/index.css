@@ -8450,7 +8450,7 @@ label {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--tg-background-color, var(--mg-bg));
+  background: var(--mg-bg);
   color: var(--mg-fg);
   font-family: var(--font-hud);
   overflow: hidden;
@@ -8608,6 +8608,7 @@ label {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: flex-start;
   background: oklch(0.148 0.007 286 / 94%);
   backdrop-filter: blur(24px) saturate(1.6);
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
@@ -8615,7 +8616,7 @@ label {
   border-right: 1px solid oklch(0.648 0.116 182.503 / 18%);
   border-radius: calc(4px * var(--es-ui-scale)) 0 0 calc(4px * var(--es-ui-scale));
   overflow: hidden;
-  padding: calc(4px * var(--es-ui-scale)) 0;
+  padding: calc(6px * var(--es-ui-scale)) 0;
   z-index: 2;
 }
 
@@ -8647,6 +8648,7 @@ label {
   flex-direction: column;
   align-items: center;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .tg-sb-spacer {
@@ -8654,11 +8656,29 @@ label {
 }
 
 .tg-sb-rule {
-  width: calc(20px * var(--es-ui-scale));
+  width: calc(18px * var(--es-ui-scale));
   height: 1px;
-  margin: calc(3px * var(--es-ui-scale)) 0;
+  margin: calc(4px * var(--es-ui-scale)) auto;
   background: oklch(1 0 0 / 6%);
   flex-shrink: 0;
+}
+
+/* ── Marker toggle items (Exterior / Wireframe / WS Base) ── */
+
+.tg-sb-marker {
+  position: relative;
+  padding: calc(1px * var(--es-ui-scale)) 0;
+}
+
+.tg-sb-marker .tg-sb-icon-btn {
+  padding: calc(6px * var(--es-ui-scale)) 0;
+}
+
+.tg-sb-marker .tg-sb-ext-label {
+  font-size: calc(6.5px * var(--es-ui-scale));
+  letter-spacing: 0.2em;
+  color: oklch(0.44 0.006 286);
+  padding: calc(3px * var(--es-ui-scale)) 0;
 }
 
 /* ── Sidebar buttons ── */
@@ -8675,6 +8695,7 @@ label {
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
   position: relative;
+  box-sizing: border-box;
 }
 
 .tg-sb-btn:hover {
@@ -8697,13 +8718,15 @@ label {
 }
 
 .tg-sb-icon-btn {
-  padding: calc(8px * var(--es-ui-scale)) 0;
+  padding: calc(7px * var(--es-ui-scale)) 0;
 }
 
 .tg-sb-icon {
   width: calc(13px * var(--es-ui-scale));
   height: calc(13px * var(--es-ui-scale));
   flex-shrink: 0;
+  display: block;
+  margin: 0 auto;
 }
 
 /* Unload X — subtle */
@@ -8733,14 +8756,15 @@ label {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: oklch(0.58 0.008 286);
-  padding: calc(6px * var(--es-ui-scale)) 0;
+  padding: calc(5px * var(--es-ui-scale)) 0;
   max-height: calc(88px * var(--es-ui-scale));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: none;
   user-select: none;
-  transition: color 0.15s;
+  transition: color 0.2s;
+  margin: 0 auto;
 }
 
 .tg-sb-model-label {
@@ -8749,7 +8773,9 @@ label {
 }
 
 .tg-sb-ext-label {
-  color: oklch(0.50 0.008 286);
+  color: oklch(0.46 0.006 286);
+  font-size: calc(6.5px * var(--es-ui-scale));
+  letter-spacing: 0.18em;
 }
 
 .tg-sb-ext-label.is-active {
@@ -8831,7 +8857,7 @@ label {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: var(--tg-background-color, oklch(0.125 0.004 286));
+  background: oklch(0.125 0.004 286);
 }
 
 .tg-preview-state {
@@ -12821,7 +12847,7 @@ label {
   height: 100%;
   background:
     radial-gradient(circle at 22% 20%, rgba(255, 255, 255, 0.08), transparent 55%),
-    var(--tg-background-color, linear-gradient(165deg, rgba(12, 14, 18, 0.97), rgba(7, 8, 10, 0.98)));
+    linear-gradient(165deg, rgba(12, 14, 18, 0.97), rgba(7, 8, 10, 0.98));
 }
 
 .tg-preview-refresh-overlay {

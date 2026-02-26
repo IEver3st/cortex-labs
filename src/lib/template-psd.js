@@ -86,6 +86,9 @@ const SMALL_SHELL_PLACEHOLDER_MARGIN_PX = 20;
 const SMALL_SHELL_PLACEHOLDER_PADDING_PX = 6;
 const SMALL_SHELL_PLACEHOLDER_TARGET_U = 0.88;
 const SMALL_SHELL_PLACEHOLDER_TARGET_V = 0.58;
+const SMALL_SHELL_DETECTION_MARKER_SCALE = 1.5;
+const DEFAULT_SMALL_SHELL_DETECTION_FILL = "#00FF00";
+const DEFAULT_SMALL_SHELL_DETECTION_BORDER = "#FFFFFF";
 
 
 /* ── Per-island palette + gradient helpers ───────────────────────── */
@@ -111,6 +114,13 @@ const ISLAND_PALETTES = [
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeHexColor(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (/^#(?:[0-9a-fA-F]{3}){1,2}$/.test(trimmed)) return trimmed.toUpperCase();
+  return fallback;
 }
 
 function stableHash64(value) {
@@ -1792,7 +1802,10 @@ function getSmallShellDetectionMarkerRect(bounds) {
   const centerX = (bounds.minX + bounds.maxX) * 0.5;
   const centerY = (bounds.minY + bounds.maxY) * 0.5;
   const shellSize = Math.max(width, height);
-  const markerSize = Math.max(26, Math.min(68, shellSize + 26));
+  const markerSize = Math.max(
+    26 * SMALL_SHELL_DETECTION_MARKER_SCALE,
+    Math.min(68 * SMALL_SHELL_DETECTION_MARKER_SCALE, (shellSize + 26) * SMALL_SHELL_DETECTION_MARKER_SCALE),
+  );
   const half = markerSize * 0.5;
   const x = centerX - half;
   const y = centerY - half;
@@ -1807,24 +1820,24 @@ function getSmallShellDetectionMarkerRect(bounds) {
   };
 }
 
-function drawSmallShellDetectionMarkerRect(ctx, markerRect, baseWidth) {
+function drawSmallShellDetectionMarkerRect(
+  ctx,
+  markerRect,
+  baseWidth,
+  fillColor = DEFAULT_SMALL_SHELL_DETECTION_FILL,
+) {
   if (!markerRect) return;
   const outerX = markerRect.x;
   const outerY = markerRect.y;
   const markerSize = markerRect.size;
 
   ctx.save();
-  ctx.fillStyle = "#00FF00";
+  ctx.fillStyle = normalizeHexColor(fillColor, DEFAULT_SMALL_SHELL_DETECTION_FILL);
   ctx.fillRect(outerX, outerY, markerSize, markerSize);
-  ctx.strokeStyle = "#FFFFFF";
+  ctx.strokeStyle = DEFAULT_SMALL_SHELL_DETECTION_BORDER;
   ctx.lineWidth = Math.max(baseWidth * 3.2, 2.2);
   ctx.strokeRect(outerX, outerY, markerSize, markerSize);
   ctx.restore();
-}
-
-function drawSmallShellDetectionMarker(ctx, bounds, baseWidth) {
-  const markerRect = getSmallShellDetectionMarkerRect(bounds);
-  drawSmallShellDetectionMarkerRect(ctx, markerRect, baseWidth);
 }
 
 function rectsOverlap(a, b, gap = 0) {
@@ -1854,7 +1867,7 @@ function buildCombinedMarkerRect(markerRects) {
 
   const combinedWidth = maxX - minX;
   const combinedHeight = maxY - minY;
-  const side = Math.max(combinedWidth, combinedHeight) + 2;
+  const side = (Math.max(combinedWidth, combinedHeight) + 2) * SMALL_SHELL_DETECTION_MARKER_SCALE;
   const centerX = (minX + maxX) * 0.5;
   const centerY = (minY + maxY) * 0.5;
   const half = side * 0.5;
@@ -1869,7 +1882,92 @@ function buildCombinedMarkerRect(markerRects) {
   };
 }
 
-function paintWireframeLayer(canvas, shells, mapper) {
+function buildDetectionMarkerClusters(shells, mapper) {
+  const markerCandidates = [];
+
+  shells.forEach((shell, index) => {
+    const bounds = mapper.mapBounds(index);
+    const shellSize = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+    const needsDetectionMarker =
+      shellSize <= 20 || (shell?.isSmallShell && shellSize <= 30);
+    if (!needsDetectionMarker) return;
+
+    const markerRect = getSmallShellDetectionMarkerRect(bounds);
+    if (!markerRect) return;
+
+    const islandId = buildIslandKey(shell, index);
+    markerCandidates.push({
+      ...markerRect,
+      islandId,
+      label: shell?.shellName || islandId,
+    });
+  });
+
+  if (markerCandidates.length === 0) return [];
+
+  const parent = markerCandidates.map((_, index) => index);
+  const findRoot = (index) => {
+    while (parent[index] !== index) {
+      parent[index] = parent[parent[index]];
+      index = parent[index];
+    }
+    return index;
+  };
+  const unite = (a, b) => {
+    const ra = findRoot(a);
+    const rb = findRoot(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+
+  for (let i = 0; i < markerCandidates.length; i += 1) {
+    for (let j = i + 1; j < markerCandidates.length; j += 1) {
+      if (!rectsOverlap(markerCandidates[i], markerCandidates[j], 3)) continue;
+      unite(i, j);
+    }
+  }
+
+  const clusters = new Map();
+  for (let i = 0; i < markerCandidates.length; i += 1) {
+    const root = findRoot(i);
+    if (!clusters.has(root)) clusters.set(root, []);
+    clusters.get(root).push(markerCandidates[i]);
+  }
+
+  const result = [];
+  for (const clusterRects of clusters.values()) {
+    const combined = buildCombinedMarkerRect(clusterRects);
+    if (!combined) continue;
+
+    const islandIds = clusterRects
+      .map((entry) => entry.islandId)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    const uniqueIslandIds = [...new Set(islandIds)];
+    const key = uniqueIslandIds.join("|");
+    const label =
+      uniqueIslandIds.length === 1
+        ? clusterRects[0]?.label || uniqueIslandIds[0]
+        : `${uniqueIslandIds.length} islands`;
+
+    result.push({
+      ...combined,
+      key,
+      label,
+      islandIds: uniqueIslandIds,
+      defaultColor: DEFAULT_SMALL_SHELL_DETECTION_FILL,
+    });
+  }
+
+  result.sort((a, b) => {
+    const yDiff = a.y - b.y;
+    if (Math.abs(yDiff) > 0.01) return yDiff;
+    return a.x - b.x;
+  });
+
+  return result;
+}
+
+function paintWireframeLayer(canvas, shells, mapper, options = {}) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.lineJoin = "round";
@@ -1877,22 +1975,32 @@ function paintWireframeLayer(canvas, shells, mapper) {
   ctx.strokeStyle = "rgba(16, 20, 42, 0.52)";
 
   const baseWidth = Math.max(0.52, canvas.width * 0.00042);
-  const markerCandidates = [];
+  const markerColorMap =
+    options?.markerColorMap && typeof options.markerColorMap === "object"
+      ? options.markerColorMap
+      : {};
+  const markerVisibilityMap =
+    options?.markerVisibilityMap && typeof options.markerVisibilityMap === "object"
+      ? options.markerVisibilityMap
+      : {};
+  const markerClusters = buildDetectionMarkerClusters(shells, mapper);
+  const markedIslandIds = new Set();
+  markerClusters.forEach((cluster) => {
+    for (const islandId of cluster.islandIds || []) {
+      markedIslandIds.add(islandId);
+    }
+  });
 
   shells.forEach((shell, index) => {
+    const islandId = buildIslandKey(shell, index);
+    if (markedIslandIds.has(islandId)) return;
+
     const shellSegments = Array.isArray(shell?.wireSegments) ? shell.wireSegments : [];
-    const bounds = mapper.mapBounds(index);
-    const shellSize = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-    const needsDetectionMarker =
-      shellSize <= 20 || (shell?.isSmallShell && shellSize <= 30);
-    if (needsDetectionMarker) {
-      const markerRect = getSmallShellDetectionMarkerRect(bounds);
-      if (markerRect) markerCandidates.push(markerRect);
-      return;
-    }
 
     if (shellSegments.length < 4) return;
 
+    const bounds = mapper.mapBounds(index);
+    const shellSize = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
     if (shell?.isSmallShell || shellSize < 22) {
       ctx.lineWidth = Math.max(baseWidth * 2.35, 1.15);
     } else if (shellSize < 56) {
@@ -1916,42 +2024,25 @@ function paintWireframeLayer(canvas, shells, mapper) {
     }
   });
 
-  if (markerCandidates.length > 0) {
-    const parent = markerCandidates.map((_, index) => index);
-    const findRoot = (index) => {
-      while (parent[index] !== index) {
-        parent[index] = parent[parent[index]];
-        index = parent[index];
-      }
-      return index;
-    };
-    const unite = (a, b) => {
-      const ra = findRoot(a);
-      const rb = findRoot(b);
-      if (ra !== rb) parent[ra] = rb;
-    };
-
-    for (let i = 0; i < markerCandidates.length; i += 1) {
-      for (let j = i + 1; j < markerCandidates.length; j += 1) {
-        if (!rectsOverlap(markerCandidates[i], markerCandidates[j], 3)) continue;
-        unite(i, j);
-      }
-    }
-
-    const clusters = new Map();
-    for (let i = 0; i < markerCandidates.length; i += 1) {
-      const root = findRoot(i);
-      if (!clusters.has(root)) clusters.set(root, []);
-      clusters.get(root).push(markerCandidates[i]);
-    }
-
-    for (const clusterRects of clusters.values()) {
-      const combined = buildCombinedMarkerRect(clusterRects);
-      drawSmallShellDetectionMarkerRect(ctx, combined, baseWidth);
-    }
+  for (const marker of markerClusters) {
+    const isVisible = markerVisibilityMap[marker.key] !== false;
+    if (!isVisible) continue;
+    const markerColor = normalizeHexColor(
+      markerColorMap[marker.key],
+      marker.defaultColor || DEFAULT_SMALL_SHELL_DETECTION_FILL,
+    );
+    drawSmallShellDetectionMarkerRect(ctx, marker, baseWidth, markerColor);
   }
 
-  return canvas;
+  return {
+    canvas,
+    detectionMarkers: markerClusters.map((marker) => ({
+      key: marker.key,
+      label: marker.label,
+      islandIds: marker.islandIds,
+      defaultColor: marker.defaultColor || DEFAULT_SMALL_SHELL_DETECTION_FILL,
+    })),
+  };
 }
 
 
@@ -2184,7 +2275,12 @@ function buildAutoTemplateArtifacts(templateMap, options = {}) {
 
   const backgroundCanvas = paintBackgroundLayer(createCanvas(size), backgroundColor);
   const fillCanvas = paintMeshFillLayer(createCanvas(size), renderMeshes, mapper, fillColor);
-  const wireCanvas = paintWireframeLayer(createCanvas(size), renderMeshes, mapper);
+  const wireLayer = paintWireframeLayer(createCanvas(size), renderMeshes, mapper, {
+    markerColorMap: options.detectedIslandColors,
+    markerVisibilityMap: options.detectedIslandVisibility,
+  });
+  const wireCanvas = wireLayer.canvas;
+  const detectedIslands = Array.isArray(wireLayer.detectionMarkers) ? wireLayer.detectionMarkers : [];
   const annotationCanvas = paintAnnotationLayer(createCanvas(size), modelName, targetCount, renderMeshes.length);
   const plateCanvas = paintLicencePlateLayer(createCanvas(size));
   const worldSpaceNormals = includeWorldSpaceNormals
@@ -2222,6 +2318,7 @@ function buildAutoTemplateArtifacts(templateMap, options = {}) {
     layers,
     fileName: `${modelName}_auto_template.psd`,
     targetCount,
+    detectedIslands,
   };
 }
 
@@ -2234,6 +2331,7 @@ export function buildAutoTemplatePsd(templateMap, options = {}) {
     previewDataUrl: renderPreview(result.size, result.layers),
     fileName: result.fileName,
     targetCount: result.targetCount,
+    detectedIslands: result.detectedIslands,
   };
 }
 
@@ -2246,5 +2344,6 @@ export async function buildAutoTemplatePsdAsync(templateMap, options = {}) {
     previewDataUrl: await renderPreviewAsync(result.size, result.layers),
     fileName: result.fileName,
     targetCount: result.targetCount,
+    detectedIslands: result.detectedIslands,
   };
 }

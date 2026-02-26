@@ -22,10 +22,7 @@ import { openFolderPath } from "../lib/open-folder";
 const SIZE_OPTIONS = [4096, 2048, 1024, 512];
 const NOOP = () => {};
 const DEFAULT_AUTO_TEMPLATE_COLOR = "#c9d8ee";
-const DEFAULT_AUTO_TEMPLATE_BACKGROUND_COLOR = "#000000";
 const DEFAULT_AUTO_TEMPLATE_EXPORT_FORMAT = "psd";
-const DEFAULT_ENV_BODY_COLOR = "#e7ebf0";
-const DEFAULT_ENV_BACKGROUND_COLOR = "#141414";
 
 function normalizeAutoTemplateExportFormat(value) {
   if (value === "png" || value === "psd_png") return value;
@@ -198,36 +195,9 @@ function normalizeAutoTemplateColor(value) {
   return DEFAULT_AUTO_TEMPLATE_COLOR;
 }
 
-function normalizeAutoTemplateBackgroundColor(value) {
-  if (typeof value !== "string") return DEFAULT_AUTO_TEMPLATE_BACKGROUND_COLOR;
-  const trimmed = value.trim();
-  if (/^#(?:[0-9a-fA-F]{3}){1,2}$/.test(trimmed)) return trimmed;
-  return DEFAULT_AUTO_TEMPLATE_BACKGROUND_COLOR;
-}
-
-function normalizeEnvironmentColor(value, fallback) {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  return trimmed || fallback;
-}
-
-function getDefaultEnvironmentColors() {
-  const prefs = loadPrefs() || {};
-  const defaults = prefs?.defaults || {};
-  return {
-    bodyColor: normalizeEnvironmentColor(defaults.bodyColor, DEFAULT_ENV_BODY_COLOR),
-    backgroundColor: normalizeEnvironmentColor(defaults.backgroundColor, DEFAULT_ENV_BACKGROUND_COLOR),
-  };
-}
-
 function getDefaultAutoTemplateColor() {
   const prefs = loadPrefs() || {};
   return normalizeAutoTemplateColor(prefs?.defaults?.autoTemplateColor);
-}
-
-function getDefaultAutoTemplateBackgroundColor() {
-  const prefs = loadPrefs() || {};
-  return normalizeAutoTemplateBackgroundColor(prefs?.defaults?.autoTemplateBackgroundColor);
 }
 
 function getDefaultAutoTemplateExportFormat() {
@@ -257,25 +227,23 @@ export default function TemplateGenerationPage({
     workspaceState?.outputFolder || getDefaultOutputFolder(),
   );
   const [autoTemplateColor, setAutoTemplateColor] = useState(() => getDefaultAutoTemplateColor());
-  const [autoTemplateBackgroundColor, setAutoTemplateBackgroundColor] = useState(() =>
-    getDefaultAutoTemplateBackgroundColor(),
-  );
   const [autoTemplateExportFormat, setAutoTemplateExportFormat] = useState(
     () => getDefaultAutoTemplateExportFormat(),
   );
-  const [environmentColors, setEnvironmentColors] = useState(() => getDefaultEnvironmentColors());
   const [useWorldSpaceNormalsAsBase, setUseWorldSpaceNormalsAsBase] = useState(() =>
     Boolean(
-      workspaceState?.useWorldSpaceNormalsAsBase ||
-      workspaceState?.generateWorldSpaceNormals,
+      (workspaceState?.useWorldSpaceNormalsAsBase ??
+        workspaceState?.generateWorldSpaceNormals) ??
+        true,
     ),
   );
-  const [exportSize, setExportSize] = useState(workspaceState?.exportSize || 2048);
+  const [exportSize, setExportSize] = useState(workspaceState?.exportSize ?? 4096);
   const [exteriorOnly, setExteriorOnly] = useState(Boolean(workspaceState?.exteriorOnly));
   const [includeTemplateWireframe, setIncludeTemplateWireframe] = useState(() =>
     Boolean(
-      workspaceState?.includeTemplateWireframe ??
-      workspaceState?.showWireframe,
+      (workspaceState?.includeTemplateWireframe ??
+        workspaceState?.showWireframe) ??
+        true,
     ),
   );
 
@@ -301,9 +269,7 @@ export default function TemplateGenerationPage({
     if (!settingsVersion) return;
     setOutputFolder((prev) => prev || getDefaultOutputFolder());
     setAutoTemplateColor(getDefaultAutoTemplateColor());
-    setAutoTemplateBackgroundColor(getDefaultAutoTemplateBackgroundColor());
     setAutoTemplateExportFormat(getDefaultAutoTemplateExportFormat());
-    setEnvironmentColors(getDefaultEnvironmentColors());
   }, [settingsVersion]);
 
   useEffect(() => {
@@ -443,7 +409,6 @@ export default function TemplateGenerationPage({
           modelFileName: getFileLabel(modelPath, "template"),
           templatePsdSource,
           fillColor: autoTemplateColor,
-          backgroundColor: autoTemplateBackgroundColor,
           preferredTarget: "material:vehicle_paint3",
           includeWireframe: includeTemplateWireframe,
           includeWorldSpaceNormals: useWorldSpaceNormalsAsBase,
@@ -522,7 +487,6 @@ export default function TemplateGenerationPage({
     modelPath,
     outputFolder,
     autoTemplateColor,
-    autoTemplateBackgroundColor,
     autoTemplateExportFormat,
     includeTemplateWireframe,
     useWorldSpaceNormalsAsBase,
@@ -588,10 +552,7 @@ export default function TemplateGenerationPage({
   const worldSpaceNormalsBaseEnabled = useWorldSpaceNormalsAsBase;
 
   return (
-    <div
-      className="tg-root"
-      style={{ "--tg-background-color": environmentColors.backgroundColor }}
-    >
+    <div className="tg-root">
         <AnimatePresence mode="wait">
           {!modelPath ? (
           /* ━━━ Empty state: immersive CTA ━━━ */
@@ -690,7 +651,7 @@ export default function TemplateGenerationPage({
               <div className="tg-sb-rule" />
 
               {/* Exterior toggle */}
-              <div className="tg-sb-section">
+              <div className="tg-sb-section tg-sb-marker">
                 <button
                   type="button"
                   className={`tg-sb-btn tg-sb-icon-btn tg-sb-ext-btn${exteriorOnly ? " is-active" : ""}`}
@@ -706,7 +667,7 @@ export default function TemplateGenerationPage({
               </div>
 
               {/* Wireframe toggle */}
-              <div className="tg-sb-section">
+              <div className="tg-sb-section tg-sb-marker">
                 <button
                   type="button"
                   className={`tg-sb-btn tg-sb-icon-btn tg-sb-ext-btn${includeTemplateWireframe ? " is-active" : ""}`}
@@ -722,7 +683,7 @@ export default function TemplateGenerationPage({
               </div>
 
               {/* World-space normal base toggle */}
-              <div className="tg-sb-section">
+              <div className="tg-sb-section tg-sb-marker">
                 <button
                   type="button"
                   className={`tg-sb-btn tg-sb-icon-btn tg-sb-ext-btn${worldSpaceNormalsBaseEnabled ? " is-active" : ""}`}
@@ -736,6 +697,8 @@ export default function TemplateGenerationPage({
                   WS Base
                 </span>
               </div>
+
+              <div className="tg-sb-rule" />
 
               {/* Regenerate */}
               <div className="tg-sb-section">
@@ -822,8 +785,8 @@ export default function TemplateGenerationPage({
                 windowTexturePath=""
                 windowTextureTarget="none"
                 windowTextureReloadToken={0}
-                bodyColor={environmentColors.bodyColor}
-                backgroundColor={environmentColors.backgroundColor}
+                bodyColor={autoTemplateColor}
+                backgroundColor="#111214"
                 lightIntensity={1}
                 lightAzimuth={54}
                 lightElevation={46}

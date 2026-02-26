@@ -434,6 +434,28 @@ export default function Shell() {
         openTab("viewer", label, id, { textureMode: mode }, mode);
         setActiveWorkspaceId(id);
         addRecent(id, label, "viewer");
+        return;
+      }
+
+      if (action === HOTKEY_ACTIONS.NEW_TAB_VARIANTS) {
+        event.preventDefault();
+        event.stopPropagation();
+        const label = "Variant Builder";
+        const id = createWorkspace(label, "variants");
+        openTab("variants", label, id, {});
+        setActiveWorkspaceId(id);
+        addRecent(id, label, "variants");
+        return;
+      }
+
+      if (action === HOTKEY_ACTIONS.NEW_TAB_TEMPLATE_GEN) {
+        event.preventDefault();
+        event.stopPropagation();
+        const label = "Template Generator";
+        const id = createWorkspace(label, "templategen");
+        openTab("templategen", label, id, {});
+        setActiveWorkspaceId(id);
+        addRecent(id, label, "templategen");
       }
     };
 
