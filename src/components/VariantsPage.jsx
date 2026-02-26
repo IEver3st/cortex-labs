@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { parsePsdLayers, compositePsdVariant } from "../lib/psd-layers";
 import { loadPrefs } from "../lib/prefs";
+import { openFolderPath } from "../lib/open-folder";
 import * as Ctx from "./ContextMenu";
 import Viewer from "./Viewer";
 
@@ -903,7 +904,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                   <button type="button" className="vp-dropdown-item" onClick={() => { handleSelectOutput(); setOpenMenu(null); }}>
                     <FolderOpen className="w-3 h-3" /> Change folder
                   </button>
-                  <button type="button" className="vp-dropdown-item" onClick={async () => { setOpenMenu(null); if (isTauriRuntime) { try { const { openPath } = await import("@tauri-apps/plugin-opener"); await openPath(outputFolder); } catch {} } }}>
+                  <button type="button" className="vp-dropdown-item" onClick={async () => { setOpenMenu(null); if (isTauriRuntime) await openFolderPath(outputFolder); }}>
                     <FolderTree className="w-3 h-3" /> Open output folder
                   </button>
                 </div>
@@ -1010,7 +1011,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                     )}
                     <button type="button" className="vp-dropdown-item" onClick={() => { handleExport("all"); setShowExportMenu(false); }}>Export all ({variants.length})</button>
                     <div className="vp-dropdown-sep" />
-                    <button type="button" className="vp-dropdown-item" onClick={async () => { await handleExport("all"); setShowExportMenu(false); if (outputFolder && isTauriRuntime) { try { const { openPath } = await import("@tauri-apps/plugin-opener"); await openPath(outputFolder); } catch {} } }}>Export all + open folder</button>
+                    <button type="button" className="vp-dropdown-item" onClick={async () => { await handleExport("all"); setShowExportMenu(false); if (outputFolder && isTauriRuntime) await openFolderPath(outputFolder); }}>Export all + open folder</button>
                   </div>
                 )}
               </div>

@@ -6,7 +6,7 @@ const DEFAULT_SIZE = 2048;
 const MIN_SIZE = 256;
 const MAX_SIZE = 8192;
 const MIN_TRIANGLE_AREA_PIXELS = 0.005;
-const AUTO_TEMPLATE_FILL_COLOR = "rgb(201, 216, 238)";
+const DEFAULT_AUTO_TEMPLATE_FILL_COLOR = "#c9d8ee";
 
 /* ── Utility ─────────────────────────────────────────────────────── */
 
@@ -14,6 +14,13 @@ function clampSize(size) {
   const parsed = Number(size);
   if (!Number.isFinite(parsed)) return DEFAULT_SIZE;
   return Math.max(MIN_SIZE, Math.min(MAX_SIZE, Math.round(parsed)));
+}
+
+function normalizeAutoTemplateFillColor(value) {
+  if (typeof value !== "string") return DEFAULT_AUTO_TEMPLATE_FILL_COLOR;
+  const trimmed = value.trim();
+  if (/^#(?:[0-9a-fA-F]{3}){1,2}$/.test(trimmed)) return trimmed;
+  return DEFAULT_AUTO_TEMPLATE_FILL_COLOR;
 }
 
 function sanitizeStem(value) {
@@ -33,10 +40,18 @@ function getModelFileName(path) {
 }
 
 function createCanvas(size) {
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  return canvas;
+  if (typeof document !== "undefined" && typeof document.createElement === "function") {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    return canvas;
+  }
+
+  if (typeof OffscreenCanvas !== "undefined") {
+    return new OffscreenCanvas(size, size);
+  }
+
+  throw new Error("Canvas API is unavailable in this runtime.");
 }
 
 function clamp01(value) {
@@ -50,6 +65,19 @@ const SMALL_SHELL_MAX_ASPECT = 4.8;
 const SMALL_SHELL_MAX_DIM_RATIO = 96 / 2048;
 const SMALL_SHELL_INNER_BOX_RATIO = 0.16;
 const MIN_INTERIOR_EDGE_LENGTH_PX = 5;
+const SMALL_SHELL_MARKER_MIN_SIZE_PX = 12;
+const SMALL_SHELL_MARKER_MAX_DIM_PX = 26;
+const SMALL_SHELL_MARKER_MAX_AREA_PX2 = 420;
+const SMALL_SHELL_MARKER_NEEDLE_MAX_DIM_PX = 40;
+const SMALL_SHELL_MARKER_NEEDLE_MIN_DIM_PX = 4;
+const SMALL_SHELL_PLACEHOLDER_SIZE_PX = 84;
+const SMALL_SHELL_PLACEHOLDER_MIN_PX = 28;
+const SMALL_SHELL_PLACEHOLDER_MAX_PX = 132;
+const SMALL_SHELL_PLACEHOLDER_GAP_PX = 14;
+const SMALL_SHELL_PLACEHOLDER_MARGIN_PX = 20;
+const SMALL_SHELL_PLACEHOLDER_PADDING_PX = 6;
+const SMALL_SHELL_PLACEHOLDER_TARGET_U = 0.88;
+const SMALL_SHELL_PLACEHOLDER_TARGET_V = 0.58;
 
 
 /* ── Per-island palette + gradient helpers ───────────────────────── */
@@ -250,15 +278,48 @@ function isSmallUvShell(shell, size, topology = null) {
     : Number.isFinite(topology?.triangleCount)
       ? topology.triangleCount
       : Math.floor(triangles.length / 6);
-  if (triangleCount <= 0 || triangleCount > SMALL_SHELL_MAX_TRIANGLES) return false;
+  if (triangleCount <= 0) return false;
 
-  const bounds = resolveShellUvBounds(shell, triangles);
-  const maxSpan = Math.max(bounds.spanU, bounds.spanV);
-  const minSpan = Math.max(UV_EPSILON, Math.min(bounds.spanU, bounds.spanV));
-  const aspect = maxSpan / minSpan;
-  if (!Number.isFinite(aspect) || aspect > SMALL_SHELL_MAX_ASPECT) return false;
+  const rawBounds = resolveShellUvBounds(shell, triangles);
+  const visibleMinU = clamp01(rawBounds.minU);
+  const visibleMinV = clamp01(rawBounds.minV);
+  const visibleMaxU = clamp01(rawBounds.maxU);
+  const visibleMaxV = clamp01(rawBounds.maxV);
+  const visibleSpanU = Math.max(0, visibleMaxU - visibleMinU);
+  const visibleSpanV = Math.max(0, visibleMaxV - visibleMinV);
 
-  return maxSpan <= SMALL_SHELL_MAX_DIM_RATIO;
+  const pixelScale = Math.max(1, safeSize - 1);
+  const spanPxU = visibleSpanU * pixelScale;
+  const spanPxV = visibleSpanV * pixelScale;
+  const maxSpanPx = Math.max(spanPxU, spanPxV);
+  const minSpanPx = Math.min(spanPxU, spanPxV);
+  const areaPx2 = spanPxU * spanPxV;
+
+  // Fully-clamped shells collapse to specks in render space.
+  if (maxSpanPx <= 0.75) return true;
+
+  // Primary marker decision: tiny visible footprint regardless of source density.
+  if (maxSpanPx <= SMALL_SHELL_MARKER_MAX_DIM_PX && areaPx2 <= SMALL_SHELL_MARKER_MAX_AREA_PX2) {
+    return true;
+  }
+
+  // Thin slivers (doorjamb strips) should still become markers.
+  if (
+    maxSpanPx <= SMALL_SHELL_MARKER_NEEDLE_MAX_DIM_PX &&
+    minSpanPx <= SMALL_SHELL_MARKER_NEEDLE_MIN_DIM_PX
+  ) {
+    return true;
+  }
+
+  // Legacy fallback so existing thresholds still contribute.
+  const maxSpanUv = Math.max(rawBounds.spanU, rawBounds.spanV);
+  const minSpanUv = Math.max(UV_EPSILON, Math.min(rawBounds.spanU, rawBounds.spanV));
+  const aspectUv = maxSpanUv / minSpanUv;
+  return (
+    triangleCount <= SMALL_SHELL_MAX_TRIANGLES &&
+    aspectUv <= SMALL_SHELL_MAX_ASPECT &&
+    maxSpanUv <= SMALL_SHELL_MAX_DIM_RATIO
+  );
 }
 
 function normalizeLocalUvPoint(u, v, bounds) {
@@ -492,6 +553,41 @@ function selectTemplateMeshes(templateMap, templatePsdSource, options = {}) {
   return filtered.length > 0 ? filtered : meshes;
 }
 
+function collectProxyTrianglesForNormals(templatePsdSource, selectedMeshes) {
+  const proxyMeshes = Array.isArray(templatePsdSource?.proxyMeshes) ? templatePsdSource.proxyMeshes : [];
+  if (proxyMeshes.length === 0) return [];
+
+  const selectedMeshNames = new Set();
+  for (const shell of selectedMeshes || []) {
+    if (shell?.meshName) selectedMeshNames.add(shell.meshName);
+  }
+  if (selectedMeshNames.size === 0) return [];
+
+  const triangles = [];
+  for (const proxy of proxyMeshes) {
+    if (!selectedMeshNames.has(proxy?.meshName)) continue;
+    const proxyTriangles = Array.isArray(proxy?.triangles) ? proxy.triangles : [];
+    for (const triangle of proxyTriangles) {
+      const uv = Array.isArray(triangle?.uv) ? triangle.uv : null;
+      if (!uv || uv.length < 6) continue;
+
+      const vertexNormals = Array.isArray(triangle?.vertexNormals) ? triangle.vertexNormals : null;
+      const faceNormal = Array.isArray(triangle?.normal) ? triangle.normal : null;
+      const hasVertexNormals = vertexNormals && vertexNormals.length >= 9;
+      const hasFaceNormal = faceNormal && faceNormal.length >= 3;
+      if (!hasVertexNormals && !hasFaceNormal) continue;
+
+      triangles.push({
+        uv,
+        vertexNormals: hasVertexNormals ? vertexNormals : null,
+        faceNormal: hasFaceNormal ? faceNormal : null,
+      });
+    }
+  }
+
+  return triangles;
+}
+
 
 /* ── MaxRects bin packing ────────────────────────────────────────── */
 
@@ -667,10 +763,11 @@ function createShellMapper(size, shells) {
 
   const mapBounds = (shellIndex) => {
     const shell = shells[shellIndex];
-    if (!shell?.bounds) {
+    const sourceBounds = shell?.smallShellPlaceholderBounds || shell?.bounds;
+    if (!sourceBounds) {
       return { minX: 0, minY: 0, maxX: maxCoord, maxY: maxCoord };
     }
-    const b = shell.bounds;
+    const b = sourceBounds;
     return {
       minX: mapU(b.minU),
       minY: mapV(b.maxV),
@@ -776,21 +873,205 @@ function fillShellTriangles(ctx, triangles, mapper, shellIndex, edgeBleed = 0) {
   }
 }
 
-function paintMeshFillLayer(canvas, shells, mapper) {
+function paintMeshFillLayer(canvas, shells, mapper, fillColor = DEFAULT_AUTO_TEMPLATE_FILL_COLOR) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
 
   shells.forEach((shell, index) => {
+    if (shell?.isSmallShell) {
+      const placeholder = shell?.smallShellPlaceholderBounds;
+      if (!placeholder) return;
+
+      const [x0, y0] = mapper.toPoint(index, placeholder.minU, placeholder.maxV);
+      const [x1, y1] = mapper.toPoint(index, placeholder.maxU, placeholder.minV);
+      if (![x0, y0, x1, y1].every((value) => Number.isFinite(value))) return;
+
+      const minX = Math.min(x0, x1);
+      const minY = Math.min(y0, y1);
+      const width = Math.max(0, Math.abs(x1 - x0));
+      const height = Math.max(0, Math.abs(y1 - y0));
+      if (width < 0.5 || height < 0.5) return;
+
+      ctx.fillStyle = fillColor;
+      ctx.fillRect(minX, minY, width, height);
+      return;
+    }
+
     const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
     if (triangles.length < 6) return;
 
-    ctx.fillStyle = AUTO_TEMPLATE_FILL_COLOR;
+    ctx.fillStyle = fillColor;
     fillShellTriangles(ctx, triangles, mapper, index, 0);
   });
 
   return canvas;
+}
+
+function normalizeVec3(x, y, z) {
+  const length = Math.hypot(x, y, z);
+  if (!Number.isFinite(length) || length <= 1e-10) return null;
+  return [x / length, y / length, z / length];
+}
+
+function encodeNormalToRgb(normal) {
+  const nx = clamp01(normal[0] * 0.5 + 0.5);
+  const ny = clamp01(normal[1] * 0.5 + 0.5);
+  const nz = clamp01(normal[2] * 0.5 + 0.5);
+  return [
+    Math.round(nx * 255),
+    Math.round(ny * 255),
+    Math.round(nz * 255),
+  ];
+}
+
+function triangleOutsideUvTile(uv) {
+  const u0 = uv[0];
+  const v0 = uv[1];
+  const u1 = uv[2];
+  const v1 = uv[3];
+  const u2 = uv[4];
+  const v2 = uv[5];
+
+  const minU = Math.min(u0, u1, u2);
+  const maxU = Math.max(u0, u1, u2);
+  const minV = Math.min(v0, v1, v2);
+  const maxV = Math.max(v0, v1, v2);
+
+  return maxU < 0 || minU > 1 || maxV < 0 || minV > 1;
+}
+
+function paintWorldSpaceNormalLayer(canvas, templatePsdSource, selectedMeshes, mapper) {
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const proxyTriangles = collectProxyTrianglesForNormals(templatePsdSource, selectedMeshes);
+  const smallShellBounds = [];
+  const smallShellPlaceholders = [];
+  for (const shell of selectedMeshes || []) {
+    if (!shell?.isSmallShell) continue;
+    const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
+    const shellBounds = clampUvBounds(resolveShellUvBounds(shell, triangles));
+    if (shellBounds) smallShellBounds.push(shellBounds);
+
+    const placeholderBounds = clampUvBounds(shell?.smallShellPlaceholderBounds);
+    if (placeholderBounds) smallShellPlaceholders.push(placeholderBounds);
+  }
+
+  if (proxyTriangles.length === 0 && smallShellPlaceholders.length === 0) {
+    return { canvas, paintedTriangleCount: 0 };
+  }
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const imageData = ctx.createImageData(width, height);
+  const pixels = imageData.data;
+  let paintedTriangleCount = 0;
+
+  for (const entry of proxyTriangles) {
+    const uv = entry.uv;
+    if (triangleOutsideUvTile(uv)) continue;
+    const centroidU = (uv[0] + uv[2] + uv[4]) / 3;
+    const centroidV = (uv[1] + uv[3] + uv[5]) / 3;
+
+    let belongsToSmallShell = false;
+    for (const shellBounds of smallShellBounds) {
+      if (uvPointWithinBounds(centroidU, centroidV, shellBounds, UV_EPSILON * 4)) {
+        belongsToSmallShell = true;
+        break;
+      }
+    }
+    if (belongsToSmallShell) continue;
+
+    const [x0, y0] = mapper.toPoint(0, uv[0], uv[1]);
+    const [x1, y1] = mapper.toPoint(0, uv[2], uv[3]);
+    const [x2, y2] = mapper.toPoint(0, uv[4], uv[5]);
+
+    const area = Math.abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)) * 0.5;
+    if (!Number.isFinite(area) || area < MIN_TRIANGLE_AREA_PIXELS) continue;
+
+    const normals = entry.vertexNormals;
+    const n0 = normals && normals.length >= 3
+      ? normalizeVec3(Number(normals[0]), Number(normals[1]), Number(normals[2]))
+      : null;
+    const n1 = normals && normals.length >= 6
+      ? normalizeVec3(Number(normals[3]), Number(normals[4]), Number(normals[5]))
+      : null;
+    const n2 = normals && normals.length >= 9
+      ? normalizeVec3(Number(normals[6]), Number(normals[7]), Number(normals[8]))
+      : null;
+    const face = entry.faceNormal
+      ? normalizeVec3(Number(entry.faceNormal[0]), Number(entry.faceNormal[1]), Number(entry.faceNormal[2]))
+      : null;
+
+    const fallback = face || [0, 0, 1];
+    const vn0 = n0 || fallback;
+    const vn1 = n1 || fallback;
+    const vn2 = n2 || fallback;
+
+    const minX = Math.max(0, Math.floor(Math.min(x0, x1, x2)));
+    const maxX = Math.min(width - 1, Math.ceil(Math.max(x0, x1, x2)));
+    const minY = Math.max(0, Math.floor(Math.min(y0, y1, y2)));
+    const maxY = Math.min(height - 1, Math.ceil(Math.max(y0, y1, y2)));
+    if (minX > maxX || minY > maxY) continue;
+
+    const denom = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+    if (!Number.isFinite(denom) || Math.abs(denom) <= 1e-12) continue;
+    const invDenom = 1 / denom;
+
+    for (let py = minY; py <= maxY; py += 1) {
+      const sampleY = py + 0.5;
+      for (let px = minX; px <= maxX; px += 1) {
+        const sampleX = px + 0.5;
+        const w0 = ((y1 - y2) * (sampleX - x2) + (x2 - x1) * (sampleY - y2)) * invDenom;
+        const w1 = ((y2 - y0) * (sampleX - x2) + (x0 - x2) * (sampleY - y2)) * invDenom;
+        const w2 = 1 - w0 - w1;
+        if (w0 < -1e-4 || w1 < -1e-4 || w2 < -1e-4) continue;
+
+        const nx = w0 * vn0[0] + w1 * vn1[0] + w2 * vn2[0];
+        const ny = w0 * vn0[1] + w1 * vn1[1] + w2 * vn2[1];
+        const nz = w0 * vn0[2] + w1 * vn1[2] + w2 * vn2[2];
+        const normalized = normalizeVec3(nx, ny, nz);
+        if (!normalized) continue;
+
+        const [r, g, b] = encodeNormalToRgb(normalized);
+        const pixelIndex = (py * width + px) * 4;
+        pixels[pixelIndex] = r;
+        pixels[pixelIndex + 1] = g;
+        pixels[pixelIndex + 2] = b;
+        pixels[pixelIndex + 3] = 255;
+      }
+    }
+
+    paintedTriangleCount += 1;
+  }
+
+  if (paintedTriangleCount > 0) {
+    ctx.putImageData(imageData, 0, 0);
+    const iterations = Math.max(1, Math.round(dilateSizeForCanvas(canvas.width) * 0.35));
+    dilateCanvas(canvas, iterations);
+  }
+
+  if (smallShellPlaceholders.length > 0) {
+    const [r, g, b] = encodeNormalToRgb([0, 0, 1]);
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+
+    for (const placeholder of smallShellPlaceholders) {
+      const [x0, y0] = mapper.toPoint(0, placeholder.minU, placeholder.maxV);
+      const [x1, y1] = mapper.toPoint(0, placeholder.maxU, placeholder.minV);
+      if (![x0, y0, x1, y1].every((value) => Number.isFinite(value))) continue;
+      const minX = Math.min(x0, x1);
+      const minY = Math.min(y0, y1);
+      const width = Math.abs(x1 - x0);
+      const height = Math.abs(y1 - y0);
+      if (width < 0.5 || height < 0.5) continue;
+      ctx.fillRect(minX, minY, width, height);
+      paintedTriangleCount += 1;
+    }
+  }
+
+  return { canvas, paintedTriangleCount };
 }
 
 function quantizeUvKey(u, v) {
@@ -881,6 +1162,262 @@ function appendLoopSegments(segments, loopPoints) {
     if (!current || !next) continue;
     appendSegment(segments, current[0], current[1], next[0], next[1]);
   }
+}
+
+function fitUvSpanToUnit(center, span) {
+  const safeCenter = clamp01(center);
+  const safeSpan = Math.max(UV_EPSILON, Math.min(1, span));
+  let min = safeCenter - safeSpan * 0.5;
+  let max = safeCenter + safeSpan * 0.5;
+
+  if (min < 0) {
+    max -= min;
+    min = 0;
+  }
+  if (max > 1) {
+    min -= max - 1;
+    max = 1;
+  }
+
+  min = clamp01(min);
+  max = clamp01(max);
+  if (max - min < UV_EPSILON) {
+    const fallbackMin = Math.max(0, safeCenter - UV_EPSILON * 2);
+    const fallbackMax = Math.min(1, safeCenter + UV_EPSILON * 2);
+    return [fallbackMin, Math.max(fallbackMin + UV_EPSILON, fallbackMax)];
+  }
+
+  return [min, max];
+}
+
+function clampUvBounds(bounds) {
+  if (!bounds) return null;
+  const minU = clamp01(Number(bounds.minU));
+  const minV = clamp01(Number(bounds.minV));
+  const maxU = clamp01(Number(bounds.maxU));
+  const maxV = clamp01(Number(bounds.maxV));
+  if (![minU, minV, maxU, maxV].every((value) => Number.isFinite(value))) return null;
+  if (maxU - minU <= UV_EPSILON || maxV - minV <= UV_EPSILON) return null;
+  return { minU, minV, maxU, maxV };
+}
+
+function uvPointWithinBounds(u, v, bounds, padding = 0) {
+  if (!bounds) return false;
+  const pad = Number.isFinite(padding) ? Math.max(0, padding) : 0;
+  return (
+    u >= bounds.minU - pad &&
+    u <= bounds.maxU + pad &&
+    v >= bounds.minV - pad &&
+    v <= bounds.maxV + pad
+  );
+}
+
+function boundsOverlap(a, b, padding = 0) {
+  const pad = Number.isFinite(padding) ? Math.max(0, padding) : 0;
+  return !(
+    a.maxU + pad <= b.minU - pad ||
+    a.minU - pad >= b.maxU + pad ||
+    a.maxV + pad <= b.minV - pad ||
+    a.minV - pad >= b.maxV + pad
+  );
+}
+
+function buildSmallShellPlaceholderWireSegments(bounds) {
+  if (!bounds) return [];
+
+  const outerLoop = [
+    [bounds.minU, bounds.minV],
+    [bounds.maxU, bounds.minV],
+    [bounds.maxU, bounds.maxV],
+    [bounds.minU, bounds.maxV],
+  ];
+  const segments = [];
+  appendLoopSegments(segments, outerLoop);
+
+  const spanU = bounds.maxU - bounds.minU;
+  const spanV = bounds.maxV - bounds.minV;
+  if (spanU <= UV_EPSILON || spanV <= UV_EPSILON) return segments;
+
+  const insetU = spanU * SMALL_SHELL_INNER_BOX_RATIO;
+  const insetV = spanV * SMALL_SHELL_INNER_BOX_RATIO;
+  const innerLoop = [
+    [bounds.minU + insetU, bounds.minV + insetV],
+    [bounds.maxU - insetU, bounds.minV + insetV],
+    [bounds.maxU - insetU, bounds.maxV - insetV],
+    [bounds.minU + insetU, bounds.maxV - insetV],
+  ];
+  appendLoopSegments(segments, innerLoop);
+
+  for (let i = 0; i < outerLoop.length; i += 1) {
+    const outer = outerLoop[i];
+    const inner = innerLoop[i];
+    appendSegment(segments, outer[0], outer[1], inner[0], inner[1]);
+  }
+
+  return segments;
+}
+
+function buildSmallShellPlaceholderBounds(shells, size) {
+  if (!Array.isArray(shells) || shells.length === 0) return new Map();
+
+  const occupied = [];
+  const smallShellIndices = [];
+
+  shells.forEach((shell, shellIndex) => {
+    const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
+    const bounds = clampUvBounds(resolveShellUvBounds(shell, triangles));
+    if (!bounds) return;
+    if (shell?.isSmallShell) {
+      smallShellIndices.push(shellIndex);
+    } else {
+      occupied.push(bounds);
+    }
+  });
+
+  if (smallShellIndices.length === 0) return new Map();
+
+  const safeSize = Math.max(1, Number.isFinite(size) ? size : DEFAULT_SIZE);
+  const scale = safeSize / 2048;
+  const pixelScale = Math.max(1, safeSize - 1);
+  const markerSizePx = clamp(
+    SMALL_SHELL_PLACEHOLDER_SIZE_PX * scale,
+    SMALL_SHELL_PLACEHOLDER_MIN_PX,
+    SMALL_SHELL_PLACEHOLDER_MAX_PX,
+  );
+  const spanUv = Math.max(UV_EPSILON, markerSizePx / pixelScale);
+  const gapUv = (SMALL_SHELL_PLACEHOLDER_GAP_PX * scale) / pixelScale;
+  const marginUv = (SMALL_SHELL_PLACEHOLDER_MARGIN_PX * scale) / pixelScale;
+  const paddingUv = (SMALL_SHELL_PLACEHOLDER_PADDING_PX * scale) / pixelScale;
+
+  const minStart = marginUv;
+  const maxStart = 1 - marginUv - spanUv;
+  if (maxStart <= minStart + UV_EPSILON) return new Map();
+
+  const step = Math.max(UV_EPSILON, spanUv + gapUv);
+  const candidates = [];
+
+  for (let v = minStart; v <= maxStart + UV_EPSILON; v += step) {
+    for (let u = minStart; u <= maxStart + UV_EPSILON; u += step) {
+      candidates.push({
+        minU: u,
+        minV: v,
+        maxU: u + spanUv,
+        maxV: v + spanUv,
+      });
+    }
+  }
+
+  candidates.sort((a, b) => {
+    const aCenterU = (a.minU + a.maxU) * 0.5;
+    const bCenterU = (b.minU + b.maxU) * 0.5;
+    const aRightPenalty = aCenterU < 0.66 ? 1 : 0;
+    const bRightPenalty = bCenterU < 0.66 ? 1 : 0;
+    if (aRightPenalty !== bRightPenalty) return aRightPenalty - bRightPenalty;
+
+    const aCenterV = (a.minV + a.maxV) * 0.5;
+    const bCenterV = (b.minV + b.maxV) * 0.5;
+    const aDu = aCenterU - SMALL_SHELL_PLACEHOLDER_TARGET_U;
+    const aDv = aCenterV - SMALL_SHELL_PLACEHOLDER_TARGET_V;
+    const bDu = bCenterU - SMALL_SHELL_PLACEHOLDER_TARGET_U;
+    const bDv = bCenterV - SMALL_SHELL_PLACEHOLDER_TARGET_V;
+    const aDist = aDu * aDu + aDv * aDv;
+    const bDist = bDu * bDu + bDv * bDv;
+    return aDist - bDist;
+  });
+
+  const placements = new Map();
+  for (const shellIndex of smallShellIndices) {
+    let selected = null;
+    for (const candidate of candidates) {
+      let collides = false;
+      for (const existing of occupied) {
+        if (boundsOverlap(candidate, existing, paddingUv)) {
+          collides = true;
+          break;
+        }
+      }
+      if (collides) continue;
+      selected = candidate;
+      break;
+    }
+
+    if (!selected) continue;
+    placements.set(shellIndex, selected);
+    occupied.push(selected);
+  }
+
+  return placements;
+}
+
+function buildSmallShellMarkerSegments(shell, size, topology) {
+  const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
+  const bounds = resolveShellUvBounds(shell, triangles);
+  const vertices = Array.isArray(topology?.vertices) ? topology.vertices : [];
+
+  let centerU = 0;
+  let centerV = 0;
+  let count = 0;
+  for (const vertex of vertices) {
+    if (!Array.isArray(vertex) || vertex.length < 2) continue;
+    const u = Number(vertex[0]);
+    const v = Number(vertex[1]);
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    centerU += u;
+    centerV += v;
+    count += 1;
+  }
+
+  if (count > 0) {
+    centerU /= count;
+    centerV /= count;
+  } else {
+    centerU = bounds.minU + bounds.spanU * 0.5;
+    centerV = bounds.minV + bounds.spanV * 0.5;
+  }
+
+  centerU = clamp01(centerU);
+  centerV = clamp01(centerV);
+
+  const pixelScale = Math.max(1, size - 1);
+  const markerSpanUv = SMALL_SHELL_MARKER_MIN_SIZE_PX / pixelScale;
+  const [outerMinU, outerMaxU] = fitUvSpanToUnit(centerU, markerSpanUv);
+  const [outerMinV, outerMaxV] = fitUvSpanToUnit(centerV, markerSpanUv);
+
+  const outerLoop = [
+    [outerMinU, outerMinV],
+    [outerMaxU, outerMinV],
+    [outerMaxU, outerMaxV],
+    [outerMinU, outerMaxV],
+  ];
+
+  const outerSpanU = outerMaxU - outerMinU;
+  const outerSpanV = outerMaxV - outerMinV;
+  const insetU = outerSpanU * SMALL_SHELL_INNER_BOX_RATIO;
+  const insetV = outerSpanV * SMALL_SHELL_INNER_BOX_RATIO;
+
+  const innerLoop = [
+    [outerMinU + insetU, outerMinV + insetV],
+    [outerMaxU - insetU, outerMinV + insetV],
+    [outerMaxU - insetU, outerMaxV - insetV],
+    [outerMinU + insetU, outerMaxV - insetV],
+  ];
+
+  const segments = [];
+  appendLoopSegments(segments, outerLoop);
+  appendLoopSegments(segments, innerLoop);
+
+  for (let i = 0; i < outerLoop.length; i += 1) {
+    const outer = outerLoop[i];
+    const inner = innerLoop[i];
+    const lengthPx = Math.hypot(
+      (outer[0] - inner[0]) * pixelScale,
+      (outer[1] - inner[1]) * pixelScale,
+    );
+    if (lengthPx < 0.5) continue;
+    appendSegment(segments, outer[0], outer[1], inner[0], inner[1]);
+  }
+
+  return segments;
 }
 
 function dot2(ax, ay, bx, by) {
@@ -999,21 +1536,27 @@ function buildOrientedBoxSegments(points, principalAxis, options = {}) {
  *     as a diagonal to be hidden.
  *  5. Emit all non-diagonal edges as line segments.
  */
-function buildCleanWireSegments(shell, size) {
+function buildCleanWireSegments(shell, size, options = {}) {
   const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
   if (triangles.length < 6) return [];
 
   const pixelScale = Math.max(1, size - 1);
-  const topology = extractShellTopology(triangles);
+  const topology = options?.topology || extractShellTopology(triangles);
+  const smallShellPlaceholderBounds = options?.smallShellPlaceholderBounds || null;
   const topoVertices = Array.isArray(topology?.vertices) ? topology.vertices : [];
   const principalAxis = computePrincipalAxis(topoVertices) || [1, 0];
   const orientedBoxOptions = {
     pixelScale,
     minInteriorLengthPx: MIN_INTERIOR_EDGE_LENGTH_PX,
   };
-
-  if (isSmallUvShell(shell, size, topology)) {
-    return buildOrientedBoxSegments(topoVertices, principalAxis, orientedBoxOptions);
+  const isSmallShell = typeof options?.isSmallShell === "boolean"
+    ? options.isSmallShell
+    : isSmallUvShell(shell, size, topology);
+  if (isSmallShell) {
+    if (smallShellPlaceholderBounds) {
+      return buildSmallShellPlaceholderWireSegments(smallShellPlaceholderBounds);
+    }
+    return buildSmallShellMarkerSegments(shell, size, topology);
   }
 
   /* ── 1.  Parse triangles into indexed vertex / face lists ────── */
@@ -1168,10 +1711,29 @@ function buildCleanWireSegments(shell, size) {
 
 function buildRenderShellsWithCleanWire(shells, size) {
   if (!Array.isArray(shells)) return [];
-  return shells.map((shell) => ({
-    ...shell,
-    wireSegments: buildCleanWireSegments(shell, size),
-  }));
+  const analyzedShells = shells.map((shell) => {
+    const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
+    const topology = extractShellTopology(triangles);
+    return { ...shell, __topology: topology, isSmallShell: isSmallUvShell(shell, size, topology) };
+  });
+
+  const placeholderBoundsByShell = buildSmallShellPlaceholderBounds(analyzedShells, size);
+
+  return analyzedShells.map((shell, shellIndex) => {
+    const placeholderBounds = placeholderBoundsByShell.get(shellIndex) || null;
+    const wireSegments = buildCleanWireSegments(shell, size, {
+      topology: shell.__topology,
+      isSmallShell: shell.isSmallShell,
+      smallShellPlaceholderBounds: placeholderBounds,
+    });
+
+    const { __topology, ...cleanShell } = shell;
+    return {
+      ...cleanShell,
+      smallShellPlaceholderBounds: placeholderBounds,
+      wireSegments,
+    };
+  });
 }
 
 function paintWireframeLayer(canvas, shells, mapper) {
@@ -1393,7 +1955,48 @@ function renderPreview(size, layers) {
     ctx.drawImage(layer.canvas, 0, 0);
   }
 
-  return preview.toDataURL("image/png");
+  if (typeof preview.toDataURL === "function") {
+    return preview.toDataURL("image/png");
+  }
+
+  throw new Error("Synchronous preview export is unavailable.");
+}
+
+function bytesToBase64(bytes) {
+  if (typeof btoa !== "function") {
+    throw new Error("Base64 encoding is unavailable.");
+  }
+
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function renderPreviewAsync(size, layers) {
+  const preview = createCanvas(size);
+  const ctx = preview.getContext("2d");
+
+  for (const layer of layers) {
+    if (layer?.hidden) continue;
+    ctx.drawImage(layer.canvas, 0, 0);
+  }
+
+  if (typeof preview.toDataURL === "function") {
+    return preview.toDataURL("image/png");
+  }
+
+  if (typeof preview.convertToBlob === "function") {
+    const blob = await preview.convertToBlob({ type: "image/png" });
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    return `data:image/png;base64,${bytesToBase64(bytes)}`;
+  }
+
+  throw new Error("Preview export is unavailable in this runtime.");
 }
 
 /* ── Validation ──────────────────────────────────────────────────── */
@@ -1416,7 +2019,7 @@ function validatePsdSource(templatePsdSource) {
 
 /* ── Main entry point ────────────────────────────────────────────── */
 
-export function buildAutoTemplatePsd(templateMap, options = {}) {
+function buildAutoTemplateArtifacts(templateMap, options = {}) {
   if (!templateMap || typeof templateMap !== "object") {
     throw new Error("Template map is required.");
   }
@@ -1425,6 +2028,9 @@ export function buildAutoTemplatePsd(templateMap, options = {}) {
   validatePsdSource(templatePsdSource);
 
   const size = clampSize(options.size ?? DEFAULT_SIZE);
+  const fillColor = normalizeAutoTemplateFillColor(options.fillColor);
+  const includeWorldSpaceNormals = options.includeWorldSpaceNormals === true;
+  const useWorldSpaceNormalsAsBase = options.useWorldSpaceNormalsAsBase === true;
   const modelFileName =
     options.modelFileName ||
     templateMap?.source?.fileName ||
@@ -1449,16 +2055,27 @@ export function buildAutoTemplatePsd(templateMap, options = {}) {
   }
 
   const backgroundCanvas = paintBackgroundLayer(createCanvas(size));
-  const fillCanvas = paintMeshFillLayer(createCanvas(size), renderMeshes, mapper);
+  const fillCanvas = paintMeshFillLayer(createCanvas(size), renderMeshes, mapper, fillColor);
   const wireCanvas = paintWireframeLayer(createCanvas(size), renderMeshes, mapper);
   const annotationCanvas = paintAnnotationLayer(createCanvas(size), modelName, targetCount, renderMeshes.length);
   const plateCanvas = paintLicencePlateLayer(createCanvas(size));
   const swatchCanvas = paintColorSwatchLayer(createCanvas(size), templateMap);
+  const worldSpaceNormals = includeWorldSpaceNormals
+    ? paintWorldSpaceNormalLayer(createCanvas(size), templatePsdSource, renderMeshes, mapper)
+    : null;
+  const hasWorldSpaceNormals = Boolean(worldSpaceNormals && worldSpaceNormals.paintedTriangleCount > 0);
+  const useWorldNormalsBase = includeWorldSpaceNormals && useWorldSpaceNormalsAsBase && hasWorldSpaceNormals;
+  const baseLayer = useWorldNormalsBase
+    ? { name: "_WS_NORMAL_WORLD_BASE", canvas: worldSpaceNormals.canvas }
+    : { name: "_UV_FILL", canvas: fillCanvas };
 
   const layers = [
     { name: "_BG_BLACK", canvas: backgroundCanvas },
-    { name: "_UV_FILL", canvas: fillCanvas },
+    baseLayer,
     { name: "_UV_WIREFRAME", canvas: wireCanvas },
+    ...(hasWorldSpaceNormals && !useWorldNormalsBase
+      ? [{ name: "_WS_NORMAL_WORLD", canvas: worldSpaceNormals.canvas, hidden: true }]
+      : []),
 
     { name: "_ANNOTATIONS", canvas: annotationCanvas, hidden: true },
     { name: "_LICENCE_PLATES", canvas: plateCanvas, hidden: true },
@@ -1472,14 +2089,36 @@ export function buildAutoTemplatePsd(templateMap, options = {}) {
   };
 
   const bytes = writePsdUint8Array(psd);
-  const previewDataUrl = renderPreview(size, layers);
-
   return {
     bytes,
     size,
     layerCount: layers.length,
-    previewDataUrl,
+    layers,
     fileName: `${modelName}_auto_template.psd`,
     targetCount,
+  };
+}
+
+export function buildAutoTemplatePsd(templateMap, options = {}) {
+  const result = buildAutoTemplateArtifacts(templateMap, options);
+  return {
+    bytes: result.bytes,
+    size: result.size,
+    layerCount: result.layerCount,
+    previewDataUrl: renderPreview(result.size, result.layers),
+    fileName: result.fileName,
+    targetCount: result.targetCount,
+  };
+}
+
+export async function buildAutoTemplatePsdAsync(templateMap, options = {}) {
+  const result = buildAutoTemplateArtifacts(templateMap, options);
+  return {
+    bytes: result.bytes,
+    size: result.size,
+    layerCount: result.layerCount,
+    previewDataUrl: await renderPreviewAsync(result.size, result.layers),
+    fileName: result.fileName,
+    targetCount: result.targetCount,
   };
 }

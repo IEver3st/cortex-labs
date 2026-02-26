@@ -22,6 +22,7 @@ const BUILT_IN_DEFAULTS = {
   windowTextureTarget: "auto",
   cameraWASD: false,
   bodyColor: "#e7ebf0",
+  autoTemplateColor: "#c9d8ee",
   backgroundColor: "#141414",
   experimentalSettings: false,
   showHints: true,
@@ -35,6 +36,7 @@ const BUILT_IN_DEFAULTS = {
   uiScale: 1.0,
   previewFolder: "",
   variantExportFolder: "",
+  autoTemplateExportFormat: "psd",
   cameraControlsInPanel: false,
   legacyLayersLayout: false,
 };
@@ -48,11 +50,20 @@ function clampUiScale(value) {
   return Math.min(MAX_UI_SCALE, Math.max(MIN_UI_SCALE, num));
 }
 
+function normalizeAutoTemplateExportFormat(value) {
+  if (value === "png" || value === "psd_png") return value;
+  return BUILT_IN_DEFAULTS.autoTemplateExportFormat;
+}
+
 function getStoredDefaults() {
   const prefs = loadPrefs();
   const stored = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
   const merged = { ...BUILT_IN_DEFAULTS, ...stored };
-  return { ...merged, uiScale: clampUiScale(merged.uiScale) };
+  return {
+    ...merged,
+    uiScale: clampUiScale(merged.uiScale),
+    autoTemplateExportFormat: normalizeAutoTemplateExportFormat(merged.autoTemplateExportFormat),
+  };
 }
 
 function getStoredHotkeys() {
@@ -180,7 +191,11 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
   const save = useCallback(() => {
     const normalizedUiScale = clampUiScale(draft.uiScale);
-    const normalizedDraft = { ...draft, uiScale: normalizedUiScale };
+    const normalizedDraft = {
+      ...draft,
+      uiScale: normalizedUiScale,
+      autoTemplateExportFormat: normalizeAutoTemplateExportFormat(draft.autoTemplateExportFormat),
+    };
     const prefs = loadPrefs() || {};
     savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: hotkeysDraft });
     // Apply UI scale immediately
@@ -446,6 +461,51 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                         )}
                                       </div>
                                     </div>
+
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Auto Template Save Format</div>
+                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Choose which files are exported when templates auto-save</div>
+                                      </div>
+                                      <div className="flex p-0.5" style={{ background: 'var(--mg-input-bg)', border: '1px solid var(--mg-border)', borderRadius: 'var(--mg-radius)' }}>
+                                        <button
+                                          type="button"
+                                          className={`px-3 py-1 text-[9px] transition-all ${draft.autoTemplateExportFormat === "psd" ? "font-bold" : ""}`}
+                                          style={{
+                                            borderRadius: 'calc(var(--mg-radius) - 2px)',
+                                            background: draft.autoTemplateExportFormat === "psd" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
+                                            color: draft.autoTemplateExportFormat === "psd" ? 'var(--mg-primary)' : 'var(--mg-muted)'
+                                          }}
+                                          onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "psd" }))}
+                                        >
+                                          PSD
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className={`px-3 py-1 text-[9px] transition-all ${draft.autoTemplateExportFormat === "png" ? "font-bold" : ""}`}
+                                          style={{
+                                            borderRadius: 'calc(var(--mg-radius) - 2px)',
+                                            background: draft.autoTemplateExportFormat === "png" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
+                                            color: draft.autoTemplateExportFormat === "png" ? 'var(--mg-primary)' : 'var(--mg-muted)'
+                                          }}
+                                          onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "png" }))}
+                                        >
+                                          PNG
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className={`px-3 py-1 text-[9px] transition-all ${draft.autoTemplateExportFormat === "psd_png" ? "font-bold" : ""}`}
+                                          style={{
+                                            borderRadius: 'calc(var(--mg-radius) - 2px)',
+                                            background: draft.autoTemplateExportFormat === "psd_png" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
+                                            color: draft.autoTemplateExportFormat === "psd_png" ? 'var(--mg-primary)' : 'var(--mg-muted)'
+                                          }}
+                                          onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "psd_png" }))}
+                                        >
+                                          PSD + PNG
+                                        </button>
+                                      </div>
+                                    </div>
                                   </section>
                               </div>
                             ) : null}
@@ -669,6 +729,12 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                       value={draft.backgroundColor}
                                       onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
                                       onReset={() => setDraft((p) => ({ ...p, backgroundColor: BUILT_IN_DEFAULTS.backgroundColor }))}
+                                    />
+                                    <ColorField
+                                      label="Auto Template Fill"
+                                      value={draft.autoTemplateColor}
+                                      onChange={(value) => setDraft((p) => ({ ...p, autoTemplateColor: value }))}
+                                      onReset={() => setDraft((p) => ({ ...p, autoTemplateColor: BUILT_IN_DEFAULTS.autoTemplateColor }))}
                                     />
                                   </div>
                                 </section>

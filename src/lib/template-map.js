@@ -91,10 +91,45 @@ function readPositionAt(positionAttribute, index) {
   return [x, y, z];
 }
 
+function readNormalAt(normalAttribute, index) {
+  const x = normalAttribute.getX(index);
+  const y = normalAttribute.getY(index);
+  const z = normalAttribute.getZ(index);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+  return normalizeVec3(x, y, z);
+}
+
 function normalizeVec3(x, y, z) {
   const length = Math.hypot(x, y, z);
   if (!Number.isFinite(length) || length <= NORMAL_EPSILON) return null;
   return [x / length, y / length, z / length];
+}
+
+function transformPointByMatrix4(point, matrix4) {
+  const elements = matrix4?.elements;
+  if (!elements || elements.length < 16) return [point[0], point[1], point[2]];
+  const x = point[0];
+  const y = point[1];
+  const z = point[2];
+  const tx = elements[0] * x + elements[4] * y + elements[8] * z + elements[12];
+  const ty = elements[1] * x + elements[5] * y + elements[9] * z + elements[13];
+  const tz = elements[2] * x + elements[6] * y + elements[10] * z + elements[14];
+  if (!Number.isFinite(tx) || !Number.isFinite(ty) || !Number.isFinite(tz)) {
+    return [point[0], point[1], point[2]];
+  }
+  return [tx, ty, tz];
+}
+
+function transformDirectionByMatrix4(direction, matrix4) {
+  const elements = matrix4?.elements;
+  if (!elements || elements.length < 16) return [direction[0], direction[1], direction[2]];
+  const x = direction[0];
+  const y = direction[1];
+  const z = direction[2];
+  const tx = elements[0] * x + elements[4] * y + elements[8] * z;
+  const ty = elements[1] * x + elements[5] * y + elements[9] * z;
+  const tz = elements[2] * x + elements[6] * y + elements[10] * z;
+  return normalizeVec3(tx, ty, tz) || [direction[0], direction[1], direction[2]];
 }
 
 function computeTriangleNormal(p0, p1, p2) {
@@ -552,12 +587,16 @@ function extractMeshProxyGeometry(mesh, fallbackIndex, options = {}) {
   const attributes = geometry?.attributes;
   const positionAttribute = attributes?.position;
   if (!positionAttribute) return null;
+  const normalAttribute = attributes?.normal;
+  const normalCount = normalAttribute?.count || 0;
 
   const uvAttribute = chooseTemplateUvAttribute(geometry, options);
   const uvCount = uvAttribute?.count || 0;
   const indexArray = geometry?.index?.array || null;
   const indexCount = indexArray ? indexArray.length : positionAttribute.count || 0;
   if (indexCount < 3) return null;
+  mesh?.updateWorldMatrix?.(true, false);
+  const worldMatrix = mesh?.matrixWorld || null;
 
   const meshName = resolveMeshName(mesh, fallbackIndex);
   const baseMaterial = mesh?.userData?.baseMaterial || mesh?.material;
@@ -583,10 +622,14 @@ function extractMeshProxyGeometry(mesh, fallbackIndex, options = {}) {
 
     if (i0 >= positionAttribute.count || i1 >= positionAttribute.count || i2 >= positionAttribute.count) continue;
 
-    const p0 = readPositionAt(positionAttribute, i0);
-    const p1 = readPositionAt(positionAttribute, i1);
-    const p2 = readPositionAt(positionAttribute, i2);
-    if (!p0 || !p1 || !p2) continue;
+    const lp0 = readPositionAt(positionAttribute, i0);
+    const lp1 = readPositionAt(positionAttribute, i1);
+    const lp2 = readPositionAt(positionAttribute, i2);
+    if (!lp0 || !lp1 || !lp2) continue;
+
+    const p0 = transformPointByMatrix4(lp0, worldMatrix);
+    const p1 = transformPointByMatrix4(lp1, worldMatrix);
+    const p2 = transformPointByMatrix4(lp2, worldMatrix);
 
     const ax = p1[0] - p0[0];
     const ay = p1[1] - p0[1];
@@ -600,8 +643,18 @@ function extractMeshProxyGeometry(mesh, fallbackIndex, options = {}) {
     const twiceArea = Math.hypot(cx, cy, cz);
     if (!Number.isFinite(twiceArea) || twiceArea <= POSITION_AREA_EPSILON) continue;
 
-    const normal = normalizeVec3(cx, cy, cz) || computeTriangleNormal(p0, p1, p2);
-    if (!normal) continue;
+    const faceNormal = normalizeVec3(cx, cy, cz) || computeTriangleNormal(p0, p1, p2);
+    if (!faceNormal) continue;
+
+    const n0 = normalAttribute && i0 < normalCount ? readNormalAt(normalAttribute, i0) : null;
+    const n1 = normalAttribute && i1 < normalCount ? readNormalAt(normalAttribute, i1) : null;
+    const n2 = normalAttribute && i2 < normalCount ? readNormalAt(normalAttribute, i2) : null;
+    const wn0 = n0 ? transformDirectionByMatrix4(n0, worldMatrix) : null;
+    const wn1 = n1 ? transformDirectionByMatrix4(n1, worldMatrix) : null;
+    const wn2 = n2 ? transformDirectionByMatrix4(n2, worldMatrix) : null;
+    const v0Normal = wn0 || faceNormal;
+    const v1Normal = wn1 || faceNormal;
+    const v2Normal = wn2 || faceNormal;
 
     const materialIndex = findMaterialIndexForDrawOffset(groups, drawOffset);
     const materialName = resolveMaterialNameFromIndex(baseMaterial, materialIndex) || defaultMaterialName;
@@ -641,7 +694,18 @@ function extractMeshProxyGeometry(mesh, fallbackIndex, options = {}) {
       meshName,
       materialIndex,
       materialName,
-      normal,
+      normal: faceNormal,
+      vertexNormals: [
+        v0Normal[0],
+        v0Normal[1],
+        v0Normal[2],
+        v1Normal[0],
+        v1Normal[1],
+        v1Normal[2],
+        v2Normal[0],
+        v2Normal[1],
+        v2Normal[2],
+      ],
       positions: [
         p0[0],
         p0[1],
