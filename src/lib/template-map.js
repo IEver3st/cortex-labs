@@ -8,6 +8,7 @@ const UV_WRAP_EPSILON = 1e-8;
 const POSITION_AREA_EPSILON = 1e-12;
 const NORMAL_EPSILON = 1e-12;
 const UV_ISLAND_MISSING = -1;
+const UV_TOPOLOGY_QUANTIZE = 1e6;
 
 /**
  * Minimum UV-space area for a shell to be included in the output.
@@ -15,12 +16,6 @@ const UV_ISLAND_MISSING = -1;
  * (door-edge slivers, trim caps, narrow seams) are not discarded.
  */
 const MIN_SHELL_UV_AREA = 1e-8;
-
-/**
- * Proximity threshold in UV space for merging nearby shells from the
- * same mesh. Shells whose bounding boxes overlap or are within this
- * distance are merged into a single island.
- */
 const SHELL_MERGE_PROXIMITY = 0.02;
 
 /* ── helpers ─────────────────────────────────────────────────────── */
@@ -331,9 +326,94 @@ function buildTriangleRecords(uvAttribute, indexArray) {
 
 /* ── Connected component detection ───────────────────────────────── */
 
-function buildTriangleComponents(triangles, hasIndexArray) {
-  if (triangles.length === 0) return [];
+function quantizeUvForTopology(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * UV_TOPOLOGY_QUANTIZE);
+}
 
+function makeUvVertexKey(u, v) {
+  return `${quantizeUvForTopology(u)},${quantizeUvForTopology(v)}`;
+}
+
+function makeUvEdgeKey(u0, v0, u1, v1) {
+  const a = makeUvVertexKey(u0, v0);
+  const b = makeUvVertexKey(u1, v1);
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+function resolveTriangleUvValues(triangle) {
+  if (Array.isArray(triangle?.uvs) && triangle.uvs.length >= 6) return triangle.uvs;
+  if (Array.isArray(triangle?.uv) && triangle.uv.length >= 6) return triangle.uv;
+  return null;
+}
+
+/**
+ * Build UV-island components by shared UV edges.
+ * This is resilient to split normals / duplicated mesh vertices because
+ * connectivity is established in UV-space, not index-space.
+ */
+function buildTriangleComponentsByUvEdges(triangles) {
+  const edgeToTriangles = new Map();
+  const adjacency = Array.from({ length: triangles.length }, () => new Set());
+
+  for (let triangleIndex = 0; triangleIndex < triangles.length; triangleIndex += 1) {
+    const triangle = triangles[triangleIndex];
+    const uv = resolveTriangleUvValues(triangle);
+    if (!uv) continue;
+    if (!uv.every((value) => Number.isFinite(value))) continue;
+
+    const edgeKeys = [
+      makeUvEdgeKey(uv[0], uv[1], uv[2], uv[3]),
+      makeUvEdgeKey(uv[2], uv[3], uv[4], uv[5]),
+      makeUvEdgeKey(uv[4], uv[5], uv[0], uv[1]),
+    ];
+
+    for (const edgeKey of edgeKeys) {
+      if (!edgeToTriangles.has(edgeKey)) edgeToTriangles.set(edgeKey, []);
+      edgeToTriangles.get(edgeKey).push(triangleIndex);
+    }
+  }
+
+  for (const linkedTriangles of edgeToTriangles.values()) {
+    if (!Array.isArray(linkedTriangles) || linkedTriangles.length < 2) continue;
+    for (let i = 0; i < linkedTriangles.length; i += 1) {
+      for (let j = i + 1; j < linkedTriangles.length; j += 1) {
+        const a = linkedTriangles[i];
+        const b = linkedTriangles[j];
+        adjacency[a].add(b);
+        adjacency[b].add(a);
+      }
+    }
+  }
+
+  const visited = new Uint8Array(triangles.length);
+  const components = [];
+
+  for (let start = 0; start < triangles.length; start += 1) {
+    if (visited[start]) continue;
+
+    visited[start] = 1;
+    const queue = [start];
+    const component = [];
+
+    while (queue.length > 0) {
+      const triangleIndex = queue.pop();
+      component.push(triangleIndex);
+
+      for (const neighborIndex of adjacency[triangleIndex]) {
+        if (visited[neighborIndex]) continue;
+        visited[neighborIndex] = 1;
+        queue.push(neighborIndex);
+      }
+    }
+
+    if (component.length > 0) components.push(component);
+  }
+
+  return components;
+}
+
+function buildTriangleComponentsByIndex(triangles, hasIndexArray) {
   if (!hasIndexArray) {
     return [triangles.map((_, index) => index)];
   }
@@ -376,6 +456,18 @@ function buildTriangleComponents(triangles, hasIndexArray) {
   }
 
   return components;
+}
+
+function buildTriangleComponents(triangles, options = {}) {
+  if (triangles.length === 0) return [];
+
+  const mode = options?.mode || "auto";
+  const hasUvTriangles = triangles.some((triangle) => resolveTriangleUvValues(triangle));
+  if (mode === "uv" || (mode === "auto" && hasUvTriangles)) {
+    return buildTriangleComponentsByUvEdges(triangles);
+  }
+
+  return buildTriangleComponentsByIndex(triangles, Boolean(options?.hasIndexArray));
 }
 
 /* ── Shell record construction ───────────────────────────────────── */
@@ -565,7 +657,10 @@ function extractMeshUvShells(mesh, fallbackIndex, options = {}) {
   const triangles = buildTriangleRecords(uvAttribute, indexArray);
   if (triangles.length === 0) return [];
 
-  const components = buildTriangleComponents(triangles, Boolean(indexArray));
+  const components = buildTriangleComponents(triangles, {
+    mode: "uv",
+    hasIndexArray: Boolean(indexArray),
+  });
   if (components.length === 0) return [];
 
   const meshName = resolveMeshName(mesh, fallbackIndex);
@@ -722,7 +817,7 @@ function extractMeshProxyGeometry(mesh, fallbackIndex, options = {}) {
     });
 
     if (uvValues) {
-      uvTriangles.push({ i0, i1, i2 });
+      uvTriangles.push({ i0, i1, i2, uvs: uvValues });
       uvTriangleToProxy.push(proxyIndex);
     }
   }
@@ -730,7 +825,10 @@ function extractMeshProxyGeometry(mesh, fallbackIndex, options = {}) {
   if (triangles.length === 0) return null;
 
   if (uvTriangles.length > 0) {
-    const uvComponents = buildTriangleComponents(uvTriangles, Boolean(indexArray));
+    const uvComponents = buildTriangleComponents(uvTriangles, {
+      mode: "uv",
+      hasIndexArray: Boolean(indexArray),
+    });
     uvComponents.forEach((component, componentIndex) => {
       for (const uvTriangleIndex of component) {
         const proxyIndex = uvTriangleToProxy[uvTriangleIndex];
@@ -837,8 +935,9 @@ export function buildYftTemplatePsdSource({ object, modelPath = "", preferUv2 = 
 
   if (rawShells.length === 0) return null;
 
-  // Merge nearby shells from the same mesh (fixes split-normal fragmentation)
-  const shells = mergeNearbyShells(rawShells);
+  // UV-edge connected components already produce robust islands without
+  // proximity-based post-merge heuristics.
+  const shells = rawShells;
 
   // Sort by area descending
   shells.sort((a, b) => {

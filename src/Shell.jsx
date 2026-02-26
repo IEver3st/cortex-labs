@@ -544,7 +544,6 @@ export default function Shell() {
           {/* ━━━ UNIFIED TOOLBAR (single row) ━━━ */}
           <motion.div
             className="shell-toolbar"
-            data-tauri-drag-region
             onMouseDown={handleToolbarMouseDown}
             onDoubleClick={handleToolbarDoubleClick}
             initial={{ opacity: 0, y: -8 }}
@@ -552,7 +551,7 @@ export default function Shell() {
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           >
             {/* Brand mark */}
-            <div className="shell-brand" data-tauri-drag-region>
+            <div className="shell-brand">
               <img src={cortexLogo} alt="" className="shell-brand-logo" draggable={false} />
               <span className="shell-brand-name">CORTEX</span>
             </div>
@@ -560,7 +559,7 @@ export default function Shell() {
             <div className="shell-toolbar-sep" />
 
             {/* Tab strip — inline in the single row */}
-            <div className="shell-tabs" data-tauri-drag-region>
+            <div className="shell-tabs">
               <AnimatePresence initial={false}>
                 {tabs.map((tab, index) => {
                   const Icon = TAB_ICONS[tab.type] || Eye;
@@ -718,7 +717,6 @@ export default function Shell() {
             {/* Context bar — page-specific controls portaled here */}
             <div
               className="shell-context"
-              data-tauri-drag-region
               ref={(node) => {
                 contextBarRef.current = node;
                 if (node && !contextBarReady) setContextBarReady(true);
@@ -728,7 +726,7 @@ export default function Shell() {
             {/* Draggable spacer (right-click for new tab) */}
             <Ctx.Root>
               <Ctx.Trigger>
-                <div className="shell-toolbar-spacer" data-tauri-drag-region />
+                <div className="shell-toolbar-spacer" />
               </Ctx.Trigger>
               <Ctx.Content>
                 <Ctx.Label>New Tab</Ctx.Label>

@@ -7,6 +7,7 @@ const MIN_SIZE = 256;
 const MAX_SIZE = 8192;
 const MIN_TRIANGLE_AREA_PIXELS = 0.005;
 const DEFAULT_AUTO_TEMPLATE_FILL_COLOR = "#c9d8ee";
+const DEFAULT_AUTO_TEMPLATE_BACKGROUND_COLOR = "#000000";
 
 /* ── Utility ─────────────────────────────────────────────────────── */
 
@@ -21,6 +22,13 @@ function normalizeAutoTemplateFillColor(value) {
   const trimmed = value.trim();
   if (/^#(?:[0-9a-fA-F]{3}){1,2}$/.test(trimmed)) return trimmed;
   return DEFAULT_AUTO_TEMPLATE_FILL_COLOR;
+}
+
+function normalizeAutoTemplateBackgroundColor(value) {
+  if (typeof value !== "string") return DEFAULT_AUTO_TEMPLATE_BACKGROUND_COLOR;
+  const trimmed = value.trim();
+  if (/^#(?:[0-9a-fA-F]{3}){1,2}$/.test(trimmed)) return trimmed;
+  return DEFAULT_AUTO_TEMPLATE_BACKGROUND_COLOR;
 }
 
 function sanitizeStem(value) {
@@ -763,7 +771,7 @@ function createShellMapper(size, shells) {
 
   const mapBounds = (shellIndex) => {
     const shell = shells[shellIndex];
-    const sourceBounds = shell?.smallShellPlaceholderBounds || shell?.bounds;
+    const sourceBounds = shell?.bounds;
     if (!sourceBounds) {
       return { minX: 0, minY: 0, maxX: maxCoord, maxY: maxCoord };
     }
@@ -837,12 +845,12 @@ function dilateSizeForCanvas(size) {
 
 /* ── Layer painting ──────────────────────────────────────────────── */
 
-function paintBackgroundLayer(canvas) {
+function paintBackgroundLayer(canvas, backgroundColor = DEFAULT_AUTO_TEMPLATE_BACKGROUND_COLOR) {
   const ctx = canvas.getContext("2d");
   const { width, height } = canvas;
 
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "rgb(0, 0, 0)";
+  ctx.fillStyle = backgroundColor;
   ctx.fillRect(0, 0, width, height);
 
   return canvas;
@@ -880,25 +888,6 @@ function paintMeshFillLayer(canvas, shells, mapper, fillColor = DEFAULT_AUTO_TEM
   ctx.lineCap = "round";
 
   shells.forEach((shell, index) => {
-    if (shell?.isSmallShell) {
-      const placeholder = shell?.smallShellPlaceholderBounds;
-      if (!placeholder) return;
-
-      const [x0, y0] = mapper.toPoint(index, placeholder.minU, placeholder.maxV);
-      const [x1, y1] = mapper.toPoint(index, placeholder.maxU, placeholder.minV);
-      if (![x0, y0, x1, y1].every((value) => Number.isFinite(value))) return;
-
-      const minX = Math.min(x0, x1);
-      const minY = Math.min(y0, y1);
-      const width = Math.max(0, Math.abs(x1 - x0));
-      const height = Math.max(0, Math.abs(y1 - y0));
-      if (width < 0.5 || height < 0.5) return;
-
-      ctx.fillStyle = fillColor;
-      ctx.fillRect(minX, minY, width, height);
-      return;
-    }
-
     const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
     if (triangles.length < 6) return;
 
@@ -947,19 +936,8 @@ function paintWorldSpaceNormalLayer(canvas, templatePsdSource, selectedMeshes, m
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const proxyTriangles = collectProxyTrianglesForNormals(templatePsdSource, selectedMeshes);
-  const smallShellBounds = [];
-  const smallShellPlaceholders = [];
-  for (const shell of selectedMeshes || []) {
-    if (!shell?.isSmallShell) continue;
-    const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
-    const shellBounds = clampUvBounds(resolveShellUvBounds(shell, triangles));
-    if (shellBounds) smallShellBounds.push(shellBounds);
 
-    const placeholderBounds = clampUvBounds(shell?.smallShellPlaceholderBounds);
-    if (placeholderBounds) smallShellPlaceholders.push(placeholderBounds);
-  }
-
-  if (proxyTriangles.length === 0 && smallShellPlaceholders.length === 0) {
+  if (proxyTriangles.length === 0) {
     return { canvas, paintedTriangleCount: 0 };
   }
 
@@ -972,17 +950,6 @@ function paintWorldSpaceNormalLayer(canvas, templatePsdSource, selectedMeshes, m
   for (const entry of proxyTriangles) {
     const uv = entry.uv;
     if (triangleOutsideUvTile(uv)) continue;
-    const centroidU = (uv[0] + uv[2] + uv[4]) / 3;
-    const centroidV = (uv[1] + uv[3] + uv[5]) / 3;
-
-    let belongsToSmallShell = false;
-    for (const shellBounds of smallShellBounds) {
-      if (uvPointWithinBounds(centroidU, centroidV, shellBounds, UV_EPSILON * 4)) {
-        belongsToSmallShell = true;
-        break;
-      }
-    }
-    if (belongsToSmallShell) continue;
 
     const [x0, y0] = mapper.toPoint(0, uv[0], uv[1]);
     const [x1, y1] = mapper.toPoint(0, uv[2], uv[3]);
@@ -1051,24 +1018,6 @@ function paintWorldSpaceNormalLayer(canvas, templatePsdSource, selectedMeshes, m
     ctx.putImageData(imageData, 0, 0);
     const iterations = Math.max(1, Math.round(dilateSizeForCanvas(canvas.width) * 0.35));
     dilateCanvas(canvas, iterations);
-  }
-
-  if (smallShellPlaceholders.length > 0) {
-    const [r, g, b] = encodeNormalToRgb([0, 0, 1]);
-    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-
-    for (const placeholder of smallShellPlaceholders) {
-      const [x0, y0] = mapper.toPoint(0, placeholder.minU, placeholder.maxV);
-      const [x1, y1] = mapper.toPoint(0, placeholder.maxU, placeholder.minV);
-      if (![x0, y0, x1, y1].every((value) => Number.isFinite(value))) continue;
-      const minX = Math.min(x0, x1);
-      const minY = Math.min(y0, y1);
-      const width = Math.abs(x1 - x0);
-      const height = Math.abs(y1 - y0);
-      if (width < 0.5 || height < 0.5) continue;
-      ctx.fillRect(minX, minY, width, height);
-      paintedTriangleCount += 1;
-    }
   }
 
   return { canvas, paintedTriangleCount };
@@ -1222,6 +1171,30 @@ function boundsOverlap(a, b, padding = 0) {
   );
 }
 
+function clampPlaceholderBounds(minU, minV, spanUv, lowerBound, upperBound) {
+  const clampedMinU = clamp(minU, lowerBound, upperBound);
+  const clampedMinV = clamp(minV, lowerBound, upperBound);
+  return {
+    minU: clampedMinU,
+    minV: clampedMinV,
+    maxU: clampedMinU + spanUv,
+    maxV: clampedMinV + spanUv,
+  };
+}
+
+function chooseFirstNonOverlappingBounds(candidates, collisionBounds, paddingUv = 0) {
+  const safePadding = Number.isFinite(paddingUv) ? Math.max(0, paddingUv) : 0;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const overlapsVehicleShell = collisionBounds.some((bounds) => boundsOverlap(candidate, bounds, safePadding));
+    if (!overlapsVehicleShell) return candidate;
+  }
+  // Never silently return an overlapping position — return null so the
+  // caller can handle the failure explicitly instead of placing a block
+  // on top of the vehicle shell.
+  return null;
+}
+
 function buildSmallShellPlaceholderWireSegments(bounds) {
   if (!bounds) return [];
 
@@ -1260,21 +1233,21 @@ function buildSmallShellPlaceholderWireSegments(bounds) {
 function buildSmallShellPlaceholderBounds(shells, size) {
   if (!Array.isArray(shells) || shells.length === 0) return new Map();
 
-  const occupied = [];
-  const smallShellIndices = [];
+  const smallShellEntries = [];
+  const vehicleShellBounds = [];
 
   shells.forEach((shell, shellIndex) => {
     const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
     const bounds = clampUvBounds(resolveShellUvBounds(shell, triangles));
     if (!bounds) return;
     if (shell?.isSmallShell) {
-      smallShellIndices.push(shellIndex);
-    } else {
-      occupied.push(bounds);
+      smallShellEntries.push({ shellIndex, bounds });
+      return;
     }
+    vehicleShellBounds.push(bounds);
   });
 
-  if (smallShellIndices.length === 0) return new Map();
+  if (smallShellEntries.length === 0) return new Map();
 
   const safeSize = Math.max(1, Number.isFinite(size) ? size : DEFAULT_SIZE);
   const scale = safeSize / 2048;
@@ -1285,65 +1258,89 @@ function buildSmallShellPlaceholderBounds(shells, size) {
     SMALL_SHELL_PLACEHOLDER_MAX_PX,
   );
   const spanUv = Math.max(UV_EPSILON, markerSizePx / pixelScale);
-  const gapUv = (SMALL_SHELL_PLACEHOLDER_GAP_PX * scale) / pixelScale;
+  const gapUv = Math.max(UV_EPSILON, (SMALL_SHELL_PLACEHOLDER_GAP_PX * scale) / pixelScale);
   const marginUv = (SMALL_SHELL_PLACEHOLDER_MARGIN_PX * scale) / pixelScale;
-  const paddingUv = (SMALL_SHELL_PLACEHOLDER_PADDING_PX * scale) / pixelScale;
-
-  const minStart = marginUv;
-  const maxStart = 1 - marginUv - spanUv;
-  if (maxStart <= minStart + UV_EPSILON) return new Map();
-
-  const step = Math.max(UV_EPSILON, spanUv + gapUv);
-  const candidates = [];
-
-  for (let v = minStart; v <= maxStart + UV_EPSILON; v += step) {
-    for (let u = minStart; u <= maxStart + UV_EPSILON; u += step) {
-      candidates.push({
-        minU: u,
-        minV: v,
-        maxU: u + spanUv,
-        maxV: v + spanUv,
-      });
-    }
-  }
-
-  candidates.sort((a, b) => {
-    const aCenterU = (a.minU + a.maxU) * 0.5;
-    const bCenterU = (b.minU + b.maxU) * 0.5;
-    const aRightPenalty = aCenterU < 0.66 ? 1 : 0;
-    const bRightPenalty = bCenterU < 0.66 ? 1 : 0;
-    if (aRightPenalty !== bRightPenalty) return aRightPenalty - bRightPenalty;
-
-    const aCenterV = (a.minV + a.maxV) * 0.5;
-    const bCenterV = (b.minV + b.maxV) * 0.5;
-    const aDu = aCenterU - SMALL_SHELL_PLACEHOLDER_TARGET_U;
-    const aDv = aCenterV - SMALL_SHELL_PLACEHOLDER_TARGET_V;
-    const bDu = bCenterU - SMALL_SHELL_PLACEHOLDER_TARGET_U;
-    const bDv = bCenterV - SMALL_SHELL_PLACEHOLDER_TARGET_V;
-    const aDist = aDu * aDu + aDv * aDv;
-    const bDist = bDu * bDu + bDv * bDv;
-    return aDist - bDist;
-  });
+  const overlapPaddingUv = Math.max(UV_EPSILON, (SMALL_SHELL_PLACEHOLDER_PADDING_PX * scale) / pixelScale);
+  const lowerBound = marginUv;
+  const upperBound = Math.max(lowerBound, 1 - marginUv - spanUv);
 
   const placements = new Map();
-  for (const shellIndex of smallShellIndices) {
-    let selected = null;
-    for (const candidate of candidates) {
-      let collides = false;
-      for (const existing of occupied) {
-        if (boundsOverlap(candidate, existing, paddingUv)) {
-          collides = true;
-          break;
-        }
+  for (const { shellIndex, bounds } of smallShellEntries) {
+    const centerU = clamp01((bounds.minU + bounds.maxU) * 0.5);
+    const centerV = clamp01((bounds.minV + bounds.maxV) * 0.5);
+    const centered = clampPlaceholderBounds(
+      centerU - spanUv * 0.5,
+      centerV - spanUv * 0.5,
+      spanUv,
+      lowerBound,
+      upperBound,
+    );
+    const above = clampPlaceholderBounds(
+      centerU - spanUv * 0.5,
+      bounds.maxV + gapUv,
+      spanUv,
+      lowerBound,
+      upperBound,
+    );
+    const below = clampPlaceholderBounds(
+      centerU - spanUv * 0.5,
+      bounds.minV - gapUv - spanUv,
+      spanUv,
+      lowerBound,
+      upperBound,
+    );
+    const right = clampPlaceholderBounds(
+      bounds.maxU + gapUv,
+      centerV - spanUv * 0.5,
+      spanUv,
+      lowerBound,
+      upperBound,
+    );
+    const left = clampPlaceholderBounds(
+      bounds.minU - gapUv - spanUv,
+      centerV - spanUv * 0.5,
+      spanUv,
+      lowerBound,
+      upperBound,
+    );
+
+    // Primary candidates: centred on the shell, then cardinal offsets.
+    let chosenBounds = chooseFirstNonOverlappingBounds(
+      [centered, above, below, right, left],
+      vehicleShellBounds,
+      overlapPaddingUv,
+    );
+
+    // Spiral search — try increasingly distant positions around the
+    // shell centre so we never fall back to an overlapping placement.
+    if (!chosenBounds) {
+      const spiralDirs = [
+        [0, -1], [0, 1], [-1, 0], [1, 0],
+        [-1, -1], [1, -1], [-1, 1], [1, 1],
+      ];
+      for (let ring = 2; ring <= 12 && !chosenBounds; ring += 1) {
+        const offset = gapUv * ring;
+        const spiralCandidates = spiralDirs.map(([du, dv]) =>
+          clampPlaceholderBounds(
+            centerU - spanUv * 0.5 + du * offset,
+            centerV - spanUv * 0.5 + dv * offset,
+            spanUv,
+            lowerBound,
+            upperBound,
+          ),
+        );
+        chosenBounds = chooseFirstNonOverlappingBounds(
+          spiralCandidates,
+          vehicleShellBounds,
+          overlapPaddingUv,
+        );
       }
-      if (collides) continue;
-      selected = candidate;
-      break;
     }
 
-    if (!selected) continue;
-    placements.set(shellIndex, selected);
-    occupied.push(selected);
+    // Last-resort: use centred position (better than nothing, but log
+    // that this placement may overlap).
+    if (!chosenBounds) chosenBounds = centered;
+    placements.set(shellIndex, chosenBounds);
   }
 
   return placements;
@@ -1517,6 +1514,58 @@ function buildOrientedBoxSegments(points, principalAxis, options = {}) {
   return segments;
 }
 
+function computeTopologyMaxSpanPx(topology, pixelScale) {
+  const vertices = Array.isArray(topology?.vertices) ? topology.vertices : [];
+  if (vertices.length === 0) return 0;
+
+  let minU = Infinity;
+  let minV = Infinity;
+  let maxU = -Infinity;
+  let maxV = -Infinity;
+  for (const vertex of vertices) {
+    if (!Array.isArray(vertex) || vertex.length < 2) continue;
+    const u = Number(vertex[0]);
+    const v = Number(vertex[1]);
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    minU = Math.min(minU, u);
+    minV = Math.min(minV, v);
+    maxU = Math.max(maxU, u);
+    maxV = Math.max(maxV, v);
+  }
+
+  if (![minU, minV, maxU, maxV].every((value) => Number.isFinite(value))) return 0;
+  return Math.max((maxU - minU) * pixelScale, (maxV - minV) * pixelScale);
+}
+
+function buildSmallShellTopologyWireSegments(shell, size, topology, pixelScale, principalAxis, orientedBoxOptions) {
+  const edges = Array.isArray(topology?.edges) ? topology.edges : [];
+  const segments = [];
+  const markerSegments = buildSmallShellMarkerSegments(shell, size, topology);
+  const maxSpanPx = computeTopologyMaxSpanPx(topology, pixelScale);
+
+  for (const edge of edges) {
+    if (!edge || edge.count !== 1) continue;
+    const u0 = Number(edge.u0);
+    const v0 = Number(edge.v0);
+    const u1 = Number(edge.u1);
+    const v1 = Number(edge.v1);
+    if (![u0, v0, u1, v1].every((value) => Number.isFinite(value))) continue;
+
+    const lengthPx = Math.hypot((u1 - u0) * pixelScale, (v1 - v0) * pixelScale);
+    if (lengthPx < 0.35) continue;
+    appendSegment(segments, u0, v0, u1, v1);
+  }
+
+  if (segments.length >= 4 && maxSpanPx >= 6) return segments;
+  if (markerSegments.length >= 4) return markerSegments;
+  if (segments.length >= 4) return segments;
+  return buildOrientedBoxSegments(
+    Array.isArray(topology?.vertices) ? topology.vertices : [],
+    principalAxis,
+    orientedBoxOptions,
+  );
+}
+
 /**
  * Reconstruct quad-cage wireframe from a triangulated UV shell.
  *
@@ -1542,7 +1591,6 @@ function buildCleanWireSegments(shell, size, options = {}) {
 
   const pixelScale = Math.max(1, size - 1);
   const topology = options?.topology || extractShellTopology(triangles);
-  const smallShellPlaceholderBounds = options?.smallShellPlaceholderBounds || null;
   const topoVertices = Array.isArray(topology?.vertices) ? topology.vertices : [];
   const principalAxis = computePrincipalAxis(topoVertices) || [1, 0];
   const orientedBoxOptions = {
@@ -1553,10 +1601,14 @@ function buildCleanWireSegments(shell, size, options = {}) {
     ? options.isSmallShell
     : isSmallUvShell(shell, size, topology);
   if (isSmallShell) {
-    if (smallShellPlaceholderBounds) {
-      return buildSmallShellPlaceholderWireSegments(smallShellPlaceholderBounds);
-    }
-    return buildSmallShellMarkerSegments(shell, size, topology);
+    return buildSmallShellTopologyWireSegments(
+      shell,
+      size,
+      topology,
+      pixelScale,
+      principalAxis,
+      orientedBoxOptions,
+    );
   }
 
   /* ── 1.  Parse triangles into indexed vertex / face lists ────── */
@@ -1717,23 +1769,104 @@ function buildRenderShellsWithCleanWire(shells, size) {
     return { ...shell, __topology: topology, isSmallShell: isSmallUvShell(shell, size, topology) };
   });
 
-  const placeholderBoundsByShell = buildSmallShellPlaceholderBounds(analyzedShells, size);
-
-  return analyzedShells.map((shell, shellIndex) => {
-    const placeholderBounds = placeholderBoundsByShell.get(shellIndex) || null;
+  return analyzedShells.map((shell) => {
     const wireSegments = buildCleanWireSegments(shell, size, {
       topology: shell.__topology,
       isSmallShell: shell.isSmallShell,
-      smallShellPlaceholderBounds: placeholderBounds,
     });
 
     const { __topology, ...cleanShell } = shell;
     return {
       ...cleanShell,
-      smallShellPlaceholderBounds: placeholderBounds,
       wireSegments,
     };
   });
+}
+
+function getSmallShellDetectionMarkerRect(bounds) {
+  if (!bounds) return;
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+
+  const centerX = (bounds.minX + bounds.maxX) * 0.5;
+  const centerY = (bounds.minY + bounds.maxY) * 0.5;
+  const shellSize = Math.max(width, height);
+  const markerSize = Math.max(26, Math.min(68, shellSize + 26));
+  const half = markerSize * 0.5;
+  const x = centerX - half;
+  const y = centerY - half;
+  return {
+    x,
+    y,
+    size: markerSize,
+    minX: x,
+    minY: y,
+    maxX: x + markerSize,
+    maxY: y + markerSize,
+  };
+}
+
+function drawSmallShellDetectionMarkerRect(ctx, markerRect, baseWidth) {
+  if (!markerRect) return;
+  const outerX = markerRect.x;
+  const outerY = markerRect.y;
+  const markerSize = markerRect.size;
+
+  ctx.save();
+  ctx.fillStyle = "#00FF00";
+  ctx.fillRect(outerX, outerY, markerSize, markerSize);
+  ctx.strokeStyle = "#FFFFFF";
+  ctx.lineWidth = Math.max(baseWidth * 3.2, 2.2);
+  ctx.strokeRect(outerX, outerY, markerSize, markerSize);
+  ctx.restore();
+}
+
+function drawSmallShellDetectionMarker(ctx, bounds, baseWidth) {
+  const markerRect = getSmallShellDetectionMarkerRect(bounds);
+  drawSmallShellDetectionMarkerRect(ctx, markerRect, baseWidth);
+}
+
+function rectsOverlap(a, b, gap = 0) {
+  const safeGap = Number.isFinite(gap) ? Math.max(0, gap) : 0;
+  return !(
+    a.maxX + safeGap < b.minX - safeGap ||
+    a.minX - safeGap > b.maxX + safeGap ||
+    a.maxY + safeGap < b.minY - safeGap ||
+    a.minY - safeGap > b.maxY + safeGap
+  );
+}
+
+function buildCombinedMarkerRect(markerRects) {
+  if (!Array.isArray(markerRects) || markerRects.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const markerRect of markerRects) {
+    if (!markerRect) continue;
+    minX = Math.min(minX, markerRect.minX);
+    minY = Math.min(minY, markerRect.minY);
+    maxX = Math.max(maxX, markerRect.maxX);
+    maxY = Math.max(maxY, markerRect.maxY);
+  }
+  if (![minX, minY, maxX, maxY].every((value) => Number.isFinite(value))) return null;
+
+  const combinedWidth = maxX - minX;
+  const combinedHeight = maxY - minY;
+  const side = Math.max(combinedWidth, combinedHeight) + 2;
+  const centerX = (minX + maxX) * 0.5;
+  const centerY = (minY + maxY) * 0.5;
+  const half = side * 0.5;
+  return {
+    x: centerX - half,
+    y: centerY - half,
+    size: side,
+    minX: centerX - half,
+    minY: centerY - half,
+    maxX: centerX + half,
+    maxY: centerY + half,
+  };
 }
 
 function paintWireframeLayer(canvas, shells, mapper) {
@@ -1744,14 +1877,29 @@ function paintWireframeLayer(canvas, shells, mapper) {
   ctx.strokeStyle = "rgba(16, 20, 42, 0.52)";
 
   const baseWidth = Math.max(0.52, canvas.width * 0.00042);
+  const markerCandidates = [];
 
   shells.forEach((shell, index) => {
     const shellSegments = Array.isArray(shell?.wireSegments) ? shell.wireSegments : [];
-    if (shellSegments.length < 4) return;
-
     const bounds = mapper.mapBounds(index);
     const shellSize = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-    ctx.lineWidth = shellSize < 56 ? baseWidth * 1.28 : baseWidth;
+    const needsDetectionMarker =
+      shellSize <= 20 || (shell?.isSmallShell && shellSize <= 30);
+    if (needsDetectionMarker) {
+      const markerRect = getSmallShellDetectionMarkerRect(bounds);
+      if (markerRect) markerCandidates.push(markerRect);
+      return;
+    }
+
+    if (shellSegments.length < 4) return;
+
+    if (shell?.isSmallShell || shellSize < 22) {
+      ctx.lineWidth = Math.max(baseWidth * 2.35, 1.15);
+    } else if (shellSize < 56) {
+      ctx.lineWidth = baseWidth * 1.28;
+    } else {
+      ctx.lineWidth = baseWidth;
+    }
 
     for (let i = 0; i + 3 < shellSegments.length; i += 4) {
       const [x0, y0] = mapper.toPoint(index, shellSegments[i], shellSegments[i + 1]);
@@ -1767,6 +1915,41 @@ function paintWireframeLayer(canvas, shells, mapper) {
       ctx.stroke();
     }
   });
+
+  if (markerCandidates.length > 0) {
+    const parent = markerCandidates.map((_, index) => index);
+    const findRoot = (index) => {
+      while (parent[index] !== index) {
+        parent[index] = parent[parent[index]];
+        index = parent[index];
+      }
+      return index;
+    };
+    const unite = (a, b) => {
+      const ra = findRoot(a);
+      const rb = findRoot(b);
+      if (ra !== rb) parent[ra] = rb;
+    };
+
+    for (let i = 0; i < markerCandidates.length; i += 1) {
+      for (let j = i + 1; j < markerCandidates.length; j += 1) {
+        if (!rectsOverlap(markerCandidates[i], markerCandidates[j], 3)) continue;
+        unite(i, j);
+      }
+    }
+
+    const clusters = new Map();
+    for (let i = 0; i < markerCandidates.length; i += 1) {
+      const root = findRoot(i);
+      if (!clusters.has(root)) clusters.set(root, []);
+      clusters.get(root).push(markerCandidates[i]);
+    }
+
+    for (const clusterRects of clusters.values()) {
+      const combined = buildCombinedMarkerRect(clusterRects);
+      drawSmallShellDetectionMarkerRect(ctx, combined, baseWidth);
+    }
+  }
 
   return canvas;
 }
@@ -1887,63 +2070,6 @@ function paintLicencePlateLayer(canvas) {
   return canvas;
 }
 
-/* ── Color reference swatches ────────────────────────────────────── */
-
-function paintColorSwatchLayer(canvas, templateMap) {
-  const ctx = canvas.getContext("2d");
-  const { width, height } = canvas;
-
-  ctx.clearRect(0, 0, width, height);
-  void templateMap;
-
-  const scale = width / 2048;
-  const plateX = Math.round(16 * scale);
-  const plateW = Math.round(248 * scale);
-  const swatchX = plateX + plateW + Math.round(18 * scale);
-  const swatchYStart = height - Math.round(324 * scale);
-  const swatchSize = Math.round(48 * scale);
-  const swatchGap = Math.round(66 * scale);
-
-  const swatches = [
-    {
-      color: "#030303",
-      label: "BOOT SPOILER UPPER COLOUR",
-      value: "(ALWAYS BLACK)",
-    },
-    {
-      color: "#1dff25",
-      label: "DOORSHUTS COLOUR",
-      value: "(ALWAYS BODY COLOUR)",
-    },
-  ];
-
-  swatches.forEach((entry, index) => {
-    const y = swatchYStart + index * swatchGap;
-
-    ctx.fillStyle = entry.color;
-    ctx.fillRect(swatchX, y, swatchSize, swatchSize);
-    ctx.strokeStyle = "rgba(236, 242, 251, 0.96)";
-    ctx.lineWidth = Math.max(1.2, 1.8 * scale);
-    ctx.strokeRect(swatchX, y, swatchSize, swatchSize);
-
-    ctx.fillStyle = "rgba(244, 248, 252, 0.92)";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.font = `600 ${Math.max(10, Math.round(20 * scale * 0.52))}px "Outfit", "Share Tech Mono", sans-serif`;
-    ctx.fillText(entry.label, swatchX + swatchSize + Math.round(8 * scale), y + Math.round(3 * scale));
-
-    ctx.fillStyle = "rgba(226, 233, 244, 0.84)";
-    ctx.font = `600 ${Math.max(9, Math.round(16 * scale * 0.5))}px "Outfit", "Share Tech Mono", sans-serif`;
-    ctx.fillText(
-      entry.value,
-      swatchX + swatchSize + Math.round(8 * scale),
-      y + Math.round(3 * scale) + Math.max(10, Math.round(20 * scale * 0.52)) + Math.round(3 * scale),
-    );
-  });
-
-  return canvas;
-}
-
 /* ── Preview compositing ─────────────────────────────────────────── */
 
 function renderPreview(size, layers) {
@@ -2029,6 +2155,8 @@ function buildAutoTemplateArtifacts(templateMap, options = {}) {
 
   const size = clampSize(options.size ?? DEFAULT_SIZE);
   const fillColor = normalizeAutoTemplateFillColor(options.fillColor);
+  const backgroundColor = normalizeAutoTemplateBackgroundColor(options.backgroundColor);
+  const includeWireframe = options.includeWireframe !== false;
   const includeWorldSpaceNormals = options.includeWorldSpaceNormals === true;
   const useWorldSpaceNormalsAsBase = options.useWorldSpaceNormalsAsBase === true;
   const modelFileName =
@@ -2054,12 +2182,11 @@ function buildAutoTemplateArtifacts(templateMap, options = {}) {
     throw new Error("Failed to layout UV shells for template export.");
   }
 
-  const backgroundCanvas = paintBackgroundLayer(createCanvas(size));
+  const backgroundCanvas = paintBackgroundLayer(createCanvas(size), backgroundColor);
   const fillCanvas = paintMeshFillLayer(createCanvas(size), renderMeshes, mapper, fillColor);
   const wireCanvas = paintWireframeLayer(createCanvas(size), renderMeshes, mapper);
   const annotationCanvas = paintAnnotationLayer(createCanvas(size), modelName, targetCount, renderMeshes.length);
   const plateCanvas = paintLicencePlateLayer(createCanvas(size));
-  const swatchCanvas = paintColorSwatchLayer(createCanvas(size), templateMap);
   const worldSpaceNormals = includeWorldSpaceNormals
     ? paintWorldSpaceNormalLayer(createCanvas(size), templatePsdSource, renderMeshes, mapper)
     : null;
@@ -2072,14 +2199,13 @@ function buildAutoTemplateArtifacts(templateMap, options = {}) {
   const layers = [
     { name: "_BG_BLACK", canvas: backgroundCanvas },
     baseLayer,
-    { name: "_UV_WIREFRAME", canvas: wireCanvas },
+    { name: "_UV_WIREFRAME", canvas: wireCanvas, hidden: !includeWireframe },
     ...(hasWorldSpaceNormals && !useWorldNormalsBase
       ? [{ name: "_WS_NORMAL_WORLD", canvas: worldSpaceNormals.canvas, hidden: true }]
       : []),
 
     { name: "_ANNOTATIONS", canvas: annotationCanvas, hidden: true },
     { name: "_LICENCE_PLATES", canvas: plateCanvas, hidden: true },
-    { name: "_COLOR_REFS", canvas: swatchCanvas, hidden: true },
   ];
 
   const psd = {

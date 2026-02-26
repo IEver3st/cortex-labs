@@ -96,7 +96,6 @@ const BUILT_IN_DEFAULTS = {
   bodyColor: DEFAULT_BODY,
   backgroundColor: DEFAULT_BG,
   experimentalSettings: false,
-  templateGenWorldSpaceNormals: false,
   showHints: true,
   hideRotText: false,
   showGrid: false,

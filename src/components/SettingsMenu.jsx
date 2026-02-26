@@ -23,6 +23,7 @@ const BUILT_IN_DEFAULTS = {
   cameraWASD: false,
   bodyColor: "#e7ebf0",
   autoTemplateColor: "#c9d8ee",
+  autoTemplateBackgroundColor: "#000000",
   backgroundColor: "#141414",
   experimentalSettings: false,
   showHints: true,
@@ -735,6 +736,17 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                       value={draft.autoTemplateColor}
                                       onChange={(value) => setDraft((p) => ({ ...p, autoTemplateColor: value }))}
                                       onReset={() => setDraft((p) => ({ ...p, autoTemplateColor: BUILT_IN_DEFAULTS.autoTemplateColor }))}
+                                    />
+                                    <ColorField
+                                      label="Auto Template Background"
+                                      value={draft.autoTemplateBackgroundColor}
+                                      onChange={(value) => setDraft((p) => ({ ...p, autoTemplateBackgroundColor: value }))}
+                                      onReset={() =>
+                                        setDraft((p) => ({
+                                          ...p,
+                                          autoTemplateBackgroundColor: BUILT_IN_DEFAULTS.autoTemplateBackgroundColor,
+                                        }))
+                                      }
                                     />
                                   </div>
                                 </section>

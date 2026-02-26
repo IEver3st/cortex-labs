@@ -8450,7 +8450,7 @@ label {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--mg-bg);
+  background: var(--tg-background-color, var(--mg-bg));
   color: var(--mg-fg);
   font-family: var(--font-hud);
   overflow: hidden;
@@ -8831,7 +8831,7 @@ label {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: oklch(0.125 0.004 286);
+  background: var(--tg-background-color, oklch(0.125 0.004 286));
 }
 
 .tg-preview-state {
@@ -12821,7 +12821,7 @@ label {
   height: 100%;
   background:
     radial-gradient(circle at 22% 20%, rgba(255, 255, 255, 0.08), transparent 55%),
-    linear-gradient(165deg, rgba(12, 14, 18, 0.97), rgba(7, 8, 10, 0.98));
+    var(--tg-background-color, linear-gradient(165deg, rgba(12, 14, 18, 0.97), rgba(7, 8, 10, 0.98)));
 }
 
 .tg-preview-refresh-overlay {
