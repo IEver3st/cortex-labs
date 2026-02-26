@@ -198,7 +198,9 @@ export function setupLiveryShader(material) {
         #ifdef DECODE_VIDEO_TEXTURE
           sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
         #endif
-        diffuseColor.rgb = mix(diffuseColor.rgb, sampledDiffuseColor.rgb, sampledDiffuseColor.a);
+        float liveryAlpha = sampledDiffuseColor.a;
+        vec3 liveryRgb = sampledDiffuseColor.rgb * liveryAlpha;
+        diffuseColor.rgb = diffuseColor.rgb * (1.0 - liveryAlpha) + liveryRgb;
         diffuseColor.a = 1.0;
       #endif
       `
@@ -377,6 +379,69 @@ const CAGE_BOX_COLOR = 0x5a5a5a; // subtle gray for bounding-box cubes
 const CAGE_SMALL_MESH_MAX_DIM_RATIO = 0.075;
 const CAGE_SMALL_MESH_MAX_ASPECT = 4.8;
 const CAGE_SIZE_EPSILON = 1e-5;
+const LIVERY_UV_MIN_CONFIDENCE = 0.55;
+const LIVERY_UV_FALLBACK_MARGIN = 0.2;
+
+function scoreUvAttributeForLivery(attribute) {
+  if (!attribute || !attribute.array || attribute.itemSize < 2) return -1;
+  const count = Math.min(attribute.count || 0, 2000);
+  if (!count) return -1;
+  const array = attribute.array;
+  const stride = attribute.itemSize;
+  let inRange = 0;
+  let valid = 0;
+  for (let i = 0; i < count; i += 1) {
+    const u = array[i * stride];
+    const v = array[i * stride + 1];
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    valid += 1;
+    if (u >= 0 && u <= 1 && v >= 0 && v <= 1) inRange += 1;
+  }
+  if (!valid) return -1;
+  return inRange / valid;
+}
+
+function chooseLiveryUvAttribute(geometry) {
+  if (!geometry?.attributes) return null;
+  const candidates = [
+    geometry.attributes.uv || null,
+    geometry.attributes.uv2 || null,
+    geometry.attributes.uv3 || null,
+    geometry.attributes.uv4 || null,
+  ];
+  const preferredOrder = [1, 2, 3, 0];
+  let preferredIndex = -1;
+  for (const index of preferredOrder) {
+    if (candidates[index]) {
+      preferredIndex = index;
+      break;
+    }
+  }
+  if (preferredIndex === -1) return null;
+
+  const preferred = candidates[preferredIndex];
+  const preferredScore = scoreUvAttributeForLivery(preferred);
+  let bestScored = null;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const attribute = candidates[index];
+    if (!attribute) continue;
+    const score = scoreUvAttributeForLivery(attribute);
+    if (score < 0) continue;
+    if (!bestScored || score > bestScored.score) {
+      bestScored = { index, attribute, score };
+    }
+  }
+
+  if (bestScored && bestScored.index !== preferredIndex) {
+    const shouldFallback =
+      preferredScore < 0 ||
+      (bestScored.score >= LIVERY_UV_MIN_CONFIDENCE &&
+        bestScored.score - Math.max(preferredScore, 0) >= LIVERY_UV_FALLBACK_MARGIN);
+    if (shouldFallback) return bestScored.attribute;
+  }
+
+  return preferred;
+}
 
 function isSmallCageMesh(worldSize, modelMaxDimension) {
   if (!worldSize || !Number.isFinite(modelMaxDimension) || modelMaxDimension <= CAGE_SIZE_EPSILON) {
@@ -539,8 +604,9 @@ export function applyLiveryToModel(object, bodyColor, texture) {
       matName.includes("sign") || matName.includes("decal") || matName.includes("body") || matName.includes("wrap");
 
     if (isPaint && texture) {
-      if (child.geometry?.attributes?.uv2 && child.geometry.attributes.uv !== child.geometry.attributes.uv2) {
-        child.geometry.setAttribute("uv", child.geometry.attributes.uv2);
+      const liveryUv = chooseLiveryUvAttribute(child.geometry);
+      if (liveryUv && child.geometry.attributes.uv !== liveryUv) {
+        child.geometry.setAttribute("uv", liveryUv);
         child.geometry.attributes.uv.needsUpdate = true;
       }
 

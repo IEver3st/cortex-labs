@@ -8,6 +8,8 @@ import {
   Car,
   Check,
   Download,
+  Eye,
+  EyeOff,
   FolderOpen,
   Layers,
   RefreshCw,
@@ -195,6 +197,27 @@ function normalizeAutoTemplateColor(value) {
   return DEFAULT_AUTO_TEMPLATE_COLOR;
 }
 
+function normalizeColorInputValue(value) {
+  const normalized = normalizeAutoTemplateColor(value);
+  if (/^#[0-9a-fA-F]{3}$/.test(normalized)) {
+    return `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}`.toLowerCase();
+  }
+  return normalized.toLowerCase();
+}
+
+function shallowEqualObject(a, b) {
+  if (a === b) return true;
+  const aObj = a && typeof a === "object" ? a : {};
+  const bObj = b && typeof b === "object" ? b : {};
+  const aKeys = Object.keys(aObj);
+  const bKeys = Object.keys(bObj);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (aObj[key] !== bObj[key]) return false;
+  }
+  return true;
+}
+
 function getDefaultAutoTemplateColor() {
   const prefs = loadPrefs() || {};
   return normalizeAutoTemplateColor(prefs?.defaults?.autoTemplateColor);
@@ -251,6 +274,17 @@ export default function TemplateGenerationPage({
   const [templateMapError, setTemplateMapError] = useState("");
   const [templatePsdSource, setTemplatePsdSource] = useState(null);
   const [templatePsdSourceError, setTemplatePsdSourceError] = useState("");
+  const [detectedIslands, setDetectedIslands] = useState(() =>
+    Array.isArray(workspaceState?.detectedIslands) ? workspaceState.detectedIslands : [],
+  );
+  const [detectedIslandColors, setDetectedIslandColors] = useState(() => {
+    const map = workspaceState?.detectedIslandColors;
+    return map && typeof map === "object" && !Array.isArray(map) ? map : {};
+  });
+  const [detectedIslandVisibility, setDetectedIslandVisibility] = useState(() => {
+    const map = workspaceState?.detectedIslandVisibility;
+    return map && typeof map === "object" && !Array.isArray(map) ? map : {};
+  });
   const [previewUrl, setPreviewUrl] = useState("");
   const [psdBytes, setPsdBytes] = useState(null);
   const [psdFileName, setPsdFileName] = useState("auto_template.psd");
@@ -283,6 +317,9 @@ export default function TemplateGenerationPage({
         exteriorOnly,
         includeTemplateWireframe,
         useWorldSpaceNormalsAsBase,
+        detectedIslands,
+        detectedIslandColors,
+        detectedIslandVisibility,
       });
     }, 140);
 
@@ -296,6 +333,9 @@ export default function TemplateGenerationPage({
     exteriorOnly,
     includeTemplateWireframe,
     useWorldSpaceNormalsAsBase,
+    detectedIslands,
+    detectedIslandColors,
+    detectedIslandVisibility,
     onStateChange,
   ]);
 
@@ -310,6 +350,9 @@ export default function TemplateGenerationPage({
     setTemplateMapError("");
     setTemplatePsdSource(null);
     setTemplatePsdSourceError("");
+    setDetectedIslands([]);
+    setDetectedIslandColors({});
+    setDetectedIslandVisibility({});
     setPreviewUrl("");
     setPsdBytes(null);
     setPsdFileName("auto_template.psd");
@@ -364,6 +407,42 @@ export default function TemplateGenerationPage({
     setTemplatePsdSourceError(info?.templatePsdSourceError || "");
   }, []);
 
+  const handleMarkerColorChange = useCallback((markerKey, colorValue) => {
+    if (!markerKey) return;
+    const nextColor = normalizeColorInputValue(colorValue);
+    setDetectedIslandColors((prev) => ({
+      ...prev,
+      [markerKey]: nextColor,
+    }));
+    setAutoSavedPath("");
+  }, []);
+
+  const handleMarkerVisibilityToggle = useCallback(
+    (markerKey, currentlyVisible, markerDefaultVisible = true) => {
+      if (!markerKey) return;
+      setDetectedIslandVisibility((prev) => {
+        const next = { ...prev };
+        if (currentlyVisible) {
+          next[markerKey] = false;
+        } else if (markerDefaultVisible === false) {
+          next[markerKey] = true;
+        } else {
+          delete next[markerKey];
+        }
+        return shallowEqualObject(prev, next) ? prev : next;
+      });
+      setAutoSavedPath("");
+    },
+    [],
+  );
+
+  const openMarkerColorPicker = useCallback((inputId) => {
+    if (!inputId) return;
+    const input = document.getElementById(inputId);
+    if (!(input instanceof HTMLInputElement)) return;
+    input.click();
+  }, []);
+
   const handleRegenerateTemplate = useCallback(() => {
     if (!modelPath || !templateMap || !templatePsdSource || generating) return;
     setIsPreviewRefreshing(true);
@@ -390,6 +469,7 @@ export default function TemplateGenerationPage({
       setGenerationError(upstreamError);
       setLayerCount(0);
       setTargetCount(0);
+      setDetectedIslands([]);
       setAutoSavedPath("");
       setGenerating(false);
       setIsPreviewRefreshing(false);
@@ -413,6 +493,8 @@ export default function TemplateGenerationPage({
           includeWireframe: includeTemplateWireframe,
           includeWorldSpaceNormals: useWorldSpaceNormalsAsBase,
           useWorldSpaceNormalsAsBase,
+          detectedIslandColors,
+          detectedIslandVisibility,
         };
 
         const buildJob = createTemplateBuildJob(templateMap, buildOptions);
@@ -431,6 +513,31 @@ export default function TemplateGenerationPage({
         setPsdFileName(result.fileName);
         setLayerCount(result.layerCount);
         setTargetCount(result.targetCount);
+        const nextMarkers = Array.isArray(result.detectedIslands) ? result.detectedIslands : [];
+        setDetectedIslands(nextMarkers);
+        setDetectedIslandColors((prev) => {
+          const next = {};
+          for (const marker of nextMarkers) {
+            if (!marker?.key || typeof prev[marker.key] !== "string") continue;
+            next[marker.key] = normalizeColorInputValue(prev[marker.key]);
+          }
+          return shallowEqualObject(prev, next) ? prev : next;
+        });
+        setDetectedIslandVisibility((prev) => {
+          const next = {};
+          for (const marker of nextMarkers) {
+            if (!marker?.key) continue;
+            const explicitVisibility = prev[marker.key];
+            if (explicitVisibility === false || explicitVisibility === true) {
+              next[marker.key] = explicitVisibility;
+              continue;
+            }
+            if (marker.defaultVisible === false) {
+              next[marker.key] = false;
+            }
+          }
+          return shallowEqualObject(prev, next) ? prev : next;
+        });
         setLastGeneratedAt(new Date());
         setGenerationError("");
 
@@ -464,6 +571,7 @@ export default function TemplateGenerationPage({
         setPsdBytes(null);
         setLayerCount(0);
         setTargetCount(0);
+        setDetectedIslands([]);
         setAutoSavedPath("");
       } finally {
         if (!cancelled) {
@@ -490,6 +598,8 @@ export default function TemplateGenerationPage({
     autoTemplateExportFormat,
     includeTemplateWireframe,
     useWorldSpaceNormalsAsBase,
+    detectedIslandColors,
+    detectedIslandVisibility,
     regenerationToken,
     isTauriRuntime,
   ]);
@@ -550,6 +660,7 @@ export default function TemplateGenerationPage({
   const canRegenerate = Boolean(modelPath && templateMap && templatePsdSource && !generating);
   const saveButtonLabel = getTemplateSaveButtonLabel(autoTemplateExportFormat);
   const worldSpaceNormalsBaseEnabled = useWorldSpaceNormalsAsBase;
+  const hasDetectedIslands = detectedIslands.length > 0;
 
   return (
     <div className="tg-root">
@@ -697,6 +808,91 @@ export default function TemplateGenerationPage({
                   WS Base
                 </span>
               </div>
+
+              {hasDetectedIslands && (
+                <>
+                  <div className="tg-sb-rule" />
+                  <div className="tg-sb-section tg-sb-marker-controls">
+                    <span className="tg-sb-label tg-sb-marker-controls-label">Markers</span>
+                    <div className="tg-sb-marker-shell">
+                      <div className="tg-sb-marker-list" role="list" aria-label="Template markers">
+                        {detectedIslands.map((marker, index) => {
+                          const markerKey = marker?.key || `marker-${index}`;
+                          const markerLabel = marker?.label || `Marker ${index + 1}`;
+                          const markerColor = normalizeColorInputValue(
+                            detectedIslandColors[markerKey] ||
+                              marker?.defaultColor ||
+                              DEFAULT_AUTO_TEMPLATE_COLOR,
+                          );
+                          const explicitMarkerVisibility = detectedIslandVisibility[markerKey];
+                          const markerDefaultVisible = marker?.defaultVisible !== false;
+                          const markerVisible =
+                            explicitMarkerVisibility === true
+                              ? true
+                              : explicitMarkerVisibility === false
+                                ? false
+                                : markerDefaultVisible;
+                          const markerInputId = `tg-marker-color-${index}-${markerKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+
+                          return (
+                            <div
+                              key={markerKey}
+                              role="listitem"
+                              className={`tg-sb-marker-row${markerVisible ? " is-active" : ""}`}
+                              title={markerLabel}
+                            >
+                              <div className="tg-sb-marker-color-wrap">
+                                <input
+                                  id={markerInputId}
+                                  type="color"
+                                  className="tg-sb-marker-color-input"
+                                  value={markerColor}
+                                  onChange={(event) =>
+                                    handleMarkerColorChange(markerKey, event.currentTarget.value)
+                                  }
+                                  aria-label={`${markerLabel} color`}
+                                  tabIndex={-1}
+                                />
+                                <button
+                                  type="button"
+                                  className="tg-sb-marker-color"
+                                  onClick={() => openMarkerColorPicker(markerInputId)}
+                                  title={`${markerLabel} color`}
+                                >
+                                  <span
+                                    className="tg-sb-marker-color-swatch"
+                                    style={{ backgroundColor: markerColor }}
+                                  />
+                                </button>
+                              </div>
+                              <button
+                                type="button"
+                                className={`tg-sb-marker-visibility${markerVisible ? " is-active" : ""}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleMarkerVisibilityToggle(
+                                    markerKey,
+                                    markerVisible,
+                                    markerDefaultVisible,
+                                  );
+                                }}
+                                aria-label={`${markerVisible ? "Hide" : "Show"} ${markerLabel}`}
+                                title={`${markerVisible ? "Hide" : "Show"} ${markerLabel}`}
+                              >
+                                {markerVisible ? (
+                                  <Eye className="tg-sb-marker-icon" />
+                                ) : (
+                                  <EyeOff className="tg-sb-marker-icon" />
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="tg-sb-rule" />
 

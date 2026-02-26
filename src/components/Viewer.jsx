@@ -113,6 +113,8 @@ const FIT_SAMPLE_LIMIT = 12000;
 const FIT_TRIM_PERCENT = 0.02;
 const FIT_MIN_SAMPLES = 96;
 const FIT_MIN_SIZE_RATIO = 0.35;
+const LIVERY_UV_MIN_CONFIDENCE = 0.55;
+const LIVERY_UV_FALLBACK_MARGIN = 0.2;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -1233,12 +1235,13 @@ function ViewerComponent({
       );
 
       const applyTextureSettings = (texture) => {
+        const isLiveryMode = materialStateRef.current?.textureMode === "livery";
         texture.colorSpace = THREE.SRGBColorSpace;
         if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded) {
           texture.flipY = flipTextureY;
         }
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
+        texture.wrapS = isLiveryMode ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+        texture.wrapT = isLiveryMode ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
         texture.needsUpdate = true;
         texture.anisotropy = rendererRef.current?.capabilities.getMaxAnisotropy() || 1;
         if (texture.isDataTexture) {
@@ -1518,12 +1521,13 @@ function ViewerComponent({
       );
 
       const applyTextureSettings = (texture) => {
+        const isLiveryMode = materialStateRef.current?.textureMode === "livery";
         texture.colorSpace = THREE.SRGBColorSpace;
         if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded) {
           texture.flipY = flipTextureY;
         }
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
+        texture.wrapS = isLiveryMode ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+        texture.wrapT = isLiveryMode ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
         texture.needsUpdate = true;
         texture.anisotropy = rendererRef.current?.capabilities.getMaxAnisotropy() || 1;
         if (texture.isDataTexture) {
@@ -2155,10 +2159,16 @@ function applyMaterials(
   const vehicleTarget = textureTarget || ALL_TARGET;
   const windowTarget = windowTextureTarget || ALL_TARGET;
   const exteriorOnly = Boolean(liveryExteriorOnly);
-  const preferUv2 = textureMode === "livery";
+  const preferUv2 =
+    textureMode === "livery" ||
+    (textureMode === "everything" && shouldPreferLiveryUvForTarget(vehicleTarget));
   const meshes = getMeshList(object);
   const materialConfig = object.userData?.materialConfig || DEFAULT_MATERIAL_CONFIG;
   const materialDetailTexture = object.userData?.materialDetailTexture || null;
+  const vehicleTexture =
+    textureMode === "livery"
+      ? texture
+      : (materialDetailTexture || texture);
   const baseGlossFactor = 2 - 2 * clamp(glossiness, 0, 1);
 
   for (const child of meshes) {
@@ -2174,7 +2184,7 @@ function applyMaterials(
     const activeTexture = matchesWindow
       ? windowTexture
       : matchesVehicle
-        ? (materialDetailTexture || texture)
+        ? vehicleTexture
         : null;
     const preferUv2ForMesh = matchesWindow ? false : preferUv2;
 
@@ -2282,10 +2292,39 @@ function chooseUVAttribute(geometry, preferUv2) {
   const candidates = [uv0, uv1, uv2, uv3];
 
   if (preferUv2) {
-    for (const index of [1, 2, 3, 0]) {
-      if (candidates[index]) return candidates[index];
+    const preferredOrder = [1, 2, 3, 0];
+    let preferredIndex = -1;
+    for (const index of preferredOrder) {
+      if (candidates[index]) {
+        preferredIndex = index;
+        break;
+      }
     }
-    return null;
+    if (preferredIndex === -1) return null;
+
+    const preferredAttribute = candidates[preferredIndex];
+    const preferredScore = scoreUVAttribute(preferredAttribute);
+
+    let bestScored = null;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const attribute = candidates[index];
+      if (!attribute) continue;
+      const score = scoreUVAttribute(attribute);
+      if (score < 0) continue;
+      if (!bestScored || score > bestScored.score) {
+        bestScored = { index, attribute, score };
+      }
+    }
+
+    if (bestScored && bestScored.index !== preferredIndex) {
+      const shouldFallback =
+        preferredScore < 0 ||
+        (bestScored.score >= LIVERY_UV_MIN_CONFIDENCE &&
+          bestScored.score - Math.max(preferredScore, 0) >= LIVERY_UV_FALLBACK_MARGIN);
+      if (shouldFallback) return bestScored.attribute;
+    }
+
+    return preferredAttribute;
   }
 
   if (uv0) return uv0;
@@ -2422,6 +2461,27 @@ function getMeshMeta(child) {
   const meta = { baseMaterial, meshLabel, materialNames, targetSet, isGlass };
   child.userData.textureMeta = meta;
   return meta;
+}
+
+function shouldPreferLiveryUvForTarget(textureTarget) {
+  if (!textureTarget || textureTarget === ALL_TARGET || textureTarget === "none") return false;
+  const raw = textureTarget.toString().trim().toLowerCase();
+  if (!raw) return false;
+  return (
+    raw.includes("vehicle_paint") ||
+    raw.includes("carpaint") ||
+    raw.includes("car_paint") ||
+    raw.includes("car-paint") ||
+    raw.includes("livery") ||
+    raw.includes("vehicle_sign") ||
+    raw.includes("sign_1") ||
+    raw.includes("sign-1") ||
+    raw.includes("sign1") ||
+    raw.includes("vehicle_decal") ||
+    raw.includes("decal") ||
+    raw.includes("logo") ||
+    raw.includes("wrap")
+  );
 }
 
 function matchesTextureTarget(child, textureTarget) {
@@ -2599,7 +2659,14 @@ function scoreLiveryName(name) {
   const raw = name.toString().trim().toLowerCase();
   if (!raw) return 0;
 
-  if (raw.includes("vehicle_paint") || raw.includes("carpaint") || raw.includes("car_paint") || raw.includes("car-paint")) return 120;
+  const vehiclePaintIndexMatch = raw.match(/vehicle[_-]?paint[_-]?(\d+)/);
+  if (vehiclePaintIndexMatch) {
+    const index = Number.parseInt(vehiclePaintIndexMatch[1], 10);
+    if (Number.isFinite(index)) return 140 + Math.max(0, Math.min(index, 99));
+    return 140;
+  }
+
+  if (raw.includes("vehicle_paint") || raw.includes("carpaint") || raw.includes("car_paint") || raw.includes("car-paint")) return 130;
   if (raw.includes("livery")) return 110;
 
   if (raw.includes("vehicle_sign") || raw.includes("sign_1") || raw.includes("sign-1") || raw.includes("sign1")) return 95;

@@ -138,16 +138,6 @@ function getFileLabel(path, emptyLabel) {
   return path.split(/[\\/]/).pop();
 }
 
-function sanitizeFileStem(value) {
-  if (!value) return "model";
-  const sanitized = value
-    .toString()
-    .replace(/\.[^.]+$/, "")
-    .replace(/[^a-zA-Z0-9_-]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return sanitized || "model";
-}
-
 function UnloadButton({ onClick, title, className }) {
   return (
     <CyberButton variant="danger" className={className} onClick={onClick} title={title}>
@@ -707,7 +697,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     const sourceName =
       generatedTemplateMap?.source?.fileName ||
       getFileLabel(modelSourcePath || modelPath, "model");
-    const stem = sanitizeFileStem(sourceName);
+    const stem = (sourceName || "model").toString().replace(/\.[^.]+$/, "");
     const fileName = `${stem}.template-map.v1.json`;
 
     try {
@@ -1539,7 +1529,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       : templateMapError
         ? templateMapError
         : hasTemplateMap
-          ? "Template map ready for download."
+          ? "Template map ready."
           : "Generating template map...";
   const liveryTargetLabel = (liveryLabel || "").replace(/^(material|mesh):\s*/i, "").trim();
   const liveryTargetMessage = !hasModel
@@ -1721,6 +1711,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 </div>
                 <CyberButton
                   onClick={handleDownloadTemplateMap}
+                  hidden={textureMode !== "templategen"}
                   variant="secondary"
                   className="flex-1"
                   disabled={!hasTemplateMap}

@@ -1882,14 +1882,140 @@ function buildCombinedMarkerRect(markerRects) {
   };
 }
 
+const DOOR_SHUT_STRONG_PATTERN =
+  /\b(?:door[\s_-]*(?:shut|jamb|jam|seam|gap|edge)|(?:shut|jamb|jam|seam)[\s_-]*door|dshut|drshut|doorshut)\b/i;
+const DOOR_SHUT_HINT_PATTERN =
+  /\b(?:door|bodyshell|body|frame|jamb|jam|seal|seam|pillar|panel|cab|chassis)\b/i;
+const DOOR_SHUT_NOISE_PATTERN =
+  /\b(?:wheel|rim|tyre|tire|badge|logo|decal|emblem|plate|light|lamp|mirror|glass|window|wiper|grille|grill|exhaust|engine|interior|seat|dash|antenna|roofrack|spoiler)\b/i;
+const GEOM_FRAGMENT_PATTERN = /(?:^|[\s:_-])geom\d+(?:::?\d+)?(?:$|[\s:_-])/i;
+const ISLAND_LABEL_PATTERN = /\b\d+\s+islands?\b/i;
+
+function scoreDetectionMarkerName(text) {
+  if (!text || typeof text !== "string") return 0;
+  const normalized = text.toLowerCase();
+  let score = 0;
+
+  if (DOOR_SHUT_STRONG_PATTERN.test(normalized)) score += 132;
+  if (DOOR_SHUT_HINT_PATTERN.test(normalized)) score += 24;
+  if (/\bdoor\b/.test(normalized)) score += 16;
+  if (ISLAND_LABEL_PATTERN.test(normalized)) score += 28;
+  if (DOOR_SHUT_NOISE_PATTERN.test(normalized)) score -= 42;
+  if (GEOM_FRAGMENT_PATTERN.test(normalized)) score -= 24;
+  if (normalized.includes("::") && !/\bdoor\b/.test(normalized)) score -= 8;
+
+  return score;
+}
+
+function scoreDetectionMarkerGeometry(marker) {
+  const size = Number.isFinite(marker?.size) ? marker.size : 0;
+  const width = Number.isFinite(marker?.width) ? marker.width : size;
+  const height = Number.isFinite(marker?.height) ? marker.height : size;
+  const minDim = Math.max(UV_EPSILON, Math.min(width, height));
+  const maxDim = Math.max(width, height);
+  const aspect = maxDim / minDim;
+  const memberCount = Number.isFinite(marker?.memberCount) ? marker.memberCount : 1;
+  const islandCount = Number.isFinite(marker?.islandCount) ? marker.islandCount : memberCount;
+  const averageShellSize = Number.isFinite(marker?.averageShellSize) ? marker.averageShellSize : size;
+  const minShellSize = Number.isFinite(marker?.minShellSize) ? marker.minShellSize : averageShellSize;
+  const maxShellSize = Number.isFinite(marker?.maxShellSize) ? marker.maxShellSize : averageShellSize;
+  const area = Math.max(0, size * size);
+
+  let score = 0;
+
+  if (islandCount >= 2) score += 36 + Math.min(52, islandCount * 6);
+  if (islandCount >= 8) score += 16;
+  if (islandCount === 1) score -= 14;
+
+  if (memberCount >= 2) score += Math.min(24, memberCount * 3);
+  if (memberCount > 12) score -= 8;
+
+  if (averageShellSize >= 6 && averageShellSize <= 28) score += 12;
+  if (averageShellSize > 36) score -= 10;
+
+  if (minShellSize <= 4.5 && maxShellSize >= 20) score += 12;
+
+  const looksLikeSeamStrip = aspect >= 5 && minDim <= 6 && maxDim >= 20;
+  if (looksLikeSeamStrip) score += 28;
+  if (aspect < 2 && maxDim <= 26) score -= 18;
+
+  if (size >= 26 && size <= 150) score += 12;
+  if (area < 16 * 16) score -= 22;
+  if (area > 260 * 260) score -= 18;
+
+  return score;
+}
+
+function compareDetectionMarkers(a, b) {
+  const scoreDiff = b.confidenceScore - a.confidenceScore;
+  if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
+  const islandCountA = Number.isFinite(a?.islandCount) ? a.islandCount : 1;
+  const islandCountB = Number.isFinite(b?.islandCount) ? b.islandCount : 1;
+  const islandDiff = islandCountB - islandCountA;
+  if (islandDiff !== 0) return islandDiff;
+  const yDiff = b.y - a.y;
+  if (Math.abs(yDiff) > 0.01) return yDiff;
+  return a.x - b.x;
+}
+
+function markerLabelContainsIslands(marker) {
+  const label = typeof marker?.label === "string" ? marker.label : "";
+  return /\bislands?\b/i.test(label);
+}
+
+function rankDetectionMarkers(markers) {
+  if (!Array.isArray(markers) || markers.length === 0) return [];
+
+  let minCenterY = Infinity;
+  let maxCenterY = -Infinity;
+  for (const marker of markers) {
+    const centerY = marker.y + marker.size * 0.5;
+    minCenterY = Math.min(minCenterY, centerY);
+    maxCenterY = Math.max(maxCenterY, centerY);
+  }
+  const centerSpanY = Math.max(1, maxCenterY - minCenterY);
+
+  const scored = markers
+    .map((marker) => {
+      const centerY = marker.y + marker.size * 0.5;
+      const yBias = ((centerY - minCenterY) / centerSpanY) * 8;
+      const confidenceScore =
+        scoreDetectionMarkerName(marker.searchText) +
+        scoreDetectionMarkerGeometry(marker) +
+        yBias;
+      return {
+        ...marker,
+        confidenceScore,
+      };
+    })
+    .sort(compareDetectionMarkers);
+
+  return scored.map((marker) => ({
+    ...marker,
+    // Testing mode: only markers named with "island(s)" are enabled by default.
+    defaultVisible: markerLabelContainsIslands(marker),
+  }));
+}
+
 function buildDetectionMarkerClusters(shells, mapper) {
   const markerCandidates = [];
 
   shells.forEach((shell, index) => {
     const bounds = mapper.mapBounds(index);
-    const shellSize = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+    const shellWidth = Math.max(0, bounds.maxX - bounds.minX);
+    const shellHeight = Math.max(0, bounds.maxY - bounds.minY);
+    const shellSize = Math.max(shellWidth, shellHeight);
+    const shellMinDim = Math.min(shellWidth, shellHeight);
+    const shellAspect = shellSize / Math.max(UV_EPSILON, shellMinDim);
+    const isNeedleCandidate =
+      shellMinDim <= SMALL_SHELL_MARKER_NEEDLE_MIN_DIM_PX + 1 &&
+      shellSize >= 16 &&
+      shellSize <= 220 &&
+      shellAspect >= 4.5;
     const needsDetectionMarker =
-      shellSize <= 20 || (shell?.isSmallShell && shellSize <= 30);
+      shellSize <= 20 ||
+      (shell?.isSmallShell && shellSize <= 34) ||
+      isNeedleCandidate;
     if (!needsDetectionMarker) return;
 
     const markerRect = getSmallShellDetectionMarkerRect(bounds);
@@ -1900,6 +2026,13 @@ function buildDetectionMarkerClusters(shells, mapper) {
       ...markerRect,
       islandId,
       label: shell?.shellName || islandId,
+      meshName: shell?.meshName || "",
+      shellSize,
+      shellWidth,
+      shellHeight,
+      shellMinDim,
+      shellAspect,
+      triangleCount: Number.isFinite(shell?.triangleCount) ? shell.triangleCount : 0,
     });
   });
 
@@ -1948,23 +2081,46 @@ function buildDetectionMarkerClusters(shells, mapper) {
       uniqueIslandIds.length === 1
         ? clusterRects[0]?.label || uniqueIslandIds[0]
         : `${uniqueIslandIds.length} islands`;
+    const combinedWidth = Math.max(0, combined.maxX - combined.minX);
+    const combinedHeight = Math.max(0, combined.maxY - combined.minY);
+    const searchText = clusterRects
+      .map((entry) => `${entry.label || ""} ${entry.meshName || ""}`)
+      .join(" ")
+      .trim();
+    const combinedSearchText = `${label} ${searchText}`.trim();
+    const shellSizes = clusterRects
+      .map((entry) => entry.shellSize)
+      .filter((value) => Number.isFinite(value));
+    const averageShellSize =
+      shellSizes.length > 0
+        ? shellSizes.reduce((sum, value) => sum + value, 0) / shellSizes.length
+        : combined.size;
+    const minShellSize = shellSizes.length > 0 ? Math.min(...shellSizes) : averageShellSize;
+    const maxShellSize = shellSizes.length > 0 ? Math.max(...shellSizes) : averageShellSize;
+    const triangleCount = clusterRects.reduce(
+      (sum, entry) => sum + (Number.isFinite(entry.triangleCount) ? entry.triangleCount : 0),
+      0,
+    );
 
     result.push({
       ...combined,
       key,
       label,
       islandIds: uniqueIslandIds,
+      islandCount: uniqueIslandIds.length,
       defaultColor: DEFAULT_SMALL_SHELL_DETECTION_FILL,
+      searchText: combinedSearchText,
+      width: combinedWidth,
+      height: combinedHeight,
+      memberCount: clusterRects.length,
+      averageShellSize,
+      minShellSize,
+      maxShellSize,
+      triangleCount,
     });
   }
 
-  result.sort((a, b) => {
-    const yDiff = a.y - b.y;
-    if (Math.abs(yDiff) > 0.01) return yDiff;
-    return a.x - b.x;
-  });
-
-  return result;
+  return rankDetectionMarkers(result);
 }
 
 function paintWireframeLayer(canvas, shells, mapper, options = {}) {
@@ -2025,7 +2181,13 @@ function paintWireframeLayer(canvas, shells, mapper, options = {}) {
   });
 
   for (const marker of markerClusters) {
-    const isVisible = markerVisibilityMap[marker.key] !== false;
+    const explicitVisibility = markerVisibilityMap[marker.key];
+    const isVisible =
+      explicitVisibility === true
+        ? true
+        : explicitVisibility === false
+          ? false
+          : marker.defaultVisible !== false;
     if (!isVisible) continue;
     const markerColor = normalizeHexColor(
       markerColorMap[marker.key],
@@ -2040,7 +2202,10 @@ function paintWireframeLayer(canvas, shells, mapper, options = {}) {
       key: marker.key,
       label: marker.label,
       islandIds: marker.islandIds,
+      islandCount: marker.islandCount,
       defaultColor: marker.defaultColor || DEFAULT_SMALL_SHELL_DETECTION_FILL,
+      defaultVisible: marker.defaultVisible !== false,
+      confidenceScore: marker.confidenceScore,
     })),
   };
 }

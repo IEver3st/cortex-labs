@@ -8572,7 +8572,7 @@ label {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: calc(40px * var(--es-ui-scale)) minmax(0, 1.2fr) minmax(0, 0.8fr);
+  grid-template-columns: auto minmax(0, 1.2fr) minmax(0, 0.8fr);
   gap: calc(2px * var(--es-ui-scale));
   padding: calc(2px * var(--es-ui-scale));
 }
@@ -8609,15 +8609,16 @@ label {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  background: oklch(0.148 0.007 286 / 94%);
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  border: 1px solid oklch(1 0 0 / 7%);
-  border-right: 1px solid oklch(0.648 0.116 182.503 / 18%);
+  background: oklch(0.13 0.005 286 / 96%);
+  backdrop-filter: blur(28px) saturate(1.7);
+  -webkit-backdrop-filter: blur(28px) saturate(1.7);
+  border: 1px solid oklch(1 0 0 / 5%);
+  border-right: 1px solid oklch(0.648 0.116 182.503 / 14%);
   border-radius: calc(4px * var(--es-ui-scale)) 0 0 calc(4px * var(--es-ui-scale));
   overflow: hidden;
-  padding: calc(6px * var(--es-ui-scale)) 0;
+  padding: calc(4px * var(--es-ui-scale)) 0;
   z-index: 2;
+  gap: 0;
 }
 
 /* Accent shimmer on generating */
@@ -8656,10 +8657,10 @@ label {
 }
 
 .tg-sb-rule {
-  width: calc(18px * var(--es-ui-scale));
+  width: calc(14px * var(--es-ui-scale));
   height: 1px;
-  margin: calc(4px * var(--es-ui-scale)) auto;
-  background: oklch(1 0 0 / 6%);
+  margin: calc(3px * var(--es-ui-scale)) auto;
+  background: oklch(1 0 0 / 5%);
   flex-shrink: 0;
 }
 
@@ -8667,18 +8668,24 @@ label {
 
 .tg-sb-marker {
   position: relative;
-  padding: calc(1px * var(--es-ui-scale)) 0;
+  padding: 0;
 }
 
 .tg-sb-marker .tg-sb-icon-btn {
-  padding: calc(6px * var(--es-ui-scale)) 0;
+  padding: calc(5px * var(--es-ui-scale)) 0;
 }
 
 .tg-sb-marker .tg-sb-ext-label {
-  font-size: calc(6.5px * var(--es-ui-scale));
-  letter-spacing: 0.2em;
-  color: oklch(0.44 0.006 286);
-  padding: calc(3px * var(--es-ui-scale)) 0;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  text-orientation: mixed;
+  font-size: calc(8.5px * var(--es-ui-scale));
+  letter-spacing: 0.18em;
+  color: oklch(0.40 0.005 286);
+  padding: calc(2px * var(--es-ui-scale)) 0 calc(4px * var(--es-ui-scale));
+  margin: 0 auto;
+  width: auto;
+  text-align: center;
 }
 
 /* ── Sidebar buttons ── */
@@ -8688,12 +8695,12 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: calc(7px * var(--es-ui-scale)) 0;
+  padding: calc(5px * var(--es-ui-scale)) 0;
   border: none;
   background: transparent;
-  color: oklch(0.72 0.01 286);
+  color: oklch(0.64 0.008 286);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.18s, background 0.18s;
   position: relative;
   box-sizing: border-box;
 }
@@ -8704,29 +8711,30 @@ label {
 }
 
 .tg-sb-btn:active {
-  background: oklch(1 0 0 / 8%);
+  background: oklch(1 0 0 / 7%);
 }
 
 .tg-sb-btn:disabled {
-  opacity: 0.25;
+  opacity: 0.22;
   cursor: default;
 }
 
 .tg-sb-btn:disabled:hover {
   background: transparent;
-  color: oklch(0.72 0.01 286);
+  color: oklch(0.64 0.008 286);
 }
 
 .tg-sb-icon-btn {
-  padding: calc(7px * var(--es-ui-scale)) 0;
+  padding: calc(5px * var(--es-ui-scale)) 0;
 }
 
 .tg-sb-icon {
-  width: calc(13px * var(--es-ui-scale));
-  height: calc(13px * var(--es-ui-scale));
+  width: calc(12px * var(--es-ui-scale));
+  height: calc(12px * var(--es-ui-scale));
   flex-shrink: 0;
   display: block;
   margin: 0 auto;
+  stroke-width: 1.6;
 }
 
 /* Unload X — subtle */
@@ -8749,15 +8757,19 @@ label {
 /* ── Sidebar rotated labels ── */
 
 .tg-sb-label {
-  writing-mode: vertical-lr;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
   text-orientation: mixed;
+  display: block;
+  text-align: center;
+  line-height: 1;
   font-family: var(--font-hud);
-  font-size: calc(7.5px * var(--es-ui-scale));
-  letter-spacing: 0.14em;
+  font-size: calc(9px * var(--es-ui-scale));
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: oklch(0.58 0.008 286);
-  padding: calc(5px * var(--es-ui-scale)) 0;
-  max-height: calc(88px * var(--es-ui-scale));
+  color: oklch(0.44 0.006 286);
+  padding: calc(2px * var(--es-ui-scale)) 0 calc(4px * var(--es-ui-scale));
+  max-height: calc(120px * var(--es-ui-scale));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8765,16 +8777,19 @@ label {
   user-select: none;
   transition: color 0.2s;
   margin: 0 auto;
+  width: auto;
 }
 
 .tg-sb-model-label {
-  max-height: calc(110px * var(--es-ui-scale));
-  color: oklch(0.62 0.01 286);
+  max-height: calc(90px * var(--es-ui-scale));
+  font-size: calc(7.5px * var(--es-ui-scale));
+  color: oklch(0.52 0.008 286);
+  letter-spacing: 0.14em;
 }
 
 .tg-sb-ext-label {
-  color: oklch(0.46 0.006 286);
-  font-size: calc(6.5px * var(--es-ui-scale));
+  color: oklch(0.40 0.005 286);
+  font-size: calc(8.5px * var(--es-ui-scale));
   letter-spacing: 0.18em;
 }
 
@@ -8785,22 +8800,171 @@ label {
 /* Exterior btn active state */
 .tg-sb-ext-btn.is-active {
   color: var(--mg-primary);
-  background: oklch(0.648 0.116 182.503 / 10%);
 }
 
 .tg-sb-ext-btn.is-active::after {
   content: "";
   position: absolute;
   right: 0;
-  top: 30%;
+  top: 25%;
   width: 2px;
-  height: 40%;
+  height: 50%;
   background: var(--mg-primary);
   border-radius: 1px 0 0 1px;
-  opacity: 0.7;
+  opacity: 0.6;
 }
 
 /* ── Sidebar size buttons ── */
+
+.tg-sb-marker-controls {
+  gap: calc(3px * var(--es-ui-scale));
+  padding: calc(1px * var(--es-ui-scale)) calc(3px * var(--es-ui-scale)) calc(3px * var(--es-ui-scale));
+}
+
+.tg-sb-marker-controls-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  text-orientation: mixed;
+  font-size: calc(8.5px * var(--es-ui-scale));
+  letter-spacing: 0.2em;
+  color: oklch(0.40 0.005 286);
+  padding: calc(2px * var(--es-ui-scale)) 0 calc(4px * var(--es-ui-scale));
+  margin: 0 auto;
+  width: auto;
+  text-align: center;
+}
+
+.tg-sb-marker-shell {
+  width: 100%;
+  max-height: calc(160px * var(--es-ui-scale));
+  overflow: hidden;
+  border-top: 1px solid oklch(1 0 0 / 6%);
+  border-bottom: 1px solid oklch(1 0 0 / 6%);
+  background: oklch(1 0 0 / 1.5%);
+}
+
+.tg-sb-marker-list {
+  width: 100%;
+  max-height: calc(160px * var(--es-ui-scale));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(3px * var(--es-ui-scale));
+  padding: calc(4px * var(--es-ui-scale)) calc(3px * var(--es-ui-scale));
+  box-sizing: border-box;
+}
+
+.tg-sb-marker-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(3px * var(--es-ui-scale));
+  width: 100%;
+}
+
+.tg-sb-marker-color-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tg-sb-marker-color {
+  width: calc(14px * var(--es-ui-scale));
+  height: calc(14px * var(--es-ui-scale));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid oklch(1 0 0 / 8%);
+  border-radius: calc(3px * var(--es-ui-scale));
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.16s, box-shadow 0.16s;
+}
+
+.tg-sb-marker-color:hover {
+  border-color: oklch(1 0 0 / 20%);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 6%);
+}
+
+.tg-sb-marker-color-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tg-sb-marker-list::-webkit-scrollbar {
+  width: 3px;
+}
+
+.tg-sb-marker-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tg-sb-marker-list::-webkit-scrollbar-thumb {
+  background: oklch(0.648 0.116 182.503 / 22%);
+  border-radius: 2px;
+}
+
+.tg-sb-marker-list::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.648 0.116 182.503 / 38%);
+}
+
+.tg-sb-marker-list {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.648 0.116 182.503 / 22%) transparent;
+}
+
+.tg-sb-marker-color:focus-visible,
+.tg-sb-marker-visibility:focus-visible {
+  outline: 1px solid oklch(0.648 0.116 182.503 / 55%);
+  outline-offset: -1px;
+}
+
+.tg-sb-marker-color-swatch {
+  width: calc(9px * var(--es-ui-scale));
+  height: calc(9px * var(--es-ui-scale));
+  border-radius: calc(2px * var(--es-ui-scale));
+  border: 1px solid oklch(0 0 0 / 30%);
+  box-shadow: inset 0 0 0 1px oklch(1 0 0 / 14%);
+}
+
+.tg-sb-marker-visibility {
+  width: calc(14px * var(--es-ui-scale));
+  height: calc(14px * var(--es-ui-scale));
+  flex-shrink: 0;
+  border: 1px solid oklch(1 0 0 / 8%);
+  border-radius: calc(3px * var(--es-ui-scale));
+  background: transparent;
+  color: oklch(0.45 0.008 286);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.16s, color 0.16s, background-color 0.16s;
+}
+
+.tg-sb-marker-visibility:hover {
+  border-color: oklch(1 0 0 / 18%);
+  color: oklch(0.75 0.008 286);
+}
+
+.tg-sb-marker-visibility.is-active {
+  color: var(--mg-primary);
+  border-color: oklch(0.648 0.116 182.503 / 28%);
+}
+
+.tg-sb-marker-row:not(.is-active) .tg-sb-marker-color {
+  opacity: 0.5;
+}
+
+.tg-sb-marker-icon {
+  width: calc(8px * var(--es-ui-scale));
+  height: calc(8px * var(--es-ui-scale));
+  stroke-width: 1.8;
+}
 
 .tg-sb-sizes {
   gap: 0;
@@ -8808,11 +8972,11 @@ label {
 
 .tg-sb-size {
   font-family: var(--font-hud);
-  font-size: calc(7.5px * var(--es-ui-scale));
-  letter-spacing: 0.1em;
+  font-size: calc(7px * var(--es-ui-scale));
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  padding: calc(5px * var(--es-ui-scale)) 0;
-  color: oklch(0.60 0.008 286);
+  padding: calc(4px * var(--es-ui-scale)) 0;
+  color: oklch(0.50 0.006 286);
 }
 
 .tg-sb-size:hover {
@@ -8821,8 +8985,6 @@ label {
 
 .tg-sb-size.is-active {
   color: var(--mg-primary);
-  background: oklch(0.648 0.116 182.503 / 10%);
-  box-shadow: inset 2px 0 0 oklch(0.648 0.116 182.503 / 60%);
 }
 
 /* ── Sidebar save ── */
@@ -8840,7 +9002,7 @@ label {
 }
 
 .tg-sb-save-label {
-  color: oklch(0.60 0.008 286);
+  color: oklch(0.44 0.006 286);
 }
 
 .tg-sb-save-label.is-saved {
@@ -8848,7 +9010,7 @@ label {
 }
 
 .tg-sb-save-label.is-disabled {
-  opacity: 0.28;
+  opacity: 0.22;
 }
 
 /* ── Preview (right pane) ── */
@@ -8895,7 +9057,7 @@ label {
 
 @media (max-width: 1260px) {
   .tg-workspace {
-    grid-template-columns: calc(40px * var(--es-ui-scale)) 1fr;
+    grid-template-columns: auto 1fr;
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 
@@ -12881,4 +13043,72 @@ label {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(232, 238, 247, 0.95);
+}
+
+/* Template Generator Sidebar v3: icon + sideways labels */
+.tg-sidebar {
+  width: clamp(48px, 4.5vw, 56px);
+  padding: 0.75rem 0.2rem 0.66rem;
+  gap: 0.62rem;
+  background:
+    linear-gradient(180deg, rgba(8, 10, 14, 0.97), rgba(6, 7, 10, 0.95)),
+    radial-gradient(circle at 50% -24%, rgba(94, 217, 195, 0.2), transparent 56%);
+  border-right: 1px solid rgba(161, 194, 212, 0.22);
+}
+
+.tg-sb-section {
+  align-items: center;
+  justify-content: center;
+  gap: 0.36rem;
+  width: 100%;
+}
+
+.tg-sb-label {
+  writing-mode: vertical-rl;
+  text-orientation: sideways;
+  transform: rotate(180deg);
+  letter-spacing: 0.22em;
+  font-size: 0.55rem;
+  line-height: 1;
+  max-height: 7.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.86;
+  color: rgba(206, 222, 235, 0.86);
+}
+
+.tg-sb-model-label {
+  max-height: 9rem;
+  font-size: 0.49rem;
+  letter-spacing: 0.16em;
+  opacity: 0.72;
+}
+
+.tg-sb-marker-controls {
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tg-sb-marker-controls-label {
+  max-height: 4.8rem;
+}
+
+.tg-sb-marker-shell {
+  width: 100%;
+}
+
+.tg-sb-btn.tg-sb-size {
+  min-width: 2.1rem;
+}
+
+.tg-sb-rule {
+  width: calc(100% - 0.6rem);
+}
+
+@media (max-width: 1280px) {
+  .tg-sb-label {
+    font-size: 0.5rem;
+    letter-spacing: 0.18em;
+  }
 }
