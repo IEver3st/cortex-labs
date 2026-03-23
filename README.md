@@ -15,11 +15,11 @@ Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/relea
 
 The centerpiece of v3.7.0 is the **Template Generator (beta)**, a dedicated workspace for auto-generating layered `.psd` templates directly from `.yft` models.
 
-- **Auto-generation from models:** Drop a `.yft` and Cortex Studio builds a fully-layered Photoshop template with UV shells mapped to spatial colors — no manual tracing.
+- **Auto-generation from models:** Drop a `.yft` and Cortex Studio builds a fully-layered Photoshop template with UV shells mapped to spatial colors. No manual tracing.
 - **Live preview:** See the template as it generates, with wireframe and world-space-normal diagnostic overlays for inspection.
 - **Flexible export:** Save as `.psd`, `.png`, or both. Output folders are remembered, and you can open them directly from Cortex.
 - **Background builds:** Template generation runs in a dedicated Web Worker, keeping the UI responsive on complex models.
-- **Diagnostics & reporting:** Download a template map JSON, inspect diagnostic renders, and submit telemetry for failed generations.
+- **Diagnostics and reporting:** Download a template map JSON, inspect diagnostic renders, and submit telemetry for failed generations.
 - **Workspace persistence:** Your Template Generator session is saved and restored on relaunch.
 
 ---
@@ -31,7 +31,7 @@ The **Variant Builder** is a dedicated environment for managing complex livery p
 - **PSD Native Workflow:** Load your Photoshop files directly. Cortex Studio parses layers and groups with full hierarchy support.
 - **Variant Management:** Create, duplicate, and rename variants. Each variant stores its own unique set of layer visibilities.
 - **IDE-Style Interface:** A professional layout featuring a variant sidebar, dual 3D/2D preview panes, and a comprehensive layer panel.
-- **Solo & Group Controls:** Quickly isolate layers or toggle entire groups.
+- **Solo and Group Controls:** Quickly isolate layers or toggle entire groups.
 - **Batch Export:** Export all your variants at once to high-quality PNGs (up to 4K resolution) into a dedicated output folder.
 - **Real-time Compositing:** As you toggle layers in the panel, the 3D model updates instantly with the new composited texture.
 
@@ -49,8 +49,8 @@ The **Variant Builder** is a dedicated environment for managing complex livery p
 - **Native GTA V Support:** Direct parsing of `.yft` (vehicles) and `.ydd` (clothing) files.
 - **Full Camera Control:** Quick presets (Front, Side, 3/4, Top), center action, and optional WASD flight controls.
 - **Material Controls:** Fine-tune body color, background color, glossiness, and light intensity to see how your design looks in different conditions.
-- **Light & Dark Mode:** Branded light-mode defaults and dark-mode overrides, with a native toggle in Settings.
-- **Fully Local & Private:** No cloud dependencies, no accounts, no data leaves your machine.
+- **Light and Dark Mode:** Branded light-mode defaults and dark-mode overrides, with a native toggle in Settings.
+- **Fully Local and Private:** No cloud dependencies, no accounts, no data leaves your machine.
 - **Tauri v2 Core:** Built on the latest Tauri framework for maximum performance and a tiny footprint.
 
 ---
@@ -62,21 +62,21 @@ The **Variant Builder** is a dedicated environment for managing complex livery p
 - **.ydd** (GTA V/FiveM Clothing/EUP)
 
 ### Textures
-- **.psd** (Photoshop — recommended for Variants and Template Generator)
+- **.psd** (Photoshop - recommended for Variants and Template Generator)
 - **.png, .jpg, .tga, .dds, .bmp, .webp, .tiff**
 
 ---
 
 ## Why Cortex Studio
 
-Livery work is iterative. In-game testing is slow and breaks your flow. Cortex Studio keeps your preview live so you can focus on design and iteration instead of constant exporting, loading, and reloading. The Template Generator takes it a step further — skip the blank-canvas problem entirely and start from a model-accurate template.
+Livery work is iterative. In-game testing is slow and breaks your flow. Cortex Studio keeps your preview live so you can focus on design and iteration instead of constant exporting, loading, and reloading. The Template Generator takes it a step further: skip the blank-canvas problem entirely and start from a model-accurate template.
 
 ---
 
 ## Limitations (By Design)
 
 * **Not a material editor.** Cortex Studio doesn't aim to replace a full material/shader workflow or in-game tuning.
-* **Preview-focused.** It's built to **view liveries/textures in real time** on a 3D model — fast iteration, quick inspection, and instant feedback.
+* **Preview-focused.** It's built to **view liveries/textures in real time** on a 3D model. Fast iteration, quick inspection, and instant feedback.
 * **Asset fidelity depends on the source files.** What you see is constrained by the model/material setup and naming conventions in the asset.
 * **Template Generator is in beta.** Generation quality depends on UV shell structure in the source model. Use the diagnostic tools and telemetry reporting if you hit issues.
 
@@ -95,7 +95,7 @@ Livery work is iterative. In-game testing is slow and breaks your flow. Cortex S
 ## Getting Started
 
 ### Prerequisites
-- **Bun** (Fastest JS runtime & package manager)
+- **Bun** (Fastest JS runtime and package manager)
 - **Rust toolchain** (Required for building the Tauri app)
 
 ### Installation
@@ -128,7 +128,7 @@ bun run tauri build
 - **Double-Click Layers:** In the Variant Builder, double-click a layer in the panel to "Solo" it.
 - **Alt + 1-4:** Use these hotkeys to quickly switch between viewing modes.
 - **Custom Hotkeys:** Check the Settings menu to customize every action to your liking.
-- **Recents & Pinned Projects:** Pin frequently-used projects from the home screen for faster access.
+- **Recents and Pinned Projects:** Pin frequently-used projects from the home screen for faster access.
 
 ---
 
