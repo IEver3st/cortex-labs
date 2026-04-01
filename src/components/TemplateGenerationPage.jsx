@@ -4,27 +4,41 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
   AlertTriangle,
+  Bug,
   Box,
   Car,
   Check,
+  Copy,
   Download,
-  Eye,
-  EyeOff,
   FolderOpen,
   Layers,
   RefreshCw,
+  Send,
   Sparkles,
   X,
 } from "lucide-react";
 import Viewer from "./Viewer";
 import { buildAutoTemplatePsd } from "../lib/template-psd";
-import { loadPrefs } from "../lib/prefs";
+import { loadPrefs, savePrefs } from "../lib/prefs";
 import { openFolderPath } from "../lib/open-folder";
+import {
+  buildMarkerSelectionDraft,
+  countSelectedMarkers,
+  getContainedTemplateViewport,
+  getMarkerTextureRect,
+  isTemplateMarkerModifierPressed,
+  normalizeTemplateMarkerPickModifier,
+  pickMarkerAtTexturePoint,
+  toggleMarkerSelection,
+  uvToTemplateTexturePoint,
+} from "../lib/template-marker-utils";
 
 const SIZE_OPTIONS = [4096, 2048, 1024, 512];
 const NOOP = () => {};
 const DEFAULT_AUTO_TEMPLATE_COLOR = "#c9d8ee";
 const DEFAULT_AUTO_TEMPLATE_EXPORT_FORMAT = "psd";
+const DEFAULT_TEMPLATE_TELEMETRY_ENDPOINT = (import.meta.env?.VITE_TEMPLATE_TELEMETRY_ENDPOINT || "").trim();
+const TELEMETRY_EVENT_TYPE = "template_generation_issue";
 
 function normalizeAutoTemplateExportFormat(value) {
   if (value === "png" || value === "psd_png") return value;
@@ -218,6 +232,11 @@ function shallowEqualObject(a, b) {
   return true;
 }
 
+function hasTrueEntries(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value).some((entry) => entry === true);
+}
+
 function getDefaultAutoTemplateColor() {
   const prefs = loadPrefs() || {};
   return normalizeAutoTemplateColor(prefs?.defaults?.autoTemplateColor);
@@ -228,10 +247,70 @@ function getDefaultAutoTemplateExportFormat() {
   return normalizeAutoTemplateExportFormat(prefs?.defaults?.autoTemplateExportFormat);
 }
 
+function getDefaultTemplateTelemetryEndpoint() {
+  const prefs = loadPrefs() || {};
+  const fromPrefs = prefs?.defaults?.templateTelemetryEndpoint;
+  if (typeof fromPrefs === "string" && fromPrefs.trim()) return fromPrefs.trim();
+  return DEFAULT_TEMPLATE_TELEMETRY_ENDPOINT;
+}
+
+function getDefaultTemplateMarkerPickModifier() {
+  const prefs = loadPrefs() || {};
+  return normalizeTemplateMarkerPickModifier(prefs?.defaults?.templateMarkerPickModifier);
+}
+
+function persistTemplateTelemetryEndpoint(nextEndpoint) {
+  const prefs = loadPrefs() || {};
+  const defaults = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
+  const endpoint = typeof nextEndpoint === "string" ? nextEndpoint.trim() : "";
+  const nextDefaults = { ...defaults };
+  if (endpoint) {
+    nextDefaults.templateTelemetryEndpoint = endpoint;
+  } else {
+    delete nextDefaults.templateTelemetryEndpoint;
+  }
+  savePrefs({ ...prefs, defaults: nextDefaults });
+}
+
 function getFileLabel(path, fallback = "") {
   if (!path) return fallback;
   const parts = path.toString().split(/[\\/]/);
   return parts[parts.length - 1] || fallback;
+}
+
+function createTelemetryReportId() {
+  const nonce = Math.random().toString(36).slice(2, 10);
+  return `tg-${Date.now()}-${nonce}`;
+}
+
+function toErrorMessage(error, fallback) {
+  if (error && typeof error === "object" && "message" in error) {
+    const value = error.message;
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return fallback;
+}
+
+function triggerTextDownload(fileName, textContent, mimeType = "application/json") {
+  const blob = new Blob([textContent], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
+async function writeTextToClipboard(text) {
+  if (!navigator?.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export default function TemplateGenerationPage({
@@ -253,6 +332,21 @@ export default function TemplateGenerationPage({
   const [autoTemplateExportFormat, setAutoTemplateExportFormat] = useState(
     () => getDefaultAutoTemplateExportFormat(),
   );
+  const [templateMarkerPickModifier, setTemplateMarkerPickModifier] = useState(
+    () => getDefaultTemplateMarkerPickModifier(),
+  );
+  const [markerSelectionConfirmed, setMarkerSelectionConfirmed] = useState(() => {
+    const explicitValue = workspaceState?.markerSelectionConfirmed;
+    if (typeof explicitValue === "boolean") return explicitValue;
+    return hasTrueEntries(workspaceState?.detectedIslandVisibility);
+  });
+  const [pendingMarkerSelection, setPendingMarkerSelection] = useState(() => {
+    const markers = Array.isArray(workspaceState?.detectedIslands)
+      ? workspaceState.detectedIslands
+      : [];
+    return buildMarkerSelectionDraft(markers, workspaceState?.detectedIslandVisibility);
+  });
+  const [isMarkerEditMode, setIsMarkerEditMode] = useState(false);
   const [useWorldSpaceNormalsAsBase, setUseWorldSpaceNormalsAsBase] = useState(() =>
     Boolean(
       (workspaceState?.useWorldSpaceNormalsAsBase ??
@@ -295,15 +389,38 @@ export default function TemplateGenerationPage({
   const [autoSavedPath, setAutoSavedPath] = useState("");
   const [lastGeneratedAt, setLastGeneratedAt] = useState(null);
   const [regenerationToken, setRegenerationToken] = useState(0);
-  const [isPreviewRefreshing, setIsPreviewRefreshing] = useState(false);
+  const [isMarkerPickModifierPressed, setIsMarkerPickModifierPressed] = useState(false);
+  const [hoveredMarkerKey, setHoveredMarkerKey] = useState("");
+  const [previewViewport, setPreviewViewport] = useState(() => ({
+    size: 0,
+    offsetX: 0,
+    offsetY: 0,
+  }));
+  const [isTelemetryDialogOpen, setIsTelemetryDialogOpen] = useState(false);
+  const [telemetrySending, setTelemetrySending] = useState(false);
+  const [telemetryStatus, setTelemetryStatus] = useState({ tone: "", message: "" });
+  const [telemetryDraft, setTelemetryDraft] = useState(() => ({
+    summary: "",
+    details: "",
+    expectedBehavior: "",
+    severity: "high",
+    endpoint: getDefaultTemplateTelemetryEndpoint(),
+    includeDiagnostics: true,
+    includeModelPath: false,
+  }));
+  const [compactHeight, setCompactHeight] = useState(false);
   const persistTimerRef = useRef(null);
   const regenerateTimerRef = useRef(null);
+  const telemetryStatusTimerRef = useRef(null);
+  const previewShellRef = useRef(null);
+  const workspaceRef = useRef(null);
 
   useEffect(() => {
     if (!settingsVersion) return;
     setOutputFolder((prev) => prev || getDefaultOutputFolder());
     setAutoTemplateColor(getDefaultAutoTemplateColor());
     setAutoTemplateExportFormat(getDefaultAutoTemplateExportFormat());
+    setTemplateMarkerPickModifier(getDefaultTemplateMarkerPickModifier());
   }, [settingsVersion]);
 
   useEffect(() => {
@@ -320,6 +437,7 @@ export default function TemplateGenerationPage({
         detectedIslands,
         detectedIslandColors,
         detectedIslandVisibility,
+        markerSelectionConfirmed,
       });
     }, 140);
 
@@ -336,13 +454,71 @@ export default function TemplateGenerationPage({
     detectedIslands,
     detectedIslandColors,
     detectedIslandVisibility,
+    markerSelectionConfirmed,
     onStateChange,
   ]);
 
   useEffect(() => {
     return () => {
       if (regenerateTimerRef.current) clearTimeout(regenerateTimerRef.current);
+      if (telemetryStatusTimerRef.current) clearTimeout(telemetryStatusTimerRef.current);
     };
+  }, []);
+
+  useEffect(() => {
+    setIsMarkerPickModifierPressed(false);
+    setHoveredMarkerKey("");
+
+    const updateModifierState = (event) => {
+      const nextPressed = isTemplateMarkerModifierPressed(
+        event,
+        templateMarkerPickModifier,
+      );
+      setIsMarkerPickModifierPressed(nextPressed);
+      if (!nextPressed) setHoveredMarkerKey("");
+    };
+
+    const handleWindowBlur = () => {
+      setIsMarkerPickModifierPressed(false);
+      setHoveredMarkerKey("");
+    };
+
+    window.addEventListener("keydown", updateModifierState);
+    window.addEventListener("keyup", updateModifierState);
+    window.addEventListener("blur", handleWindowBlur);
+
+    return () => {
+      window.removeEventListener("keydown", updateModifierState);
+      window.removeEventListener("keyup", updateModifierState);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [templateMarkerPickModifier]);
+
+  useEffect(() => {
+    if (!previewShellRef.current || typeof ResizeObserver === "undefined") return;
+
+    const node = previewShellRef.current;
+    const updateViewport = () => {
+      setPreviewViewport(
+        getContainedTemplateViewport(node.clientWidth || 0, node.clientHeight || 0),
+      );
+    };
+
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(node);
+    updateViewport();
+
+    return () => observer.disconnect();
+  }, [previewUrl]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const obs = new ResizeObserver(([entry]) => {
+      setCompactHeight(entry.contentRect.height < 480);
+    });
+    const node = workspaceRef.current;
+    if (node) obs.observe(node);
+    return () => obs.disconnect();
   }, []);
 
   const clearGeneratedState = useCallback(() => {
@@ -353,6 +529,10 @@ export default function TemplateGenerationPage({
     setDetectedIslands([]);
     setDetectedIslandColors({});
     setDetectedIslandVisibility({});
+    setMarkerSelectionConfirmed(false);
+    setPendingMarkerSelection({});
+    setIsMarkerEditMode(false);
+    setHoveredMarker("");
     setPreviewUrl("");
     setPsdBytes(null);
     setPsdFileName("auto_template.psd");
@@ -362,7 +542,6 @@ export default function TemplateGenerationPage({
     setGenerationError("");
     setAutoSavedPath("");
     setLastGeneratedAt(null);
-    setIsPreviewRefreshing(false);
     if (regenerateTimerRef.current) {
       clearTimeout(regenerateTimerRef.current);
       regenerateTimerRef.current = null;
@@ -407,50 +586,192 @@ export default function TemplateGenerationPage({
     setTemplatePsdSourceError(info?.templatePsdSourceError || "");
   }, []);
 
-  const handleMarkerColorChange = useCallback((markerKey, colorValue) => {
-    if (!markerKey) return;
-    const nextColor = normalizeColorInputValue(colorValue);
-    setDetectedIslandColors((prev) => ({
-      ...prev,
-      [markerKey]: nextColor,
-    }));
-    setAutoSavedPath("");
-  }, []);
-
-  const handleMarkerVisibilityToggle = useCallback(
-    (markerKey, currentlyVisible, markerDefaultVisible = true) => {
-      if (!markerKey) return;
-      setDetectedIslandVisibility((prev) => {
-        const next = { ...prev };
-        if (currentlyVisible) {
-          next[markerKey] = false;
-        } else if (markerDefaultVisible === false) {
-          next[markerKey] = true;
-        } else {
-          delete next[markerKey];
-        }
-        return shallowEqualObject(prev, next) ? prev : next;
-      });
-      setAutoSavedPath("");
+  const resolveMarkerFromUv = useCallback(
+    (uv) => {
+      const point = uvToTemplateTexturePoint(uv, exportSize);
+      return pickMarkerAtTexturePoint(detectedIslands, point);
     },
-    [],
+    [detectedIslands, exportSize],
   );
 
-  const openMarkerColorPicker = useCallback((inputId) => {
-    if (!inputId) return;
-    const input = document.getElementById(inputId);
-    if (!(input instanceof HTMLInputElement)) return;
-    input.click();
+  const setHoveredMarker = useCallback((markerKey = "") => {
+    setHoveredMarkerKey((prev) => (prev === markerKey ? prev : markerKey));
   }, []);
+
+  const clearHoveredMarker = useCallback(() => {
+    setHoveredMarker("");
+  }, [setHoveredMarker]);
+
+  useEffect(() => {
+    if (!detectedIslands.length) {
+      setPendingMarkerSelection((prev) => (shallowEqualObject(prev, {}) ? prev : {}));
+      setIsMarkerEditMode(false);
+      return;
+    }
+
+    setPendingMarkerSelection((prev) => {
+      const sourceSelection = isMarkerEditMode ? prev : detectedIslandVisibility;
+      const next = buildMarkerSelectionDraft(detectedIslands, sourceSelection);
+      return shallowEqualObject(prev, next) ? prev : next;
+    });
+  }, [detectedIslandVisibility, detectedIslands, isMarkerEditMode]);
+
+  useEffect(() => {
+    if (!detectedIslands.length || markerSelectionConfirmed || isMarkerEditMode) return;
+    setPendingMarkerSelection((prev) => {
+      const next = buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility);
+      return shallowEqualObject(prev, next) ? prev : next;
+    });
+    setIsMarkerEditMode(true);
+  }, [
+    detectedIslandVisibility,
+    detectedIslands,
+    isMarkerEditMode,
+    markerSelectionConfirmed,
+  ]);
+
+  const handleTogglePendingMarkerSelection = useCallback(
+    (markerKey) => {
+      if (!markerKey) return;
+      setPendingMarkerSelection((prev) => {
+        const next = toggleMarkerSelection(prev, markerKey);
+        return shallowEqualObject(prev, next) ? prev : next;
+      });
+      setHoveredMarker(markerKey);
+    },
+    [setHoveredMarker],
+  );
+
+  const handleBeginMarkerEdit = useCallback(() => {
+    setPendingMarkerSelection((prev) => {
+      const next = buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility);
+      return shallowEqualObject(prev, next) ? prev : next;
+    });
+    setHoveredMarker("");
+    setIsMarkerEditMode(true);
+  }, [detectedIslandVisibility, detectedIslands, setHoveredMarker]);
+
+  const handleCancelMarkerEdit = useCallback(() => {
+    setPendingMarkerSelection((prev) => {
+      const next = buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility);
+      return shallowEqualObject(prev, next) ? prev : next;
+    });
+    setHoveredMarker("");
+    setIsMarkerEditMode(false);
+  }, [detectedIslandVisibility, detectedIslands, setHoveredMarker]);
+
+  const handleClearPendingMarkerSelection = useCallback(() => {
+    setPendingMarkerSelection((prev) => (shallowEqualObject(prev, {}) ? prev : {}));
+    setHoveredMarker("");
+  }, [setHoveredMarker]);
+
+  const handleConfirmMarkerSelection = useCallback(() => {
+    const nextSelection = buildMarkerSelectionDraft(detectedIslands, pendingMarkerSelection);
+    if (!shallowEqualObject(detectedIslandVisibility, nextSelection)) {
+      setDetectedIslandVisibility(nextSelection);
+      setAutoSavedPath("");
+      setGenerationError("");
+    }
+    setPendingMarkerSelection(nextSelection);
+    setMarkerSelectionConfirmed(true);
+    setHoveredMarker("");
+    setIsMarkerEditMode(false);
+  }, [
+    detectedIslandVisibility,
+    detectedIslands,
+    pendingMarkerSelection,
+    setHoveredMarker,
+  ]);
+
+  const handleResetMarkerSelection = useCallback(() => {
+    if (!shallowEqualObject(detectedIslandVisibility, {})) {
+      setDetectedIslandVisibility({});
+      setAutoSavedPath("");
+      setGenerationError("");
+    }
+    setPendingMarkerSelection({});
+    setMarkerSelectionConfirmed(false);
+    setHoveredMarker("");
+    setIsMarkerEditMode(true);
+  }, [detectedIslandVisibility, setHoveredMarker]);
+
+  const handleIslandColorChange = useCallback((color) => {
+    if (!detectedIslands.length || typeof color !== "string") return;
+    const normalized = normalizeColorInputValue(color);
+    setDetectedIslandColors((prev) => {
+      const next = {};
+      for (const marker of detectedIslands) {
+        if (marker?.key) next[marker.key] = normalized;
+      }
+      return shallowEqualObject(prev, next) ? prev : next;
+    });
+    setAutoSavedPath("");
+  }, [detectedIslands]);
+
+  const handleModelMarkerHover = useCallback(
+    (hit) => {
+      if (!isMarkerEditMode) return;
+      const marker = resolveMarkerFromUv(hit?.uv);
+      setHoveredMarker(marker?.key || "");
+    },
+    [isMarkerEditMode, resolveMarkerFromUv, setHoveredMarker],
+  );
+
+  const handleModelMarkerPick = useCallback(
+    (hit) => {
+      if (!isMarkerEditMode) return;
+      const marker = resolveMarkerFromUv(hit?.uv);
+      if (!marker?.key) return;
+      handleTogglePendingMarkerSelection(marker.key);
+    },
+    [handleTogglePendingMarkerSelection, isMarkerEditMode, resolveMarkerFromUv],
+  );
+
+  const setTelemetryNotice = useCallback((tone, message, timeoutMs = 0) => {
+    if (telemetryStatusTimerRef.current) {
+      clearTimeout(telemetryStatusTimerRef.current);
+      telemetryStatusTimerRef.current = null;
+    }
+    setTelemetryStatus({ tone, message });
+    if (timeoutMs > 0) {
+      telemetryStatusTimerRef.current = setTimeout(() => {
+        setTelemetryStatus({ tone: "", message: "" });
+        telemetryStatusTimerRef.current = null;
+      }, timeoutMs);
+    }
+  }, []);
+
+  const openTelemetryDialog = useCallback((prefillMessage = "") => {
+    const prefill = typeof prefillMessage === "string" ? prefillMessage.trim() : "";
+    setTelemetryStatus({ tone: "", message: "" });
+    setIsTelemetryDialogOpen(true);
+    setTelemetryDraft((prev) => ({
+      ...prev,
+      endpoint: prev.endpoint || getDefaultTemplateTelemetryEndpoint(),
+      summary: prev.summary || (prefill ? `Template issue: ${prefill.slice(0, 140)}` : ""),
+      details: prev.details || (prefill ? `Observed error:\n${prefill}` : ""),
+    }));
+  }, []);
+
+  const closeTelemetryDialog = useCallback(() => {
+    if (telemetrySending) return;
+    setIsTelemetryDialogOpen(false);
+  }, [telemetrySending]);
+
+  useEffect(() => {
+    if (!isTelemetryDialogOpen) return;
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeTelemetryDialog();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closeTelemetryDialog, isTelemetryDialogOpen]);
 
   const handleRegenerateTemplate = useCallback(() => {
     if (!modelPath || !templateMap || !templatePsdSource || generating) return;
-    setIsPreviewRefreshing(true);
     setGenerating(true);
-    setPreviewUrl("");
-    setPsdBytes(null);
-    setLayerCount(0);
-    setTargetCount(0);
     setGenerationError("");
     setAutoSavedPath("");
     if (regenerateTimerRef.current) clearTimeout(regenerateTimerRef.current);
@@ -472,7 +793,6 @@ export default function TemplateGenerationPage({
       setDetectedIslands([]);
       setAutoSavedPath("");
       setGenerating(false);
-      setIsPreviewRefreshing(false);
       return;
     }
 
@@ -504,7 +824,7 @@ export default function TemplateGenerationPage({
           result = await buildJob.promise;
         } catch {
           if (cancelled) return;
-          result = buildAutoTemplatePsd(templateMap, buildOptions);
+          result = await buildAutoTemplatePsd(templateMap, buildOptions);
         }
 
         if (cancelled) return;
@@ -520,21 +840,6 @@ export default function TemplateGenerationPage({
           for (const marker of nextMarkers) {
             if (!marker?.key || typeof prev[marker.key] !== "string") continue;
             next[marker.key] = normalizeColorInputValue(prev[marker.key]);
-          }
-          return shallowEqualObject(prev, next) ? prev : next;
-        });
-        setDetectedIslandVisibility((prev) => {
-          const next = {};
-          for (const marker of nextMarkers) {
-            if (!marker?.key) continue;
-            const explicitVisibility = prev[marker.key];
-            if (explicitVisibility === false || explicitVisibility === true) {
-              next[marker.key] = explicitVisibility;
-              continue;
-            }
-            if (marker.defaultVisible === false) {
-              next[marker.key] = false;
-            }
           }
           return shallowEqualObject(prev, next) ? prev : next;
         });
@@ -576,7 +881,6 @@ export default function TemplateGenerationPage({
       } finally {
         if (!cancelled) {
           setGenerating(false);
-          setIsPreviewRefreshing(false);
         }
       }
     };
@@ -656,11 +960,344 @@ export default function TemplateGenerationPage({
     await openFolderPath(outputFolder);
   }, [isTauriRuntime, outputFolder]);
 
+  const collectTemplateDiagnostics = useCallback(
+    (includeModelPath = false) => {
+      const mapTargets =
+        templateMap?.targets && typeof templateMap.targets === "object" ? templateMap.targets : {};
+      const targetKeys = Object.keys(mapTargets);
+      const selectedIslandCount = countSelectedMarkers(
+        buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility),
+      );
+      const markerSamples = detectedIslands.slice(0, 40).map((marker, index) => {
+        const markerKey = marker?.key || `marker-${index}`;
+        const explicitVisible = detectedIslandVisibility[markerKey];
+        const explicitColor = detectedIslandColors[markerKey];
+        return {
+          key: markerKey,
+          label: marker?.label || "",
+          defaultVisible: marker?.defaultVisible !== false,
+          forcedVisibility: explicitVisible === true ? true : null,
+          color: typeof explicitColor === "string" ? normalizeColorInputValue(explicitColor) : null,
+        };
+      });
+      const meshSamples = Array.isArray(templatePsdSource?.meshes)
+        ? templatePsdSource.meshes.slice(0, 30).map((mesh, index) => ({
+            index,
+            meshName: mesh?.meshName || "",
+            materialName: mesh?.materialName || "",
+            shellIndex: Number.isFinite(mesh?.shellIndex) ? mesh.shellIndex : null,
+            triangleCount: Number.isFinite(mesh?.triangleCount) ? mesh.triangleCount : null,
+            uvArea: Number.isFinite(mesh?.uvArea) ? Number(mesh.uvArea.toFixed(8)) : null,
+            isMainLiveryCandidate: Boolean(mesh?.isMainLiveryCandidate),
+          }))
+        : [];
+
+      return {
+        runtime: {
+          shell: isTauriRuntime ? "tauri" : "browser",
+          userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+          language: typeof navigator !== "undefined" ? navigator.language : "",
+        },
+        model: {
+          fileName: getFileLabel(modelPath, ""),
+          fullPath: includeModelPath ? modelPath || "" : "",
+        },
+        template: {
+          exportSize,
+          autoTemplateColor,
+          autoTemplateExportFormat,
+          includeTemplateWireframe,
+          useWorldSpaceNormalsAsBase,
+          exteriorOnly,
+          layerCount,
+          targetCount,
+          detectedIslandCount: detectedIslands.length,
+          selectedIslandCount,
+          hiddenIslandCount: Math.max(0, detectedIslands.length - selectedIslandCount),
+          markerSelectionConfirmed,
+          markerSamples,
+          hasTemplateMap: Boolean(templateMap),
+          templateMapStats: templateMap?.stats || null,
+          templateMapInference: templateMap?.inference || null,
+          templateMapTargetsSample: targetKeys.slice(0, 30),
+          templateMapTargetCount: targetKeys.length,
+          hasTemplatePsdSource: Boolean(templatePsdSource),
+          psdSourceSummary: templatePsdSource
+            ? {
+                bounds: templatePsdSource.bounds || null,
+                meshCount: templatePsdSource.meshCount || 0,
+                triangleCount: templatePsdSource.triangleCount || 0,
+                proxyMeshCount: templatePsdSource.proxyMeshCount || 0,
+                meshSamples,
+              }
+            : null,
+          previewReady: Boolean(previewUrl),
+          generatedAt: lastGeneratedAt ? lastGeneratedAt.toISOString() : null,
+          generationError: generationError || null,
+          templateMapError: templateMapError || null,
+          templatePsdSourceError: templatePsdSourceError || null,
+        },
+      };
+    },
+    [
+      autoTemplateColor,
+      autoTemplateExportFormat,
+      detectedIslandColors,
+      detectedIslandVisibility,
+      detectedIslands,
+      exportSize,
+      exteriorOnly,
+      generationError,
+      includeTemplateWireframe,
+      isTauriRuntime,
+      lastGeneratedAt,
+      layerCount,
+      markerSelectionConfirmed,
+      modelPath,
+      previewUrl,
+      targetCount,
+      templateMap,
+      templateMapError,
+      templatePsdSource,
+      templatePsdSourceError,
+      useWorldSpaceNormalsAsBase,
+    ],
+  );
+
+  const buildTelemetryPayload = useCallback(() => {
+    const summary = telemetryDraft.summary.trim();
+    const details = telemetryDraft.details.trim();
+    const expectedBehavior = telemetryDraft.expectedBehavior.trim();
+    return {
+      schemaVersion: 1,
+      eventType: TELEMETRY_EVENT_TYPE,
+      reportId: createTelemetryReportId(),
+      createdAt: new Date().toISOString(),
+      issue: {
+        summary,
+        details,
+        expectedBehavior: expectedBehavior || null,
+        severity: telemetryDraft.severity,
+      },
+      diagnostics: telemetryDraft.includeDiagnostics
+        ? collectTemplateDiagnostics(telemetryDraft.includeModelPath)
+        : null,
+    };
+  }, [collectTemplateDiagnostics, telemetryDraft]);
+
+  const updateTelemetryField = useCallback((field, value) => {
+    setTelemetryDraft((prev) => ({ ...prev, [field]: value }));
+  }, []);
+
+  const handleCopyTelemetryPayload = useCallback(async () => {
+    const summary = telemetryDraft.summary.trim();
+    const details = telemetryDraft.details.trim();
+    if (!summary || !details) {
+      setTelemetryNotice("error", "Add a summary and details before exporting telemetry.", 4800);
+      return;
+    }
+    const payload = buildTelemetryPayload();
+    const payloadJson = JSON.stringify(payload, null, 2);
+    const copied = await writeTextToClipboard(payloadJson);
+    if (copied) {
+      setTelemetryNotice("success", "Telemetry payload copied to clipboard.", 4200);
+      return;
+    }
+    const fallbackName = `template-telemetry-${payload.reportId}.json`;
+    triggerTextDownload(fallbackName, payloadJson);
+    setTelemetryNotice("success", `Clipboard unavailable. Downloaded ${fallbackName}.`, 5000);
+  }, [buildTelemetryPayload, setTelemetryNotice, telemetryDraft.details, telemetryDraft.summary]);
+
+  const handleSubmitTelemetry = useCallback(async () => {
+    const summary = telemetryDraft.summary.trim();
+    const details = telemetryDraft.details.trim();
+    if (!summary || !details) {
+      setTelemetryNotice("error", "Summary and details are required to send telemetry.", 5000);
+      return;
+    }
+
+    const payload = buildTelemetryPayload();
+    const payloadJson = JSON.stringify(payload, null, 2);
+    const endpoint = telemetryDraft.endpoint.trim();
+
+    setTelemetrySending(true);
+    setTelemetryStatus({ tone: "", message: "" });
+    try {
+      if (endpoint) {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Cortex-Telemetry": "template-v1",
+          },
+          body: payloadJson,
+        });
+        if (!response.ok) {
+          let body = "";
+          try {
+            body = (await response.text()).trim();
+          } catch {
+            body = "";
+          }
+          const suffix = body ? ` ${body.slice(0, 160)}` : "";
+          throw new Error(`Endpoint returned HTTP ${response.status}.${suffix}`);
+        }
+        persistTemplateTelemetryEndpoint(endpoint);
+        setTelemetryDraft((prev) => ({
+          ...prev,
+          summary: "",
+          details: "",
+          expectedBehavior: "",
+          endpoint,
+        }));
+        setTelemetryNotice("success", "Telemetry sent successfully. Thanks for reporting this.", 6400);
+      } else {
+        const copied = await writeTextToClipboard(payloadJson);
+        if (copied) {
+          setTelemetryNotice(
+            "success",
+            "No endpoint configured. Telemetry JSON copied so you can share it manually.",
+            6400,
+          );
+        } else {
+          const fallbackName = `template-telemetry-${payload.reportId}.json`;
+          triggerTextDownload(fallbackName, payloadJson);
+          setTelemetryNotice(
+            "success",
+            `No endpoint configured. Downloaded ${fallbackName} for manual sharing.`,
+            6400,
+          );
+        }
+      }
+    } catch (error) {
+      setTelemetryStatus({
+        tone: "error",
+        message: toErrorMessage(error, "Failed to send telemetry."),
+      });
+    } finally {
+      setTelemetrySending(false);
+    }
+  }, [buildTelemetryPayload, setTelemetryNotice, telemetryDraft.details, telemetryDraft.endpoint, telemetryDraft.summary]);
+
+  const telemetryCanSubmit = Boolean(
+    telemetryDraft.summary.trim() && telemetryDraft.details.trim() && !telemetrySending,
+  );
   const modelFileName = getFileLabel(modelPath, "");
   const canRegenerate = Boolean(modelPath && templateMap && templatePsdSource && !generating);
   const saveButtonLabel = getTemplateSaveButtonLabel(autoTemplateExportFormat);
   const worldSpaceNormalsBaseEnabled = useWorldSpaceNormalsAsBase;
   const hasDetectedIslands = detectedIslands.length > 0;
+  const confirmedSelectedCount = countSelectedMarkers(
+    buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility),
+  );
+  const pendingSelectedCount = countSelectedMarkers(pendingMarkerSelection);
+  const markerSelectionCountLabel = isMarkerEditMode
+    ? `${pendingSelectedCount} / ${detectedIslands.length || 0} queued`
+    : `${confirmedSelectedCount} / ${detectedIslands.length || 0} selected`;
+  const markerPickModifierLabel =
+    templateMarkerPickModifier === "ctrl"
+      ? "Ctrl"
+      : templateMarkerPickModifier === "shift"
+        ? "Shift"
+        : "Alt";
+  const markerPickHint = `Hold ${markerPickModifierLabel} + click to select chunks`;
+  const markerSelectionHint = isMarkerEditMode
+    ? "Selections stay staged until you confirm."
+    : "Re-enter edit mode to change which chunks regenerate into the template.";
+  const markerOverlayStyle = {
+    left: `${previewViewport.offsetX}px`,
+    top: `${previewViewport.offsetY}px`,
+    width: `${previewViewport.size}px`,
+    height: `${previewViewport.size}px`,
+  };
+  const showMarkerSelectionOverlay =
+    previewUrl && hasDetectedIslands && previewViewport.size > 0 && isMarkerEditMode;
+  const markerSelectionPickingActive = isMarkerEditMode;
+  const globalMarkerColor = (() => {
+    const first = detectedIslands[0];
+    const key = first?.key;
+    return key && detectedIslandColors[key]
+      ? normalizeColorInputValue(detectedIslandColors[key])
+      : (first?.defaultColor || "#00ff00");
+  })();
+  const markerOverlayMarkers = detectedIslands
+    .slice()
+    .sort((a, b) => {
+      const aRect = getMarkerTextureRect(a);
+      const bRect = getMarkerTextureRect(b);
+      return (bRect?.area || 0) - (aRect?.area || 0);
+    });
+
+  const markerPromptEl = hasDetectedIslands ? (
+    <div className={`tg-marker-prompt${compactHeight ? " tg-marker-prompt--compact" : ""}`} aria-live="polite">
+      <div className="tg-marker-prompt-row">
+        <div className="tg-marker-prompt-copy">
+          <span className="tg-marker-prompt-eyebrow">
+            {isMarkerEditMode ? "Marker Edit Mode" : "Marker Selection"}
+          </span>
+          <strong className="tg-marker-prompt-count">{markerSelectionCountLabel}</strong>
+          <span className="tg-marker-prompt-text">{markerSelectionHint}</span>
+        </div>
+        <div className="tg-marker-prompt-actions">
+          {isMarkerEditMode ? (
+            <>
+              <button
+                type="button"
+                className="tg-marker-prompt-btn is-primary"
+                onClick={handleConfirmMarkerSelection}
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                className="tg-marker-prompt-btn"
+                onClick={handleClearPendingMarkerSelection}
+                disabled={!pendingSelectedCount}
+              >
+                Clear
+              </button>
+              {markerSelectionConfirmed ? (
+                <button
+                  type="button"
+                  className="tg-marker-prompt-btn"
+                  onClick={handleCancelMarkerEdit}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="tg-marker-prompt-btn is-primary"
+                onClick={handleBeginMarkerEdit}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className="tg-marker-prompt-btn"
+                onClick={handleResetMarkerSelection}
+                disabled={!confirmedSelectedCount && !markerSelectionConfirmed}
+              >
+                Reset
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      <div
+        className={`tg-marker-tip${
+          isMarkerEditMode ? " is-active" : ""
+        }`}
+      >
+        <span className="tg-marker-tip-line">
+          Click chunks to toggle them. Confirm to apply.
+        </span>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="tg-root">
@@ -707,6 +1344,7 @@ export default function TemplateGenerationPage({
           <motion.div
             key="tg-active"
             className="tg-workspace"
+            ref={workspaceRef}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -812,84 +1450,20 @@ export default function TemplateGenerationPage({
               {hasDetectedIslands && (
                 <>
                   <div className="tg-sb-rule" />
-                  <div className="tg-sb-section tg-sb-marker-controls">
-                    <span className="tg-sb-label tg-sb-marker-controls-label">Markers</span>
-                    <div className="tg-sb-marker-shell">
-                      <div className="tg-sb-marker-list" role="list" aria-label="Template markers">
-                        {detectedIslands.map((marker, index) => {
-                          const markerKey = marker?.key || `marker-${index}`;
-                          const markerLabel = marker?.label || `Marker ${index + 1}`;
-                          const markerColor = normalizeColorInputValue(
-                            detectedIslandColors[markerKey] ||
-                              marker?.defaultColor ||
-                              DEFAULT_AUTO_TEMPLATE_COLOR,
-                          );
-                          const explicitMarkerVisibility = detectedIslandVisibility[markerKey];
-                          const markerDefaultVisible = marker?.defaultVisible !== false;
-                          const markerVisible =
-                            explicitMarkerVisibility === true
-                              ? true
-                              : explicitMarkerVisibility === false
-                                ? false
-                                : markerDefaultVisible;
-                          const markerInputId = `tg-marker-color-${index}-${markerKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-
-                          return (
-                            <div
-                              key={markerKey}
-                              role="listitem"
-                              className={`tg-sb-marker-row${markerVisible ? " is-active" : ""}`}
-                              title={markerLabel}
-                            >
-                              <div className="tg-sb-marker-color-wrap">
-                                <input
-                                  id={markerInputId}
-                                  type="color"
-                                  className="tg-sb-marker-color-input"
-                                  value={markerColor}
-                                  onChange={(event) =>
-                                    handleMarkerColorChange(markerKey, event.currentTarget.value)
-                                  }
-                                  aria-label={`${markerLabel} color`}
-                                  tabIndex={-1}
-                                />
-                                <button
-                                  type="button"
-                                  className="tg-sb-marker-color"
-                                  onClick={() => openMarkerColorPicker(markerInputId)}
-                                  title={`${markerLabel} color`}
-                                >
-                                  <span
-                                    className="tg-sb-marker-color-swatch"
-                                    style={{ backgroundColor: markerColor }}
-                                  />
-                                </button>
-                              </div>
-                              <button
-                                type="button"
-                                className={`tg-sb-marker-visibility${markerVisible ? " is-active" : ""}`}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleMarkerVisibilityToggle(
-                                    markerKey,
-                                    markerVisible,
-                                    markerDefaultVisible,
-                                  );
-                                }}
-                                aria-label={`${markerVisible ? "Hide" : "Show"} ${markerLabel}`}
-                                title={`${markerVisible ? "Hide" : "Show"} ${markerLabel}`}
-                              >
-                                {markerVisible ? (
-                                  <Eye className="tg-sb-marker-icon" />
-                                ) : (
-                                  <EyeOff className="tg-sb-marker-icon" />
-                                )}
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                  <div className="tg-sb-section tg-sb-marker">
+                    <label className="tg-sb-btn tg-sb-icon-btn tg-sb-color-all" title="Change marker color for all chunks">
+                      <span
+                        className="tg-sb-color-all-swatch"
+                        style={{ background: globalMarkerColor }}
+                      />
+                      <input
+                        type="color"
+                        className="tg-sb-marker-color-input"
+                        value={globalMarkerColor}
+                        onChange={(e) => handleIslandColorChange(e.target.value)}
+                      />
+                    </label>
+                    <span className="tg-sb-label tg-sb-ext-label">Color</span>
                   </div>
                 </>
               )}
@@ -963,6 +1537,24 @@ export default function TemplateGenerationPage({
                   {autoSavedPath ? "Saved" : saveButtonLabel}
                 </span>
               </div>
+
+              <div className="tg-sb-rule" />
+
+              {/* Telemetry report */}
+              <div className="tg-sb-section">
+                <motion.button
+                  type="button"
+                  className="tg-sb-btn tg-sb-icon-btn tg-sb-report"
+                  onClick={() => openTelemetryDialog(generationError)}
+                  title="Report template issue telemetry"
+                  whileTap={{ scale: 0.88 }}
+                >
+                  <Bug className="tg-sb-icon" />
+                </motion.button>
+                <span className="tg-sb-label tg-sb-report-label">
+                  Report
+                </span>
+              </div>
             </motion.div>
 
             {/* ── Model Viewer ── */}
@@ -993,6 +1585,10 @@ export default function TemplateGenerationPage({
                 wasdEnabled={false}
                 isActive={isActive}
                 includeTemplateGeometry
+                templateMarkerPickModifier={templateMarkerPickModifier}
+                onTemplateMarkerUvHover={isMarkerEditMode ? handleModelMarkerHover : undefined}
+                onTemplateMarkerUvLeave={isMarkerEditMode ? clearHoveredMarker : undefined}
+                onTemplateMarkerUvPick={isMarkerEditMode ? handleModelMarkerPick : undefined}
                 onModelInfo={handleModelInfo}
                 onReady={NOOP}
                 onTextureReload={NOOP}
@@ -1002,6 +1598,7 @@ export default function TemplateGenerationPage({
                 onModelLoading={NOOP}
                 onFormatWarning={NOOP}
               />
+              {compactHeight && markerPromptEl}
             </motion.div>
 
             {/* ── Template Preview ── */}
@@ -1011,18 +1608,14 @@ export default function TemplateGenerationPage({
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.06 }}
             >
-              <div className="tg-preview-shell">
+              <div
+                ref={previewShellRef}
+                className={`tg-preview-shell${isMarkerEditMode ? " is-edit-mode" : ""}${
+                  markerSelectionPickingActive ? " is-pick-mode" : ""
+                }`}
+              >
                 <AnimatePresence mode="wait" initial={false}>
-                  {isPreviewRefreshing ? (
-                    <motion.div
-                      key="refresh-unloaded"
-                      className="tg-preview-unloaded"
-                      initial={{ opacity: 0, scale: 0.985 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 1.01 }}
-                      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-                    />
-                  ) : generationError ? (
+                  {generationError ? (
                     <motion.div
                       key={`error-${generationError}`}
                       className="tg-preview-state tg-preview-state--error"
@@ -1033,21 +1626,13 @@ export default function TemplateGenerationPage({
                     >
                       <AlertTriangle className="w-5 h-5" />
                       <span>{generationError}</span>
-                    </motion.div>
-                  ) : generating ? (
-                    <motion.div
-                      key="generating"
-                      className="tg-preview-state"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.22 }}
-                    >
-                      <motion.div
-                        className="tg-gen-ring"
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 1.2, ease: "linear", repeat: Infinity }}
-                      />
+                      <button
+                        type="button"
+                        className="tg-preview-report-btn"
+                        onClick={() => openTelemetryDialog(generationError)}
+                      >
+                        Report with telemetry
+                      </button>
                     </motion.div>
                   ) : previewUrl ? (
                     <motion.img
@@ -1060,6 +1645,21 @@ export default function TemplateGenerationPage({
                       exit={{ opacity: 0, scale: 0.992, filter: "blur(5px)" }}
                       transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
                     />
+                  ) : generating ? (
+                    <motion.div
+                      key="generating"
+                      className="tg-preview-state"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.22 }}
+                      >
+                        <motion.div
+                          className="tg-gen-ring"
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1.2, ease: "linear", repeat: Infinity }}
+                        />
+                      </motion.div>
                   ) : (
                     <motion.div
                       key="idle"
@@ -1074,8 +1674,53 @@ export default function TemplateGenerationPage({
                   )}
                 </AnimatePresence>
 
+                {showMarkerSelectionOverlay ? (
+                  <div
+                    className={`tg-preview-marker-overlay${
+                      markerSelectionPickingActive ? " is-pick-mode" : ""
+                    }`}
+                    style={markerOverlayStyle}
+                  >
+                    {markerOverlayMarkers.map((marker, index) => {
+                      const markerKey = marker?.key || `overlay-${index}`;
+                      const markerRect = getMarkerTextureRect(marker);
+                      if (!markerRect) return null;
+                      const markerSelected = pendingMarkerSelection[markerKey] === true;
+                      const markerLabel = marker?.label || `Marker ${index + 1}`;
+                      return (
+                        <button
+                          key={markerKey}
+                          type="button"
+                          className={`tg-preview-marker-hitbox${
+                            markerSelected ? " is-selected" : ""
+                          }${hoveredMarkerKey === markerKey ? " is-hovered" : ""}`}
+                          style={{
+                            left: `${(markerRect.x / exportSize) * previewViewport.size}px`,
+                            top: `${(markerRect.y / exportSize) * previewViewport.size}px`,
+                            width: `${(markerRect.width / exportSize) * previewViewport.size}px`,
+                            height: `${(markerRect.height / exportSize) * previewViewport.size}px`,
+                          }}
+                          onMouseEnter={() => setHoveredMarker(markerKey)}
+                          onMouseLeave={clearHoveredMarker}
+                          onClick={(event) => {
+                            if (!markerSelectionPickingActive) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleTogglePendingMarkerSelection(markerKey);
+                          }}
+                          aria-label={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
+                          title={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
+                          tabIndex={markerSelectionPickingActive ? 0 : -1}
+                        />
+                      );
+                    })}
+                  </div>
+                ) : null}
+
+                {!compactHeight && markerPromptEl}
+
                 <AnimatePresence>
-                  {isPreviewRefreshing && (
+                  {generating && previewUrl && (
                     <motion.div
                       className="tg-preview-refresh-overlay"
                       initial={{ opacity: 0 }}
@@ -1102,6 +1747,177 @@ export default function TemplateGenerationPage({
               </div>
             </motion.div>
           </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {isTelemetryDialogOpen && (
+            <motion.div
+              className="tg-telemetry-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.16 }}
+              onClick={closeTelemetryDialog}
+            >
+              <motion.div
+                className="tg-telemetry-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="tg-telemetry-title"
+                initial={{ opacity: 0, y: 16, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.985 }}
+                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="tg-telemetry-head">
+                  <div>
+                    <h3 id="tg-telemetry-title" className="tg-telemetry-title">
+                      Template Telemetry Report
+                    </h3>
+                    <p className="tg-telemetry-subtitle">
+                      Share what broke so template diagnostics can be reproduced.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="tg-telemetry-close"
+                    onClick={closeTelemetryDialog}
+                    disabled={telemetrySending}
+                    aria-label="Close telemetry dialog"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="tg-telemetry-fields">
+                  <label className="tg-telemetry-field">
+                    <span className="tg-telemetry-label">Issue summary</span>
+                    <input
+                      className="tg-telemetry-input"
+                      value={telemetryDraft.summary}
+                      onChange={(event) => updateTelemetryField("summary", event.currentTarget.value)}
+                      placeholder="Example: template islands overlap and marker colors mismatch"
+                      maxLength={240}
+                    />
+                  </label>
+
+                  <label className="tg-telemetry-field">
+                    <span className="tg-telemetry-label">What happened</span>
+                    <textarea
+                      className="tg-telemetry-textarea"
+                      value={telemetryDraft.details}
+                      onChange={(event) => updateTelemetryField("details", event.currentTarget.value)}
+                      placeholder="Steps, output, what looked broken, and any related model details"
+                      rows={4}
+                    />
+                  </label>
+
+                  <label className="tg-telemetry-field">
+                    <span className="tg-telemetry-label">What you expected (optional)</span>
+                    <textarea
+                      className="tg-telemetry-textarea"
+                      value={telemetryDraft.expectedBehavior}
+                      onChange={(event) =>
+                        updateTelemetryField("expectedBehavior", event.currentTarget.value)
+                      }
+                      placeholder="Describe expected result"
+                      rows={2}
+                    />
+                  </label>
+
+                  <div className="tg-telemetry-row">
+                    <label className="tg-telemetry-field tg-telemetry-field--half">
+                      <span className="tg-telemetry-label">Severity</span>
+                      <select
+                        className="tg-telemetry-input"
+                        value={telemetryDraft.severity}
+                        onChange={(event) => updateTelemetryField("severity", event.currentTarget.value)}
+                      >
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                      </select>
+                    </label>
+
+                    <label className="tg-telemetry-field tg-telemetry-field--grow">
+                      <span className="tg-telemetry-label">Endpoint (optional)</span>
+                      <input
+                        className="tg-telemetry-input"
+                        value={telemetryDraft.endpoint}
+                        onChange={(event) => updateTelemetryField("endpoint", event.currentTarget.value)}
+                        placeholder="https://api.example.com/template-telemetry"
+                        autoComplete="off"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="tg-telemetry-check">
+                    <input
+                      type="checkbox"
+                      checked={telemetryDraft.includeDiagnostics}
+                      onChange={(event) =>
+                        updateTelemetryField("includeDiagnostics", event.currentTarget.checked)
+                      }
+                    />
+                    <span>Include template diagnostics (settings, map stats, mesh samples, errors)</span>
+                  </label>
+
+                  <label
+                    className={`tg-telemetry-check${telemetryDraft.includeDiagnostics ? "" : " is-disabled"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={telemetryDraft.includeModelPath}
+                      disabled={!telemetryDraft.includeDiagnostics}
+                      onChange={(event) =>
+                        updateTelemetryField("includeModelPath", event.currentTarget.checked)
+                      }
+                    />
+                    <span>Include full model path (off by default for privacy)</span>
+                  </label>
+
+                  {telemetryStatus.message && (
+                    <div
+                      className={`tg-telemetry-status${telemetryStatus.tone === "error" ? " is-error" : " is-success"}`}
+                    >
+                      {telemetryStatus.message}
+                    </div>
+                  )}
+                </div>
+
+                <div className="tg-telemetry-actions">
+                  <button
+                    type="button"
+                    className="tg-telemetry-btn"
+                    onClick={handleCopyTelemetryPayload}
+                    disabled={telemetrySending}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Copy JSON
+                  </button>
+                  <button
+                    type="button"
+                    className="tg-telemetry-btn"
+                    onClick={closeTelemetryDialog}
+                    disabled={telemetrySending}
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    className="tg-telemetry-btn is-primary"
+                    onClick={handleSubmitTelemetry}
+                    disabled={!telemetryCanSubmit}
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    {telemetrySending ? "Sending..." : "Send Telemetry"}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
           )}
         </AnimatePresence>
       </div>

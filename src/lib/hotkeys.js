@@ -1,5 +1,6 @@
 export const HOTKEY_ACTIONS = {
   TOGGLE_EXTERIOR_ONLY: "toggleExteriorOnly",
+  TOGGLE_SHADOWS: "toggleShadows",
   NEW_TAB_LIVERY: "newTabLivery",
   NEW_TAB_ALL: "newTabAll",
   NEW_TAB_EUP: "newTabEup",
@@ -22,6 +23,7 @@ export const HOTKEY_ACTIONS = {
 
 export const HOTKEY_LABELS = {
   [HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY]: "Toggle Exterior Only",
+  [HOTKEY_ACTIONS.TOGGLE_SHADOWS]: "Toggle Ground Shadows",
   [HOTKEY_ACTIONS.NEW_TAB_LIVERY]: "New Livery Tab",
   [HOTKEY_ACTIONS.NEW_TAB_ALL]: "New All Tab",
   [HOTKEY_ACTIONS.NEW_TAB_EUP]: "New EUP Tab",
@@ -58,6 +60,7 @@ export const HOTKEY_CATEGORIES = {
     label: "View Controls",
     actions: [
       HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY,
+      HOTKEY_ACTIONS.TOGGLE_SHADOWS,
       HOTKEY_ACTIONS.TOGGLE_PANEL,
     ],
   },
@@ -91,6 +94,7 @@ export const HOTKEY_CATEGORIES = {
 
 export const DEFAULT_HOTKEYS = {
   [HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY]: { key: "E", ctrl: false, alt: true, shift: false },
+  [HOTKEY_ACTIONS.TOGGLE_SHADOWS]: { key: "S", ctrl: false, alt: true, shift: true },
   [HOTKEY_ACTIONS.NEW_TAB_LIVERY]: { key: "1", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.NEW_TAB_ALL]: { key: "2", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.NEW_TAB_EUP]: { key: "3", ctrl: false, alt: true, shift: false },

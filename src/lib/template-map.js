@@ -9,6 +9,8 @@ const POSITION_AREA_EPSILON = 1e-12;
 const NORMAL_EPSILON = 1e-12;
 const UV_ISLAND_MISSING = -1;
 const UV_TOPOLOGY_QUANTIZE = 1e6;
+const TEMPLATE_UV_MIN_CONFIDENCE = 0.55;
+const TEMPLATE_UV_FALLBACK_MARGIN = 0.2;
 
 /**
  * Minimum UV-space area for a shell to be included in the output.
@@ -250,21 +252,48 @@ function chooseTemplateUvAttribute(geometry, options = {}) {
   const preferUv2 = options.preferUv2 !== false;
   const preferredOrder = preferUv2 ? [1, 2, 3, 0] : [0, 1, 2, 3];
 
+  let preferredIndex = -1;
   for (const index of preferredOrder) {
     const attr = candidates[index];
-    if (hasUvVariation(attr)) return attr;
+    if (!attr) continue;
+    preferredIndex = index;
+    break;
   }
+  if (preferredIndex === -1) return null;
+
+  const preferredAttr = candidates[preferredIndex];
+  const preferredScore = scoreUvAttribute(preferredAttr);
+  const preferredVaries = hasUvVariation(preferredAttr);
 
   let bestAttr = null;
+  let bestIndex = -1;
   let bestScore = -1;
-  for (const index of preferredOrder) {
+  for (let index = 0; index < candidates.length; index += 1) {
     const attr = candidates[index];
+    if (!attr) continue;
     const score = scoreUvAttribute(attr);
     if (score > bestScore) {
       bestScore = score;
       bestAttr = attr;
+      bestIndex = index;
     }
   }
+  if (
+    bestAttr &&
+    bestIndex !== preferredIndex &&
+    (
+      !preferredVaries ||
+      preferredScore < 0 ||
+      (
+        bestScore >= TEMPLATE_UV_MIN_CONFIDENCE &&
+        bestScore - Math.max(preferredScore, 0) >= TEMPLATE_UV_FALLBACK_MARGIN
+      )
+    )
+  ) {
+    return bestAttr;
+  }
+
+  if (preferredAttr) return preferredAttr;
   if (bestAttr) return bestAttr;
 
   for (const index of preferredOrder) {

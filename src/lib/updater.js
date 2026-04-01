@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
+import { getVersion as getAppVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import tauriConfig from "../../src-tauri/tauri.conf.json";
 
 const CHECK_INTERVAL = 30 * 60 * 1000;
 const INITIAL_DELAY_MS = 5000;
 const IS_DEV = typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
+const UPDATER_ENDPOINT = tauriConfig?.plugins?.updater?.endpoints?.[0] ?? "";
 
 const INITIAL_STATE = {
   available: false,
@@ -16,6 +20,10 @@ const INITIAL_STATE = {
   error: "",
   lastChecked: null,
   dismissed: false,
+  currentVersion: null,
+  publishedLatest: null,
+  statusKind: "idle",
+  statusNote: "",
 };
 
 const store = {
@@ -28,6 +36,7 @@ const store = {
   downloadedBytes: 0,
   totalBytes: 0,
   checkInFlight: false,
+  currentVersionPromise: null,
 };
 
 function isTauriRuntime() {
@@ -49,6 +58,98 @@ function setStoreState(updater) {
       ? updater(store.state)
       : { ...store.state, ...updater };
   emit(nextState);
+}
+
+function compareVersions(left, right) {
+  const leftParts = String(left || "")
+    .replace(/^v/i, "")
+    .split(".")
+    .map((part) => {
+      const match = String(part).match(/^(\d+)/);
+      return match ? Number(match[1]) : 0;
+    });
+  const rightParts = String(right || "")
+    .replace(/^v/i, "")
+    .split(".")
+    .map((part) => {
+      const match = String(part).match(/^(\d+)/);
+      return match ? Number(match[1]) : 0;
+    });
+  const maxLength = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftValue = leftParts[index] ?? 0;
+    const rightValue = rightParts[index] ?? 0;
+    if (leftValue > rightValue) return 1;
+    if (leftValue < rightValue) return -1;
+  }
+
+  return 0;
+}
+
+async function ensureCurrentVersionLoaded() {
+  if (!isTauriRuntime()) return null;
+  if (store.state.currentVersion) return store.state.currentVersion;
+  if (store.currentVersionPromise) return store.currentVersionPromise;
+
+  store.currentVersionPromise = getAppVersion()
+    .then((version) => {
+      if (typeof version === "string" && version.trim()) {
+        setStoreState((prev) => ({ ...prev, currentVersion: version.trim() }));
+        return version.trim();
+      }
+      return null;
+    })
+    .catch(() => null)
+    .finally(() => {
+      store.currentVersionPromise = null;
+    });
+
+  return store.currentVersionPromise;
+}
+
+async function inspectPublishedRelease(currentVersion) {
+  if (!isTauriRuntime() || !UPDATER_ENDPOINT) return null;
+
+  try {
+    const feed = await invoke("inspect_updater_release", { endpoint: UPDATER_ENDPOINT });
+    const publishedLatest =
+      typeof feed?.version === "string" && feed.version.trim() ? feed.version.trim() : null;
+
+    if (!publishedLatest) {
+      return {
+        publishedLatest: null,
+        statusKind: "unknown",
+        statusNote: "",
+      };
+    }
+
+    if (currentVersion) {
+      const comparison = compareVersions(currentVersion, publishedLatest);
+      if (comparison > 0) {
+        return {
+          publishedLatest,
+          statusKind: "ahead",
+          statusNote: `Installed v${currentVersion} is newer than the published updater feed (v${publishedLatest}). Push and publish a newer GitHub release to test updates.`,
+        };
+      }
+      if (comparison === 0) {
+        return {
+          publishedLatest,
+          statusKind: "latest",
+          statusNote: `Published feed version: v${publishedLatest}.`,
+        };
+      }
+    }
+
+    return {
+      publishedLatest,
+      statusKind: "unknown",
+      statusNote: "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 function subscribe(listener) {
@@ -102,10 +203,15 @@ async function runCheck({ manual = false } = {}) {
   }));
 
   try {
+    const currentVersion = await ensureCurrentVersionLoaded();
     const update = await checkForAppUpdate();
     store.update = update;
 
     if (update) {
+      const resolvedCurrentVersion =
+        typeof update.currentVersion === "string" && update.currentVersion.trim()
+          ? update.currentVersion.trim()
+          : currentVersion ?? store.state.currentVersion;
       emit({
         ...store.state,
         available: true,
@@ -116,8 +222,13 @@ async function runCheck({ manual = false } = {}) {
         progressPercent: 0,
         error: "",
         lastChecked: Date.now(),
+        currentVersion: resolvedCurrentVersion,
+        publishedLatest: update.version ?? null,
+        statusKind: "available",
+        statusNote: "",
       });
     } else {
+      const diagnostics = await inspectPublishedRelease(currentVersion ?? store.state.currentVersion);
       emit({
         ...store.state,
         available: false,
@@ -128,6 +239,10 @@ async function runCheck({ manual = false } = {}) {
         progressPercent: 0,
         error: "",
         lastChecked: Date.now(),
+        currentVersion: currentVersion ?? store.state.currentVersion,
+        publishedLatest: diagnostics?.publishedLatest ?? store.state.publishedLatest,
+        statusKind: diagnostics?.statusKind ?? "latest",
+        statusNote: diagnostics?.statusNote ?? "",
       });
     }
   } catch (error) {
@@ -148,6 +263,8 @@ async function runCheck({ manual = false } = {}) {
 function ensureUpdaterInitialized() {
   if (store.initialized || !isTauriRuntime()) return;
   store.initialized = true;
+
+  void ensureCurrentVersionLoaded();
 
   if (IS_DEV) return;
 

@@ -58,7 +58,7 @@ jobs:
           releaseName: 'Cortex Studio ${{ github.ref_name }}'
           releaseBody: |
             See the [CHANGELOG](https://github.com/IEver3st/cortex-labs/blob/main/CHANGELOG.md) for release notes.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           tauriScript: bun tauri

@@ -142,3 +142,67 @@ dist
 
 # Agents
 AGENTS.md
+
+# AI / Superpowers / Agent Systems
+.agents/
+opencode/
+superpowers/
+*.agents*
+.claude/
+.cursor/
+.codex/
+.windsurf/
+.v0/
+.bolt/
+.replit/
+
+# AI-generated files
+*.ai.md
+*.prompt.md
+.prompts/
+.context/
+
+# Test files and directories
+**/__tests__/
+**/__mocks__/
+**/test/
+**/tests/
+**/spec/
+**/specs/
+*.test.js
+*.test.ts
+*.test.jsx
+*.test.tsx
+*.spec.js
+*.spec.ts
+*.spec.jsx
+*.spec.tsx
+*.e2e.js
+*.e2e.ts
+jest.config.*
+vitest.config.*
+cypress/
+playwright/
+playwright.config.*
+.coverage/
+.nyc_output/
+
+# Rust / Tauri build artifacts
+target/
+target-*/
+src-tauri/target*/
+src-tauri/target-codex-check/
+**/*.pdb
+**/*.rlib
+**/*.rmeta
+**/*.d
+Cargo.lock
+
+# Local tooling/session artifacts
+.agents/artifacts/
+.opencode/
+tools/codewalker-bridge/obj/
+/src/App.jsx.new
+/tmp*
+/replace_buttons*.cjs
+/diff.patch

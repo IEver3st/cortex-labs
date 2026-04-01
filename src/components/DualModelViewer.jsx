@@ -16,6 +16,22 @@ import {
   buildCageOverlay,
   disposeCageOverlay,
 } from "../lib/viewer-utils";
+import {
+  buildCameraFraming,
+  computeFramingBounds,
+  CAMERA_PRESET_KEYS,
+  DEFAULT_CAMERA_PRESET,
+} from "../lib/camera-framing.js";
+import {
+  applyShadowFlags,
+  configureShadowLight,
+  createShadowReceiver,
+  disposeShadowReceiver,
+  renderWithEffects,
+  updateShadowReceiver,
+  updateDirectionalShadowFrustum,
+} from "../lib/viewer-render-effects.js";
+import { stabilizeObjectForWorld } from "../lib/model-normalization.js";
 
 export default function DualModelViewer({
   modelAPath,
@@ -40,8 +56,10 @@ export default function DualModelViewer({
   lightAzimuth = 54,
   lightElevation = 46,
   glossiness = 0.5,
+  shadowsEnabled = false,
   showWireframe = false,
   showCageWireframe = false,
+  wasdEnabled = true,
   selectedSlot,
   gizmoVisible = true,
   showGrid = true,
@@ -67,6 +85,7 @@ export default function DualModelViewer({
   const controlsRef = useRef(null);
   const requestRenderRef = useRef(null);
   const lightsRef = useRef({ ambient: null, key: null, rim: null });
+  const shadowReceiverRef = useRef(null);
 
   const modelARef = useRef(null);
   const modelBRef = useRef(null);
@@ -80,7 +99,18 @@ export default function DualModelViewer({
   const gizmoARef = useRef(null);
   const gizmoBRef = useRef(null);
   const gridRef = useRef(null);
-  const fitRef = useRef({ center: new THREE.Vector3(), distance: 6 });
+  const fitRef = useRef({
+    bounds: null,
+    center: new THREE.Vector3(),
+    distance: 6,
+    baseDistance: 6,
+    presetKey: DEFAULT_CAMERA_PRESET,
+    zoomFactor: 1,
+  });
+  const cameraStateRef = useRef({
+    presetKey: DEFAULT_CAMERA_PRESET,
+    zoomFactor: 1,
+  });
 
   const [sceneReady, setSceneReady] = useState(false);
   const [modelAVersion, setModelAVersion] = useState(0);
@@ -106,6 +136,7 @@ export default function DualModelViewer({
   const showWireframeRef = useRef(showWireframe);
   const showCageWireframeRef = useRef(showCageWireframe);
   const isActiveRef = useRef(isActive);
+  const shadowsEnabledRef = useRef(shadowsEnabled);
 
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   useEffect(() => { onModelAErrorRef.current = onModelAError; }, [onModelAError]);
@@ -121,6 +152,7 @@ export default function DualModelViewer({
   useEffect(() => { glossinessRef.current = glossiness; }, [glossiness]);
   useEffect(() => { showWireframeRef.current = showWireframe; }, [showWireframe]);
   useEffect(() => { showCageWireframeRef.current = showCageWireframe; }, [showCageWireframe]);
+  useEffect(() => { shadowsEnabledRef.current = shadowsEnabled; }, [shadowsEnabled]);
   useEffect(() => {
     isActiveRef.current = isActive;
     if (isActive) requestRenderRef.current?.();
@@ -168,6 +200,8 @@ export default function DualModelViewer({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = Boolean(shadowsEnabled);
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
     camera.position.set(4, 2, 6);
@@ -187,8 +221,11 @@ export default function DualModelViewer({
     key.position.set(3.5, 4.5, 2.5);
     const rim = new THREE.DirectionalLight(0xffffff, 0.35 * lightIntensity);
     rim.position.set(-3, 2, -2.2);
+    configureShadowLight(key, shadowsEnabled);
+    const shadowReceiver = createShadowReceiver();
     lightsRef.current = { ambient, key, rim };
-    scene.add(ambient, key, rim);
+    shadowReceiverRef.current = shadowReceiver;
+    scene.add(ambient, key, rim, shadowReceiver);
 
     renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
     containerRef.current.appendChild(renderer.domElement);
@@ -197,6 +234,49 @@ export default function DualModelViewer({
     sceneRef.current = scene;
     cameraRef.current = camera;
     controlsRef.current = controls;
+
+    const applyCameraFrame = (presetKey = cameraStateRef.current.presetKey, zoomFactor = cameraStateRef.current.zoomFactor, shouldRequestRender = true) => {
+      if (!containerRef.current || !fitRef.current?.bounds) return;
+      const { clientWidth, clientHeight } = containerRef.current;
+      if (!clientWidth || !clientHeight) return;
+
+      const framing = buildCameraFraming({
+        bounds: fitRef.current.bounds,
+        aspect: clientWidth / clientHeight,
+        fov: camera.fov,
+        presetKey,
+        zoomFactor,
+      });
+
+      camera.up.copy(framing.up);
+      camera.near = framing.near;
+      camera.far = framing.far;
+      camera.position.copy(framing.position);
+      camera.updateProjectionMatrix();
+      controls.target.copy(framing.target);
+      controls.minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
+      controls.maxDistance = Math.max(framing.baseDistance * 10, 10);
+      controls.update();
+
+      fitRef.current = {
+        ...fitRef.current,
+        center: framing.target.clone(),
+        distance: framing.distance,
+        baseDistance: framing.baseDistance,
+        presetKey: framing.presetKey,
+        zoomFactor,
+      };
+      cameraStateRef.current = {
+        presetKey: framing.presetKey,
+        zoomFactor,
+      };
+
+      if (lightsRef.current.key?.castShadow) {
+        updateDirectionalShadowFrustum(lightsRef.current.key, framing.distance);
+      }
+
+      if (shouldRequestRender) requestRenderRef.current?.();
+    };
 
     const reportPositions = () => {
       const posA = modelARef.current ? [modelARef.current.position.x, modelARef.current.position.y, modelARef.current.position.z] : [0, 0, 0];
@@ -248,7 +328,16 @@ export default function DualModelViewer({
         return;
       }
       const needsUpdate = controls.update();
-      renderer.render(scene, camera);
+      updateShadowReceiver(shadowReceiverRef.current, {
+        bounds: fitRef.current?.bounds,
+        camera,
+        enabled: shadowsEnabledRef.current,
+      });
+      renderWithEffects({
+        renderer,
+        scene,
+        camera,
+      });
       if (renderRequested || needsUpdate) {
         renderRequested = false;
         frameId = requestAnimationFrame(renderFrame);
@@ -274,6 +363,9 @@ export default function DualModelViewer({
       renderer.setSize(clientWidth, clientHeight);
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
+      if (fitRef.current?.bounds) {
+        applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
+      }
       requestRenderFrame();
     };
     const resizeObserver = new ResizeObserver(resize);
@@ -286,17 +378,19 @@ export default function DualModelViewer({
     requestRenderFrame();
 
     onReadyRef.current?.({
+      setPreset: (presetKey) => {
+        applyCameraFrame(presetKey, cameraStateRef.current.zoomFactor);
+      },
+      setZoom: (zoomFactor) => {
+        applyCameraFrame(cameraStateRef.current.presetKey, zoomFactor);
+      },
       reset: () => {
-        const { center, distance } = fitRef.current;
-        camera.position.set(center.x + distance, center.y + distance * 0.2, center.z + distance);
-        controls.target.copy(center);
-        controls.update();
-        requestRenderRef.current?.();
+        applyCameraFrame(DEFAULT_CAMERA_PRESET, 1);
       },
       resetPositions: () => {
         if (modelARef.current) modelARef.current.position.set(0, 0, 0);
         if (modelBRef.current) modelBRef.current.position.set(0, 0, 3);
-        requestRenderRef.current?.();
+        refitCamera(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor);
       },
       snapTogether: () => {
         if (!modelARef.current || !modelBRef.current) return;
@@ -313,8 +407,9 @@ export default function DualModelViewer({
         const gap = 0.05;
         const newZ = modelARef.current.position.z + (sizeA.z / 2) + (sizeB.z / 2) + gap;
         modelBRef.current.position.set(modelARef.current.position.x, modelARef.current.position.y, newZ);
-        requestRenderRef.current?.();
+        refitCamera(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor);
       },
+      getPresetKeys: () => CAMERA_PRESET_KEYS,
     });
 
     return () => {
@@ -328,6 +423,8 @@ export default function DualModelViewer({
       }
       backgroundTextureRef.current?.dispose?.();
       backgroundTextureRef.current = null;
+      disposeShadowReceiver(shadowReceiverRef.current);
+      shadowReceiverRef.current = null;
       gizmoA.dispose();
       gizmoB.dispose();
       controls.dispose();
@@ -444,8 +541,34 @@ export default function DualModelViewer({
       r * Math.sin(elevRad),
       r * Math.cos(elevRad) * Math.cos(aziRad),
     );
+    if (shadowsEnabled) {
+      updateDirectionalShadowFrustum(key, fitRef.current?.distance);
+    }
     requestRender();
-  }, [lightAzimuth, lightElevation, requestRender]);
+  }, [lightAzimuth, lightElevation, requestRender, shadowsEnabled]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const { key } = lightsRef.current;
+    if (!renderer || !key) return;
+
+    renderer.shadowMap.enabled = Boolean(shadowsEnabled);
+    configureShadowLight(key, shadowsEnabled);
+
+    applyShadowFlags(modelARef.current, shadowsEnabled);
+    applyShadowFlags(modelBRef.current, shadowsEnabled);
+    updateShadowReceiver(shadowReceiverRef.current, {
+      bounds: fitRef.current?.bounds,
+      camera: cameraRef.current,
+      enabled: shadowsEnabled,
+    });
+
+    if (shadowsEnabled) {
+      updateDirectionalShadowFrustum(key, fitRef.current?.distance);
+    }
+
+    requestRender();
+  }, [shadowsEnabled, requestRender]);
 
   useEffect(() => {
     if (!sceneReady) return;
@@ -494,8 +617,9 @@ export default function DualModelViewer({
 
   useEffect(() => {
     if (!sceneReady || !cameraRef.current || !controlsRef.current) return;
+    if (!wasdEnabled) return;
     return setupWasdControls({ wasdStateRef, wasdFrameRef, cameraRef, controlsRef, fitRef, requestRenderRef });
-  }, [sceneReady]);
+  }, [sceneReady, wasdEnabled]);
 
   useEffect(() => {
     if (!sceneReady) return;
@@ -561,16 +685,23 @@ export default function DualModelViewer({
           maybeAutoFixYftUpAxis(object, size);
         }
 
+        const sceneObject = stabilizeObjectForWorld(object, {
+          autoLevel: true,
+          centerXZ: true,
+          groundToZero: true,
+        }) || object;
+
         const initA = initialPosARef.current;
         if (initA && Array.isArray(initA) && initA.length === 3) {
-          object.position.set(initA[0], initA[1], initA[2]);
+          sceneObject.position.set(initA[0], initA[1], initA[2]);
         }
 
-        applyGlossinessToObject(object);
+        applyGlossinessToObject(sceneObject);
+        applyShadowFlags(sceneObject, shadowsEnabled);
 
-        sceneRef.current.add(object);
-        modelARef.current = object;
-        gizmoARef.current?.attach(object);
+        sceneRef.current.add(sceneObject);
+        modelARef.current = sceneObject;
+        gizmoARef.current?.attach(sceneObject);
         setModelAVersion((v) => v + 1);
 
         refitCamera();
@@ -632,23 +763,30 @@ export default function DualModelViewer({
           maybeAutoFixYftUpAxis(object, size);
         }
 
+        const sceneObject = stabilizeObjectForWorld(object, {
+          autoLevel: true,
+          centerXZ: true,
+          groundToZero: true,
+        }) || object;
+
         const initB = initialPosBRef.current;
         if (initB && Array.isArray(initB) && initB.length === 3) {
-          object.position.set(initB[0], initB[1], initB[2]);
+          sceneObject.position.set(initB[0], initB[1], initB[2]);
         } else if (modelARef.current) {
           const boxA = new THREE.Box3().setFromObject(modelARef.current);
           const sizeA = new THREE.Vector3();
           boxA.getSize(sizeA);
-          object.position.set(0, 0, sizeA.z / 2 + size.z / 2 + 0.1);
+          sceneObject.position.set(0, 0, sizeA.z / 2 + size.z / 2 + 0.1);
         } else {
-          object.position.set(0, 0, 3);
+          sceneObject.position.set(0, 0, 3);
         }
 
-        applyGlossinessToObject(object);
+        applyGlossinessToObject(sceneObject);
+        applyShadowFlags(sceneObject, shadowsEnabled);
 
-        sceneRef.current.add(object);
-        modelBRef.current = object;
-        gizmoBRef.current?.attach(object);
+        sceneRef.current.add(sceneObject);
+        modelBRef.current = sceneObject;
+        gizmoBRef.current?.attach(sceneObject);
         setModelBVersion((v) => v + 1);
 
         refitCamera();
@@ -835,34 +973,67 @@ export default function DualModelViewer({
     return () => { cancelled = true; };
   }, [windowTextureBPath, windowTextureBReloadToken, windowTextureBTarget, sceneReady, modelBVersion, textureMode, applyGlossinessToObject]);
 
-  const refitCamera = useCallback(() => {
+  const refitCamera = useCallback((
+    presetKey = cameraStateRef.current?.presetKey || DEFAULT_CAMERA_PRESET,
+    zoomFactor = cameraStateRef.current?.zoomFactor || 1,
+  ) => {
     const objects = [modelARef.current, modelBRef.current].filter(Boolean);
-    if (objects.length === 0) return;
+    if (objects.length === 0) {
+      fitRef.current = {
+        ...fitRef.current,
+        bounds: null,
+      };
+      return;
+    }
 
-    const combinedBox = new THREE.Box3();
-    objects.forEach((obj) => combinedBox.expandByObject(obj));
+    const combinedBox = computeFramingBounds(objects);
+    if (!combinedBox) return;
     const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
     combinedBox.getSize(size);
-    combinedBox.getCenter(center);
+    if (!Number.isFinite(size.x) || !Number.isFinite(size.y) || !Number.isFinite(size.z)) return;
 
-    const maxDim = Math.max(size.x, size.y, size.z);
-    if (!Number.isFinite(maxDim) || maxDim <= 0) return;
-    const distance = Math.max(maxDim * 1.8, 3);
-    fitRef.current = { center, distance };
+    fitRef.current = {
+      ...fitRef.current,
+      bounds: combinedBox.clone(),
+      center: combinedBox.getCenter(new THREE.Vector3()),
+    };
+    cameraStateRef.current = {
+      presetKey,
+      zoomFactor,
+    };
 
     if (cameraRef.current && controlsRef.current) {
-      cameraRef.current.near = Math.max(distance / 100, 0.01);
-      cameraRef.current.far = Math.max(distance * 50, 100);
-      cameraRef.current.position.set(center.x + distance * 0.6, center.y + distance * 0.3, center.z + distance * 0.8);
+      const { clientWidth = 1, clientHeight = 1 } = containerRef.current || {};
+      const framing = buildCameraFraming({
+        bounds: combinedBox,
+        aspect: clientWidth / clientHeight,
+        fov: cameraRef.current.fov,
+        presetKey,
+        zoomFactor,
+      });
+      fitRef.current = {
+        ...fitRef.current,
+        center: framing.target.clone(),
+        distance: framing.distance,
+        baseDistance: framing.baseDistance,
+        presetKey: framing.presetKey,
+        zoomFactor,
+      };
+      cameraRef.current.up.copy(framing.up);
+      cameraRef.current.near = framing.near;
+      cameraRef.current.far = framing.far;
+      cameraRef.current.position.copy(framing.position);
       cameraRef.current.updateProjectionMatrix();
-      controlsRef.current.target.copy(center);
-      controlsRef.current.minDistance = Math.max(distance * 0.05, 0.1);
-      controlsRef.current.maxDistance = distance * 10;
+      controlsRef.current.target.copy(framing.target);
+      controlsRef.current.minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
+      controlsRef.current.maxDistance = Math.max(framing.baseDistance * 10, 10);
       controlsRef.current.update();
     }
+    if (shadowsEnabled) {
+      updateDirectionalShadowFrustum(lightsRef.current.key, fitRef.current.distance);
+    }
     requestRender();
-  }, [requestRender]);
+  }, [requestRender, shadowsEnabled]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 }

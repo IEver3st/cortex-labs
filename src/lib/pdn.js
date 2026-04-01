@@ -22,6 +22,10 @@ import pako from "pako";
    ═══════════════════════════════════════════════════════════ */
 
 const PDN_MAGIC = [0x50, 0x44, 0x4e, 0x33]; // "PDN3"
+const GZIP_MAGIC = [0x1f, 0x8b, 0x08];
+const MAX_CHUNK_START_SCAN_SIZE = 16 * 1024 * 1024;
+const MAX_PDN_CHUNK_SIZE = 64 * 1024 * 1024;
+const MAX_PDN_REASONABLE_CHUNK_COUNT = 262_144;
 
 /** Paint.NET blend mode enum values */
 const PDN_BLEND_TYPES = {
@@ -520,7 +524,91 @@ function enrichBlendModes(data, layers) {
  * The NRBF section ends with a MessageEnd record (type 0x0B).
  * After that, the chunked layer data begins.
  */
-function findChunkedDataStart(bytes, searchStart) {
+function probeChunkedLayerStart(bytes, offset, expectedLength) {
+  if (!bytes || !Number.isFinite(expectedLength) || expectedLength <= 0) {
+    return { ok: false, reason: "invalid expected length" };
+  }
+
+  if (offset < 0 || offset + 13 > bytes.length) {
+    return { ok: false, reason: "candidate truncated before first chunk header" };
+  }
+
+  const formatVersion = bytes[offset];
+  if (formatVersion !== 0 && formatVersion !== 1) {
+    return { ok: false, reason: `unsupported format version ${formatVersion}` };
+  }
+
+  const maxProbeChunkSize = Math.min(expectedLength, MAX_CHUNK_START_SCAN_SIZE);
+  const chunkSize = readU32BE(bytes, offset + 1);
+  if (chunkSize <= 0 || chunkSize > maxProbeChunkSize) {
+    return { ok: false, reason: `invalid chunk size ${chunkSize}` };
+  }
+
+  const chunkCount = Math.ceil(expectedLength / chunkSize);
+  if (
+    !Number.isFinite(chunkCount) ||
+    chunkCount <= 0 ||
+    chunkCount > MAX_PDN_REASONABLE_CHUNK_COUNT
+  ) {
+    return { ok: false, reason: `invalid chunk count ${chunkCount}` };
+  }
+
+  const probeCount = Math.min(3, chunkCount);
+  let pos = offset + 5;
+
+  for (let expectedChunkNumber = 0; expectedChunkNumber < probeCount; expectedChunkNumber += 1) {
+    if (pos + 8 > bytes.length) {
+      return { ok: false, reason: `candidate truncated while probing chunk ${expectedChunkNumber}` };
+    }
+
+    const chunkNumber = readU32BE(bytes, pos);
+    pos += 4;
+
+    const dataSize = readU32BE(bytes, pos);
+    pos += 4;
+
+    if (chunkNumber !== expectedChunkNumber) {
+      return {
+        ok: false,
+        reason: `chunk ${expectedChunkNumber} had unexpected index ${chunkNumber}`,
+      };
+    }
+
+    if (dataSize <= 0 || pos + dataSize > bytes.length) {
+      return {
+        ok: false,
+        reason: `chunk ${expectedChunkNumber} had invalid size ${dataSize}`,
+      };
+    }
+
+    if (
+      formatVersion === 0 &&
+      (
+        dataSize < GZIP_MAGIC.length ||
+        bytes[pos] !== GZIP_MAGIC[0] ||
+        bytes[pos + 1] !== GZIP_MAGIC[1] ||
+        bytes[pos + 2] !== GZIP_MAGIC[2]
+      )
+    ) {
+      return {
+        ok: false,
+        reason: `chunk ${expectedChunkNumber} did not start with gzip magic`,
+      };
+    }
+
+    pos += dataSize;
+  }
+
+  return {
+    ok: true,
+    formatVersion,
+    chunkSize,
+    chunkCount,
+    probeCount,
+  };
+}
+
+function findChunkedDataStart(bytes, searchStart, expectedLength) {
   // The NRBF data ends with record type 0x0B (MessageEnd).
   // After the 0x00 0x01 indicator, we have NRBF data.
   // We need to find where the NRBF ends and chunked data begins.
@@ -538,15 +626,21 @@ function findChunkedDataStart(bytes, searchStart) {
   // It's a single byte record type with no payload
   for (let i = nrbfStart; i < bytes.length - 5; i++) {
     if (bytes[i] === 0x0b) {
-      // Verify the next bytes look like chunked data start
-      // (a format version byte 0x00 or 0x01, followed by a reasonable chunk size)
-      const nextByte = bytes[i + 1];
-      if (nextByte <= 1) {
-        const chunkSize = readU32BE(bytes, i + 2);
-        if (chunkSize > 0 && chunkSize <= 16 * 1024 * 1024) {
-          return i + 1; // Start of chunked data
-        }
+      const candidateOffset = i + 1;
+      const probe = probeChunkedLayerStart(bytes, candidateOffset, expectedLength);
+      if (probe.ok) {
+        pdnDebug("Accepted chunked data start candidate", {
+          offset: candidateOffset,
+          chunkSize: probe.chunkSize,
+          probeCount: probe.probeCount,
+        });
+        return candidateOffset;
       }
+
+      pdnDebug("Rejected chunked data start candidate", {
+        offset: candidateOffset,
+        reason: probe.reason,
+      });
     }
   }
 
@@ -558,18 +652,25 @@ function findChunkedDataStart(bytes, searchStart) {
  * Returns { data: Uint8Array, nextOffset: number } or null.
  */
 function readLayerChunkedData(bytes, offset, expectedLength) {
-  if (offset < 0 || offset >= bytes.length - 5) return null;
+  if (
+    offset < 0 ||
+    offset >= bytes.length - 5 ||
+    !Number.isFinite(expectedLength) ||
+    expectedLength <= 0
+  ) {
+    return null;
+  }
 
-  // Format version: 0 = gzip compressed, 1 = uncompressed
-  const formatVersion = bytes[offset];
-  if (formatVersion > 1) return null;
+  const probe = probeChunkedLayerStart(bytes, offset, expectedLength);
+  if (!probe.ok) return null;
 
-  // Chunk size (destination buffer)
-  const chunkSize = readU32BE(bytes, offset + 1);
-  if (chunkSize <= 0 || chunkSize > 64 * 1024 * 1024) return null;
+  const { formatVersion, chunkSize, chunkCount } = probe;
+  if (chunkSize > MAX_PDN_CHUNK_SIZE || chunkCount > MAX_PDN_REASONABLE_CHUNK_COUNT) {
+    return null;
+  }
 
   const data = new Uint8Array(expectedLength);
-  const chunkCount = Math.ceil(expectedLength / chunkSize);
+  let decodedChunkCount = 0;
 
   let pos = offset + 5;
 
@@ -589,12 +690,22 @@ function readLayerChunkedData(bytes, offset, expectedLength) {
 
     const chunkOffset = chunkNumber * chunkSize;
     const actualChunkSize = Math.min(chunkSize, expectedLength - chunkOffset);
+    if (actualChunkSize <= 0) break;
 
     const rawData = bytes.subarray(pos, pos + dataSize);
     pos += dataSize;
 
     try {
       if (formatVersion === 0) {
+        if (
+          dataSize < GZIP_MAGIC.length ||
+          rawData[0] !== GZIP_MAGIC[0] ||
+          rawData[1] !== GZIP_MAGIC[1] ||
+          rawData[2] !== GZIP_MAGIC[2]
+        ) {
+          break;
+        }
+
         // Gzip compressed
         const decompressed = pako.ungzip(rawData);
         data.set(
@@ -608,10 +719,13 @@ function readLayerChunkedData(bytes, offset, expectedLength) {
           chunkOffset,
         );
       }
+      decodedChunkCount += 1;
     } catch {
       // Decompression failed for this chunk, leave zeros
     }
   }
+
+  if (decodedChunkCount === 0) return null;
 
   return { data, nextOffset: pos };
 }
@@ -719,7 +833,7 @@ export function decodePdnLayers(bytes) {
   pdnDebug("Parsed header", { width, height, headerEnd, expectedLayerSize });
 
   // 2. Find where chunked bitmap data starts
-  const chunkedStart = findChunkedDataStart(bytes, headerEnd);
+  const chunkedStart = findChunkedDataStart(bytes, headerEnd, expectedLayerSize);
   if (chunkedStart < 0) {
     pdnWarn("Chunked data start not found; using fallback gzip scan", { width, height });
     // Fallback: try the old heuristic approach
@@ -895,7 +1009,7 @@ function decodePdnFastFlat(bytes) {
   const expectedLayerSize = width * height * 4;
   if (!Number.isFinite(expectedLayerSize) || expectedLayerSize <= 0) return null;
 
-  const chunkedStart = findChunkedDataStart(bytes, headerEnd);
+  const chunkedStart = findChunkedDataStart(bytes, headerEnd, expectedLayerSize);
   if (chunkedStart < 0) return null;
 
   const output = new Uint8Array(expectedLayerSize);
@@ -1066,3 +1180,9 @@ export function parsePdn(bytes) {
 export function getPdnBlendCanvasOp(blendModeName) {
   return PDN_BLEND_TO_CANVAS[blendModeName] || "source-over";
 }
+
+export const __pdnTest = {
+  findChunkedDataStart,
+  probeChunkedLayerStart,
+  readLayerChunkedData,
+};

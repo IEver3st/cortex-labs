@@ -8,13 +8,15 @@ import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
 import { AlertTriangle, ArrowUpRight, Box, Boxes, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
-import { openPath } from "@tauri-apps/plugin-opener";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 // SettingsMenu now rendered by Shell
 import Viewer from "./components/Viewer";
 import DualModelViewer from "./components/DualModelViewer";
-import { loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession } from "./lib/prefs";
+import { emitPrefsUpdated, loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession } from "./lib/prefs";
+import { openFolderPath } from "./lib/open-folder";
+import { captureTemporaryViewerFrame } from "./lib/preview-capture";
+import { ensurePreviewExportFolder, resolveExistingPreviewFolderPath } from "./lib/preview-folder";
 import { updateWorkspace } from "./lib/workspace";
 import {
   DEFAULT_HOTKEYS,
@@ -25,6 +27,7 @@ import {
 import { Button } from "./components/ui/button";
 import { Label } from "./components/ui/label";
 import { Input } from "./components/ui/input";
+import { Toggle } from "./components/ui/toggle";
 import {
   Select,
   SelectContent,
@@ -32,7 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/select";
-import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel, CyberToggle, MaterialTypeSelector, MaterialSlider, TextureUploadGrid } from "./components/CyberUI";
+import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel, MaterialTypeSelector, MaterialSlider, TextureUploadGrid } from "./components/CyberUI";
 
 const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
@@ -99,6 +102,7 @@ const BUILT_IN_DEFAULTS = {
   showHints: true,
   hideRotText: false,
   showGrid: false,
+  showShadows: false,
   showRecents: true,
   lightIntensity: 1.0,
   lightAzimuth: 54,
@@ -110,6 +114,12 @@ const BUILT_IN_DEFAULTS = {
   cameraControlsInPanel: false,
 };
 
+function sanitizeStoredDefaults(stored) {
+  if (!stored || typeof stored !== "object") return {};
+  const { showAmbientOcclusion: _removedAmbientOcclusion, ...rest } = stored;
+  return rest;
+}
+
 const BUILT_IN_UI = {
 
   colorsOpen: true,
@@ -117,7 +127,7 @@ const BUILT_IN_UI = {
 
 function getInitialDefaults() {
   const prefs = loadPrefs();
-  const stored = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
+  const stored = sanitizeStoredDefaults(prefs?.defaults);
   return { ...BUILT_IN_DEFAULTS, ...stored };
 }
 
@@ -135,7 +145,7 @@ function getInitialHotkeys() {
 
 function getFileLabel(path, emptyLabel) {
   if (!path) return emptyLabel;
-  return path.split(/[\\/]/).pop();
+return path.split(/[\\/]/).pop();
 }
 
 function UnloadButton({ onClick, title, className }) {
@@ -229,11 +239,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [liveryLabel, setLiveryLabel] = useState("");
   const [windowTextureTarget, setWindowTextureTarget] = useState(() => getInitialDefaults().windowTextureTarget || "auto");
 
-  const [cameraWASD, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
+  const [, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
   const [cameraControlsInPanel, setCameraControlsInPanel] = useState(() => Boolean(getInitialDefaults().cameraControlsInPanel));
   const [showHints, setShowHints] = useState(() => Boolean(getInitialDefaults().showHints ?? true));
   const [hideRotText, setHideRotText] = useState(() => Boolean(getInitialDefaults().hideRotText));
   const [showGrid, setShowGrid] = useState(() => Boolean(getInitialDefaults().showGrid));
+  const [showShadows, setShowShadows] = useState(() => Boolean(getInitialDefaults().showShadows));
   const [windowLiveryTarget, setWindowLiveryTarget] = useState("");
   const [windowLiveryLabel, setWindowLiveryLabel] = useState("");
   const [liveryWindowOverride, setLiveryWindowOverride] = useState(""); // Manual override for glass material in livery mode
@@ -380,6 +391,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setShowHints(Boolean(merged.showHints ?? true));
     setHideRotText(Boolean(merged.hideRotText));
     setShowGrid(Boolean(merged.showGrid));
+    setShowShadows(Boolean(merged.showShadows));
     setBodyColor(merged.bodyColor);
     setDualBodyColorA(merged.bodyColor);
     setDualBodyColorB(merged.bodyColor);
@@ -731,6 +743,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setShowHints(Boolean(merged.showHints ?? true));
     setHideRotText(Boolean(merged.hideRotText));
     setShowGrid(Boolean(merged.showGrid));
+    setShowShadows(Boolean(merged.showShadows));
     setBodyColor(merged.bodyColor);
     setDualBodyColorA(merged.bodyColor);
     setDualBodyColorB(merged.bodyColor);
@@ -746,6 +759,27 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     const prefs = loadPrefs() || {};
     savePrefs({ ...prefs, hotkeys: next });
   }, []);
+
+  const setGlobalRenderEffect = useCallback((key, nextValue) => {
+    const currentPrefs = loadPrefs() || {};
+    const storedDefaults = sanitizeStoredDefaults(currentPrefs.defaults);
+    const mergedDefaults = { ...BUILT_IN_DEFAULTS, ...storedDefaults };
+    const resolvedValue =
+      typeof nextValue === "function" ? Boolean(nextValue(Boolean(mergedDefaults[key]))) : Boolean(nextValue);
+    const nextDefaults = { ...mergedDefaults, [key]: resolvedValue };
+
+    setDefaults(nextDefaults);
+    if (key === "showShadows") {
+      setShowShadows(resolvedValue);
+    }
+
+    savePrefs({ ...currentPrefs, defaults: nextDefaults });
+    emitPrefsUpdated();
+  }, []);
+
+  const toggleGlobalRenderEffect = useCallback((key) => {
+    setGlobalRenderEffect(key, (prev) => !prev);
+  }, [setGlobalRenderEffect]);
 
   useEffect(() => {
     const prefs = loadPrefs() || {};
@@ -1075,6 +1109,23 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   selectTextureRef.current = selectTexture;
   selectWindowTextureRef.current = selectWindowTexture;
 
+  const getActiveViewerApi = useCallback(
+    () => (textureMode === "multi" ? dualViewerApiRef.current : viewerApiRef.current),
+    [textureMode],
+  );
+
+  const handleSetCameraPreset = useCallback((presetKey) => {
+    getActiveViewerApi()?.setPreset?.(presetKey);
+  }, [getActiveViewerApi]);
+
+  const handleRotateModel = useCallback((axis) => {
+    getActiveViewerApi()?.rotateModel?.(axis);
+  }, [getActiveViewerApi]);
+
+  const handleCenterCamera = useCallback(() => {
+    getActiveViewerApi()?.reset?.();
+  }, [getActiveViewerApi]);
+
   useEffect(() => {
     if (!isActive) return undefined;
 
@@ -1097,27 +1148,30 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         case HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY:
           setLiveryExteriorOnly((prev) => !prev);
           break;
+        case HOTKEY_ACTIONS.TOGGLE_SHADOWS:
+          toggleGlobalRenderEffect("showShadows");
+          break;
         // Mode switching removed — handled by Shell via new-tab hotkeys
         case HOTKEY_ACTIONS.TOGGLE_PANEL:
           setPanelCollapsed((prev) => !prev);
           break;
         case HOTKEY_ACTIONS.RESET_VIEW:
-          viewerApiRef.current?.reset?.();
+          getActiveViewerApi()?.reset?.();
           break;
         case HOTKEY_ACTIONS.CAMERA_PRESET_FRONT:
-          viewerApiRef.current?.setPreset?.("front");
+          getActiveViewerApi()?.setPreset?.("front");
           break;
         case HOTKEY_ACTIONS.CAMERA_PRESET_BACK:
-          viewerApiRef.current?.setPreset?.("back");
+          getActiveViewerApi()?.setPreset?.("back");
           break;
         case HOTKEY_ACTIONS.CAMERA_PRESET_SIDE:
-          viewerApiRef.current?.setPreset?.("side");
+          getActiveViewerApi()?.setPreset?.("side");
           break;
         case HOTKEY_ACTIONS.CAMERA_PRESET_ANGLE:
-          viewerApiRef.current?.setPreset?.("angle");
+          getActiveViewerApi()?.setPreset?.("angle");
           break;
         case HOTKEY_ACTIONS.CAMERA_PRESET_TOP:
-          viewerApiRef.current?.setPreset?.("top");
+          getActiveViewerApi()?.setPreset?.("top");
           break;
         case HOTKEY_ACTIONS.SELECT_MODEL:
           selectModelRef.current?.();
@@ -1141,35 +1195,55 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hotkeys, experimentalSettings, isActive]);
+  }, [hotkeys, experimentalSettings, getActiveViewerApi, isActive, toggleGlobalRenderEffect]);
 
-  const handleCenterCamera = () => {
-    viewerApiRef.current?.reset?.();
-  };
+  const persistPreviewFolder = useCallback(async (folder) => {
+    const current = loadPrefs() || {};
+    const defs = current?.defaults || {};
+    savePrefs({ ...current, defaults: { ...defs, previewFolder: folder } });
+  }, []);
+
+  const promptForPreviewFolder = useCallback(async () => {
+    if (!isTauriRuntime) return "";
+
+    try {
+      const selected = await open({ directory: true, title: "Select Preview Export Folder" });
+      return typeof selected === "string" ? selected : "";
+    } catch {
+      return "";
+    }
+  }, [isTauriRuntime]);
 
   const resolveExistingFolder = useCallback(async (preferredPath, fallbackPath = "") => {
     if (!isTauriRuntime) return preferredPath || fallbackPath;
-    const candidates = [];
-    if (preferredPath) {
-      candidates.push(preferredPath);
-      const trimmed = preferredPath.replace(/[\\/]+$/, "");
-      const parent = trimmed.replace(/[\\/][^\\/]+$/, "");
-      if (parent && parent !== trimmed) candidates.push(parent);
-    }
-    if (fallbackPath) candidates.push(fallbackPath);
-
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      try {
-        const ok = await fsExists(candidate);
-        if (ok) return candidate;
-      } catch {
-        // keep trying remaining candidates
-      }
-    }
-
-    return preferredPath || fallbackPath;
+    return await resolveExistingPreviewFolderPath(preferredPath, fallbackPath, fsExists);
   }, [isTauriRuntime]);
+
+  const ensurePreviewFolderReady = useCallback(async () => {
+    const prefs = loadPrefs() || {};
+    const savedFolder = prefs?.defaults?.previewFolder || "";
+    const result = await ensurePreviewExportFolder({
+      savedFolder,
+      isTauriRuntime,
+      pathExists: fsExists,
+      chooseFolder: async ({ reason }) => {
+        if (reason === "missing") {
+          showToast("Preview export folder was moved or deleted. Choose a new folder to continue.");
+        } else {
+          showToast("Choose a preview export folder to save captures.");
+        }
+
+        return await promptForPreviewFolder();
+      },
+      persistFolder: persistPreviewFolder,
+    });
+
+    if (result.status === "cancelled-missing" || result.status === "cancelled-unset") {
+      showToast("Preview capture cancelled. No preview export folder was selected.");
+    }
+
+    return result;
+  }, [isTauriRuntime, persistPreviewFolder, promptForPreviewFolder, showToast]);
 
   const previewSnapTokenRef = useRef(0);
   const updatePreviewSnapshot = useCallback(async (zoomLevel) => {
@@ -1178,11 +1252,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     const token = previewSnapTokenRef.current;
     setPreviewZoomLoading(true);
     try {
-      viewerApiRef.current.setPreset("angle");
-      viewerApiRef.current.setZoom?.(zoomLevel);
-      await new Promise((r) => setTimeout(r, 120));
-      if (token !== previewSnapTokenRef.current) return;
-      const dataUrl = viewerApiRef.current.captureScreenshot?.();
+      const dataUrl = await captureTemporaryViewerFrame(viewerApiRef.current, {
+        presetKey: "angle",
+        zoomFactor: zoomLevel,
+        delayMs: 120,
+      });
       if (token !== previewSnapTokenRef.current) return;
       setPreviewZoomPreview(dataUrl || "");
     } finally {
@@ -1196,22 +1270,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     const presetKeys = PREVIEW_CAPTURE_PRESET_KEYS.filter((key) => requestedPresets.includes(key));
     if (!presetKeys.length) return;
 
-    // Get preview folder from prefs or prompt
-    const prefs = loadPrefs() || {};
-    let folder = prefs?.defaults?.previewFolder;
-
-    if (!folder && isTauriRuntime) {
-      try {
-        const selected = await open({ directory: true, title: "Select Preview Export Folder" });
-        if (typeof selected === "string") {
-          folder = selected;
-          const current = loadPrefs() || {};
-          const defs = current?.defaults || {};
-          savePrefs({ ...current, defaults: { ...defs, previewFolder: folder } });
-        }
-      } catch {}
-    }
-
+    const folderResult = await ensurePreviewFolderReady();
+    const folder = folderResult.folder;
     if (!folder) return;
 
     const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "preview";
@@ -1251,11 +1311,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         const preset = presetKeys[i];
         setPreviewProgress({ current: i, total: presetKeys.length, preset: PREVIEW_CAPTURE_PRESET_LABELS[preset] || preset });
 
-        viewerApiRef.current.setPreset(preset);
-        viewerApiRef.current.setZoom?.(zoomLevel);
-        await new Promise((r) => setTimeout(r, 400));
-
-        const dataUrl = viewerApiRef.current.captureScreenshot();
+        const dataUrl = await captureTemporaryViewerFrame(viewerApiRef.current, {
+          presetKey: preset,
+          zoomFactor: zoomLevel,
+          delayMs: 400,
+        });
         if (!dataUrl) continue;
 
         const base64 = dataUrl.split(",")[1];
@@ -1291,7 +1351,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       // Restore grid state
       if (gridWasOn) setShowGrid(true);
     }
-  }, [modelPath, generatingPreview, isTauriRuntime, showGrid, resolveExistingFolder]);
+  }, [modelPath, generatingPreview, showGrid, resolveExistingFolder, ensurePreviewFolderReady]);
 
   useEffect(() => {
     if (!previewPromptOpen) return;
@@ -1595,38 +1655,42 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
           </div>
 
+          <div className="ctx-bar-drag-pad" aria-hidden="true" />
+
           <div className="ctx-bar-center">
-            {textureMode !== "multi" && (
+            {!cameraControlsInPanel && (
               <>
-                {!cameraControlsInPanel && (
-                  <>
                     <span className="ctx-bar-group-label">Camera</span>
-                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("front")} title="Front view">Front</button>
-                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("back")} title="Rear view">Back</button>
-                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("side")} title="Side view">Side</button>
-                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("angle")} title="3/4 angle view">3/4</button>
-                    <button type="button" className="ctx-bar-btn" onClick={() => viewerApiRef.current?.setPreset("top")} title="Top-down view">Top</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("front")} title="Front view">Front</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("back")} title="Rear view">Back</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("side")} title="Side view">Side</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("angle")} title="3/4 angle view">3/4</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("top")} title="Top-down view">Top</button>
                     <div className="ctx-bar-sep" />
                     <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={handleCenterCamera} disabled={!viewerReady} title="Re-center camera on model">
                       <RotateCcw className="w-3 h-3" style={{ marginRight: 3 }} />Center
                     </button>
-                    <div className="ctx-bar-sep" />
-                    <span className="ctx-bar-group-label">Rotate</span>
-                    <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("x")} title="Rotate 90° on X axis">
-                      <span style={{ color: "#f87171" }}>X</span>
-                    </button>
-                    <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("y")} title="Rotate 90° on Y axis">
-                      <span style={{ color: "#4ade80" }}>Y</span>
-                    </button>
-                    <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => viewerApiRef.current?.rotateModel("z")} title="Rotate 90° on Z axis">
-                      <span style={{ color: "#60a5fa" }}>Z</span>
-                    </button>
-                    <div className="ctx-bar-sep" />
-                  </>
-                )}
+                    {textureMode !== "multi" && (
+                      <>
+                        <div className="ctx-bar-sep" />
+                        <span className="ctx-bar-group-label">Rotate</span>
+                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("x")} title="Rotate 90° on X axis">
+                          <span style={{ color: "#f87171" }}>X</span>
+                        </button>
+                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("y")} title="Rotate 90° on Y axis">
+                          <span style={{ color: "#4ade80" }}>Y</span>
+                        </button>
+                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("z")} title="Rotate 90° on Z axis">
+                          <span style={{ color: "#60a5fa" }}>Z</span>
+                        </button>
+                        <div className="ctx-bar-sep" />
+                      </>
+                    )}
               </>
             )}
           </div>
+
+          <div className="ctx-bar-drag-pad" aria-hidden="true" />
 
           <div className="ctx-bar-right">
           </div>
@@ -1779,10 +1843,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberLabel className="mb-0">Enabled</CyberLabel>
                     <button
                       type="button"
-                      className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${windowTemplateEnabled ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
-                      onClick={() => setWindowTemplateEnabled((prev) => !prev)}
+                      className={`settings-toggle ${windowTemplateEnabled ? "is-on" : ""}`}
+                      onClick={() => setWindowTemplateEnabled(!windowTemplateEnabled)}
+                      aria-pressed={windowTemplateEnabled}
+                      aria-label="Toggle glass overlay"
                     >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
+                      <span className="settings-toggle-dot" />
                     </button>
                   </div>
                   {windowTemplateEnabled ? (
@@ -1844,13 +1910,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <CyberLabel className="mb-0">Exterior Only</CyberLabel>
-                    <button
-                      type="button"
-                      className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${liveryExteriorOnly ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
-                      onClick={() => setLiveryExteriorOnly((prev) => !prev)}
-                    >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${liveryExteriorOnly ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
-                    </button>
+<Toggle
+                      checked={liveryExteriorOnly}
+                      onChange={setLiveryExteriorOnly}
+                      ariaLabel="Toggle exterior only visibility"
+                    />
                   </div>
                   <div className="text-[9px] text-[var(--mg-primary)]/50">Hides interior, glass, and wheel meshes.</div>
                 </div>
@@ -1917,13 +1981,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <CyberLabel className="mb-0">Secondary Texture</CyberLabel>
-                    <button
-                      type="button"
-                      className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${windowTemplateEnabled ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
-                      onClick={() => setWindowTemplateEnabled((prev) => !prev)}
-                    >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${windowTemplateEnabled ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
-                    </button>
+<Toggle
+                                checked={rotationEnabled}
+                                onChange={(next) => setRotationEnabled(next)}
+                                ariaLabel="Toggle rotation"
+                              />
                   </div>
                   {windowTemplateEnabled ? (
                     <>
@@ -1978,13 +2040,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <CyberLabel className="mb-0">Exterior Only</CyberLabel>
-                    <button
-                      type="button"
-                      className={`w-8 h-4 rounded-none border border-[var(--mg-border)] relative transition-colors ${liveryExteriorOnly ? "bg-[oklch(0.648_0.116_182.503_/_0.2)] border-[oklch(0.648_0.116_182.503_/_0.5)]" : "bg-[var(--mg-bg)]"}`}
-                      onClick={() => setLiveryExteriorOnly((prev) => !prev)}
-                    >
-                      <div className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-none bg-[var(--mg-muted)] transition-transform ${liveryExteriorOnly ? "translate-x-4 bg-[var(--mg-primary)]" : ""}`} />
-                    </button>
+<Toggle
+                      checked={liveryExteriorOnly}
+                      onChange={setLiveryExteriorOnly}
+                      ariaLabel="Toggle exterior only visibility"
+                    />
                   </div>
                   <div className="text-[9px] text-[var(--mg-primary)]/50">Hides interior, glass, and wheel meshes.</div>
                 </div>
@@ -2108,7 +2168,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   <button
                     type="button"
                     className="cs-multi-slot-action"
-                    onClick={() => dualViewerApiRef.current?.reset?.()}
+                    onClick={handleCenterCamera}
                     title="Re-center camera"
                   >
                     <RotateCcw className="w-3 h-3" />
@@ -2595,16 +2655,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           </CyberSection>
 
           {/* ── Scene Lighting ── */}
-          {textureMode !== "multi" && (
-            <CyberSection
-              title="Lighting"
-              caption="Scene illumination"
-              open={lightingOpen}
-              onToggle={() => setLightingOpen((prev) => !prev)}
-              contentId="panel-lighting"
-              icon={Sun}
-              color="yellow"
-            >
+          <CyberSection
+            title="Lighting"
+            caption="Scene illumination"
+            open={lightingOpen}
+            onToggle={() => setLightingOpen((prev) => !prev)}
+            contentId="panel-lighting"
+            icon={Sun}
+            color="yellow"
+          >
               {(() => {
                 const elRad = lightElevation * (Math.PI / 180);
                 const elRadius = 35;
@@ -2616,89 +2675,151 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 const azX = 50 + azRadius * Math.sin(azRad);
                 const azY = 30 - azRadius * Math.cos(azRad);
 
-                return (
-                  <div className="space-y-4">
-                    {/* === THE HUD VISUALS === */}
-                    <div className="flex space-x-2">
-                      {/* Azimuth HUD (Top-Down View) */}
-                      <div className="flex-1 bg-[#0a0c0f] border border-gray-800/60 rounded p-2 relative group">
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-[9px] font-bold text-gray-500 tracking-widest uppercase">Azimuth</span>
-                          <span className="text-[9px] font-mono text-[#00d9ff]">{lightAzimuth}°</span>
-                        </div>
-                        
-                        <div className="w-full aspect-video relative flex items-center justify-center">
-                          <svg viewBox="0 0 100 60" className="w-full h-full overflow-visible">
-                            {/* Orbital Ring (Full Circle) */}
-                            <circle cx="50" cy="30" r="24" fill="none" stroke="#374151" strokeWidth="1" strokeDasharray="2 2" />
-                            
-                            {/* Top-Down Car Silhouette */}
-                            <g className="text-[#1a2026] stroke-[#2d3748] stroke-[0.5]">
-                              {/* Tires */}
-                              <rect x="39" y="19" width="3" height="7" rx="1" fill="#050709" stroke="none" />
-                              <rect x="58" y="19" width="3" height="7" rx="1" fill="#050709" stroke="none" />
-                              <rect x="39" y="34" width="3" height="7" rx="1" fill="#050709" stroke="none" />
-                              <rect x="58" y="34" width="3" height="7" rx="1" fill="#050709" stroke="none" />
-                              
-                              {/* Body */}
-                              <rect x="42" y="15" width="16" height="30" rx="4" fill="currentColor" />
-                              
-                              {/* Windshield */}
-                              <path d="M 44 23 Q 50 20 56 23 L 55 27 L 45 27 Z" fill="#222b36" stroke="none" />
-                              
-                              {/* Rear Window */}
-                              <path d="M 45 34 L 55 34 L 54 37 Q 50 39 46 37 Z" fill="#222b36" stroke="none" />
-                              
-                              {/* Headlight Hints */}
-                              <path d="M 44 16 L 47 16 L 46 17 L 44 17 Z" fill="#00d9ff" opacity="0.3" stroke="none" />
-                              <path d="M 53 16 L 56 16 L 56 17 L 54 17 Z" fill="#00d9ff" opacity="0.3" stroke="none" />
-                            </g>
+                // Drag handler for azimuth — click/drag anywhere in SVG sets the orbital angle
+                const onAzPointerDown = (e) => {
+                  e.preventDefault();
+                  const svg = e.currentTarget;
+                  svg.setPointerCapture(e.pointerId);
+                  const compute = (cx, cy) => {
+                    const rect = svg.getBoundingClientRect();
+                    const sx = ((cx - rect.left) / rect.width) * 100;
+                    const sy = ((cy - rect.top) / rect.height) * 60;
+                    let deg = Math.atan2(sx - 50, -(sy - 30)) * (180 / Math.PI);
+                    if (deg < 0) deg += 360;
+                    return Math.round(deg);
+                  };
+                  const onMove = (ev) => handleLightAzimuthChange(compute(ev.clientX, ev.clientY));
+                  const onUp = () => {
+                    svg.style.cursor = 'crosshair';
+                    svg.removeEventListener('pointermove', onMove);
+                    svg.removeEventListener('pointerup', onUp);
+                  };
+                  svg.style.cursor = 'grabbing';
+                  handleLightAzimuthChange(compute(e.clientX, e.clientY));
+                  svg.addEventListener('pointermove', onMove);
+                  svg.addEventListener('pointerup', onUp);
+                };
 
-                            {/* Sun Dot (Azimuth) */}
-                            <g style={{ transform: `translate(${azX}px, ${azY}px)`, transition: 'all 0.1s ease-out' }}>
-                              <circle cx="0" cy="0" r="3.5" fill="#00d9ff" />
-                              <circle cx="0" cy="0" r="8" fill="#00d9ff" opacity="0.3" />
+                // Drag handler for elevation — click/drag anywhere in SVG sets the dome angle
+                const onElPointerDown = (e) => {
+                  e.preventDefault();
+                  const svg = e.currentTarget;
+                  svg.setPointerCapture(e.pointerId);
+                  const compute = (cx, cy) => {
+                    const rect = svg.getBoundingClientRect();
+                    const sx = ((cx - rect.left) / rect.width) * 100;
+                    const sy = ((cy - rect.top) / rect.height) * 60;
+                    const deg = Math.atan2(40 - sy, sx - 50) * (180 / Math.PI);
+                    return Math.max(0, Math.min(90, Math.round(deg)));
+                  };
+                  const onMove = (ev) => handleLightElevationChange(compute(ev.clientX, ev.clientY));
+                  const onUp = () => {
+                    svg.style.cursor = 'crosshair';
+                    svg.removeEventListener('pointermove', onMove);
+                    svg.removeEventListener('pointerup', onUp);
+                  };
+                  svg.style.cursor = 'grabbing';
+                  handleLightElevationChange(compute(e.clientX, e.clientY));
+                  svg.addEventListener('pointermove', onMove);
+                  svg.addEventListener('pointerup', onUp);
+                };
+
+                return (
+                  <div className="space-y-3">
+                    {/* === HUD VISUALS === */}
+                    <div className="flex space-x-1.5">
+                      {/* Azimuth HUD (Top-Down View) */}
+                      <div
+                        className="flex-1 rounded-sm p-2 relative"
+                        style={{ background: '#100F0D', border: '1px solid rgba(220,215,206,0.1)' }}
+                      >
+                        <div className="flex justify-between items-center mb-1.5">
+                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '8px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--mg-muted)', opacity: 0.75 }}>Azimuth</span>
+                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '9px', color: '#D97952', fontVariantNumeric: 'tabular-nums' }}>{lightAzimuth}°</span>
+                        </div>
+                        <div className="w-full aspect-video relative flex items-center justify-center">
+                          <svg
+                            viewBox="0 0 100 60"
+                            preserveAspectRatio="none"
+                            className="w-full h-full"
+                            style={{ cursor: 'crosshair', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                            onPointerDown={onAzPointerDown}
+                          >
+                            {/* Ghost outer ring */}
+                            <circle cx="50" cy="30" r="26.5" fill="none" stroke="rgba(90,85,79,0.12)" strokeWidth="0.5" style={{ pointerEvents: 'none' }} />
+                            {/* Orbital ring */}
+                            <circle cx="50" cy="30" r="24" fill="none" stroke="rgba(90,85,79,0.4)" strokeWidth="0.7" strokeDasharray="1.5 2.5" style={{ pointerEvents: 'none' }} />
+                            {/* Cardinal ticks at N/E/S/W */}
+                            {[0, 90, 180, 270].map(deg => {
+                              const r = deg * (Math.PI / 180);
+                              return <line key={deg} x1={50 + 22 * Math.sin(r)} y1={30 - 22 * Math.cos(r)} x2={50 + 26 * Math.sin(r)} y2={30 - 26 * Math.cos(r)} stroke="rgba(90,85,79,0.5)" strokeWidth="0.8" style={{ pointerEvents: 'none' }} />;
+                            })}
+                            {/* Spoke from center to sun */}
+                            <line x1="50" y1="30" x2={azX} y2={azY} stroke="rgba(217,121,82,0.38)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
+                            {/* Top-Down Car Silhouette */}
+                            <g style={{ pointerEvents: 'none' }}>
+                              <rect x="39" y="20" width="3" height="7" rx="0.5" fill="#0B0A09" />
+                              <rect x="58" y="20" width="3" height="7" rx="0.5" fill="#0B0A09" />
+                              <rect x="39" y="33" width="3" height="7" rx="0.5" fill="#0B0A09" />
+                              <rect x="58" y="33" width="3" height="7" rx="0.5" fill="#0B0A09" />
+                              <rect x="42" y="15" width="16" height="30" rx="3.5" fill="#1C1A17" />
+                              <path d="M 44 23 Q 50 20.5 56 23 L 55 27 L 45 27 Z" fill="#221F1C" />
+                              <path d="M 45 34 L 55 34 L 54 37 Q 50 39 46 37 Z" fill="#221F1C" />
+                              <path d="M 44 16 L 47 16 L 46 17.5 L 44 17.5 Z" fill="rgba(217,121,82,0.2)" />
+                              <path d="M 53 16 L 56 16 L 56 17.5 L 54 17.5 Z" fill="rgba(217,121,82,0.2)" />
+                            </g>
+                            {/* Sun dot */}
+                            <g style={{ transform: `translate(${azX}px, ${azY}px)`, pointerEvents: 'none' }}>
+                              <circle cx="0" cy="0" r="6" fill="rgba(217,121,82,0.12)" />
+                              <circle cx="0" cy="0" r="3" fill="#D97952" />
+                              <circle cx="0" cy="0" r="1.3" fill="rgba(252,248,240,0.85)" />
                             </g>
                           </svg>
                         </div>
                       </div>
 
                       {/* Elevation HUD (Side View) */}
-                      <div className="flex-1 bg-[#0a0c0f] border border-gray-800/60 rounded p-2 relative group">
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-[9px] font-bold text-gray-500 tracking-widest uppercase">Elevation</span>
-                          <span className="text-[9px] font-mono text-[#00d9ff]">{lightElevation}°</span>
+                      <div
+                        className="flex-1 rounded-sm p-2 relative"
+                        style={{ background: '#100F0D', border: '1px solid rgba(220,215,206,0.1)' }}
+                      >
+                        <div className="flex justify-between items-center mb-1.5">
+                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '8px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--mg-muted)', opacity: 0.75 }}>Elevation</span>
+                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '9px', color: '#D97952', fontVariantNumeric: 'tabular-nums' }}>{lightElevation}°</span>
                         </div>
-                        
                         <div className="w-full aspect-video relative flex items-center justify-center">
-                          <svg viewBox="0 0 100 60" className="w-full h-full overflow-visible">
-                            {/* Dome Arc */}
-                            <path d="M 15 40 A 35 35 0 0 1 85 40" fill="none" stroke="#374151" strokeWidth="1" strokeDasharray="2 2" />
-                            
-                            {/* Ground Line */}
-                            <line x1="5" y1="45" x2="95" y2="45" stroke="#1f2937" strokeWidth="1" />
-
+                          <svg
+                            viewBox="0 0 100 60"
+                            preserveAspectRatio="none"
+                            className="w-full h-full"
+                            style={{ cursor: 'crosshair', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                            onPointerDown={onElPointerDown}
+                          >
+                            {/* Dome arc */}
+                            <path d="M 15 40 A 35 35 0 0 1 85 40" fill="none" stroke="rgba(90,85,79,0.4)" strokeWidth="0.7" strokeDasharray="1.5 2.5" style={{ pointerEvents: 'none' }} />
+                            {/* Elevation angle ticks at 0°, 30°, 60°, 90° */}
+                            {[0, 30, 60, 90].map(deg => {
+                              const r = deg * (Math.PI / 180);
+                              return <line key={deg} x1={50 + 33 * Math.cos(r)} y1={40 - 33 * Math.sin(r)} x2={50 + 37 * Math.cos(r)} y2={40 - 37 * Math.sin(r)} stroke="rgba(90,85,79,0.5)" strokeWidth="0.8" style={{ pointerEvents: 'none' }} />;
+                            })}
+                            {/* Ground line */}
+                            <line x1="5" y1="45" x2="95" y2="45" stroke="rgba(90,85,79,0.25)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
+                            {/* Spoke from horizon center to sun */}
+                            <line x1="50" y1="40" x2={elX} y2={elY} stroke="rgba(217,121,82,0.38)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
                             {/* Side Car Silhouette */}
-                            <g className="text-[#1a2026] stroke-[#2d3748] stroke-[0.5]">
-                              {/* Tires */}
-                              <circle cx="34" cy="41" r="4" fill="#050709" stroke="none" />
-                              <circle cx="66" cy="41" r="4" fill="#050709" stroke="none" />
-                              
-                              {/* Body */}
-                              <path d="M 26 38 L 26 30 L 36 22 L 54 22 L 66 30 L 76 30 L 76 38 Z" fill="currentColor" />
-                              
-                              {/* Windows */}
-                              <path d="M 38 30 L 44 24 L 48 24 L 48 30 Z" fill="#222b36" stroke="none" />
-                              <path d="M 50 30 L 50 24 L 58 30 Z" fill="#222b36" stroke="none" />
-                              
-                              {/* Headlight Hint */}
-                              <path d="M 74 32 L 76 32 L 76 34 L 74 34 Z" fill="#00d9ff" opacity="0.2" stroke="none" />
+                            <g style={{ pointerEvents: 'none' }}>
+                              <circle cx="34" cy="41" r="3.5" fill="#0B0A09" />
+                              <circle cx="66" cy="41" r="3.5" fill="#0B0A09" />
+                              <path d="M 26 38 L 26 30 L 36 22 L 54 22 L 66 30 L 76 30 L 76 38 Z" fill="#1C1A17" />
+                              <path d="M 38 30 L 44 24 L 48 24 L 48 30 Z" fill="#221F1C" />
+                              <path d="M 50 30 L 50 24 L 58 30 Z" fill="#221F1C" />
+                              <path d="M 74 32 L 76 32 L 76 35 L 74 35 Z" fill="rgba(217,121,82,0.18)" />
                             </g>
-
-                            {/* Sun Dot (Elevation) */}
-                            <g style={{ transform: `translate(${elX}px, ${elY}px)`, transition: 'all 0.1s ease-out' }}>
-                              <circle cx="0" cy="0" r="3.5" fill="#00d9ff" />
-                              <circle cx="0" cy="0" r="8" fill="#00d9ff" opacity="0.3" />
+                            {/* Sun dot */}
+                            <g style={{ transform: `translate(${elX}px, ${elY}px)`, pointerEvents: 'none' }}>
+                              <circle cx="0" cy="0" r="6" fill="rgba(217,121,82,0.12)" />
+                              <circle cx="0" cy="0" r="3" fill="#D97952" />
+                              <circle cx="0" cy="0" r="1.3" fill="rgba(252,248,240,0.85)" />
                             </g>
                           </svg>
                         </div>
@@ -2731,7 +2852,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         max={90}
                         step={1}
                         unit="°"
-                      />
+/>
                       <button
                         type="button"
                         className="panel-cam-action-btn w-full mt-1"
@@ -2746,10 +2867,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 );
               })()}
             </CyberSection>
-          )}
 
           {/* ── Camera Controls in Panel ── */}
-          {cameraControlsInPanel && textureMode !== "multi" && (
+          {cameraControlsInPanel && (
             <CyberSection
               title="Camera"
               caption="Presets & rotation"
@@ -2774,7 +2894,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                         key={key}
                         type="button"
                         className="panel-cam-preset-btn"
-                        onClick={() => viewerApiRef.current?.setPreset(key)}
+                        onClick={() => handleSetCameraPreset(key)}
                         title={`${label} view`}
                       >
                         {label}
@@ -2812,37 +2932,39 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     Cage
                   </button>
                 </div>
-                <div>
-                  <CyberLabel>Rotate Model</CyberLabel>
-                  <div className="flex gap-1.5 mt-1">
-                    <button
-                      type="button"
-                      className="panel-cam-axis-btn flex-1"
-                      onClick={() => viewerApiRef.current?.rotateModel("x")}
-                      title="Rotate 90° on X axis"
-                    >
-                      <span style={{ color: "#f87171", fontWeight: 700 }}>X</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="panel-cam-axis-btn flex-1"
-                      onClick={() => viewerApiRef.current?.rotateModel("y")}
-                      title="Rotate 90° on Y axis"
-                    >
-                      <span style={{ color: "#4ade80", fontWeight: 700 }}>Y</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="panel-cam-axis-btn flex-1"
-                      onClick={() => viewerApiRef.current?.rotateModel("z")}
-                      title="Rotate 90° on Z axis"
-                    >
-                      <span style={{ color: "#60a5fa", fontWeight: 700 }}>Z</span>
-                    </button>
+                {textureMode !== "multi" && (
+                  <div>
+                    <CyberLabel>Rotate Model</CyberLabel>
+                    <div className="flex gap-1.5 mt-1">
+                      <button
+                        type="button"
+                        className="panel-cam-axis-btn flex-1"
+                        onClick={() => handleRotateModel("x")}
+                        title="Rotate 90° on X axis"
+                      >
+                        <span style={{ color: "#f87171", fontWeight: 700 }}>X</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="panel-cam-axis-btn flex-1"
+                        onClick={() => handleRotateModel("y")}
+                        title="Rotate 90° on Y axis"
+                      >
+                        <span style={{ color: "#4ade80", fontWeight: 700 }}>Y</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="panel-cam-axis-btn flex-1"
+                        onClick={() => handleRotateModel("z")}
+                        title="Rotate 90° on Z axis"
+                      >
+                        <span style={{ color: "#60a5fa", fontWeight: 700 }}>Z</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
-            </CyberSection>
+          </CyberSection>
           )}
 
           {/* ── Capture Preview ── */}
@@ -2915,8 +3037,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             lightAzimuth={lightAzimuth}
             lightElevation={lightElevation}
             glossiness={glossiness}
+            shadowsEnabled={showShadows}
             showWireframe={showWireframe}
             showCageWireframe={showCageWireframe}
+            wasdEnabled={true}
             selectedSlot={dualSelectedSlot}
             gizmoVisible={dualGizmoVisible}
             showGrid={showGrid}
@@ -2958,12 +3082,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             textureMode={textureMode}
             showWireframe={showWireframe}
             showCageWireframe={showCageWireframe}
-            wasdEnabled={cameraWASD}
+            wasdEnabled={true}
             liveryExteriorOnly={(textureMode === "livery" || textureMode === "everything") && liveryExteriorOnly}
             lightIntensity={lightIntensity}
             lightAzimuth={lightAzimuth}
             lightElevation={lightElevation}
             glossiness={glossiness}
+            shadowsEnabled={showShadows}
             materialType={materialType}
             materialLightIntensity={matLightIntensity}
             materialGlossiness={matGlossiness}
@@ -3429,16 +3554,23 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   className="gen-preview-btn gen-preview-btn--open"
                   onClick={async () => {
                     if (isTauriRuntime && previewOutputPath) {
-                      try {
-                        const prefs = loadPrefs() || {};
-                        const fallbackFolder = prefs?.defaults?.previewFolder || "";
-                        const targetFolder = await resolveExistingFolder(previewOutputPath, fallbackFolder);
-                        await openPath(targetFolder);
-                      } catch {
-                        console.error("Failed to open preview folder:", previewOutputPath);
+                      const prefs = loadPrefs() || {};
+                      const fallbackFolder = prefs?.defaults?.previewFolder || "";
+                      const targetFolder = await resolveExistingFolder(previewOutputPath, fallbackFolder);
+                      if (!targetFolder) {
+                        showToast("Preview export folder no longer exists. Choose a new folder before capturing again.");
+                        return;
                       }
+
+                      const opened = await openFolderPath(targetFolder);
+                      if (!opened) {
+                        console.error("Failed to open preview folder:", targetFolder);
+                        showToast("Failed to open the preview export folder.");
+                        return;
+                      }
+
+                      setPreviewComplete(false);
                     }
-                    setPreviewComplete(false);
                   }}
                 >
                   <FolderOpen className="w-3.5 h-3.5" />

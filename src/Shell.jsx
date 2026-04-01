@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Info, Sparkles } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Info, Sparkles, Bug } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
@@ -13,6 +13,7 @@ import Onboarding from "./components/Onboarding";
 
 import SettingsMenu from "./components/SettingsMenu";
 import WhatsNew from "./components/WhatsNew";
+import BugReportModal from "./components/BugReportModal";
 import * as Ctx from "./components/ContextMenu";
 import appMeta from "../package.json";
 import cortexLogo from "../src-tauri/icons/cortex-logo.svg";
@@ -24,7 +25,7 @@ import {
   renameWorkspace,
   addRecent,
 } from "./lib/workspace";
-import { loadOnboarded, setOnboarded, loadPrefs } from "./lib/prefs";
+import { loadOnboarded, setOnboarded, loadPrefs, PREFS_UPDATED_EVENT } from "./lib/prefs";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_ACTIONS,
@@ -48,6 +49,18 @@ const TAB_ICONS = {
 
 const MIN_UI_SCALE = 0.5;
 const MAX_UI_SCALE = 1.4;
+const WINDOW_DRAG_THRESHOLD_PX = 4;
+
+function renderLabelWithBeta(label, showBeta, className = "") {
+  if (!showBeta) return <span className={className}>{label}</span>;
+  const combinedClassName = `${className} template-gen-label`.trim();
+  return (
+    <span className={combinedClassName}>
+      <span>{label}</span>
+      <span className="template-gen-beta-badge">Beta</span>
+    </span>
+  );
+}
 
 function clampUiScale(value) {
   const num = Number(value);
@@ -70,6 +83,8 @@ export default function Shell() {
   const [activeTabId, setActiveTabId] = useState("home");
   const [editingTabId, setEditingTabId] = useState(null);
   const editTabRef = useRef(null);
+  const toolbarDragGestureRef = useRef(null);
+  const lastToolbarDragAtRef = useRef(0);
   // Track pending tab activation (for use after setTabs)
   const pendingActiveRef = useRef(null);
   const lastExternalFileOpenRef = useRef({ path: "", at: 0 });
@@ -109,6 +124,9 @@ export default function Shell() {
     const style = prefs?.defaults?.windowControlsStyle ?? "windows";
     document.documentElement.setAttribute("data-window-style", style);
 
+    const isDarkMode = prefs?.defaults?.darkMode ?? true;
+    document.documentElement.classList.toggle("dark", isDarkMode);
+
     const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
     setHotkeys(mergeHotkeys(stored, DEFAULT_HOTKEYS));
   }, [settingsVersion]);
@@ -117,6 +135,15 @@ export default function Shell() {
   useEffect(() => {
     const timer = setTimeout(() => setBooted(true), MIN_BOOT_MS);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const handlePrefsUpdated = () => {
+      setSettingsVersion((version) => version + 1);
+    };
+
+    window.addEventListener(PREFS_UPDATED_EVENT, handlePrefsUpdated);
+    return () => window.removeEventListener(PREFS_UPDATED_EVENT, handlePrefsUpdated);
   }, []);
 
   // Open a new tab (or focus existing for same workspace)
@@ -478,16 +505,6 @@ export default function Shell() {
     return true;
   }, []);
 
-  const handleToolbarMouseDown = useCallback(async (event) => {
-    if (!isTauriRuntime || event.button !== 0) return;
-    if (!isWindowDragGestureTarget(event.target)) return;
-    try {
-      await getCurrentWindow().startDragging();
-    } catch {
-      // no-op: keep the UI responsive if dragging is unavailable
-    }
-  }, [isTauriRuntime, isWindowDragGestureTarget]);
-
   const handleToolbarDoubleClick = useCallback(async (event) => {
     if (!isTauriRuntime) return;
     if (!isWindowDragGestureTarget(event.target)) return;
@@ -496,6 +513,70 @@ export default function Shell() {
     if (await win.isMaximized()) await win.unmaximize();
     else await win.maximize();
   }, [isTauriRuntime, isWindowDragGestureTarget]);
+
+  const isToolbarWindowDragTarget = useCallback((target) => {
+    if (!(target instanceof Element)) return false;
+    if (target.closest(".shell-new-tab-menu")) return false;
+    return true;
+  }, []);
+
+  const clearToolbarDragGesture = useCallback(() => {
+    toolbarDragGestureRef.current = null;
+  }, []);
+
+  const handleToolbarPointerDownCapture = useCallback((event) => {
+    if (!isTauriRuntime) return;
+    if (event.button !== 0) return;
+    if (event.pointerType === "touch") return;
+    if (!isToolbarWindowDragTarget(event.target)) return;
+
+    toolbarDragGestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      started: false,
+    };
+  }, [isTauriRuntime, isToolbarWindowDragTarget]);
+
+  const handleToolbarClickCapture = useCallback((event) => {
+    if (Date.now() - lastToolbarDragAtRef.current > 250) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return undefined;
+
+    const handlePointerMove = (event) => {
+      const gesture = toolbarDragGestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId || gesture.started) return;
+
+      const dx = event.clientX - gesture.startX;
+      const dy = event.clientY - gesture.startY;
+      if (Math.hypot(dx, dy) < WINDOW_DRAG_THRESHOLD_PX) return;
+
+      gesture.started = true;
+      lastToolbarDragAtRef.current = Date.now();
+      clearToolbarDragGesture();
+      event.preventDefault();
+      void getCurrentWindow().startDragging().catch(() => {});
+    };
+
+    const handlePointerEnd = (event) => {
+      if (toolbarDragGestureRef.current?.pointerId !== event.pointerId) return;
+      clearToolbarDragGesture();
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, true);
+    window.addEventListener("pointerup", handlePointerEnd, true);
+    window.addEventListener("pointercancel", handlePointerEnd, true);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove, true);
+      window.removeEventListener("pointerup", handlePointerEnd, true);
+      window.removeEventListener("pointercancel", handlePointerEnd, true);
+    };
+  }, [clearToolbarDragGesture, isTauriRuntime]);
 
   const handleMinimize = async () => {
     if (!isTauriRuntime) return;
@@ -535,6 +616,7 @@ export default function Shell() {
 
   // WhatsNew modal: auto-open on new version, manual open from settings
   const [whatsNewManual, setWhatsNewManual] = useState(false);
+  const [isBugReportOpen, setIsBugReportOpen] = useState(false);
   const handleOpenReleaseNotes = useCallback(() => setWhatsNewManual(true), []);
   const handleCloseWhatsNew = useCallback(() => setWhatsNewManual(false), []);
   const handleOpenOnboarding = useCallback(() => setShowOnboarding(true), []);
@@ -555,6 +637,7 @@ export default function Shell() {
 
       {booted && <WhatsNew />}
       {whatsNewManual && <WhatsNew forceOpen isManual onClose={handleCloseWhatsNew} />}
+      <BugReportModal open={isBugReportOpen} onClose={() => setIsBugReportOpen(false)} />
       <AnimatePresence>
         {booted && showOnboarding ? (
           <Onboarding onComplete={handleOnboardingComplete} />
@@ -566,8 +649,9 @@ export default function Shell() {
           {/* ━━━ UNIFIED TOOLBAR (single row) ━━━ */}
           <motion.div
             className="shell-toolbar"
-            onMouseDown={handleToolbarMouseDown}
             onDoubleClick={handleToolbarDoubleClick}
+            onPointerDownCapture={handleToolbarPointerDownCapture}
+            onClickCapture={handleToolbarClickCapture}
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
@@ -628,7 +712,11 @@ export default function Shell() {
                           autoFocus
                         />
                       ) : (
-                        <span className="shell-tab-label">{tab.label}</span>
+                        renderLabelWithBeta(
+                          tab.label,
+                          tab.type === "templategen" && tab.label === "Template Gen",
+                          "shell-tab-label",
+                        )
                       )}
                       {tab.closable && (
                         <motion.button
@@ -716,7 +804,12 @@ export default function Shell() {
                           transition={{ delay: i * 0.03, duration: 0.15 }}
                           whileHover={{ x: 3, backgroundColor: "rgba(61,186,163,0.08)" }}
                         >
-                          <opt.icon className="w-3 h-3" /> {opt.label}
+                          <opt.icon className="w-3 h-3" />
+                          {renderLabelWithBeta(
+                            opt.label,
+                            opt.mode === "templategen",
+                            "shell-new-tab-option-label",
+                          )}
                         </motion.button>
                       ))}
                       <div className="shell-new-tab-sep" />
@@ -769,13 +862,28 @@ export default function Shell() {
                   <Palette className="w-3 h-3" /> New Variant Builder
                 </Ctx.Item>
                 <Ctx.Item onSelect={() => handleNavigate("templategen")}>
-                  <Sparkles className="w-3 h-3" /> New Template Generator
+                  <Sparkles className="w-3 h-3" />
+                  {renderLabelWithBeta("New Template Generator", true)}
                 </Ctx.Item>
 
               </Ctx.Content>
             </Ctx.Root>
 
             {/* Getting started / tutorial */}
+            <div className="settings-anchor">
+              <motion.button
+                type="button"
+                className="settings-cog"
+                aria-label="Report a bug"
+                title="Report a bug"
+                onClick={() => setIsBugReportOpen(true)}
+              >
+                <span className="settings-cog-icon">
+                  <Bug className="settings-cog-svg" />
+                </span>
+              </motion.button>
+            </div>
+
             <div className="settings-anchor">
               <motion.button
                 type="button"

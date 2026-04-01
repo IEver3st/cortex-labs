@@ -7,6 +7,15 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "./yft";
 import { parseDDS } from "./dds";
 
+export {
+  CAMERA_PRESETS,
+  CAMERA_PRESET_KEYS,
+  DEFAULT_CAMERA_PRESET,
+  getCameraPreset,
+  buildCameraFraming,
+  computeFramingBounds,
+} from "./camera-framing.js";
+
 export const YDD_SCAN_SETTINGS = {
   scanLimit: Number.POSITIVE_INFINITY,
   scanMaxCandidates: 32,
@@ -401,6 +410,31 @@ function scoreUvAttributeForLivery(attribute) {
   return inRange / valid;
 }
 
+function hasUvVariationForLivery(attribute) {
+  if (!attribute || !attribute.array || attribute.itemSize < 2) return false;
+  const count = Math.min(attribute.count || 0, 2000);
+  if (count < 3) return false;
+  const array = attribute.array;
+  const stride = attribute.itemSize;
+  let minU = Infinity;
+  let minV = Infinity;
+  let maxU = -Infinity;
+  let maxV = -Infinity;
+  let valid = 0;
+  for (let i = 0; i < count; i += 1) {
+    const u = array[i * stride];
+    const v = array[i * stride + 1];
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    valid += 1;
+    minU = Math.min(minU, u);
+    minV = Math.min(minV, v);
+    maxU = Math.max(maxU, u);
+    maxV = Math.max(maxV, v);
+  }
+  if (valid < 3) return false;
+  return Math.abs(maxU - minU) > 1e-8 || Math.abs(maxV - minV) > 1e-8;
+}
+
 function chooseLiveryUvAttribute(geometry) {
   if (!geometry?.attributes) return null;
   const candidates = [
@@ -420,6 +454,7 @@ function chooseLiveryUvAttribute(geometry) {
   if (preferredIndex === -1) return null;
 
   const preferred = candidates[preferredIndex];
+  const preferredVaries = hasUvVariationForLivery(preferred);
   const preferredScore = scoreUvAttributeForLivery(preferred);
   let bestScored = null;
   for (let index = 0; index < candidates.length; index += 1) {
@@ -434,6 +469,7 @@ function chooseLiveryUvAttribute(geometry) {
 
   if (bestScored && bestScored.index !== preferredIndex) {
     const shouldFallback =
+      !preferredVaries ||
       preferredScore < 0 ||
       (bestScored.score >= LIVERY_UV_MIN_CONFIDENCE &&
         bestScored.score - Math.max(preferredScore, 0) >= LIVERY_UV_FALLBACK_MARGIN);
@@ -1324,9 +1360,8 @@ export async function loadPdnTexture(bytes, filePath) {
     }
   } catch (error) {
     workerDecodeError = error;
-    pdnLog("warn", "Worker PDN decode failed", {
-      message: error instanceof Error ? error.message : String(error),
-    });
+    const message = error instanceof Error ? error.message : String(error);
+    pdnLog("warn", `Worker PDN decode failed: ${message}`, { message });
   }
 
   if (isDesktopTauriDecode) {

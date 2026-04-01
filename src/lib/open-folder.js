@@ -1,13 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 
-function normalizePath(rawPath) {
+function normalizeWindowsPath(path) {
+  if (!/^(?:[a-zA-Z]:[\\/]|\\\\)/.test(path)) return path;
+  return path.replace(/\//g, "\\");
+}
+
+export function normalizeOpenFolderPath(rawPath) {
   if (typeof rawPath !== "string") return "";
   const trimmed = rawPath.trim().replace(/^"(.*)"$/, "$1");
   if (!trimmed) return "";
 
   // "autoSavedPath" can contain multiple entries joined by " | ".
   const [firstEntry] = trimmed.split("|");
-  return (firstEntry || "").trim();
+  const normalized = (firstEntry || "").trim();
+  if (!normalized) return "";
+
+  return normalizeWindowsPath(normalized);
 }
 
 /**
@@ -15,7 +24,7 @@ function normalizePath(rawPath) {
  * Returns true on success and false when no opener path succeeded.
  */
 export async function openFolderPath(rawPath) {
-  const path = normalizePath(rawPath);
+  const path = normalizeOpenFolderPath(rawPath);
   if (!path) return false;
 
   try {
@@ -23,7 +32,6 @@ export async function openFolderPath(rawPath) {
     return true;
   } catch (fallbackError) {
     try {
-      const { openPath } = await import("@tauri-apps/plugin-opener");
       await openPath(path);
       return true;
     } catch (openerError) {

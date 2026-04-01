@@ -4,10 +4,16 @@ use std::{
     sync::Mutex,
 };
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{Emitter, Manager, State};
+
+const MAX_PDN_FILE_BYTES: u64 = 128 * 1024 * 1024; // 128 MB
+const MAX_PDN_DIMENSION: u32 = 16_384;
+const MAX_PDN_OUTPUT_BYTES: usize = 384 * 1024 * 1024; // 384 MB RGBA
+const MAX_PDN_INFLATED_CHUNK_BYTES: usize = 64 * 1024 * 1024; // 64 MB/chunk
+const MAX_PDN_TOTAL_INFLATED_BYTES: usize = 768 * 1024 * 1024; // 768 MB total
 
 fn is_yft(path: &str) -> bool {
     Path::new(path)
@@ -259,6 +265,88 @@ struct PendingOpenFileState {
 struct WatchPayload {
     path: String,
     kind: String,
+}
+
+#[derive(serde::Deserialize)]
+struct UpdaterFeedPlatform {
+    url: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct UpdaterFeed {
+    version: Option<String>,
+    pub_date: Option<String>,
+    platforms: Option<HashMap<String, UpdaterFeedPlatform>>,
+}
+
+#[tauri::command]
+async fn inspect_updater_release(endpoint: String) -> Result<serde_json::Value, String> {
+    let endpoint = endpoint.trim().to_string();
+    if endpoint.is_empty() {
+        return Ok(serde_json::Value::Null);
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::builder()
+            .user_agent(format!(
+                "{}/{}",
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION")
+            ))
+            .build()
+            .map_err(|e| format!("Failed to build updater client: {e}"))?;
+
+        let feed = client
+            .get(&endpoint)
+            .send()
+            .and_then(|response| response.error_for_status())
+            .map_err(|e| format!("Failed to fetch updater feed: {e}"))?
+            .json::<UpdaterFeed>()
+            .map_err(|e| format!("Failed to parse updater feed: {e}"))?;
+
+        let version = feed
+            .version
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+
+        let pub_date = feed
+            .pub_date
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+
+        let url = feed.platforms.and_then(|platforms| {
+            platforms.into_values().find_map(|platform| {
+                platform.url.and_then(|value| {
+                    let trimmed = value.trim().to_string();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                })
+            })
+        });
+
+        Ok(serde_json::json!({
+            "version": version,
+            "pubDate": pub_date,
+            "url": url,
+        }))
+    })
+    .await
+    .map_err(|e| format!("Failed to join updater inspection task: {e}"))?
 }
 
 #[tauri::command]
@@ -983,6 +1071,15 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
     use flate2::read::GzDecoder;
     use std::io::Read;
 
+    let file_meta = std::fs::metadata(&path).map_err(|e| format!("Failed to stat PDN file: {e}"))?;
+    if file_meta.len() > MAX_PDN_FILE_BYTES {
+        return Err(format!(
+            "PDN file exceeds safety limit ({} bytes > {} bytes).",
+            file_meta.len(),
+            MAX_PDN_FILE_BYTES
+        ));
+    }
+
     let data = std::fs::read(&path).map_err(|e| format!("Failed to read PDN file: {e}"))?;
 
     // Validate PDN3 magic
@@ -995,8 +1092,15 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
     let (width, height) = extract_pdn_dimensions(&data)
         .ok_or_else(|| "Could not extract image dimensions from PDN file.".to_string())?;
 
-    if width == 0 || height == 0 || width > 65536 || height > 65536 {
+    if width == 0 || height == 0 || width > MAX_PDN_DIMENSION || height > MAX_PDN_DIMENSION {
         return Err(format!("Invalid PDN dimensions: {width}x{height}"));
+    }
+    let initial_expected_size = (width as usize).saturating_mul(height as usize).saturating_mul(4);
+    if initial_expected_size == 0 || initial_expected_size > MAX_PDN_OUTPUT_BYTES {
+        return Err(format!(
+            "PDN image dimensions exceed safety output limit ({} bytes > {} bytes).",
+            initial_expected_size, MAX_PDN_OUTPUT_BYTES
+        ));
     }
 
     // Find and decompress all gzip chunks
@@ -1017,12 +1121,46 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
 
     // Decompress all chunks first.
     let mut inflated_chunks: Vec<Vec<u8>> = Vec::new();
+    let mut total_inflated_bytes: usize = 0;
 
     for offset in &gzip_offsets {
         let slice = &data[*offset..];
         let mut decoder = GzDecoder::new(slice);
         let mut inflated = Vec::new();
-        if decoder.read_to_end(&mut inflated).is_err() || inflated.is_empty() {
+        let mut chunk_buf = [0u8; 8192];
+
+        loop {
+            let bytes_read = match decoder.read(&mut chunk_buf) {
+                Ok(n) => n,
+                Err(_) => {
+                    inflated.clear();
+                    break;
+                }
+            };
+
+            if bytes_read == 0 {
+                break;
+            }
+
+            if inflated.len().saturating_add(bytes_read) > MAX_PDN_INFLATED_CHUNK_BYTES {
+                return Err(format!(
+                    "PDN chunk exceeded inflate safety limit ({} bytes).",
+                    MAX_PDN_INFLATED_CHUNK_BYTES
+                ));
+            }
+
+            if total_inflated_bytes.saturating_add(bytes_read) > MAX_PDN_TOTAL_INFLATED_BYTES {
+                return Err(format!(
+                    "PDN decode exceeded total inflate safety limit ({} bytes).",
+                    MAX_PDN_TOTAL_INFLATED_BYTES
+                ));
+            }
+
+            inflated.extend_from_slice(&chunk_buf[..bytes_read]);
+            total_inflated_bytes += bytes_read;
+        }
+
+        if inflated.is_empty() {
             continue;
         }
 
@@ -1040,7 +1178,7 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
     maybe_swap_pdn_dimensions_by_alignment(&inflated_chunks, &mut width_usize, &mut height_usize);
 
     let expected_size = width_usize.saturating_mul(height_usize).saturating_mul(4);
-    if expected_size == 0 {
+    if expected_size == 0 || expected_size > MAX_PDN_OUTPUT_BYTES {
         return Err("PDN decode produced invalid output dimensions.".to_string());
     }
 
@@ -1325,6 +1463,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            inspect_updater_release,
             start_watch,
             stop_watch,
             start_window_watch,

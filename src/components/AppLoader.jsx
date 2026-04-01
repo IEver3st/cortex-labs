@@ -189,8 +189,8 @@ export default function AppLoader({ variant = "boot" }) {
               style={{
                 opacity: i < visibleLines ? 1 : 0,
                 color: i === visibleLines - 1
-                  ? "oklch(0.72 0.13 182)"
-                  : "oklch(0.45 0.05 182)",
+                  ? "var(--mg-primary)"
+                  : "var(--mg-muted)",
                 transition: "opacity 0.2s ease, color 0.6s ease",
               }}
             >

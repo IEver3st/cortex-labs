@@ -184,6 +184,17 @@ const GROUP_LABELS = {
   older: "Older",
 };
 
+function renderModeLabel(mode, labelClassName) {
+  const label = <span className={labelClassName}>{mode.label}</span>;
+  if (mode.id !== "templategen") return label;
+  return (
+    <span className="template-gen-label">
+      {label}
+      <span className="template-gen-beta-badge">Beta</span>
+    </span>
+  );
+}
+
 function shouldShowRecents() {
   const prefs = loadPrefs() || {};
   const defaults =
@@ -575,7 +586,7 @@ export default function HomePage({
                       <Icon className="w-4 h-4" />
                     </div>
                     <div className="hp-mode-text">
-                      <span className="hp-mode-label">{mode.label}</span>
+                      {renderModeLabel(mode, "hp-mode-label")}
                       <span className="hp-mode-desc">{mode.desc}</span>
                     </div>
                     <div className="hp-mode-shortcut">
@@ -964,7 +975,7 @@ export default function HomePage({
                         onClick={() => setSelectedMode(mode.id)}
                       >
                         <mode.icon className="w-3.5 h-3.5" />
-                        <span>{mode.label}</span>
+                        {renderModeLabel(mode, "home-mode-option-label")}
                       </button>
                     ))}
                   </div>

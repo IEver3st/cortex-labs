@@ -83,7 +83,6 @@ function getInitialPrefs() {
   return {
     showGrid: d.showGrid ?? false,
     showHints: d.showHints ?? true,
-    cameraWASD: d.cameraWASD ?? false,
     legacyLayersLayout: d.legacyLayersLayout ?? false,
     liveryExteriorOnly: d.liveryExteriorOnly ?? false,
     showRecents: d.showRecents ?? true,
@@ -357,13 +356,18 @@ export default function Onboarding({ onComplete }) {
                       checked={prefs.showGrid}
                       onChange={(v) => togglePref("showGrid", v)}
                     />
-                    <SettingToggle
-                      icon={Gamepad2}
-                      label="WASD Camera"
-                      hint="FPS-style camera controls instead of orbit mode"
-                      checked={prefs.cameraWASD}
-                      onChange={(v) => togglePref("cameraWASD", v)}
-                    />
+                    <div className="onb-setting-row" aria-hidden="true">
+                      <div className="onb-setting-icon">
+                        <Gamepad2 className="w-4 h-4" />
+                      </div>
+                      <div className="onb-setting-text">
+                        <span className="onb-setting-label">Free-Cam</span>
+                        <span className="onb-setting-hint">Always available: W/A/S/D move, Q/E rise, Shift to boost</span>
+                      </div>
+                      <div className="onb-switch is-on">
+                        <div className="onb-switch-thumb" style={{ transform: "translateX(16px)" }} />
+                      </div>
+                    </div>
                     <SettingToggle
                       icon={Car}
                       label="Exterior Only"

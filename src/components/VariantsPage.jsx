@@ -530,7 +530,6 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   useEffect(() => { setLiveryTarget(""); setLiveryTargetReady(false); }, [modelPath]);
 
   /* ── UV pan/zoom ── */
-  const handleUvWheel = useCallback((e) => { e.preventDefault(); setUvZoom((p) => Math.max(0.1, Math.min(10, p * (e.deltaY > 0 ? 0.9 : 1.1)))); }, []);
   const handleUvPointerDown = useCallback((e) => { if (e.button === 1 || (e.button === 0 && e.altKey)) { setUvPanning(true); e.currentTarget.setPointerCapture(e.pointerId); } }, []);
   const handleUvPointerMove = useCallback((e) => {
     if (uvContainerRef.current && uvImgRef.current) {
@@ -542,6 +541,18 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   }, [uvPanning, uvZoom]);
   const handleUvPointerUp = useCallback(() => { setUvPanning(false); }, []);
   const handleUvZoomFit = useCallback(() => { setUvZoom(1); setUvPan({ x: 0, y: 0 }); }, []);
+  useEffect(() => {
+    const element = uvContainerRef.current;
+    if (!element) return undefined;
+
+    const handleWheel = (event) => {
+      event.preventDefault();
+      setUvZoom((previous) => Math.max(0.1, Math.min(10, previous * (event.deltaY > 0 ? 0.9 : 1.1))));
+    };
+
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    return () => element.removeEventListener("wheel", handleWheel);
+  }, [previewCollapsed, psdPath]);
 
   /* ── Camera ── */
   const handleCameraPreset = useCallback((k) => { viewerApiRef.current?.setPreset?.(k); }, []);
@@ -954,6 +965,8 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             </div>
           </nav>
 
+          <div className="ctx-bar-drag-pad" aria-hidden="true" />
+
           {/* RIGHT ZONE: View toggles + Size + Status + Export — unified strip */}
           <div className="ctx-bar-right">
             {/* View toggles */}
@@ -1215,7 +1228,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                     {uvHover && <span className="vp-uv-readout">{uvHover.px},{uvHover.py}</span>}
                   </div>
                   <div className={`vp-texture-view ${showChecker ? "vp-texture-view--checker" : ""} ${showGrid ? "vp-texture-view--grid" : ""}`}
-                    ref={uvContainerRef} onWheel={handleUvWheel} onPointerDown={handleUvPointerDown} onPointerMove={handleUvPointerMove} onPointerUp={handleUvPointerUp}>
+                    ref={uvContainerRef} onPointerDown={handleUvPointerDown} onPointerMove={handleUvPointerMove} onPointerUp={handleUvPointerUp}>
                     {previewUrl ? (
                       <div className="vp-uv-canvas" style={{ transform: `translate(${uvPan.x}px, ${uvPan.y}px) scale(${uvZoom})`, transformOrigin: "center center" }}>
                         <img ref={uvImgRef} src={previewUrl} alt="Variant preview" className="vp-texture-img" draggable={false} />

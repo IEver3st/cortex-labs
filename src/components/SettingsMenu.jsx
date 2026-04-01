@@ -1,22 +1,31 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader } from "lucide-react";
+import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Sun, Moon } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { exists as fsExists } from "@tauri-apps/plugin-fs";
 import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
+import { Toggle } from "./ui/toggle";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_CATEGORIES,
   HOTKEY_LABELS,
   mergeHotkeys,
 } from "../lib/hotkeys";
-import { loadPrefs, savePrefs } from "../lib/prefs";
+import { emitPrefsUpdated, loadPrefs, savePrefs } from "../lib/prefs";
 import { hasSeenWhatsNew, getAppVersion } from "../lib/changelog";
 import { useUpdateChecker } from "../lib/updater";
+import {
+  DEFAULT_TEMPLATE_MARKER_PICK_MODIFIER,
+  DEFAULT_TEMPLATE_MARKER_REGENERATE_BEHAVIOR,
+  normalizeTemplateMarkerPickModifier,
+  normalizeTemplateMarkerRegenerateBehavior,
+} from "../lib/template-marker-utils";
 
 /* ─── Built-in defaults (canonical source) ─── */
 const BUILT_IN_DEFAULTS = {
+  darkMode: true,
   liveryExteriorOnly: false,
   windowTemplateEnabled: false,
   windowTextureTarget: "auto",
@@ -29,6 +38,7 @@ const BUILT_IN_DEFAULTS = {
   showHints: true,
   hideRotText: false,
   showGrid: false,
+  showShadows: false,
   showRecents: true,
   lightIntensity: 1.0,
   glossiness: 0.5,
@@ -40,7 +50,15 @@ const BUILT_IN_DEFAULTS = {
   autoTemplateExportFormat: "psd",
   cameraControlsInPanel: false,
   legacyLayersLayout: false,
+  templateMarkerPickModifier: DEFAULT_TEMPLATE_MARKER_PICK_MODIFIER,
+  templateMarkerRegenerateBehavior: DEFAULT_TEMPLATE_MARKER_REGENERATE_BEHAVIOR,
 };
+
+function sanitizeStoredDefaults(stored) {
+  if (!stored || typeof stored !== "object") return {};
+  const { showAmbientOcclusion: _removedAmbientOcclusion, ...rest } = stored;
+  return rest;
+}
 
 const MIN_UI_SCALE = 0.5;
 const MAX_UI_SCALE = 1.4;
@@ -58,12 +76,18 @@ function normalizeAutoTemplateExportFormat(value) {
 
 function getStoredDefaults() {
   const prefs = loadPrefs();
-  const stored = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
+  const stored = sanitizeStoredDefaults(prefs?.defaults);
   const merged = { ...BUILT_IN_DEFAULTS, ...stored };
   return {
     ...merged,
     uiScale: clampUiScale(merged.uiScale),
     autoTemplateExportFormat: normalizeAutoTemplateExportFormat(merged.autoTemplateExportFormat),
+    templateMarkerPickModifier: normalizeTemplateMarkerPickModifier(
+      merged.templateMarkerPickModifier,
+    ),
+    templateMarkerRegenerateBehavior: normalizeTemplateMarkerRegenerateBehavior(
+      merged.templateMarkerRegenerateBehavior,
+    ),
   };
 }
 
@@ -75,9 +99,9 @@ function getStoredHotkeys() {
 
 function ColorField({ label, value, onChange, onReset }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2 min-w-0">
       <div className="text-[9px] uppercase tracking-[0.12em] font-mono" style={{ color: 'var(--mg-muted)' }}>{label}</div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0">
         <div className="relative shrink-0">
           <div className="w-7 h-7 border" style={{ background: value, borderColor: 'var(--mg-border)', borderRadius: 'var(--mg-radius)' }} />
           <input
@@ -89,7 +113,7 @@ function ColorField({ label, value, onChange, onReset }) {
           />
         </div>
         <input
-          className="settings-input flex-1 min-w-0"
+          className="settings-input flex-1"
           value={value}
           onChange={(event) => onChange(event.currentTarget.value)}
         />
@@ -116,6 +140,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   const [activeSection, setActiveSection] = useState("general");
   const [portalNode, setPortalNode] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [previewFolderExists, setPreviewFolderExists] = useState(true);
   const updater = useUpdateChecker();
 
   const [draft, setDraft] = useState(() => getStoredDefaults());
@@ -159,6 +184,31 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   }, []);
 
   useEffect(() => {
+    if (!open || !isTauriRuntime) return;
+
+    const previewFolder = typeof draft.previewFolder === "string" ? draft.previewFolder.trim() : "";
+    if (!previewFolder) {
+      setPreviewFolderExists(true);
+      return;
+    }
+
+    let cancelled = false;
+    const checkPreviewFolder = async () => {
+      try {
+        const exists = await fsExists(previewFolder);
+        if (!cancelled) setPreviewFolderExists(Boolean(exists));
+      } catch {
+        if (!cancelled) setPreviewFolderExists(false);
+      }
+    };
+
+    checkPreviewFolder();
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.previewFolder, isTauriRuntime, open]);
+
+  useEffect(() => {
     const handleOpen = () => setOpen(true);
     const handleClose = () => setOpen(false);
     const handleNav = (e) => {
@@ -196,9 +246,18 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
       ...draft,
       uiScale: normalizedUiScale,
       autoTemplateExportFormat: normalizeAutoTemplateExportFormat(draft.autoTemplateExportFormat),
+      templateMarkerPickModifier: normalizeTemplateMarkerPickModifier(
+        draft.templateMarkerPickModifier,
+      ),
+      templateMarkerRegenerateBehavior: normalizeTemplateMarkerRegenerateBehavior(
+        draft.templateMarkerRegenerateBehavior,
+      ),
     };
+    // Apply dark mode immediately
+    document.documentElement.classList.toggle('dark', normalizedDraft.darkMode ?? true);
     const prefs = loadPrefs() || {};
     savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: hotkeysDraft });
+    emitPrefsUpdated();
     // Apply UI scale immediately
     document.documentElement.style.setProperty("--es-ui-scale", String(normalizedUiScale));
     window.dispatchEvent(
@@ -414,7 +473,14 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <div className="settings-row">
                                       <div className="settings-row-label">
                                         <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Preview Export Path</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>{draft.previewFolder || "Not configured (Default: System Temp)"}</div>
+                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
+                                          {draft.previewFolder || "Not configured (You will be prompted when capturing previews)"}
+                                        </div>
+                                        {draft.previewFolder && !previewFolderExists ? (
+                                          <div className="text-[9px] mt-1" style={{ color: 'var(--mg-destructive)' }}>
+                                            Saved folder no longer exists. Choose a new folder before capturing previews.
+                                          </div>
+                                        ) : null}
                                       </div>
                                       <div className="flex items-center gap-2">
                                         <button
@@ -518,16 +584,10 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                   <div className="settings-panel-title">Navigation Defaults</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>WASD Free-Cam</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>W/A/S/D pan, Q/E rise, Shift to boost</div>
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Free-Cam</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Always available: W/A/S/D move, Q/E rise, Shift to boost</div>
                                     </div>
-                                    <button
-                                      type="button"
-                                      className={`settings-toggle ${draft.cameraWASD ? "is-on" : ""}`}
-                                      onClick={() => setDraft((p) => ({ ...p, cameraWASD: !p.cameraWASD }))}
-                                    >
-                                      <span className="settings-toggle-dot" />
-                                    </button>
+                                    <div className="settings-row-note">Enabled in every viewer mode</div>
                                   </div>
 
                                 <div className="settings-row">
@@ -568,6 +628,79 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                   >
                                     <span className="settings-toggle-dot" />
                                   </button>
+                                </div>
+                              </section>
+
+                              <section className="settings-panel">
+                                <div className="settings-panel-title">Render Effects</div>
+
+                                <div className="settings-row">
+                                  <div className="settings-row-label">
+                                    <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Ground Shadows</div>
+                                    <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Project a floor shadow under the vehicle in Studio viewers</div>
+                                  </div>
+                                  <Toggle
+                                    checked={draft.showShadows}
+                                    onChange={(v) => setDraft((p) => ({ ...p, showShadows: v }))}
+                                    ariaLabel="Toggle ground shadows"
+                                  />
+                                </div>
+
+                              </section>
+
+                              <section className="settings-panel">
+                                <div className="settings-panel-title">Template Marker Interaction</div>
+
+                                <div className="settings-row">
+                                  <div className="settings-row-label">
+                                    <div className="font-medium" style={{ color: "var(--mg-fg)" }}>
+                                      Marker Pick Modifier
+                                    </div>
+                                    <div className="text-[9px] mt-0.5" style={{ color: "var(--mg-muted)" }}>
+                                      Hold this key while edit mode is active to pick chunks from the model or template preview.
+                                    </div>
+                                  </div>
+                                </div>
+                                <div
+                                  className="flex items-center gap-1 p-1"
+                                  style={{
+                                    border: "1px solid var(--mg-border)",
+                                    borderRadius: "var(--mg-radius)",
+                                    background: "rgba(31, 30, 29, 0.03)",
+                                  }}
+                                >
+                                  {[
+                                    ["alt", "Alt"],
+                                    ["shift", "Shift"],
+                                    ["ctrl", "Ctrl"],
+                                  ].map(([value, label]) => (
+                                    <button
+                                      key={value}
+                                      type="button"
+                                      className={`px-3 py-1 text-[9px] transition-all ${
+                                        draft.templateMarkerPickModifier === value ? "font-bold" : ""
+                                      }`}
+                                      style={{
+                                        borderRadius: "calc(var(--mg-radius) - 2px)",
+                                        background:
+                                          draft.templateMarkerPickModifier === value
+                                            ? "oklch(0.648 0.116 182.503 / 15%)"
+                                            : "transparent",
+                                        color:
+                                          draft.templateMarkerPickModifier === value
+                                            ? "var(--mg-primary)"
+                                            : "var(--mg-muted)",
+                                      }}
+                                      onClick={() =>
+                                        setDraft((prev) => ({
+                                          ...prev,
+                                          templateMarkerPickModifier: value,
+                                        }))
+                                      }
+                                    >
+                                      {label}
+                                    </button>
+                                  ))}
                                 </div>
                               </section>
                               </div>
@@ -684,6 +817,25 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <div className="settings-panel-title">Interface Aesthetic</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Dark Mode</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Toggle between dark and light interface theme</div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Sun className="h-3 w-3" style={{ color: draft.darkMode ? 'var(--mg-muted)' : 'var(--mg-primary)', opacity: draft.darkMode ? 0.4 : 1, transition: 'all 0.2s ease' }} />
+                                      <button
+                                        type="button"
+                                        className={`settings-toggle ${draft.darkMode ? 'is-on' : ''}`}
+                                        onClick={() => setDraft((p) => ({ ...p, darkMode: !p.darkMode }))}
+                                        aria-pressed={draft.darkMode}
+                                        aria-label="Toggle dark mode"
+                                      >
+                                        <span className="settings-toggle-dot" />
+                                      </button>
+                                      <Moon className="h-3 w-3" style={{ color: draft.darkMode ? 'var(--mg-primary)' : 'var(--mg-muted)', opacity: draft.darkMode ? 1 : 0.4, transition: 'all 0.2s ease' }} />
+                                    </div>
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
                                       <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Window Controls Style</div>
                                       <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Select visual theme for window buttons</div>
                                     </div>
@@ -718,7 +870,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                                 <section className="settings-panel">
                                   <div className="settings-panel-title">Default Environment Colors</div>
-                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 mt-2">
+                                   <div className="grid grid-cols-2 gap-4 mt-2">
                                     <ColorField
                                       label="Base Body"
                                       value={draft.bodyColor}
@@ -798,14 +950,36 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                 <section className="settings-panel settings-update-panel">
                                   <div className="settings-panel-title">Software Update</div>
 
+                                  {/* Published feed behind installed build */}
+                                  {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind === "ahead" ? (
+                                    <div className="settings-update-status settings-update-status--error">
+                                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-[10px]" style={{ color: 'var(--mg-destructive)' }}>Published feed is behind this build</div>
+                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
+                                          {updater.statusNote}
+                                        </div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="settings-mini settings-update-check-btn"
+                                        onClick={updater.checkNow}
+                                        disabled={updater.checking}
+                                      >
+                                        <RefreshCw className="h-3 w-3" />
+                                        Check again
+                                      </button>
+                                    </div>
+                                  ) : null}
+
                                   {/* Up-to-date state */}
-                                  {!updater.available && !updater.checking && !updater.error && updater.lastChecked ? (
+                                  {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind !== "ahead" ? (
                                     <div className="settings-update-status settings-update-status--ok">
                                       <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
                                       <div className="flex-1 min-w-0">
                                         <div className="text-[10px]" style={{ color: 'var(--mg-fg)' }}>You're up to date</div>
                                         <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
-                                          Last checked {new Date(updater.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                          {updater.statusNote || `Last checked ${new Date(updater.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
                                         </div>
                                       </div>
                                       <button

@@ -32,14 +32,27 @@ import {
   loadPdnTexture,
   YDD_SCAN_SETTINGS,
 } from "../lib/viewer-utils";
-
-const presets = {
-  front: new THREE.Vector3(0, 0, -1),
-  back: new THREE.Vector3(0, 0, 1),
-  side: new THREE.Vector3(1, 0, 0),
-  angle: new THREE.Vector3(0.8, 0.12, -0.8),
-  top: new THREE.Vector3(0, 1, 0),
-};
+import {
+  buildCameraFraming,
+  computeFramingBounds,
+  CAMERA_PRESET_KEYS,
+  DEFAULT_CAMERA_PRESET,
+} from "../lib/camera-framing.js";
+import {
+  cloneViewerCameraState,
+  restoreViewerCameraState,
+} from "../lib/camera-state.js";
+import { isTemplateMarkerModifierPressed } from "../lib/template-marker-utils.js";
+import {
+  applyShadowFlags,
+  configureShadowLight,
+  createShadowReceiver,
+  disposeShadowReceiver,
+  renderWithEffects,
+  updateShadowReceiver,
+  updateDirectionalShadowFrustum,
+} from "../lib/viewer-render-effects.js";
+import { stabilizeObjectForWorld } from "../lib/model-normalization.js";
 
 const defaultBody = "#dfe4ea";
 const ALL_TARGET = "all";
@@ -109,10 +122,6 @@ const MATERIAL_TYPE_PRESETS = {
   metal: { metalness: 0.82, transparency: 0, transmission: 0, depthWrite: true },
   glass: { metalness: 0.0, transparency: 0.62, transmission: 0.9, depthWrite: false },
 };
-const FIT_SAMPLE_LIMIT = 12000;
-const FIT_TRIM_PERCENT = 0.02;
-const FIT_MIN_SAMPLES = 96;
-const FIT_MIN_SIZE_RATIO = 0.35;
 const LIVERY_UV_MIN_CONFIDENCE = 0.55;
 const LIVERY_UV_FALLBACK_MARGIN = 0.2;
 
@@ -267,6 +276,7 @@ function ViewerComponent({
   lightAzimuth = 54,
   lightElevation = 46,
   glossiness = 0.5,
+  shadowsEnabled = false,
   materialType = "paint",
   materialLightIntensity = 1.0,
   materialGlossiness = 0.62,
@@ -283,6 +293,10 @@ function ViewerComponent({
   onFormatWarning,
   isActive = true,
   includeTemplateGeometry = false,
+  templateMarkerPickModifier = "alt",
+  onTemplateMarkerUvHover,
+  onTemplateMarkerUvLeave,
+  onTemplateMarkerUvPick,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -295,8 +309,16 @@ function ViewerComponent({
   const materialTextureRef = useRef(null);
   const backgroundTextureRef = useRef(null);
   const lightsRef = useRef({ ambient: null, key: null, rim: null });
+  const shadowReceiverRef = useRef(null);
   const gridRef = useRef(null);
-  const fitRef = useRef({ center: new THREE.Vector3(), distance: 4 });
+  const fitRef = useRef({
+    bounds: null,
+    center: new THREE.Vector3(),
+    distance: 4,
+    baseDistance: 4,
+    presetKey: DEFAULT_CAMERA_PRESET,
+    zoomFactor: 1,
+  });
   const [sceneReady, setSceneReady] = useState(false);
   const requestRenderRef = useRef(null);
   const wasdStateRef = useRef({
@@ -316,8 +338,24 @@ function ViewerComponent({
   const onTextureErrorRef = useRef(onTextureError);
   const onWindowTextureErrorRef = useRef(onWindowTextureError);
   const onFormatWarningRef = useRef(onFormatWarning);
+  const onTemplateMarkerUvHoverRef = useRef(onTemplateMarkerUvHover);
+  const onTemplateMarkerUvLeaveRef = useRef(onTemplateMarkerUvLeave);
+  const onTemplateMarkerUvPickRef = useRef(onTemplateMarkerUvPick);
+  const templateMarkerPickModifierRef = useRef(templateMarkerPickModifier);
   const isActiveRef = useRef(isActive);
+  const shadowsEnabledRef = useRef(shadowsEnabled);
   const materialStateRef = useRef({});
+  const markerPickStateRef = useRef({
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    moved: false,
+    controlsDisabled: false,
+  });
+  const cameraStateRef = useRef({
+    presetKey: DEFAULT_CAMERA_PRESET,
+    zoomFactor: 1,
+  });
 
   const resolvedBodyColor = bodyColor || defaultBody;
 
@@ -346,11 +384,25 @@ function ViewerComponent({
   }, [onTextureError, onWindowTextureError, onFormatWarning]);
 
   useEffect(() => {
+    onTemplateMarkerUvHoverRef.current = onTemplateMarkerUvHover;
+    onTemplateMarkerUvLeaveRef.current = onTemplateMarkerUvLeave;
+    onTemplateMarkerUvPickRef.current = onTemplateMarkerUvPick;
+  }, [onTemplateMarkerUvHover, onTemplateMarkerUvLeave, onTemplateMarkerUvPick]);
+
+  useEffect(() => {
+    templateMarkerPickModifierRef.current = templateMarkerPickModifier;
+  }, [templateMarkerPickModifier]);
+
+  useEffect(() => {
     isActiveRef.current = isActive;
     if (isActive) {
       requestRenderRef.current?.();
     }
   }, [isActive]);
+
+  useEffect(() => {
+    shadowsEnabledRef.current = shadowsEnabled;
+  }, [shadowsEnabled]);
 
   useEffect(() => {
     const materialConfig = {
@@ -405,6 +457,8 @@ function ViewerComponent({
     renderer.setPixelRatio(getPixelRatio());
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = Boolean(shadowsEnabled);
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
     camera.position.set(2.4, 1.2, 2.8);
@@ -429,9 +483,12 @@ function ViewerComponent({
     key.position.set(3.5, 4.5, 2.5);
     const rim = new THREE.DirectionalLight(0xffffff, 0.35 * lightIntensity);
     rim.position.set(-3, 2, -2.2);
+    configureShadowLight(key, shadowsEnabled);
+    const shadowReceiver = createShadowReceiver();
 
     lightsRef.current = { ambient, key, rim };
-    scene.add(ambient, key, rim);
+    shadowReceiverRef.current = shadowReceiver;
+    scene.add(ambient, key, rim, shadowReceiver);
 
     renderer.domElement.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -449,6 +506,49 @@ function ViewerComponent({
     let isRendering = false;
     let renderRequested = false;
     const lastViewport = { width: 0, height: 0, pixelRatio: 0 };
+    const applyCameraFrame = (presetKey = cameraStateRef.current.presetKey, zoomFactor = cameraStateRef.current.zoomFactor, shouldRequestRender = true) => {
+      if (!containerRef.current || !fitRef.current?.bounds) return;
+      const { clientWidth, clientHeight } = containerRef.current;
+      if (!clientWidth || !clientHeight) return;
+
+      const framing = buildCameraFraming({
+        bounds: fitRef.current.bounds,
+        aspect: clientWidth / clientHeight,
+        fov: camera.fov,
+        presetKey,
+        zoomFactor,
+      });
+
+      camera.up.copy(framing.up);
+      camera.near = framing.near;
+      camera.far = framing.far;
+      camera.position.copy(framing.position);
+      camera.updateProjectionMatrix();
+      controls.target.copy(framing.target);
+      controls.minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
+      controls.maxDistance = Math.max(framing.baseDistance * 10, 10);
+      controls.update();
+
+      fitRef.current = {
+        ...fitRef.current,
+        center: framing.target.clone(),
+        distance: framing.distance,
+        baseDistance: framing.baseDistance,
+        presetKey: framing.presetKey,
+        zoomFactor,
+      };
+      cameraStateRef.current = {
+        presetKey: framing.presetKey,
+        zoomFactor,
+      };
+
+      if (lightsRef.current.key?.castShadow) {
+        updateDirectionalShadowFrustum(lightsRef.current.key, framing.distance);
+      }
+
+      if (shouldRequestRender) requestRenderRef.current?.();
+    };
+
     const canRenderFrame = () => {
       if (!isActiveRef.current) return false;
       const container = containerRef.current;
@@ -462,7 +562,16 @@ function ViewerComponent({
         return;
       }
       const needsUpdate = controls.update();
-      renderer.render(scene, camera);
+      updateShadowReceiver(shadowReceiverRef.current, {
+        bounds: fitRef.current?.bounds,
+        camera,
+        enabled: shadowsEnabledRef.current,
+      });
+      renderWithEffects({
+        renderer,
+        scene,
+        camera,
+      });
       if (renderRequested || needsUpdate) {
         renderRequested = false;
         frameId = requestAnimationFrame(renderFrame);
@@ -480,6 +589,163 @@ function ViewerComponent({
     };
 
     requestRenderRef.current = requestRenderFrame;
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    const restoreMarkerPickControls = () => {
+      if (!markerPickStateRef.current.controlsDisabled) return;
+      markerPickStateRef.current.controlsDisabled = false;
+      controls.enabled = true;
+    };
+
+    const isMarkerPickingEnabled = () =>
+      Boolean(
+        onTemplateMarkerUvHoverRef.current ||
+          onTemplateMarkerUvLeaveRef.current ||
+          onTemplateMarkerUvPickRef.current,
+      );
+
+    const clearMarkerHover = () => {
+      renderer.domElement.style.cursor = "";
+      onTemplateMarkerUvLeaveRef.current?.();
+    };
+
+    const getTemplateMarkerHit = (event) => {
+      if (!modelRef.current) return null;
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+
+      const clientX = Number(event?.clientX);
+      const clientY = Number(event?.clientY);
+      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+      raycaster.setFromCamera(pointer, camera);
+
+      const intersections = raycaster.intersectObject(modelRef.current, true);
+      for (const intersection of intersections) {
+        const object = intersection?.object;
+        if (!object?.isMesh || !object.visible) continue;
+        if (!object.userData?.templateMarkerInteractive) continue;
+        const uv = intersection?.uv;
+        if (!uv || !Number.isFinite(uv.x) || !Number.isFinite(uv.y)) continue;
+        return {
+          uv: { x: uv.x, y: uv.y },
+          meshName: object.name || object.userData?.meshLabel || "",
+          materialName: object.material?.name || object.userData?.baseMaterial?.name || "",
+        };
+      }
+      return null;
+    };
+
+    const handleMarkerPointerMove = (event) => {
+      if (!isMarkerPickingEnabled()) return;
+      const modifierActive = isTemplateMarkerModifierPressed(
+        event,
+        templateMarkerPickModifierRef.current,
+      );
+      if (!modifierActive) {
+        clearMarkerHover();
+        restoreMarkerPickControls();
+        return;
+      }
+
+      const hit = getTemplateMarkerHit(event);
+      renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
+      if (hit) {
+        onTemplateMarkerUvHoverRef.current?.(hit);
+      } else {
+        onTemplateMarkerUvLeaveRef.current?.();
+      }
+
+      if (markerPickStateRef.current.pointerId !== null) {
+        const distance = Math.hypot(
+          Number(event.clientX) - markerPickStateRef.current.startX,
+          Number(event.clientY) - markerPickStateRef.current.startY,
+        );
+        if (distance > 6) {
+          markerPickStateRef.current.moved = true;
+        }
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const handleMarkerPointerDown = (event) => {
+      if (!isMarkerPickingEnabled()) return;
+      if (event.button !== 0) return;
+      if (
+        !isTemplateMarkerModifierPressed(event, templateMarkerPickModifierRef.current)
+      ) {
+        return;
+      }
+
+      markerPickStateRef.current.pointerId = event.pointerId ?? null;
+      markerPickStateRef.current.startX = Number(event.clientX) || 0;
+      markerPickStateRef.current.startY = Number(event.clientY) || 0;
+      markerPickStateRef.current.moved = false;
+      markerPickStateRef.current.controlsDisabled = true;
+      controls.enabled = false;
+
+      const hit = getTemplateMarkerHit(event);
+      renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
+      if (hit) {
+        onTemplateMarkerUvHoverRef.current?.(hit);
+      } else {
+        onTemplateMarkerUvLeaveRef.current?.();
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const handleMarkerPointerUp = (event) => {
+      if (!isMarkerPickingEnabled()) return;
+      const state = markerPickStateRef.current;
+      if (state.pointerId !== null && event.pointerId !== state.pointerId) return;
+
+      if (
+        !isTemplateMarkerModifierPressed(event, templateMarkerPickModifierRef.current)
+      ) {
+        state.pointerId = null;
+        state.moved = false;
+        restoreMarkerPickControls();
+        clearMarkerHover();
+        return;
+      }
+
+      const hit = getTemplateMarkerHit(event);
+      renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
+
+      if (!state.moved && hit) {
+        onTemplateMarkerUvPickRef.current?.(hit);
+      } else if (!hit) {
+        onTemplateMarkerUvLeaveRef.current?.();
+      }
+
+      state.pointerId = null;
+      state.moved = false;
+      restoreMarkerPickControls();
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const handleMarkerPointerCancel = () => {
+      if (!isMarkerPickingEnabled()) return;
+      markerPickStateRef.current.pointerId = null;
+      markerPickStateRef.current.moved = false;
+      restoreMarkerPickControls();
+      clearMarkerHover();
+    };
+
+    renderer.domElement.addEventListener("pointerdown", handleMarkerPointerDown, true);
+    renderer.domElement.addEventListener("pointermove", handleMarkerPointerMove, true);
+    renderer.domElement.addEventListener("pointerup", handleMarkerPointerUp, true);
+    renderer.domElement.addEventListener("pointerleave", handleMarkerPointerCancel, true);
+    renderer.domElement.addEventListener("pointercancel", handleMarkerPointerCancel, true);
 
     const applyResize = () => {
       if (!containerRef.current) return;
@@ -504,9 +770,16 @@ function ViewerComponent({
       renderer.setSize(clientWidth, clientHeight, false);
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
+      if (fitRef.current?.bounds) {
+        applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
+      }
       if (!isActiveRef.current) return;
       const needsUpdate = controls.update();
-      renderer.render(scene, camera);
+      renderWithEffects({
+        renderer,
+        scene,
+        camera,
+      });
       if (needsUpdate || renderRequested) {
         requestRenderFrame();
       }
@@ -527,38 +800,37 @@ function ViewerComponent({
     requestRenderFrame();
 
     onReadyRef.current?.({
-      setPreset: (presetKey) => {
-        const preset = presets[presetKey];
-        if (!preset) return;
-        const { center, distance } = fitRef.current;
-        camera.position.set(
-          center.x + preset.x * distance,
-          center.y + preset.y * distance,
-          center.z + preset.z * distance,
-        );
-        controls.target.copy(center);
-        controls.update();
+      getViewState: () => cloneViewerCameraState({
+        camera,
+        controls,
+        fit: fitRef.current,
+        cameraState: cameraStateRef.current,
+      }),
+      restoreViewState: (viewState) => {
+        const restored = restoreViewerCameraState({
+          camera,
+          controls,
+          fit: fitRef.current,
+          cameraState: cameraStateRef.current,
+          viewState,
+        });
+        fitRef.current = restored.fit;
+        cameraStateRef.current = restored.cameraState;
+
+        if (lightsRef.current.key?.castShadow) {
+          updateDirectionalShadowFrustum(lightsRef.current.key, restored.distance);
+        }
+
         requestRenderRef.current?.();
+      },
+      setPreset: (presetKey) => {
+        applyCameraFrame(presetKey, cameraStateRef.current.zoomFactor);
       },
       setZoom: (zoomFactor) => {
-        if (!cameraRef.current || !controlsRef.current) return;
-        const zoom = Math.max(0.4, Math.min(2.5, zoomFactor || 1));
-        const { center, distance } = fitRef.current;
-        const direction = new THREE.Vector3()
-          .subVectors(cameraRef.current.position, controlsRef.current.target)
-          .normalize();
-        const nextDistance = distance / zoom;
-        cameraRef.current.position.copy(center).add(direction.multiplyScalar(nextDistance));
-        controlsRef.current.target.copy(center);
-        controlsRef.current.update();
-        requestRenderRef.current?.();
+        applyCameraFrame(cameraStateRef.current.presetKey, zoomFactor);
       },
       reset: () => {
-        const { center, distance } = fitRef.current;
-        camera.position.set(center.x + distance, center.y + distance * 0.2, center.z + distance);
-        controls.target.copy(center);
-        controls.update();
-        requestRenderRef.current?.();
+        applyCameraFrame(DEFAULT_CAMERA_PRESET, 1);
       },
       rotateModel: (axis) => {
         if (!modelRef.current) return;
@@ -581,15 +853,26 @@ function ViewerComponent({
       captureScreenshot: () => {
         if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return null;
         // Render a fresh frame and capture it
-        rendererRef.current.render(sceneRef.current, cameraRef.current);
+        renderWithEffects({
+          renderer: rendererRef.current,
+          scene: sceneRef.current,
+          camera: cameraRef.current,
+        });
         return rendererRef.current.domElement.toDataURL("image/png");
       },
-      getPresetKeys: () => Object.keys(presets),
+      getPresetKeys: () => CAMERA_PRESET_KEYS,
     });
 
     return () => {
       if (frameId) cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
+      renderer.domElement.removeEventListener("pointerdown", handleMarkerPointerDown, true);
+      renderer.domElement.removeEventListener("pointermove", handleMarkerPointerMove, true);
+      renderer.domElement.removeEventListener("pointerup", handleMarkerPointerUp, true);
+      renderer.domElement.removeEventListener("pointerleave", handleMarkerPointerCancel, true);
+      renderer.domElement.removeEventListener("pointercancel", handleMarkerPointerCancel, true);
+      restoreMarkerPickControls();
+      clearMarkerHover();
       controls.removeEventListener("start", requestRenderFrame);
       controls.removeEventListener("change", requestRenderFrame);
       controls.removeEventListener("end", requestRenderFrame);
@@ -600,6 +883,8 @@ function ViewerComponent({
       backgroundTextureRef.current = null;
       releaseTexture(materialTextureRef.current);
       materialTextureRef.current = null;
+      disposeShadowReceiver(shadowReceiverRef.current);
+      shadowReceiverRef.current = null;
       controls.dispose();
       renderer.dispose();
       renderer.domElement.removeEventListener("wheel", wheelWhileDragging);
@@ -628,8 +913,34 @@ function ViewerComponent({
       r * Math.sin(elevRad),
       r * Math.cos(elevRad) * Math.cos(aziRad),
     );
+    if (shadowsEnabled) {
+      updateDirectionalShadowFrustum(key, fitRef.current?.distance);
+    }
     requestRenderRef.current?.();
-  }, [lightAzimuth, lightElevation]);
+  }, [lightAzimuth, lightElevation, shadowsEnabled]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const { key } = lightsRef.current;
+    if (!renderer || !key) return;
+
+    renderer.shadowMap.enabled = Boolean(shadowsEnabled);
+    configureShadowLight(key, shadowsEnabled);
+
+    if (modelRef.current) {
+      applyShadowFlags(modelRef.current, shadowsEnabled);
+    }
+    updateShadowReceiver(shadowReceiverRef.current, {
+      bounds: fitRef.current?.bounds,
+      camera: cameraRef.current,
+      enabled: shadowsEnabled,
+    });
+    if (shadowsEnabled) {
+      updateDirectionalShadowFrustum(key, fitRef.current?.distance);
+    }
+
+    requestRenderRef.current?.();
+  }, [shadowsEnabled]);
 
   useEffect(() => {
     if (!modelRef.current) return;
@@ -653,10 +964,9 @@ function ViewerComponent({
 
   useEffect(() => {
     if (!sceneReady) return;
-    if (!wasdEnabled) return;
     if (!cameraRef.current || !controlsRef.current) return;
     return setupWasdControls({ wasdStateRef, wasdFrameRef, cameraRef, controlsRef, fitRef, requestRenderRef });
-  }, [sceneReady, wasdEnabled]);
+  }, [sceneReady]);
 
   useEffect(() => {
     if (!rendererRef.current) return;
@@ -781,6 +1091,10 @@ function ViewerComponent({
         templatePsdSourceError: "",
       });
       onModelLoadingRef.current?.(false);
+      fitRef.current = {
+        ...fitRef.current,
+        bounds: null,
+      };
       requestRender();
       return;
     }
@@ -910,18 +1224,6 @@ function ViewerComponent({
           }
         }
 
-        if (modelRef.current) {
-          disposeCageOverlay(sceneRef.current);
-          sceneRef.current.remove(modelRef.current);
-          disposeObject(modelRef.current);
-        }
-
-        modelRef.current = object;
-        sceneRef.current.add(object);
-        object.userData = object.userData || {};
-        object.userData.materialConfig = materialStateRef.current.materialConfig || DEFAULT_MATERIAL_CONFIG;
-        object.userData.materialDetailTexture = materialTextureRef.current || null;
-
         const glossFactor = 2 - 2 * glossiness;
         const meshes = getMeshList(object);
         for (const child of meshes) {
@@ -996,7 +1298,26 @@ function ViewerComponent({
           }
         }
 
-        const fitBox = computeFocusedBounds(object, box);
+        const sceneObject = stabilizeObjectForWorld(object, {
+          autoLevel: true,
+          centerXZ: true,
+          groundToZero: true,
+        }) || object;
+        sceneObject.userData = sceneObject.userData || {};
+        sceneObject.userData.materialConfig = materialStateRef.current.materialConfig || DEFAULT_MATERIAL_CONFIG;
+        sceneObject.userData.materialDetailTexture = materialTextureRef.current || null;
+        applyShadowFlags(sceneObject, shadowsEnabled);
+
+        if (modelRef.current) {
+          disposeCageOverlay(sceneRef.current);
+          sceneRef.current.remove(modelRef.current);
+          disposeObject(modelRef.current);
+        }
+
+        modelRef.current = sceneObject;
+        sceneRef.current.add(sceneObject);
+
+        const fitBox = computeFramingBounds(sceneObject, new THREE.Box3().setFromObject(sceneObject)) || box.clone();
         fitBox.getSize(size);
         fitBox.getCenter(center);
 
@@ -1016,23 +1337,56 @@ function ViewerComponent({
           onModelErrorRef.current?.("Parsed model geometry is empty.");
           return;
         }
-        const distance = Math.max(maxDim * 1.6, 2.4);
+        const currentPreset = cameraStateRef.current?.presetKey || DEFAULT_CAMERA_PRESET;
+        const currentZoom = cameraStateRef.current?.zoomFactor || 1;
 
-        fitRef.current = { center, distance };
+        fitRef.current = {
+          bounds: fitBox.clone(),
+          center: center.clone(),
+          distance: 4,
+          baseDistance: 4,
+          presetKey: currentPreset,
+          zoomFactor: currentZoom,
+        };
+        cameraStateRef.current = {
+          presetKey: currentPreset,
+          zoomFactor: currentZoom,
+        };
 
         if (cameraRef.current && controlsRef.current) {
-          cameraRef.current.near = Math.max(distance / 100, 0.01);
-          cameraRef.current.far = Math.max(distance * 50, 100);
-          cameraRef.current.position.set(center.x + distance, center.y + distance * 0.2, center.z + distance);
+          const { clientWidth = 1, clientHeight = 1 } = containerRef.current || {};
+          const framing = buildCameraFraming({
+            bounds: fitBox,
+            aspect: clientWidth / clientHeight,
+            fov: cameraRef.current.fov,
+            presetKey: currentPreset,
+            zoomFactor: currentZoom,
+          });
+          fitRef.current = {
+            ...fitRef.current,
+            center: framing.target.clone(),
+            distance: framing.distance,
+            baseDistance: framing.baseDistance,
+            presetKey: framing.presetKey,
+            zoomFactor: currentZoom,
+          };
+          cameraRef.current.up.copy(framing.up);
+          cameraRef.current.near = framing.near;
+          cameraRef.current.far = framing.far;
+          cameraRef.current.position.copy(framing.position);
           cameraRef.current.updateProjectionMatrix();
-          controlsRef.current.target.copy(center);
-          controlsRef.current.minDistance = Math.max(distance * 0.05, 0.1);
-          controlsRef.current.maxDistance = distance * 10;
+          controlsRef.current.target.copy(framing.target);
+          controlsRef.current.minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
+          controlsRef.current.maxDistance = Math.max(framing.baseDistance * 10, 10);
           controlsRef.current.update();
         }
 
+        if (shadowsEnabled) {
+          updateDirectionalShadowFrustum(lightsRef.current.key, fitRef.current.distance);
+        }
+
         applyMaterials(
-          object,
+          sceneObject,
           resolvedBodyColor,
           textureRef.current,
           textureTarget,
@@ -1045,7 +1399,7 @@ function ViewerComponent({
         );
         // Rebuild cage overlay if it was enabled
         if (materialStateRef.current.showCageWireframe) {
-          buildCageOverlay(object, sceneRef.current);
+          buildCageOverlay(sceneObject, sceneRef.current);
         }
         requestRender();
       } catch (error) {
@@ -1962,83 +2316,6 @@ function getMeshList(object) {
   return meshes;
 }
 
-function computeFocusedBounds(object, fallbackBounds) {
-  if (!object) return fallbackBounds?.clone?.() || new THREE.Box3();
-  const fallback = fallbackBounds?.clone?.() || new THREE.Box3().setFromObject(object);
-  if (!isFiniteBounds(fallback)) return fallback;
-
-  object.updateMatrixWorld(true);
-  const meshes = getMeshList(object);
-  if (!meshes.length) return fallback;
-
-  const samples = [];
-  let totalVertexCount = 0;
-  for (const mesh of meshes) {
-    const positions = mesh.geometry?.attributes?.position;
-    if (!positions?.count) continue;
-    totalVertexCount += positions.count;
-    samples.push({ mesh, positions });
-  }
-  if (!totalVertexCount || !samples.length) return fallback;
-
-  const xs = [];
-  const ys = [];
-  const zs = [];
-  const point = new THREE.Vector3();
-
-  for (const { mesh, positions } of samples) {
-    const desired = Math.max(1, Math.round((positions.count / totalVertexCount) * FIT_SAMPLE_LIMIT));
-    const step = Math.max(1, Math.floor(positions.count / desired));
-    for (let i = 0; i < positions.count; i += step) {
-      point.set(positions.getX(i), positions.getY(i), positions.getZ(i));
-      point.applyMatrix4(mesh.matrixWorld);
-      if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) continue;
-      xs.push(point.x);
-      ys.push(point.y);
-      zs.push(point.z);
-    }
-  }
-
-  if (xs.length < FIT_MIN_SAMPLES) return fallback;
-  xs.sort((a, b) => a - b);
-  ys.sort((a, b) => a - b);
-  zs.sort((a, b) => a - b);
-
-  const trimCount = Math.floor(xs.length * FIT_TRIM_PERCENT);
-  const lowIndex = Math.min(trimCount, xs.length - 1);
-  const highIndex = Math.max(lowIndex, xs.length - trimCount - 1);
-  const min = new THREE.Vector3(xs[lowIndex], ys[lowIndex], zs[lowIndex]);
-  const max = new THREE.Vector3(xs[highIndex], ys[highIndex], zs[highIndex]);
-  if (
-    !Number.isFinite(min.x) || !Number.isFinite(min.y) || !Number.isFinite(min.z) ||
-    !Number.isFinite(max.x) || !Number.isFinite(max.y) || !Number.isFinite(max.z)
-  ) {
-    return fallback;
-  }
-  if (max.x <= min.x || max.y <= min.y || max.z <= min.z) return fallback;
-
-  const focused = new THREE.Box3(min, max);
-  const fallbackSize = fallback.getSize(new THREE.Vector3());
-  const focusedSize = focused.getSize(new THREE.Vector3());
-  const fallbackMax = Math.max(fallbackSize.x, fallbackSize.y, fallbackSize.z);
-  const focusedMax = Math.max(focusedSize.x, focusedSize.y, focusedSize.z);
-  if (!Number.isFinite(focusedMax) || focusedMax <= 0) return fallback;
-  if (focusedMax < fallbackMax * FIT_MIN_SIZE_RATIO) return fallback;
-  return focused;
-}
-
-function isFiniteBounds(box) {
-  if (!box) return false;
-  return (
-    Number.isFinite(box.min.x) &&
-    Number.isFinite(box.min.y) &&
-    Number.isFinite(box.min.z) &&
-    Number.isFinite(box.max.x) &&
-    Number.isFinite(box.max.y) &&
-    Number.isFinite(box.max.z)
-  );
-}
-
 function getPrimaryMaterial(material) {
   if (!material) return null;
   if (Array.isArray(material)) return material.find(Boolean) || null;
@@ -2187,6 +2464,7 @@ function applyMaterials(
         ? vehicleTexture
         : null;
     const preferUv2ForMesh = matchesWindow ? false : preferUv2;
+    child.userData.templateMarkerInteractive = Boolean(matchesVehicle && activeTexture);
 
     if (activeTexture && child.geometry) {
       if (!applyTextureUVSet(child.geometry, preferUv2ForMesh)) {
@@ -2287,6 +2565,31 @@ function scoreUVAttribute(attribute) {
   return inRange / valid;
 }
 
+function hasUVVariation(attribute) {
+  if (!attribute || !attribute.array || attribute.itemSize < 2) return false;
+  const count = Math.min(attribute.count || 0, 2000);
+  if (count < 3) return false;
+  const array = attribute.array;
+  const stride = attribute.itemSize;
+  let minU = Infinity;
+  let minV = Infinity;
+  let maxU = -Infinity;
+  let maxV = -Infinity;
+  let valid = 0;
+  for (let i = 0; i < count; i += 1) {
+    const u = array[i * stride];
+    const v = array[i * stride + 1];
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    valid += 1;
+    minU = Math.min(minU, u);
+    minV = Math.min(minV, v);
+    maxU = Math.max(maxU, u);
+    maxV = Math.max(maxV, v);
+  }
+  if (valid < 3) return false;
+  return Math.abs(maxU - minU) > 1e-8 || Math.abs(maxV - minV) > 1e-8;
+}
+
 function chooseUVAttribute(geometry, preferUv2) {
   const { uv0, uv1, uv2, uv3 } = getBaseUVs(geometry);
   const candidates = [uv0, uv1, uv2, uv3];
@@ -2303,6 +2606,7 @@ function chooseUVAttribute(geometry, preferUv2) {
     if (preferredIndex === -1) return null;
 
     const preferredAttribute = candidates[preferredIndex];
+    const preferredVaries = hasUVVariation(preferredAttribute);
     const preferredScore = scoreUVAttribute(preferredAttribute);
 
     let bestScored = null;
@@ -2318,6 +2622,7 @@ function chooseUVAttribute(geometry, preferUv2) {
 
     if (bestScored && bestScored.index !== preferredIndex) {
       const shouldFallback =
+        !preferredVaries ||
         preferredScore < 0 ||
         (bestScored.score >= LIVERY_UV_MIN_CONFIDENCE &&
           bestScored.score - Math.max(preferredScore, 0) >= LIVERY_UV_FALLBACK_MARGIN);

@@ -1,27 +1,19 @@
-# Complete UX Redesign and Workflow Expansion
+# Quality of Life and Template Generator Improvements
 
-> This release is an end-to-end redesign focused on usability, visual control, and faster day-to-day workflow.
+> This release focuses on polish and small quality-of-life improvements across the app, including better PDN support, model shadows, camera stability fixes, and enhanced Template Generator marker controls.
 
 ## New
 
-- Full Application Redesign | Entire interface redesigned for improved user experience.
-- Native PDN Support | .pdn files are now supported natively.
-- Scene Lighting Controls | New controls let you adjust lighting directly in the scene.
-- Vehicle Material Controls | Customize material behavior for glass, metal, plastic, and more.
-- Automatic Updates | App updates can now be delivered automatically in-app.
-- Capture Preview Angle Selection | Select the exact angles used when snapping capture previews.
-- Background Image Support | Use custom images as scene backgrounds.
-- What's New Window | In-app changelog window now shows release notes directly inside the app.
-- Wireframe Toggle | Toggle wireframe mode for quick model inspection.
+- Model Shadows | Added shadow rendering for improved depth perception on models.
+- Missing Set File Warning | Added warning when users don't have a set file configured for capturing previews.
+- Template Generator Manual Marker Selection | Pick individual markers with Alt/Ctrl/Shift + click in Marker Edit Mode—selections stay staged until you confirm.
 
 ## Improved
 
-- UI Scaling Settings | UI scaling options were improved for better readability and consistency.
-- Background Performance Optimizations | General background performance and rendering were optimized.
-- Updated Color Presets | Presets for body colors and background colors were refreshed.
-- Legacy Layers Layout Setting | Added a legacy layers layout option for compatibility workflows.
+- PDN Support | Enhanced Paint.NET file handling and compatibility.
+- Template Generator Marker Behavior | Only explicitly selected markers are painted in the generated PSD; streamlined marker interaction controls.
 
 ## Fixed
 
-- Variant Window Resize Flashing | Fixed flashing in the Variant window while resizing.
-
+- UI Polish | Various UI improvements and refinements.
+- Camera Preset Bug | Fixed camera presets causing the world to tilt down when selecting 3/4 view and then moving the camera manually.

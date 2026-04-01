@@ -1,6 +1,7 @@
 const PREFS_KEY = "cortex-labs:prefs.v1";
 const ONBOARDED_KEY = "cortex-labs:onboarded.v1";
 const SESSION_KEY = "cortex-labs:session.v1";
+export const PREFS_UPDATED_EVENT = "cortex:prefs-updated";
 
 export function loadPrefs() {
   try {
@@ -20,6 +21,11 @@ export function savePrefs(prefs) {
   } catch (err) {
     console.error("[Prefs] Failed to save preferences:", err);
   }
+}
+
+export function emitPrefsUpdated() {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+  window.dispatchEvent(new CustomEvent(PREFS_UPDATED_EVENT));
 }
 
 export function loadOnboarded() {

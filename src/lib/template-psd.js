@@ -1,4 +1,10 @@
-import { writePsdUint8Array } from "ag-psd";
+let writePsdUint8ArrayLoader = null;
+async function getWritePsdUint8Array() {
+  if (!writePsdUint8ArrayLoader) {
+    writePsdUint8ArrayLoader = import("ag-psd").then((mod) => mod.writePsdUint8Array);
+  }
+  return writePsdUint8ArrayLoader;
+}
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
@@ -576,18 +582,32 @@ function collectProxyTrianglesForNormals(templatePsdSource, selectedMeshes) {
   if (proxyMeshes.length === 0) return [];
 
   const selectedMeshNames = new Set();
+  const selectedIslandsByMesh = new Map();
   for (const shell of selectedMeshes || []) {
-    if (shell?.meshName) selectedMeshNames.add(shell.meshName);
+    const meshName = shell?.meshName;
+    if (!meshName) continue;
+    selectedMeshNames.add(meshName);
+    const islandId = Number.isInteger(shell?.shellIndex) ? shell.shellIndex : null;
+    if (!Number.isInteger(islandId)) continue;
+    if (!selectedIslandsByMesh.has(meshName)) selectedIslandsByMesh.set(meshName, new Set());
+    selectedIslandsByMesh.get(meshName).add(islandId);
   }
   if (selectedMeshNames.size === 0) return [];
 
   const triangles = [];
   for (const proxy of proxyMeshes) {
-    if (!selectedMeshNames.has(proxy?.meshName)) continue;
+    const meshName = proxy?.meshName;
+    if (!selectedMeshNames.has(meshName)) continue;
+    const allowedIslands = selectedIslandsByMesh.get(meshName) || null;
     const proxyTriangles = Array.isArray(proxy?.triangles) ? proxy.triangles : [];
     for (const triangle of proxyTriangles) {
       const uv = Array.isArray(triangle?.uv) ? triangle.uv : null;
-      if (!uv || uv.length < 6) continue;
+      if (!isRenderableUvTriangle(uv)) continue;
+      if (!triangleUvWithinTile(uv, 1e-4)) continue;
+      if (allowedIslands && allowedIslands.size > 0) {
+        const islandId = Number.isInteger(triangle?.uvIslandId) ? triangle.uvIslandId : null;
+        if (!Number.isInteger(islandId) || !allowedIslands.has(islandId)) continue;
+      }
 
       const vertexNormals = Array.isArray(triangle?.vertexNormals) ? triangle.vertexNormals : null;
       const faceNormal = Array.isArray(triangle?.normal) ? triangle.normal : null;
@@ -604,6 +624,25 @@ function collectProxyTrianglesForNormals(templatePsdSource, selectedMeshes) {
   }
 
   return triangles;
+}
+
+function isRenderableUvTriangle(uv) {
+  if (!Array.isArray(uv) || uv.length < 6) return false;
+  for (let index = 0; index < 6; index += 1) {
+    if (!Number.isFinite(uv[index])) return false;
+  }
+  return true;
+}
+
+function triangleUvWithinTile(uv, margin = 0) {
+  if (!isRenderableUvTriangle(uv)) return false;
+  const pad = Number.isFinite(margin) ? Math.max(0, margin) : 0;
+  for (let index = 0; index < 6; index += 2) {
+    const u = uv[index];
+    const v = uv[index + 1];
+    if (u < -pad || u > 1 + pad || v < -pad || v > 1 + pad) return false;
+  }
+  return true;
 }
 
 
@@ -2182,12 +2221,7 @@ function paintWireframeLayer(canvas, shells, mapper, options = {}) {
 
   for (const marker of markerClusters) {
     const explicitVisibility = markerVisibilityMap[marker.key];
-    const isVisible =
-      explicitVisibility === true
-        ? true
-        : explicitVisibility === false
-          ? false
-          : marker.defaultVisible !== false;
+    const isVisible = explicitVisibility === true;
     if (!isVisible) continue;
     const markerColor = normalizeHexColor(
       markerColorMap[marker.key],
@@ -2206,6 +2240,15 @@ function paintWireframeLayer(canvas, shells, mapper, options = {}) {
       defaultColor: marker.defaultColor || DEFAULT_SMALL_SHELL_DETECTION_FILL,
       defaultVisible: marker.defaultVisible !== false,
       confidenceScore: marker.confidenceScore,
+      x: marker.x,
+      y: marker.y,
+      size: marker.size,
+      width: marker.width || marker.size,
+      height: marker.height || marker.size,
+      minX: marker.minX,
+      minY: marker.minY,
+      maxX: marker.maxX,
+      maxY: marker.maxY,
     })),
   };
 }
@@ -2401,7 +2444,7 @@ function validatePsdSource(templatePsdSource) {
 
 /* ── Main entry point ────────────────────────────────────────────── */
 
-function buildAutoTemplateArtifacts(templateMap, options = {}) {
+function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8ArrayImpl) {
   if (!templateMap || typeof templateMap !== "object") {
     throw new Error("Template map is required.");
   }
@@ -2475,7 +2518,7 @@ function buildAutoTemplateArtifacts(templateMap, options = {}) {
     children: layers,
   };
 
-  const bytes = writePsdUint8Array(psd);
+  const bytes = writePsdUint8ArrayImpl(psd);
   return {
     bytes,
     size,
@@ -2487,8 +2530,9 @@ function buildAutoTemplateArtifacts(templateMap, options = {}) {
   };
 }
 
-export function buildAutoTemplatePsd(templateMap, options = {}) {
-  const result = buildAutoTemplateArtifacts(templateMap, options);
+export async function buildAutoTemplatePsd(templateMap, options = {}) {
+  const writePsdUint8Array = await getWritePsdUint8Array();
+  const result = buildAutoTemplateArtifacts(templateMap, options, writePsdUint8Array);
   return {
     bytes: result.bytes,
     size: result.size,
@@ -2501,7 +2545,8 @@ export function buildAutoTemplatePsd(templateMap, options = {}) {
 }
 
 export async function buildAutoTemplatePsdAsync(templateMap, options = {}) {
-  const result = buildAutoTemplateArtifacts(templateMap, options);
+  const writePsdUint8Array = await getWritePsdUint8Array();
+  const result = buildAutoTemplateArtifacts(templateMap, options, writePsdUint8Array);
   return {
     bytes: result.bytes,
     size: result.size,

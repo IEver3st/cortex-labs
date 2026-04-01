@@ -1019,7 +1019,7 @@ function parseGeometry(reader, offset, name) {
   let indices = null;
   if (reader.validPtr(indexBufferPtr)) {
     const ibOffset = reader.resolvePtr(indexBufferPtr);
-    indices = parseIndexBuffer(reader, ibOffset);
+    indices = parseIndexBuffer(reader, ibOffset, vertexData.positions.length / 3);
   }
 
   if (!indices || indices.length === 0) {
@@ -1171,7 +1171,9 @@ function getVertexComponentSize(type) {
     case 7: // Float4
       return 16;
     default:
-      return 0;
+      // Unknown/rare component encodings still consume stride bytes.
+      // Returning 0 collapses later offsets and can stack UV channels.
+      return 4;
   }
 }
 
@@ -1348,6 +1350,15 @@ function readTexcoord(reader, offset, type) {
       u = reader.f32(offset);
       v = reader.f32(offset + 4);
       break;
+    case 8: // UByte4
+    case 9: // Colour (treated as unorm bytes)
+      u = reader.u8(offset) / 255;
+      v = reader.u8(offset + 1) / 255;
+      break;
+    case 10: // RGBA8SNorm
+      u = toSnorm8(reader.u8(offset));
+      v = toSnorm8(reader.u8(offset + 1));
+      break;
     case 1: // Half2
     default:
       u = halfToFloat(reader.u16(offset));
@@ -1508,7 +1519,45 @@ function detectVertexFormat(stride) {
   return format;
 }
 
-function parseIndexBuffer(reader, offset) {
+function readIndexArray(reader, dataOffset, count, strideBytes) {
+  if (strideBytes !== 2 && strideBytes !== 4) return null;
+  if (dataOffset < 0 || dataOffset + count * strideBytes > reader.len) return null;
+  const indices = new Uint32Array(count);
+  for (let i = 0; i < count; i++) {
+    indices[i] =
+      strideBytes === 2
+        ? reader.u16(dataOffset + i * 2)
+        : reader.u32(dataOffset + i * 4);
+  }
+  return indices;
+}
+
+function scoreIndexArray(indices, vertexCount) {
+  if (!indices || indices.length < 3) return -Infinity;
+  const count = indices.length;
+  const triCount = Math.floor(count / 3);
+  let inRange = 0;
+  let degenerate = 0;
+
+  for (let i = 0; i < count; i++) {
+    const index = indices[i];
+    if (!Number.isFinite(index)) continue;
+    if (!vertexCount || index < vertexCount) inRange += 1;
+  }
+
+  for (let i = 0; i + 2 < count; i += 3) {
+    const a = indices[i];
+    const b = indices[i + 1];
+    const c = indices[i + 2];
+    if (a === b || b === c || a === c) degenerate += 1;
+  }
+
+  const inRangeRatio = inRange / count;
+  const degenerateRatio = triCount > 0 ? degenerate / triCount : 1;
+  return inRangeRatio * 2 - degenerateRatio;
+}
+
+function parseIndexBuffer(reader, offset, vertexCount = 0) {
   if (!reader.valid(offset) || offset + 32 > reader.len) return null;
 
   let count = reader.u32(offset + 0x08);
@@ -1524,12 +1573,21 @@ function parseIndexBuffer(reader, offset) {
 
   const dataOffset = reader.resolvePtr(dataPtr);
   const safeCount = Math.min(count, MAX_INDICES);
-  const indices = new Uint32Array(safeCount);
+  const indices16 = readIndexArray(reader, dataOffset, safeCount, 2);
+  const indices32 = readIndexArray(reader, dataOffset, safeCount, 4);
 
-  for (let i = 0; i < safeCount; i++) {
-    indices[i] = reader.u16(dataOffset + i * 2);
+  if (!indices16 && !indices32) return null;
+  if (!indices32) return indices16;
+  if (!indices16) return indices32;
+
+  const score16 = scoreIndexArray(indices16, vertexCount);
+  const score32 = scoreIndexArray(indices32, vertexCount);
+
+  if (score32 > score16 + 0.15) {
+    return indices32;
   }
-  return indices;
+
+  return indices16;
 }
 
 function halfToFloat(h) {

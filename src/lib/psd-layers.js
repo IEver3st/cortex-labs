@@ -10,10 +10,24 @@
  *   processes the composite, ensuring correct blending, masks, and effects.
  */
 
-import { readPsd } from "ag-psd";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { decodePdn, decodePdnLayers, getPdnBlendCanvasOp } from "./pdn";
 import { detectPsdBitDepth, getFileExtension } from "./viewer-utils";
+
+let readPsdLoader = null;
+async function getReadPsd() {
+  if (!readPsdLoader) {
+    readPsdLoader = import("ag-psd").then((mod) => mod.readPsd);
+  }
+  return readPsdLoader;
+}
+
+let pdnModuleLoader = null;
+async function getPdnModule() {
+  if (!pdnModuleLoader) {
+    pdnModuleLoader = import("./pdn");
+  }
+  return pdnModuleLoader;
+}
 
 const FLAT_LAYER_ID = "__layer_source__/image";
 const FLAT_LAYER_NAME = "Image";
@@ -295,7 +309,8 @@ function isFlatLayerVisible(layerVisibility) {
  * Parse a Paint.NET (.pdn) file into the standard layer structure
  * used by the variant builder. Format matches parsePsdLayers output.
  */
-function parsePdnLayerSource(bytes) {
+async function parsePdnLayerSource(bytes) {
+  const { decodePdnLayers, decodePdn } = await getPdnModule();
   const result = decodePdnLayers(bytes);
 
   // If layer-aware decoding failed, fall back to flat composite
@@ -365,7 +380,8 @@ function parsePdnLayerSource(bytes) {
  * Composite a PDN file with specific layer visibility into a canvas.
  * Per-layer compositing with blend modes, opacity, and visibility control.
  */
-function compositePdnVariant(bytes, layerVisibility, targetWidth, targetHeight) {
+async function compositePdnVariant(bytes, layerVisibility, targetWidth, targetHeight) {
+  const { decodePdnLayers, decodePdn } = await getPdnModule();
   const result = decodePdnLayers(bytes);
 
   // Fallback to flat composite
@@ -450,7 +466,7 @@ export async function parsePsdLayers(filePath) {
   const extension = getFileExtension(filePath);
 
   if (isPdnExtension(extension)) {
-    return parsePdnLayerSource(bytes);
+    return await parsePdnLayerSource(bytes);
   }
 
   if (isFlatLayerSourceExtension(extension)) {
@@ -466,6 +482,7 @@ export async function parsePsdLayers(filePath) {
     throw error;
   }
   const buffer = bytes.buffer || bytes;
+  const readPsd = await getReadPsd();
 
   const psd = readPsd(new DataView(buffer), {
     skipCompositeImageData: true,
@@ -632,7 +649,7 @@ export async function compositePsdVariant(filePath, layerVisibility = {}, target
   const extension = getFileExtension(filePath);
 
   if (isPdnExtension(extension)) {
-    return compositePdnVariant(bytes, layerVisibility, targetWidth, targetHeight);
+    return await compositePdnVariant(bytes, layerVisibility, targetWidth, targetHeight);
   }
 
   if (isFlatLayerSourceExtension(extension)) {
@@ -658,6 +675,7 @@ export async function compositePsdVariant(filePath, layerVisibility = {}, target
     throw error;
   }
   const buffer = bytes.buffer || bytes;
+  const readPsd = await getReadPsd();
 
   const psd = readPsd(new DataView(buffer), {
     skipThumbnail: true,

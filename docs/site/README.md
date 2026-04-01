@@ -27,12 +27,33 @@ In the project, you can see:
 | `app/(home)`              | The route group for your landing page and other pages. |
 | `app/docs`                | The documentation layout and pages.                    |
 | `app/api/search/route.ts` | The Route Handler for search.                          |
+| `app/api/report-bug/route.ts` | Serverless endpoint that creates GitHub issues from the in-app bug form. |
 
 ### Fumadocs MDX
 
 A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
 
 Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
+
+## Bug Report Endpoint
+
+The docs site hosts the `POST /api/report-bug` route used by the desktop/web app bug reporter.
+
+Required environment variables:
+
+```bash
+GITHUB_TOKEN=github_pat_or_app_token
+GITHUB_OWNER=IEver3st
+GITHUB_REPO=cortex-labs
+BUG_REPORT_ALLOWED_ORIGINS=https://your-app-origin.example.com
+BUG_REPORT_LABEL_CREATE=true
+```
+
+The app itself must point at this endpoint with:
+
+```bash
+VITE_BUG_REPORT_ENDPOINT=https://your-docs-site.example.com/api/report-bug
+```
 
 ## Learn More
 
