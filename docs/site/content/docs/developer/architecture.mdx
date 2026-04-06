@@ -1,0 +1,35 @@
+---
+title: Architecture
+description: A high-level overview of the frontend, desktop runtime, and parsing pipeline.
+---
+
+Cortex Studio is a desktop app with a React + Three.js UI, powered by Tauri 2.
+
+## Frontend
+
+- **React** drives the UI (tabs, settings, workflows).
+- **Three.js** renders models and textures in real time.
+
+Key areas:
+
+- Viewer rendering + controls live in the viewer components.
+- Format parsing helpers live under `src/lib/`.
+
+## Desktop runtime (Tauri)
+
+Tauri provides:
+
+- Native dialogs
+- File system access
+- Window controls and app lifecycle
+
+UI-only mode is still useful, but native integrations require the Tauri runtime.
+
+## YFT parsing & mesh caching
+
+Some `.yft` loading uses a sidecar process to generate a cached mesh file (`.clmesh`).
+
+- The cache is keyed by input path + modified time + file size.
+- The frontend parses `.clmesh` into Three.js geometry for fast reloads.
+
+See **Reference → YFT Parser CLI Contract** for the sidecar interface.

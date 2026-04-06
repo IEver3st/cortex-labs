@@ -1,0 +1,51 @@
+{
+  "name": "cortex-studio",
+  "private": true,
+  "version": "3.8.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "bun tools/tauri-wrapper.mjs",
+    "test:pdn": "node --test src/lib/pdn.test.mjs"
+  },
+  "dependencies": {
+    "@radix-ui/react-context-menu": "^2.2.16",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-fs": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2",
+    "ag-psd": "^30.1.0",
+    "dff-loader": "^1.0.1",
+    "motion": "^11.18.2",
+    "pako": "^2.1.0",
+    "pdfjs-dist": "^4.9.155",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-icons": "^5.5.0",
+    "three": "^0.172.0",
+    "utif": "^3.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.6.0",
+    "@radix-ui/react-label": "^2.1.1",
+    "@radix-ui/react-select": "^2.1.2",
+    "@radix-ui/react-separator": "^1.1.1",
+    "@radix-ui/react-slot": "^1.1.1",
+    "@radix-ui/react-switch": "^1.1.1",
+    "@tailwindcss/vite": "^4.1.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.470.0",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss": "^4.1.0",
+    "vite": "^7.0.4",
+    "@tauri-apps/cli": "^2"
+  },
+  "overrides": {
+    "rollup": "^4.59.0"
+  }
+}

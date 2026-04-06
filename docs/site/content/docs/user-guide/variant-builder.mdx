@@ -1,0 +1,47 @@
+---
+title: PSD Variant Builder
+description: Manage layered PSD projects, build variants, and export batches.
+---
+
+The Variant Builder is built for complex livery projects where one PSD produces many outputs.
+
+## Concepts
+
+### PSD project
+
+A PSD is treated as the source-of-truth. Cortex Studio parses its layer tree and uses that to build composites.
+
+### Variant
+
+A **variant** is a saved set of layer visibilities.
+
+- Base variant exists by default.
+- Variants can be duplicated and renamed.
+- Each variant can be locked to prevent accidental edits.
+
+## Typical workflow
+
+1. Load a `.psd`.
+2. Load a model for 3D preview (optional but recommended).
+3. Create variants like “Base”, “Night”, “HiVis”, “Stealth”.
+4. Toggle layer visibility per variant.
+5. Export all variants to PNG.
+
+## Layer controls
+
+- Toggle layers on/off.
+- Collapse/expand groups.
+- Solo workflows exist for quickly isolating one layer while you inspect.
+
+## Export
+
+- Configure export size (up to 4096).
+- Pick an output folder.
+- Export all variants in one pass.
+
+If you want consistent output locations, set a default folder in Settings.
+
+## Limits and expectations
+
+- This is not a full Photoshop replacement; it’s focused on visibility-based variants.
+- Visual fidelity depends on the PSD’s layer structure and the model’s material conventions.

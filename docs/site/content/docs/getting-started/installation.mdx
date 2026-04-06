@@ -1,0 +1,55 @@
+---
+title: Installation
+description: Set up the repo, install dependencies, and run the desktop app.
+---
+
+## Prerequisites
+
+- **Bun**
+- **Rust** (stable toolchain)
+- **Tauri prerequisites** (Windows build tools as required by Tauri)
+
+## Install dependencies
+
+From the repo root:
+
+```bash
+bun install
+```
+
+## Run (recommended)
+
+Run the desktop app with native integrations:
+
+```bash
+bun run tauri dev
+```
+
+This is the mode you want for:
+
+- File pickers and native dialogs
+- File system access (read/write)
+- External open-path/open-url integration
+
+## Run UI-only (limited)
+
+```bash
+bun run dev
+```
+
+UI-only mode is useful for iterating on layout, but **some features won’t work** because file system plugins are not available.
+
+## Build
+
+```bash
+bun run tauri build
+```
+
+## CodeWalker bridge (YFT mesh cache)
+
+Some `.yft` workflows rely on a CodeWalker-based sidecar (`CodeWalkerBridge.exe`) to generate a `.clmesh` cache.
+
+- Contract: see **Reference → YFT Parser CLI Contract**.
+- Source project: `tools/codewalker-bridge/`.
+
+If `.yft` parsing fails, check that the executable exists in one of the expected locations.

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Cortex.Studio",
+  "version": "3.8.0",
+  "identifier": "com.cortexstudio.app",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Cortex Studio",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost ws://localhost:1420 http://localhost:1420 https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self' blob:;"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVEQkYwQjJBNjdFOEEyRjMKUldUem91aG5LZ3UvWGJEWmFXaG1uZyt3QWdGRzNPSWlsSGkyV2NYbG9MQUkvVmhheU9SamVWNDkK",
+      "endpoints": [
+        "https://github.com/IEver3st/cortex-labs/releases/latest/download/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    },
+    "fileAssociations": [
+      {
+        "ext": ["yft"],
+        "name": "GTA V Fragment Type",
+        "mimeType": "application/x-yft",
+        "description": "GTA V Vehicle Model File"
+      },
+      {
+        "ext": ["ydd"],
+        "name": "GTA V Drawable Dictionary",
+        "mimeType": "application/x-ydd",
+        "description": "GTA V Drawable Dictionary File"
+      }
+    ]
+  }
+}

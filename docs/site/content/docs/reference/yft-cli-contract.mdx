@@ -1,0 +1,53 @@
+---
+title: YFT Parser CLI Contract
+description: The required behavior for the CodeWalker bridge sidecar that generates .clmesh caches.
+---
+
+The app previews `.yft` by parsing fragment data with a CodeWalker-based sidecar and writing a mesh cache (`.clmesh`).
+
+This document defines the required CLI contract for the parser sidecar.
+
+## Executable
+
+- Windows: `CodeWalkerBridge.exe`
+
+The app looks for the binary in:
+
+- Dev: `tools/codewalker-bridge/bin/Release/net8.0/CodeWalkerBridge.exe`
+- Dev (fallback): `tools/codewalker-bridge/bin/Debug/net8.0/CodeWalkerBridge.exe`
+- Bundled: `<resourceDir>/bin/codewalker-bridge/CodeWalkerBridge.exe`
+
+## Command
+
+```bash
+CodeWalkerBridge.exe --input <path-to-yft> --output <path-to-clmesh>
+```
+
+## Output
+
+- Writes the mesh cache to the `--output` path.
+- Prints a JSON object to stdout with counts:
+
+```json
+{
+  "meshCount": 12,
+  "vertexCount": 44123,
+  "indexCount": 88246,
+  "materialCount": 8
+}
+```
+
+## Exit codes
+
+- `0`: success; output file exists.
+- non-zero: failure; app will surface stderr/stdout.
+
+## Output streams
+
+- `stderr`: human-readable progress logs or errors.
+- `stdout`: JSON metadata (see above).
+
+## Notes
+
+- The app caches parsed meshes based on input path + modified time + file size.
+- The `.clmesh` cache is parsed in the frontend into Three.js geometry.

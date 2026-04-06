@@ -1,0 +1,46 @@
+---
+title: Targeting & Materials
+description: Control where textures apply (livery targets, material selection, and glass/window workflows).
+---
+
+## Texture targets
+
+Depending on the mode, Cortex Studio can:
+
+- Auto-target likely livery materials (Livery mode)
+- Apply to all meshes (All mode)
+- Let you target specific meshes/materials
+
+If your asset uses unusual naming, you may need to manually target a material or mesh.
+
+## Exterior-only filtering
+
+In Livery mode, “Exterior Only” tries to avoid applying the livery texture to:
+
+- Glass/window materials
+- Interior tokens (seats, dash, etc.)
+- Tires/rims and other non-body parts
+
+This is a heuristic based on material and mesh naming, so results depend on your source asset.
+
+## Window / glass workflows
+
+Cortex Studio supports a separate “window texture” path for assets that split livery/body and glass/window visuals.
+
+Typical use cases:
+
+- Apply a primary livery texture to paint/body.
+- Apply a second texture (or template) to glass/window materials.
+
+If auto-detection picks the wrong glass material, use the glass/window selection tools to override the target.
+
+## Vertex colors and material behavior
+
+Some models rely on vertex colors and specific roughness/metalness defaults.
+Cortex Studio approximates a PBR-ish preview for fast iteration.
+
+When something looks “off”, try:
+
+- lowering glossiness
+- changing background color
+- verifying you’re in the intended mode (Livery vs All)

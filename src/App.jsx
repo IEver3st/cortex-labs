@@ -1,0 +1,3596 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { AnimatePresence, motion } from "motion/react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
+// Window controls handled by Shell
+import { AlertTriangle, ArrowUpRight, Box, Boxes, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun } from "lucide-react";
+import { useUpdateChecker } from "./lib/updater";
+import AppLoader, { LoadingGlyph } from "./components/AppLoader";
+import Onboarding from "./components/Onboarding";
+// SettingsMenu now rendered by Shell
+import Viewer from "./components/Viewer";
+import DualModelViewer from "./components/DualModelViewer";
+import { emitPrefsUpdated, loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession } from "./lib/prefs";
+import { openFolderPath } from "./lib/open-folder";
+import { captureTemporaryViewerFrame } from "./lib/preview-capture";
+import { ensurePreviewExportFolder, resolveExistingPreviewFolderPath } from "./lib/preview-folder";
+import { updateWorkspace } from "./lib/workspace";
+import {
+  DEFAULT_HOTKEYS,
+  HOTKEY_ACTIONS,
+  findMatchingAction,
+  mergeHotkeys,
+} from "./lib/hotkeys";
+import { Button } from "./components/ui/button";
+import { Label } from "./components/ui/label";
+import { Input } from "./components/ui/input";
+import { Toggle } from "./components/ui/toggle";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./components/ui/select";
+import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel, MaterialTypeSelector, MaterialSlider, TextureUploadGrid } from "./components/CyberUI";
+
+const DEFAULT_BODY = "#e7ebf0";
+const DEFAULT_BG = "#141414";
+const MAX_BACKGROUND_IMAGE_BLUR = 32;
+const MIN_LOADER_MS = 650;
+
+const SUPPORTED_TEXTURE_EXTS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "avif",
+  "bmp",
+  "gif",
+  "tga",
+  "dds",
+  "tif",
+  "tiff",
+  "psd",
+  "ai",
+  "pdn",
+];
+
+const PREVIEW_CAPTURE_PRESETS = [
+  { key: "front", label: "Front" },
+  { key: "back", label: "Back" },
+  { key: "side", label: "Side" },
+  { key: "angle", label: "3/4" },
+  { key: "top", label: "Top" },
+];
+
+const PREVIEW_CAPTURE_PRESET_KEYS = PREVIEW_CAPTURE_PRESETS.map((preset) => preset.key);
+const PREVIEW_CAPTURE_PRESET_LABELS = PREVIEW_CAPTURE_PRESETS.reduce((acc, preset) => {
+  acc[preset.key] = preset.label;
+  return acc;
+}, {});
+
+function isTextureFormatSupported(filePath) {
+  if (!filePath) return true;
+  const ext = filePath.split(".").pop().toLowerCase();
+  return SUPPORTED_TEXTURE_EXTS.includes(ext);
+}
+
+function getFileExtension(filePath) {
+  if (!filePath) return "";
+  return filePath.split(".").pop().toLowerCase();
+}
+
+function clampBackgroundImageBlur(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(MAX_BACKGROUND_IMAGE_BLUR, Math.round(parsed)));
+}
+
+const BUILT_IN_DEFAULTS = {
+  textureMode: "everything",
+  liveryExteriorOnly: false,
+  windowTemplateEnabled: false,
+  windowTextureTarget: "auto",
+  cameraWASD: false,
+  bodyColor: DEFAULT_BODY,
+  backgroundColor: DEFAULT_BG,
+  experimentalSettings: false,
+  showHints: true,
+  hideRotText: false,
+  showGrid: false,
+  showShadows: false,
+  showRecents: true,
+  lightIntensity: 1.0,
+  lightAzimuth: 54,
+  lightElevation: 46,
+  glossiness: 0.5,
+  windowControlsStyle: "windows",
+  toolbarInTitlebar: false,
+  variantExportFolder: "",
+  cameraControlsInPanel: false,
+};
+
+function sanitizeStoredDefaults(stored) {
+  if (!stored || typeof stored !== "object") return {};
+  const { showAmbientOcclusion: _removedAmbientOcclusion, ...rest } = stored;
+  return rest;
+}
+
+const BUILT_IN_UI = {
+
+  colorsOpen: true,
+};
+
+function getInitialDefaults() {
+  const prefs = loadPrefs();
+  const stored = sanitizeStoredDefaults(prefs?.defaults);
+  return { ...BUILT_IN_DEFAULTS, ...stored };
+}
+
+function getInitialUi() {
+  const prefs = loadPrefs();
+  const stored = prefs?.ui && typeof prefs.ui === "object" ? prefs.ui : {};
+  return { ...BUILT_IN_UI, ...stored };
+}
+
+function getInitialHotkeys() {
+  const prefs = loadPrefs();
+  const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
+  return mergeHotkeys(stored, DEFAULT_HOTKEYS);
+}
+
+function getFileLabel(path, emptyLabel) {
+  if (!path) return emptyLabel;
+return path.split(/[\\/]/).pop();
+}
+
+function UnloadButton({ onClick, title, className }) {
+  return (
+    <CyberButton variant="danger" className={className} onClick={onClick} title={title}>
+      <span className="font-bold tracking-[0.2em] text-[9px]">UNLOAD</span>
+    </CyberButton>
+  );
+}
+
+function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null, contextBarTarget = null }) {
+
+  const viewerApiRef = useRef(null);
+  const reloadTimerRef = useRef({ primary: null, window: null, dualA: null, dualB: null });
+  const isTauriRuntime =
+    typeof window !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__ !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__?.invoke === "function";
+
+  const update = useUpdateChecker();
+
+  const [defaults, setDefaults] = useState(() => getInitialDefaults());
+  const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
+  const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
+
+  // Toast notification system
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
+  const showToast = useCallback((message, type = "info") => {
+    const id = ++toastIdRef.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3200);
+  }, []);
+
+  // Color swatch presets
+  const COLOR_SWATCHES = ["#e7ebf0", "#1a1a2e", "#0f3460", "#16213e", "#533483", "#e94560", "#f5f5dc", "#2c3e50", "#000000", "#ffffff"];
+
+  // Copy to clipboard
+  const copyHex = useCallback((val) => {
+    navigator.clipboard?.writeText(val).then(() => showToast(`Copied ${val}`));
+  }, [showToast]);
+
+  const [modelPath, setModelPath] = useState("");
+  const [modelSourcePath, setModelSourcePath] = useState("");
+  const [generatedTemplateMap, setGeneratedTemplateMap] = useState(null);
+  const [templateMapError, setTemplateMapError] = useState("");
+  const [texturePath, setTexturePath] = useState("");
+  const [windowTemplateEnabled, setWindowTemplateEnabled] = useState(() => Boolean(getInitialDefaults().windowTemplateEnabled));
+  const [windowTexturePath, setWindowTexturePath] = useState("");
+  const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
+  const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
+  const [backgroundImagePath, setBackgroundImagePath] = useState("");
+  const [backgroundImageBlur, setBackgroundImageBlur] = useState(0);
+  const [backgroundImageReloadToken, setBackgroundImageReloadToken] = useState(0);
+  const [showWireframe, setShowWireframe] = useState(false);
+  const [showCageWireframe, setShowCageWireframe] = useState(false);
+  const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
+  const [lightAzimuth, setLightAzimuth] = useState(() => getInitialDefaults().lightAzimuth ?? 54);
+  const [lightElevation, setLightElevation] = useState(() => getInitialDefaults().lightElevation ?? 46);
+  const [lightingOpen, setLightingOpen] = useState(true);
+  const [glossiness, setGlossiness] = useState(() => getInitialDefaults().glossiness ?? 0.5);
+  const [experimentalSettings, setExperimentalSettings] = useState(() => Boolean(getInitialDefaults().experimentalSettings));
+
+  // Vehicle Materials state
+  const [materialType, setMaterialType] = useState("paint");
+  const [matLightIntensity, setMatLightIntensity] = useState(1.0);
+  const [matGlossiness, setMatGlossiness] = useState(0.5);
+  const [matRoughness, setMatRoughness] = useState(0.3);
+  const [matClearcoat, setMatClearcoat] = useState(0.0);
+  const [materialTextures, setMaterialTextures] = useState([]);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
+
+  // windowControlsStyle now handled by Shell
+  const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
+
+  const [panelOpen, setPanelOpen] = useState(() => ({
+    model: true,
+    templates: true,
+    targeting: true,
+    overlays: false,
+    view: true,
+    camera: true,
+  }));
+  const [textureReloadToken, setTextureReloadToken] = useState(0);
+  const [windowTextureReloadToken, setWindowTextureReloadToken] = useState(0);
+  const [textureTargets, setTextureTargets] = useState([]);
+  const [textureMode, setTextureMode] = useState(() => defaultTextureMode);
+  const [textureTarget, setTextureTarget] = useState("all");
+  const [liveryTarget, setLiveryTarget] = useState("");
+  const [liveryLabel, setLiveryLabel] = useState("");
+  const [windowTextureTarget, setWindowTextureTarget] = useState(() => getInitialDefaults().windowTextureTarget || "auto");
+
+  const [, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
+  const [cameraControlsInPanel, setCameraControlsInPanel] = useState(() => Boolean(getInitialDefaults().cameraControlsInPanel));
+  const [showHints, setShowHints] = useState(() => Boolean(getInitialDefaults().showHints ?? true));
+  const [hideRotText, setHideRotText] = useState(() => Boolean(getInitialDefaults().hideRotText));
+  const [showGrid, setShowGrid] = useState(() => Boolean(getInitialDefaults().showGrid));
+  const [showShadows, setShowShadows] = useState(() => Boolean(getInitialDefaults().showShadows));
+  const [windowLiveryTarget, setWindowLiveryTarget] = useState("");
+  const [windowLiveryLabel, setWindowLiveryLabel] = useState("");
+  const [liveryWindowOverride, setLiveryWindowOverride] = useState(""); // Manual override for glass material in livery mode
+  const [liveryExteriorOnly, setLiveryExteriorOnly] = useState(() => Boolean(getInitialDefaults().liveryExteriorOnly));
+  const [lastUpdate, setLastUpdate] = useState("-");
+  const [watchStatus, setWatchStatus] = useState("idle");
+  const [dialogError, setDialogError] = useState("");
+  const [textureError, setTextureError] = useState("");
+  const [windowTextureError, setWindowTextureError] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+
+  const dualViewerApiRef = useRef(null);
+  const [dualModelAPath, setDualModelAPath] = useState("");
+  const [dualModelBPath, setDualModelBPath] = useState("");
+  const [dualTextureAPath, setDualTextureAPath] = useState("");
+  const [dualTextureBPath, setDualTextureBPath] = useState("");
+  const [dualWindowTextureAPath, setDualWindowTextureAPath] = useState("");
+  const [dualWindowTextureBPath, setDualWindowTextureBPath] = useState("");
+  const [dualWindowTextureATarget, setDualWindowTextureATarget] = useState("auto");
+  const [dualWindowTextureBTarget, setDualWindowTextureBTarget] = useState("auto");
+  const [dualTextureTargetsA, setDualTextureTargetsA] = useState([]);
+  const [dualTextureTargetsB, setDualTextureTargetsB] = useState([]);
+  const [dualWindowAutoTargetA, setDualWindowAutoTargetA] = useState("");
+  const [dualWindowAutoTargetB, setDualWindowAutoTargetB] = useState("");
+  const [dualWindowAutoLabelA, setDualWindowAutoLabelA] = useState("");
+  const [dualWindowAutoLabelB, setDualWindowAutoLabelB] = useState("");
+  const [dualTextureAReloadToken, setDualTextureAReloadToken] = useState(0);
+  const [dualTextureBReloadToken, setDualTextureBReloadToken] = useState(0);
+  const [dualBodyColorA, setDualBodyColorA] = useState(() => getInitialDefaults().bodyColor);
+  const [dualBodyColorB, setDualBodyColorB] = useState(() => getInitialDefaults().bodyColor);
+  const [dualSelectedSlot, setDualSelectedSlot] = useState("A");
+  const [dualModelALoading, setDualModelALoading] = useState(false);
+  const [dualModelBLoading, setDualModelBLoading] = useState(false);
+  const [dualModelAError, setDualModelAError] = useState("");
+  const [dualModelBError, setDualModelBError] = useState("");
+  const [dualGizmoVisible, setDualGizmoVisible] = useState(true);
+  const [dualTextureMode, setDualTextureMode] = useState("livery");
+
+  const [modelLoading, setModelLoading] = useState(false);
+  const [viewerReady, setViewerReady] = useState(false);
+  const [booted, setBooted] = useState(false);
+  const [formatWarning, setFormatWarning] = useState(null); // { type: "16bit-psd", bitDepth: 16 }
+  const bootStartRef = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
+  const bootTimerRef = useRef(null);
+
+  const initialStateRestoredRef = useRef(false);
+
+  // Generate Preview state
+  const [generatingPreview, setGeneratingPreview] = useState(false);
+  const [previewProgress, setPreviewProgress] = useState({ current: 0, total: 0, preset: "" });
+  const [previewComplete, setPreviewComplete] = useState(false);
+  const [previewOutputPath, setPreviewOutputPath] = useState("");
+  const [previewPromptOpen, setPreviewPromptOpen] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewZoomDraft, setPreviewZoomDraft] = useState(1);
+  const [previewCapturePresets, setPreviewCapturePresets] = useState(() => [...PREVIEW_CAPTURE_PRESET_KEYS]);
+  const [previewZoomPreview, setPreviewZoomPreview] = useState("");
+  const [previewZoomLoading, setPreviewZoomLoading] = useState(false);
+  const [dualModelAPos, setDualModelAPos] = useState([0, 0, 0]);
+  const [dualModelBPos, setDualModelBPos] = useState([0, 0, 3]);
+  const lightIntensityRafRef = useRef(0);
+  const pendingLightIntensityRef = useRef(null);
+  const lightDirectionRafRef = useRef(0);
+  const pendingLightDirectionRef = useRef(null);
+
+  const scheduleLightDirectionUpdate = useCallback((nextDirection) => {
+    pendingLightDirectionRef.current = nextDirection;
+    if (lightDirectionRafRef.current) return;
+    lightDirectionRafRef.current = requestAnimationFrame(() => {
+      lightDirectionRafRef.current = 0;
+      const pending = pendingLightDirectionRef.current;
+      pendingLightDirectionRef.current = null;
+      if (!pending) return;
+      setLightAzimuth((prev) => (prev === pending.azimuth ? prev : pending.azimuth));
+      setLightElevation((prev) => (prev === pending.elevation ? prev : pending.elevation));
+    });
+  }, []);
+
+  const handleLightIntensityChange = useCallback((nextValue) => {
+    const parsed = Number(nextValue);
+    const clamped = Math.max(0, Math.min(3, Math.round((Number.isFinite(parsed) ? parsed : 1) * 100) / 100));
+    pendingLightIntensityRef.current = clamped;
+    if (lightIntensityRafRef.current) return;
+    lightIntensityRafRef.current = requestAnimationFrame(() => {
+      lightIntensityRafRef.current = 0;
+      const pending = pendingLightIntensityRef.current;
+      pendingLightIntensityRef.current = null;
+      if (typeof pending !== "number") return;
+      setLightIntensity((prev) => (Math.abs(prev - pending) < 0.0001 ? prev : pending));
+    });
+  }, []);
+
+  const handleLightAzimuthChange = useCallback((nextValue) => {
+    const parsed = Number(nextValue);
+    const nextAzimuth = Math.max(0, Math.min(360, Math.round(Number.isFinite(parsed) ? parsed : 54)));
+    const pending = pendingLightDirectionRef.current;
+    scheduleLightDirectionUpdate({
+      azimuth: nextAzimuth,
+      elevation: pending?.elevation ?? lightElevation,
+    });
+  }, [lightElevation, scheduleLightDirectionUpdate]);
+
+  const handleLightElevationChange = useCallback((nextValue) => {
+    const parsed = Number(nextValue);
+    const nextElevation = Math.max(0, Math.min(90, Math.round(Number.isFinite(parsed) ? parsed : 46)));
+    const pending = pendingLightDirectionRef.current;
+    scheduleLightDirectionUpdate({
+      azimuth: pending?.azimuth ?? lightAzimuth,
+      elevation: nextElevation,
+    });
+  }, [lightAzimuth, scheduleLightDirectionUpdate]);
+
+  const resetLighting = useCallback(() => {
+    if (lightIntensityRafRef.current) {
+      cancelAnimationFrame(lightIntensityRafRef.current);
+      lightIntensityRafRef.current = 0;
+    }
+    if (lightDirectionRafRef.current) {
+      cancelAnimationFrame(lightDirectionRafRef.current);
+      lightDirectionRafRef.current = 0;
+    }
+    pendingLightIntensityRef.current = null;
+    pendingLightDirectionRef.current = null;
+    setLightIntensity(1.0);
+    setLightAzimuth(54);
+    setLightElevation(46);
+  }, []);
+
+  useEffect(() => () => {
+    if (lightIntensityRafRef.current) cancelAnimationFrame(lightIntensityRafRef.current);
+    if (lightDirectionRafRef.current) cancelAnimationFrame(lightDirectionRafRef.current);
+  }, []);
+
+  // Re-read prefs when settings are saved from the Shell-level SettingsMenu
+  useEffect(() => {
+    if (!settingsVersion) return;
+    const merged = getInitialDefaults();
+    setDefaults(merged);
+    setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
+    setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
+    setWindowTextureTarget(merged.windowTextureTarget || "auto");
+    setCameraWASD(Boolean(merged.cameraWASD));
+    setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
+    setShowHints(Boolean(merged.showHints ?? true));
+    setHideRotText(Boolean(merged.hideRotText));
+    setShowGrid(Boolean(merged.showGrid));
+    setShowShadows(Boolean(merged.showShadows));
+    setBodyColor(merged.bodyColor);
+    setDualBodyColorA(merged.bodyColor);
+    setDualBodyColorB(merged.bodyColor);
+    setBackgroundColor(merged.backgroundColor);
+    setExperimentalSettings(Boolean(merged.experimentalSettings));
+    const hk = getInitialHotkeys();
+    setHotkeys(hk);
+  }, [settingsVersion]);
+
+  const isBooting = !booted;
+  const selectedPreviewPresetCount = previewCapturePresets.length;
+  const allPreviewPresetsSelected = selectedPreviewPresetCount === PREVIEW_CAPTURE_PRESET_KEYS.length;
+  const previewCaptureTooltip = allPreviewPresetsSelected
+    ? "Generate preview screenshots from all 5 angles"
+    : selectedPreviewPresetCount > 0
+      ? `Generate preview screenshots from ${selectedPreviewPresetCount} selected angle${selectedPreviewPresetCount === 1 ? "" : "s"}`
+      : "Generate preview screenshots";
+
+  const togglePreviewCapturePreset = useCallback((presetKey) => {
+    setPreviewCapturePresets((current) =>
+      current.includes(presetKey)
+        ? current.filter((value) => value !== presetKey)
+        : PREVIEW_CAPTURE_PRESET_KEYS.filter((key) => key === presetKey || current.includes(key)),
+    );
+  }, []);
+
+  const toggleAllPreviewCapturePresets = useCallback(() => {
+    setPreviewCapturePresets((current) =>
+      current.length === PREVIEW_CAPTURE_PRESET_KEYS.length ? [] : [...PREVIEW_CAPTURE_PRESET_KEYS],
+    );
+  }, []);
+
+  const modelExtensions =
+    textureMode === "eup" || textureMode === "multi"
+      ? ["yft", "clmesh", "dff", "ydd"]
+      : ["yft", "clmesh", "dff"];
+  const modelDropLabel = modelExtensions.map((ext) => `.${ext}`).join(" / ");
+
+  const loadModel = useCallback(
+    async (path) => {
+      if (!path) return;
+
+      setFormatWarning(null);
+
+      const lower = path.toString().toLowerCase();
+      if (lower.endsWith(".obj")) {
+        setDialogError(
+          "out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported.",
+        );
+        return;
+      }
+
+      if (lower.endsWith(".yft") && !lower.endsWith("_hi.yft")) {
+        setFormatWarning({ type: "non-hi-model", path: path.split(/[\\/]/).pop() });
+      }
+
+      setDialogError("");
+      setGeneratedTemplateMap(null);
+      setTemplateMapError("");
+      setTextureTargets([]);
+      setTextureTarget("all");
+      setLiveryTarget("");
+      setLiveryLabel("");
+      setWindowTextureTarget("none");
+      setWindowLiveryTarget("");
+      setWindowLiveryLabel("");
+      setModelSourcePath(path);
+      setModelLoading(true);
+
+      try {
+        setModelPath(path);
+        // Auto-rename the tab to the loaded filename
+        const fileName = path.split(/[\\/]/).pop();
+
+        if (fileName && onRenameTab) onRenameTab(fileName);
+      } catch (error) {
+        const message =
+          typeof error === "string"
+            ? error
+            : error && typeof error === "object" && "message" in error
+              ? error.message
+              : "Model load failed.";
+        setDialogError(message);
+        setModelPath("");
+        console.error(error);
+      } finally {
+        setModelLoading(false);
+      }
+    },
+    [isTauriRuntime],
+  );
+
+  useEffect(() => {
+    if (!viewerReady) return;
+
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const elapsed = now - bootStartRef.current;
+    const remaining = Math.max(0, MIN_LOADER_MS - elapsed);
+
+    if (bootTimerRef.current) {
+      clearTimeout(bootTimerRef.current);
+    }
+
+    bootTimerRef.current = setTimeout(() => {
+      setBooted(true);
+    }, remaining);
+
+    return () => {
+      if (bootTimerRef.current) {
+        clearTimeout(bootTimerRef.current);
+      }
+    };
+  }, [viewerReady]);
+
+  const sessionSaveTimerRef = useRef(null);
+  useEffect(() => {
+    if (isBooting || showOnboarding) return;
+    const hasContent = modelPath || dualModelAPath || dualModelBPath || texturePath || dualTextureAPath || dualTextureBPath || dualWindowTextureAPath || dualWindowTextureBPath;
+    if (!hasContent) return;
+
+    if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
+    sessionSaveTimerRef.current = setTimeout(() => {
+      const stateSnapshot = {
+        textureMode,
+        modelPath: modelPath || "",
+        modelSourcePath: modelSourcePath || "",
+        texturePath: texturePath || "",
+        textureTarget,
+        windowTexturePath: windowTexturePath || "",
+        windowTextureTarget,
+        windowTemplateEnabled,
+        liveryWindowOverride,
+        bodyColor,
+        backgroundColor,
+        backgroundImagePath,
+        backgroundImageBlur,
+        showWireframe,
+        showCageWireframe,
+        lightIntensity,
+        lightAzimuth,
+        lightElevation,
+        glossiness,
+        liveryExteriorOnly,
+        dualBodyColorA,
+        dualBodyColorB,
+        dualModelAPath: dualModelAPath || "",
+        dualModelBPath: dualModelBPath || "",
+        dualTextureAPath: dualTextureAPath || "",
+        dualTextureBPath: dualTextureBPath || "",
+        dualWindowTextureAPath: dualWindowTextureAPath || "",
+        dualWindowTextureBPath: dualWindowTextureBPath || "",
+        dualWindowTextureATarget,
+        dualWindowTextureBTarget,
+        dualModelAPos,
+        dualModelBPos,
+        dualSelectedSlot,
+        dualTextureMode,
+      };
+      // Save to legacy session store
+      saveSession(stateSnapshot);
+      // Also persist to workspace so recent projects can restore full state
+      if (shellTab?.workspaceId) {
+        try {
+          updateWorkspace(shellTab.workspaceId, { state: stateSnapshot });
+        } catch {}
+      }
+    }, 1000);
+
+    return () => {
+      if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
+    };
+  }, [
+    isBooting, showOnboarding, textureMode,
+    modelPath, modelSourcePath, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
+    liveryWindowOverride, bodyColor, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, lightIntensity, glossiness, liveryExteriorOnly,
+    dualBodyColorA, dualBodyColorB,
+    dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
+    dualWindowTextureAPath, dualWindowTextureBPath,
+    dualWindowTextureATarget, dualWindowTextureBTarget,
+    dualModelAPos, dualModelBPos, dualSelectedSlot, dualTextureMode,
+    shellTab,
+  ]);
+
+  const scheduleReload = (kind) => {
+    const key = kind === "window" ? "window" : "primary";
+    const timers = reloadTimerRef.current;
+    if (timers[key]) clearTimeout(timers[key]);
+    timers[key] = setTimeout(() => {
+      if (key === "window") setWindowTextureReloadToken((prev) => prev + 1);
+      else setTextureReloadToken((prev) => prev + 1);
+    }, 350);
+  };
+
+  const scheduleDualReload = (slot) => {
+    const key = slot === "B" ? "dualB" : "dualA";
+    const timers = reloadTimerRef.current;
+    if (timers[key]) clearTimeout(timers[key]);
+    timers[key] = setTimeout(() => {
+      if (key === "dualB") setDualTextureBReloadToken((prev) => prev + 1);
+      else setDualTextureAReloadToken((prev) => prev + 1);
+    }, 350);
+  };
+
+  const togglePanel = useCallback((key) => {
+    setPanelOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
+  const handleModelInfo = useCallback((info) => {
+    const targets = info?.targets ?? [];
+    setTextureTargets(targets);
+    setGeneratedTemplateMap(info?.templateMap || null);
+    setTemplateMapError(info?.templateMapError || "");
+    setLiveryTarget(info?.liveryTarget || "");
+    setLiveryLabel(info?.liveryLabel || "");
+    setWindowLiveryTarget(info?.windowTarget || "");
+    setWindowLiveryLabel(info?.windowLabel || "");
+    setLiveryWindowOverride((prev) => {
+      if (!prev) return prev;
+      return targets.some((target) => target.value === prev) ? prev : "";
+    });
+    setTextureTarget((prev) => {
+      if (prev === "all") return prev;
+      return targets.some((target) => target.value === prev) ? prev : "all";
+
+    });
+    setWindowTextureTarget((prev) => {
+      if (prev === "all" || prev === "none" || prev === "auto") return prev;
+      return targets.some((target) => target.value === prev) ? prev : "none";
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!windowTemplateEnabled) return;
+    setWindowTextureTarget((prev) => {
+      if (prev === "auto") return prev;
+      if (prev !== "none") return prev;
+      return windowLiveryTarget || prev;
+    });
+  }, [windowTemplateEnabled, windowLiveryTarget]);
+
+  useEffect(() => {
+    if (windowTemplateEnabled) return;
+    setWindowTextureError("");
+  }, [windowTemplateEnabled]);
+
+  const handleDualModelAInfo = useCallback((info) => {
+    const targets = info?.targets ?? [];
+    setDualTextureTargetsA(targets);
+    setDualWindowAutoTargetA(info?.windowTarget || "");
+    setDualWindowAutoLabelA(info?.windowLabel || "");
+    setDualWindowTextureATarget((prev) => {
+      if (prev === "auto" || prev === "none" || prev === "all") return prev;
+      return targets.some((target) => target.value === prev) ? prev : "auto";
+    });
+  }, []);
+
+  const handleDualModelBInfo = useCallback((info) => {
+    const targets = info?.targets ?? [];
+    setDualTextureTargetsB(targets);
+    setDualWindowAutoTargetB(info?.windowTarget || "");
+    setDualWindowAutoLabelB(info?.windowLabel || "");
+    setDualWindowTextureBTarget((prev) => {
+      if (prev === "auto" || prev === "none" || prev === "all") return prev;
+      return targets.some((target) => target.value === prev) ? prev : "auto";
+    });
+  }, []);
+
+  useEffect(() => {
+    setDualWindowTextureATarget((prev) => {
+      if (prev === "auto" || prev === "none" || prev === "all") return prev;
+      return dualTextureTargetsA.some((target) => target.value === prev) ? prev : "auto";
+    });
+  }, [dualTextureTargetsA]);
+
+  useEffect(() => {
+    setDualWindowTextureBTarget((prev) => {
+      if (prev === "auto" || prev === "none" || prev === "all") return prev;
+      return dualTextureTargetsB.some((target) => target.value === prev) ? prev : "auto";
+    });
+  }, [dualTextureTargetsB]);
+
+  const handleTextureError = useCallback((message) => {
+    setTextureError(message || "");
+    // If texture failed to load, clear the stale path
+    if (message) setTexturePath("");
+  }, []);
+
+  const handleWindowTextureError = useCallback((message) => {
+    setWindowTextureError(message || "");
+    // If window texture failed to load, clear the stale path
+    if (message) setWindowTexturePath("");
+  }, []);
+
+  const handleFormatWarning = useCallback((warning) => {
+    setFormatWarning(warning);
+  }, []);
+
+  const handleModelLoading = useCallback((loading) => {
+    setModelLoading(Boolean(loading));
+  }, []);
+
+  const handleModelError = useCallback((message) => {
+    setDialogError(message || "Failed to load model.");
+    setGeneratedTemplateMap(null);
+    setTemplateMapError("");
+    setModelPath("");
+  }, []);
+
+  const handleDownloadTemplateMap = useCallback(() => {
+    if (!generatedTemplateMap) {
+      showToast("No template map available yet.");
+      return;
+    }
+
+    const sourceName =
+      generatedTemplateMap?.source?.fileName ||
+      getFileLabel(modelSourcePath || modelPath, "model");
+    const stem = (sourceName || "model").toString().replace(/\.[^.]+$/, "");
+    const fileName = `${stem}.template-map.v1.json`;
+
+    try {
+      const json = JSON.stringify(generatedTemplateMap, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+      showToast(`Downloaded ${fileName}`);
+    } catch (error) {
+      console.error("Template map download failed:", error);
+      showToast("Template map download failed.");
+    }
+  }, [generatedTemplateMap, modelPath, modelSourcePath, showToast]);
+
+  const applyAndPersistDefaults = useCallback((next) => {
+    const merged = { ...BUILT_IN_DEFAULTS, ...(next || {}) };
+    setDefaults(merged);
+    setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
+    setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
+    setWindowTextureTarget(merged.windowTextureTarget || "auto");
+
+
+    setCameraWASD(Boolean(merged.cameraWASD));
+    setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
+    setShowHints(Boolean(merged.showHints ?? true));
+    setHideRotText(Boolean(merged.hideRotText));
+    setShowGrid(Boolean(merged.showGrid));
+    setShowShadows(Boolean(merged.showShadows));
+    setBodyColor(merged.bodyColor);
+    setDualBodyColorA(merged.bodyColor);
+    setDualBodyColorB(merged.bodyColor);
+    setBackgroundColor(merged.backgroundColor);
+    setExperimentalSettings(Boolean(merged.experimentalSettings));
+    const prefs = loadPrefs() || {};
+
+    savePrefs({ ...prefs, defaults: merged });
+  }, []);
+
+  const saveHotkeys = useCallback((next) => {
+    setHotkeys(next);
+    const prefs = loadPrefs() || {};
+    savePrefs({ ...prefs, hotkeys: next });
+  }, []);
+
+  const setGlobalRenderEffect = useCallback((key, nextValue) => {
+    const currentPrefs = loadPrefs() || {};
+    const storedDefaults = sanitizeStoredDefaults(currentPrefs.defaults);
+    const mergedDefaults = { ...BUILT_IN_DEFAULTS, ...storedDefaults };
+    const resolvedValue =
+      typeof nextValue === "function" ? Boolean(nextValue(Boolean(mergedDefaults[key]))) : Boolean(nextValue);
+    const nextDefaults = { ...mergedDefaults, [key]: resolvedValue };
+
+    setDefaults(nextDefaults);
+    if (key === "showShadows") {
+      setShowShadows(resolvedValue);
+    }
+
+    savePrefs({ ...currentPrefs, defaults: nextDefaults });
+    emitPrefsUpdated();
+  }, []);
+
+  const toggleGlobalRenderEffect = useCallback((key) => {
+    setGlobalRenderEffect(key, (prev) => !prev);
+  }, [setGlobalRenderEffect]);
+
+  useEffect(() => {
+    const prefs = loadPrefs() || {};
+    const ui = { ...(prefs.ui || {}), colorsOpen };
+    savePrefs({ ...prefs, ui });
+  }, [colorsOpen]);
+
+  const selectModelRef = useRef(null);
+  const selectTextureRef = useRef(null);
+  const selectWindowTextureRef = useRef(null);
+
+  const completeOnboarding = useCallback(
+    (next) => {
+      applyAndPersistDefaults(next);
+      setOnboarded();
+      setShowOnboarding(false);
+    },
+    [applyAndPersistDefaults],
+  );
+
+  const restoreState = useCallback(async (state) => {
+    if (!state) return;
+
+    const fileOk = async (p) => {
+      if (!p) return false;
+      try { return await fsExists(p); } catch { return false; }
+    };
+
+    // Restore non-path settings immediately
+    let resolvedTextureMode = state.textureMode;
+    if (!resolvedTextureMode && state.openFile) {
+      const openFileLower = state.openFile.toLowerCase();
+      if (openFileLower.endsWith(".ydd")) {
+        resolvedTextureMode = "eup";
+      } else if (openFileLower.endsWith(".yft")) {
+        resolvedTextureMode = "livery";
+      }
+    }
+    if (resolvedTextureMode) setTextureMode(resolvedTextureMode);
+    if (state.textureTarget) setTextureTarget(state.textureTarget);
+    if (state.windowTextureTarget) setWindowTextureTarget(state.windowTextureTarget);
+    if (typeof state.liveryWindowOverride === "string") setLiveryWindowOverride(state.liveryWindowOverride);
+    if (typeof state.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(state.windowTemplateEnabled);
+    if (state.bodyColor) setBodyColor(state.bodyColor);
+    if (state.dualBodyColorA) setDualBodyColorA(state.dualBodyColorA);
+    else if (state.bodyColor) setDualBodyColorA(state.bodyColor);
+    if (state.dualBodyColorB) setDualBodyColorB(state.dualBodyColorB);
+    else if (state.bodyColor) setDualBodyColorB(state.bodyColor);
+    if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
+    if (typeof state.backgroundImageBlur === "number") {
+      setBackgroundImageBlur(clampBackgroundImageBlur(state.backgroundImageBlur));
+    }
+    if (typeof state.showWireframe === "boolean") setShowWireframe(state.showWireframe);
+    if (typeof state.showCageWireframe === "boolean") setShowCageWireframe(state.showCageWireframe);
+    if (typeof state.lightIntensity === "number") setLightIntensity(state.lightIntensity);
+    if (typeof state.lightAzimuth === "number") setLightAzimuth(state.lightAzimuth);
+    if (typeof state.lightElevation === "number") setLightElevation(state.lightElevation);
+    if (typeof state.glossiness === "number") setGlossiness(state.glossiness);
+    if (typeof state.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(state.liveryExteriorOnly);
+    if (state.dualSelectedSlot) setDualSelectedSlot(state.dualSelectedSlot);
+    if (state.dualTextureMode) setDualTextureMode(state.dualTextureMode);
+    if (state.dualWindowTextureATarget) setDualWindowTextureATarget(state.dualWindowTextureATarget);
+    if (state.dualWindowTextureBTarget) setDualWindowTextureBTarget(state.dualWindowTextureBTarget);
+    if (state.dualModelAPos) setDualModelAPos(state.dualModelAPos);
+    if (state.dualModelBPos) setDualModelBPos(state.dualModelBPos);
+
+    // Restore file paths (best effort). Some environments can report false negatives
+    // on fs existence checks for previously approved paths.
+    const initialModelPath = state.modelSourcePath || state.modelPath || state.openFile || "";
+    if (initialModelPath) {
+      await loadModel(initialModelPath);
+    }
+    if (state.texturePath && (await fileOk(state.texturePath))) setTexturePath(state.texturePath);
+    else if (state.texturePath) setTexturePath(state.texturePath);
+    if (state.backgroundImagePath && (await fileOk(state.backgroundImagePath))) setBackgroundImagePath(state.backgroundImagePath);
+    else if (state.backgroundImagePath) setBackgroundImagePath(state.backgroundImagePath);
+    if (state.windowTexturePath && (await fileOk(state.windowTexturePath))) setWindowTexturePath(state.windowTexturePath);
+    else if (state.windowTexturePath) setWindowTexturePath(state.windowTexturePath);
+    if (state.dualModelAPath && (await fileOk(state.dualModelAPath))) setDualModelAPath(state.dualModelAPath);
+    else if (state.dualModelAPath) setDualModelAPath(state.dualModelAPath);
+    if (state.dualModelBPath && (await fileOk(state.dualModelBPath))) setDualModelBPath(state.dualModelBPath);
+    else if (state.dualModelBPath) setDualModelBPath(state.dualModelBPath);
+    if (state.dualTextureAPath && (await fileOk(state.dualTextureAPath))) setDualTextureAPath(state.dualTextureAPath);
+    else if (state.dualTextureAPath) setDualTextureAPath(state.dualTextureAPath);
+    if (state.dualTextureBPath && (await fileOk(state.dualTextureBPath))) setDualTextureBPath(state.dualTextureBPath);
+    else if (state.dualTextureBPath) setDualTextureBPath(state.dualTextureBPath);
+    if (state.dualWindowTextureAPath && (await fileOk(state.dualWindowTextureAPath))) setDualWindowTextureAPath(state.dualWindowTextureAPath);
+    else if (state.dualWindowTextureAPath) setDualWindowTextureAPath(state.dualWindowTextureAPath);
+    if (state.dualWindowTextureBPath && (await fileOk(state.dualWindowTextureBPath))) setDualWindowTextureBPath(state.dualWindowTextureBPath);
+    else if (state.dualWindowTextureBPath) setDualWindowTextureBPath(state.dualWindowTextureBPath);
+  }, [loadModel]);
+
+  // Auto-restore workspace state from initialState prop (passed by Shell from workspace)
+  useEffect(() => {
+    if (initialStateRestoredRef.current) return;
+    if (!initialState) return;
+    initialStateRestoredRef.current = true;
+    restoreState(initialState);
+  }, [initialState, restoreState]);
+
+  const selectModel = async () => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
+    try {
+      const selected = await open({
+        filters: [{ name: "Model", extensions: modelExtensions }],
+      });
+      setDialogError("");
+      if (typeof selected === "string") {
+        if (textureMode === "multi") {
+          if (dualSelectedSlot === "A") {
+            setDualModelAError("");
+            setDualModelAPath(selected);
+          } else {
+            setDualModelBError("");
+            setDualModelBPath(selected);
+          }
+        } else {
+          await loadModel(selected);
+        }
+      }
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
+  };
+
+  const selectTexture = async () => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
+    try {
+      const selected = await open({
+        filters: [
+          {
+            name: "Texture",
+            extensions: [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp",
+              "avif",
+              "bmp",
+              "gif",
+              "tga",
+              "dds",
+              "tif",
+              "tiff",
+              "psd",
+              "ai",
+              "pdn",
+            ],
+          },
+        ],
+      });
+      setDialogError("");
+      if (typeof selected === "string") {
+        if (!isTextureFormatSupported(selected)) {
+          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
+        setTextureError("");
+        setTexturePath(selected);
+      }
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
+  };
+
+  // Window controls are handled by Shell
+
+  const selectWindowTexture = async () => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
+    try {
+      const selected = await open({
+        filters: [
+          {
+            name: "Texture",
+            extensions: [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp",
+              "avif",
+              "bmp",
+              "gif",
+              "tga",
+              "dds",
+              "tif",
+              "tiff",
+              "psd",
+              "ai",
+              "pdn",
+            ],
+          },
+        ],
+      });
+      setDialogError("");
+      if (typeof selected === "string") {
+        if (!isTextureFormatSupported(selected)) {
+          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
+        if (textureMode === "multi") {
+          if (dualSelectedSlot === "A") setDualWindowTextureAPath(selected);
+          else setDualWindowTextureBPath(selected);
+          return;
+        }
+        setWindowTextureError("");
+        setWindowTexturePath(selected);
+      }
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
+  };
+
+  const selectBackgroundImage = async () => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
+    try {
+      const selected = await open({
+        filters: [
+          {
+            name: "Background Image",
+            extensions: [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp",
+              "avif",
+              "bmp",
+              "gif",
+              "tga",
+              "dds",
+              "tif",
+              "tiff",
+              "psd",
+              "ai",
+              "pdn",
+            ],
+          },
+        ],
+      });
+      setDialogError("");
+      if (typeof selected === "string") {
+        if (!isTextureFormatSupported(selected)) {
+          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
+        setBackgroundImagePath((prev) => {
+          if (prev === selected) {
+            setBackgroundImageReloadToken((token) => token + 1);
+          }
+          return selected;
+        });
+      }
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
+  };
+
+  const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
+  const textureExtsDual = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai", "pdn"];
+
+  // Material texture upload handler
+  const selectMaterialTexture = async () => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [{ name: "Texture", extensions: ["png", "jpg", "jpeg", "webp", "dds", "tga", "tif", "tiff", "psd", "bmp"] }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      const newTextures = paths.map((p) => ({
+        id: `mat-tex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: p.split(/[\\/]/).pop(),
+        path: p,
+        thumbnail: null,
+      }));
+      setMaterialTextures((prev) => [...prev, ...newTextures].slice(0, 6));
+    } catch { /* dialog blocked */ }
+  };
+
+  const removeMaterialTexture = useCallback((index) => {
+    setMaterialTextures((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const selectDualModel = async (slot) => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await open({ filters: [{ name: "Model", extensions: modelExtsDual }] });
+      if (typeof selected === "string") {
+        if (slot === "A") { setDualModelAError(""); setDualModelAPath(selected); }
+        else { setDualModelBError(""); setDualModelBPath(selected); }
+      }
+    } catch { /* dialog blocked */ }
+  };
+
+  const selectDualTexture = async (slot) => {
+    if (!isTauriRuntime) return;
+    try {
+      const selected = await open({ filters: [{ name: "Texture", extensions: textureExtsDual }] });
+      if (typeof selected === "string") {
+        if (!isTextureFormatSupported(selected)) {
+          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+          return;
+        }
+        if (slot === "A") setDualTextureAPath(selected);
+        else setDualTextureBPath(selected);
+      }
+    } catch { /* dialog blocked */ }
+  };
+
+  selectModelRef.current = selectModel;
+  selectTextureRef.current = selectTexture;
+  selectWindowTextureRef.current = selectWindowTexture;
+
+  const getActiveViewerApi = useCallback(
+    () => (textureMode === "multi" ? dualViewerApiRef.current : viewerApiRef.current),
+    [textureMode],
+  );
+
+  const handleSetCameraPreset = useCallback((presetKey) => {
+    getActiveViewerApi()?.setPreset?.(presetKey);
+  }, [getActiveViewerApi]);
+
+  const handleRotateModel = useCallback((axis) => {
+    getActiveViewerApi()?.rotateModel?.(axis);
+  }, [getActiveViewerApi]);
+
+  const handleCenterCamera = useCallback(() => {
+    getActiveViewerApi()?.reset?.();
+  }, [getActiveViewerApi]);
+
+  useEffect(() => {
+    if (!isActive) return undefined;
+
+    const handleKeyDown = (event) => {
+      const target = event.target;
+      if (target instanceof Element) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        if (target.isContentEditable) return;
+        if (target.classList.contains("hotkey-input")) return;
+      }
+
+      const action = findMatchingAction(hotkeys, event);
+      if (!action) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      switch (action) {
+        case HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY:
+          setLiveryExteriorOnly((prev) => !prev);
+          break;
+        case HOTKEY_ACTIONS.TOGGLE_SHADOWS:
+          toggleGlobalRenderEffect("showShadows");
+          break;
+        // Mode switching removed — handled by Shell via new-tab hotkeys
+        case HOTKEY_ACTIONS.TOGGLE_PANEL:
+          setPanelCollapsed((prev) => !prev);
+          break;
+        case HOTKEY_ACTIONS.RESET_VIEW:
+          getActiveViewerApi()?.reset?.();
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_FRONT:
+          getActiveViewerApi()?.setPreset?.("front");
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_BACK:
+          getActiveViewerApi()?.setPreset?.("back");
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_SIDE:
+          getActiveViewerApi()?.setPreset?.("side");
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_ANGLE:
+          getActiveViewerApi()?.setPreset?.("angle");
+          break;
+        case HOTKEY_ACTIONS.CAMERA_PRESET_TOP:
+          getActiveViewerApi()?.setPreset?.("top");
+          break;
+        case HOTKEY_ACTIONS.SELECT_MODEL:
+          selectModelRef.current?.();
+          break;
+        case HOTKEY_ACTIONS.SELECT_LIVERY:
+          selectTextureRef.current?.();
+          break;
+        case HOTKEY_ACTIONS.SELECT_GLASS:
+          selectWindowTextureRef.current?.();
+          break;
+        case HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO:
+          setDualGizmoVisible((prev) => !prev);
+          break;
+        case HOTKEY_ACTIONS.SWAP_DUAL_SLOT:
+          setDualSelectedSlot((prev) => (prev === "A" ? "B" : "A"));
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hotkeys, experimentalSettings, getActiveViewerApi, isActive, toggleGlobalRenderEffect]);
+
+  const persistPreviewFolder = useCallback(async (folder) => {
+    const current = loadPrefs() || {};
+    const defs = current?.defaults || {};
+    savePrefs({ ...current, defaults: { ...defs, previewFolder: folder } });
+  }, []);
+
+  const promptForPreviewFolder = useCallback(async () => {
+    if (!isTauriRuntime) return "";
+
+    try {
+      const selected = await open({ directory: true, title: "Select Preview Export Folder" });
+      return typeof selected === "string" ? selected : "";
+    } catch {
+      return "";
+    }
+  }, [isTauriRuntime]);
+
+  const resolveExistingFolder = useCallback(async (preferredPath, fallbackPath = "") => {
+    if (!isTauriRuntime) return preferredPath || fallbackPath;
+    return await resolveExistingPreviewFolderPath(preferredPath, fallbackPath, fsExists);
+  }, [isTauriRuntime]);
+
+  const ensurePreviewFolderReady = useCallback(async () => {
+    const prefs = loadPrefs() || {};
+    const savedFolder = prefs?.defaults?.previewFolder || "";
+    const result = await ensurePreviewExportFolder({
+      savedFolder,
+      isTauriRuntime,
+      pathExists: fsExists,
+      chooseFolder: async ({ reason }) => {
+        if (reason === "missing") {
+          showToast("Preview export folder was moved or deleted. Choose a new folder to continue.");
+        } else {
+          showToast("Choose a preview export folder to save captures.");
+        }
+
+        return await promptForPreviewFolder();
+      },
+      persistFolder: persistPreviewFolder,
+    });
+
+    if (result.status === "cancelled-missing" || result.status === "cancelled-unset") {
+      showToast("Preview capture cancelled. No preview export folder was selected.");
+    }
+
+    return result;
+  }, [isTauriRuntime, persistPreviewFolder, promptForPreviewFolder, showToast]);
+
+  const previewSnapTokenRef = useRef(0);
+  const updatePreviewSnapshot = useCallback(async (zoomLevel) => {
+    if (!viewerApiRef.current || !viewerReady) return;
+    previewSnapTokenRef.current += 1;
+    const token = previewSnapTokenRef.current;
+    setPreviewZoomLoading(true);
+    try {
+      const dataUrl = await captureTemporaryViewerFrame(viewerApiRef.current, {
+        presetKey: "angle",
+        zoomFactor: zoomLevel,
+        delayMs: 120,
+      });
+      if (token !== previewSnapTokenRef.current) return;
+      setPreviewZoomPreview(dataUrl || "");
+    } finally {
+      if (token === previewSnapTokenRef.current) setPreviewZoomLoading(false);
+    }
+  }, [viewerReady]);
+
+  // Generate Preview — cycle through camera presets and capture screenshots
+  const handleGeneratePreview = useCallback(async (zoomLevel = 1, requestedPresets = PREVIEW_CAPTURE_PRESET_KEYS) => {
+    if (!viewerApiRef.current || !modelPath || generatingPreview) return;
+    const presetKeys = PREVIEW_CAPTURE_PRESET_KEYS.filter((key) => requestedPresets.includes(key));
+    if (!presetKeys.length) return;
+
+    const folderResult = await ensurePreviewFolderReady();
+    const folder = folderResult.folder;
+    if (!folder) return;
+
+    const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "preview";
+
+    // Create a subfolder named after the model to keep exports tidy
+    const modelFolder = `${folder}/${modelName}`;
+    let outputFolder = modelFolder;
+    if (isTauriRuntime) {
+      try { await invoke("ensure_dir", { path: modelFolder }); } catch {
+        // If ensure_dir command doesn't exist, try mkdir via writeFile workaround
+        // Tauri's writeFile will create the file, the folder must exist.
+        // Fall back to the base folder if subfolder creation fails.
+        outputFolder = folder;
+      }
+
+      try {
+        const subfolderExists = await fsExists(modelFolder);
+        if (!subfolderExists) outputFolder = folder;
+      } catch {
+        outputFolder = folder;
+      }
+    }
+
+    // Temporarily disable grid for clean screenshots
+    const gridWasOn = showGrid;
+    if (gridWasOn) setShowGrid(false);
+
+    setGeneratingPreview(true);
+    setPreviewProgress({ current: 0, total: presetKeys.length, preset: "" });
+    setPreviewOutputPath(outputFolder);
+
+    // Wait a frame for grid to disappear if it was on
+    if (gridWasOn) await new Promise((r) => setTimeout(r, 100));
+
+    try {
+      for (let i = 0; i < presetKeys.length; i++) {
+        const preset = presetKeys[i];
+        setPreviewProgress({ current: i, total: presetKeys.length, preset: PREVIEW_CAPTURE_PRESET_LABELS[preset] || preset });
+
+        const dataUrl = await captureTemporaryViewerFrame(viewerApiRef.current, {
+          presetKey: preset,
+          zoomFactor: zoomLevel,
+          delayMs: 400,
+        });
+        if (!dataUrl) continue;
+
+        const base64 = dataUrl.split(",")[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let j = 0; j < binary.length; j++) {
+          bytes[j] = binary.charCodeAt(j);
+        }
+
+        const fileName = `${modelName}_${preset}.png`;
+        // Try model subfolder first, fall back to base folder
+        const filePath = `${outputFolder}/${fileName}`;
+        if (isTauriRuntime) {
+          try {
+            await writeFile(filePath, bytes);
+          } catch {
+            // Subfolder might not exist — write to base folder instead
+            await writeFile(`${folder}/${fileName}`, bytes);
+            outputFolder = folder;
+          }
+        }
+      }
+
+      const resolvedOutputFolder = await resolveExistingFolder(outputFolder, folder);
+      setPreviewOutputPath(resolvedOutputFolder);
+      setPreviewProgress({ current: presetKeys.length, total: presetKeys.length, preset: "Complete" });
+      setGeneratingPreview(false);
+      setPreviewComplete(true);
+    } catch (err) {
+      console.error("Generate preview failed:", err);
+      setGeneratingPreview(false);
+    } finally {
+      // Restore grid state
+      if (gridWasOn) setShowGrid(true);
+    }
+  }, [modelPath, generatingPreview, showGrid, resolveExistingFolder, ensurePreviewFolderReady]);
+
+  useEffect(() => {
+    if (!previewPromptOpen) return;
+    const timer = setTimeout(() => {
+      updatePreviewSnapshot(previewZoomDraft);
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [previewPromptOpen, previewZoomDraft, updatePreviewSnapshot]);
+
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragLeave = (event) => {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setIsDragging(false);
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setIsDragging(false);
+    if (!isTauriRuntime) {
+      setDialogError("Drag-and-drop requires the Tauri app.");
+      return;
+    }
+
+    const files = Array.from(event.dataTransfer?.files || []);
+    const objFile = files.find((file) => file.name?.toLowerCase()?.endsWith(".obj"));
+    const modelFiles = files.filter((file) => {
+      const name = file.name?.toLowerCase();
+      return modelExtensions.some((ext) => name?.endsWith(`.${ext}`));
+    });
+    const modelFile = modelFiles[0];
+
+    if (!modelFile) {
+      setDialogError(
+        objFile
+          ? "out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported."
+          : `Only ${modelDropLabel} files are supported for drop.`,
+      );
+      return;
+    }
+
+    if (!modelFile.path) {
+      setDialogError("Unable to read dropped file path.");
+      return;
+    }
+
+    setDialogError("");
+
+    if (textureMode === "multi") {
+      if (modelFiles.length >= 2) {
+        const [first, second] = modelFiles;
+        if (!first?.path || !second?.path) {
+          setDialogError("Unable to read dropped model paths.");
+          return;
+        }
+        setDualModelAError("");
+        setDualModelBError("");
+        setDualModelAPath(first.path);
+        setDualModelBPath(second.path);
+        return;
+      }
+
+      if (dualSelectedSlot === "A") {
+        setDualModelAError("");
+        setDualModelAPath(modelFile.path);
+      } else {
+        setDualModelBError("");
+        setDualModelBPath(modelFile.path);
+      }
+      return;
+    }
+
+    loadModel(modelFile.path);
+  };
+
+  useEffect(() => {
+    let unlisten = null;
+    let cancelled = false;
+
+    const normalizePath = (value) => (value || "").toString().replace(/\\/g, "/").toLowerCase();
+
+    const start = async () => {
+      if (!isTauriRuntime) {
+        setWatchStatus("idle");
+        return;
+      }
+
+      const isMulti = textureMode === "multi";
+
+      if (isMulti) {
+        // Ensure legacy single-template watchers are stopped so they don't fight over state.
+        await invoke("stop_watch").catch(() => null);
+        await invoke("stop_window_watch").catch(() => null);
+
+        const aPath = dualTextureAPath;
+        const bPath = dualTextureBPath;
+        const paths = [aPath, bPath].filter(Boolean);
+
+        if (!paths.length) {
+          await invoke("stop_multi_watch").catch(() => null);
+          if (!cancelled) setWatchStatus("idle");
+          return;
+        }
+
+        const ok = await invoke("start_multi_watch", { paths }).then(
+          () => true,
+          () => false,
+        );
+
+        if (!cancelled) setWatchStatus(ok ? "watching" : "error");
+
+        unlisten = await listen("texture:update", (event) => {
+          const changedPath = normalizePath(event?.payload?.path);
+          const aNorm = normalizePath(aPath);
+          const bNorm = normalizePath(bPath);
+          if (!aNorm && !bNorm) return;
+
+          if (!changedPath) {
+            scheduleDualReload("A");
+            scheduleDualReload("B");
+            return;
+          }
+
+          if (aNorm && changedPath === aNorm) scheduleDualReload("A");
+          if (bNorm && changedPath === bNorm) scheduleDualReload("B");
+        });
+
+        return;
+      }
+
+      // Non-multi (single viewer) mode
+      await invoke("stop_multi_watch").catch(() => null);
+
+      const primaryPath = texturePath;
+      const secondaryPath = windowTemplateEnabled ? windowTexturePath : "";
+
+      const wantsPrimary = Boolean(primaryPath);
+      const wantsSecondary = Boolean(secondaryPath);
+
+      if (!wantsPrimary) await invoke("stop_watch").catch(() => null);
+      if (!wantsSecondary) await invoke("stop_window_watch").catch(() => null);
+
+      if (!wantsPrimary && !wantsSecondary) {
+        if (!cancelled) setWatchStatus("idle");
+        return;
+      }
+
+      const primaryOk = wantsPrimary
+        ? await invoke("start_watch", { path: primaryPath }).then(
+            () => true,
+            () => false,
+          )
+        : true;
+
+      const secondaryOk = wantsSecondary
+        ? await invoke("start_window_watch", { path: secondaryPath }).then(
+            () => true,
+            () => false,
+          )
+        : true;
+
+      if (!cancelled) setWatchStatus(primaryOk && secondaryOk ? "watching" : "error");
+
+      unlisten = await listen("texture:update", (event) => {
+        const changedPath = normalizePath(event?.payload?.path);
+        const primaryNorm = normalizePath(primaryPath);
+        const secondaryNorm = normalizePath(secondaryPath);
+
+        if (!primaryNorm && !secondaryNorm) return;
+        if (!changedPath) {
+          scheduleReload("primary");
+          scheduleReload("window");
+          return;
+        }
+        const matchesPrimary = primaryNorm && changedPath === primaryNorm;
+        const matchesWindow = secondaryNorm && changedPath === secondaryNorm;
+        if (matchesPrimary) scheduleReload("primary");
+        if (matchesWindow) scheduleReload("window");
+      });
+    };
+
+    start();
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+      if (isTauriRuntime) {
+        invoke("stop_watch").catch(() => null);
+        invoke("stop_window_watch").catch(() => null);
+        invoke("stop_multi_watch").catch(() => null);
+      }
+    };
+  }, [textureMode, texturePath, windowTexturePath, windowTemplateEnabled, dualTextureAPath, dualTextureBPath]);
+
+  const onTextureReload = useCallback(() => {
+    setLastUpdate(new Date().toLocaleTimeString());
+  }, []);
+
+  const resolvedTextureTarget =
+    textureMode === "livery" ? liveryTarget || "all" : textureTarget;
+  const resolvedWindowBaseTarget =
+    windowTextureTarget === "auto"
+      ? windowLiveryTarget || "none"
+      : windowTextureTarget || "none";
+  const resolvedWindowTextureTarget =
+    textureMode === "livery"
+      ? liveryWindowOverride || resolvedWindowBaseTarget
+      : resolvedWindowBaseTarget;
+  const resolvedDualWindowTextureATarget =
+    dualWindowTextureATarget === "auto"
+      ? dualWindowAutoTargetA || "none"
+      : dualWindowTextureATarget || "none";
+  const resolvedDualWindowTextureBTarget =
+    dualWindowTextureBTarget === "auto"
+      ? dualWindowAutoTargetB || "none"
+      : dualWindowTextureBTarget || "none";
+  const selectedDualTargets = dualSelectedSlot === "A" ? dualTextureTargetsA : dualTextureTargetsB;
+  const selectedDualWindowAutoTarget = dualSelectedSlot === "A" ? dualWindowAutoTargetA : dualWindowAutoTargetB;
+  const selectedDualWindowAutoLabel = dualSelectedSlot === "A" ? dualWindowAutoLabelA : dualWindowAutoLabelB;
+  const activeMaterialTexturePath = materialTextures.length
+    ? materialTextures[materialTextures.length - 1]?.path || ""
+    : "";
+  const hasModel = Boolean(modelPath);
+  const activeModelPath = modelSourcePath || modelPath;
+  const isYftModel = activeModelPath.toLowerCase().endsWith(".yft");
+  const hasTemplateMap = Boolean(generatedTemplateMap);
+  const templateStatusLabel = !hasModel
+    ? "Load a .yft model to auto-generate a template map."
+    : !isYftModel
+      ? "Template map generation is available for .yft models only."
+      : templateMapError
+        ? templateMapError
+        : hasTemplateMap
+          ? "Template map ready."
+          : "Generating template map...";
+  const liveryTargetLabel = (liveryLabel || "").replace(/^(material|mesh):\s*/i, "").trim();
+  const liveryTargetMessage = !hasModel
+    ? "Load a model to enable automatic targeting."
+    : liveryTargetLabel
+      ? `Automatically targeting ${liveryTargetLabel}`
+      : "No paint material detected. Applying to all meshes.";
+  const liveryTargetToneClass = !hasModel
+    ? " is-empty"
+    : liveryTargetLabel
+      ? ""
+      : " is-fallback";
+  const windowStatusLabel = windowLiveryLabel || "No window material found";
+  const usingWindowOverride = textureMode === "livery" && liveryWindowOverride;
+  const windowHint = !hasModel
+    ? "Load a model to detect window materials."
+    : usingWindowOverride
+      ? "Using manually selected material."
+      : windowLiveryTarget
+        ? "Auto-detecting glass/window materials. Use dropdown to override."
+        : "No window material auto-detected. Select a material below.";
+  const modelLabel = getFileLabel(modelSourcePath || modelPath, "No model selected");
+  const primaryTemplateLabel =
+    textureMode === "livery"
+      ? getFileLabel(texturePath, "No livery template")
+      : textureMode === "everything"
+        ? getFileLabel(texturePath, "No texture template")
+        : getFileLabel(texturePath, "No uniform texture");
+  const overlayLabel = windowTemplateEnabled
+    ? getFileLabel(windowTexturePath, "No overlay selected")
+    : "Off";
+  const manualTargetLabel =
+    textureTarget === "all"
+      ? "All meshes"
+      : textureTargets.find((target) => target.value === textureTarget)?.label || "Custom target";
+  const targetingLabel = textureMode === "livery" ? (liveryTarget ? "Auto" : "No target") : manualTargetLabel;
+  const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
+
+  const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
+  const currentModeLabel = modeLabels[textureMode] || "Preview";
+  const previewExportCount = previewProgress.total > 0 ? previewProgress.total : PREVIEW_CAPTURE_PRESET_KEYS.length;
+
+  return (
+    <motion.div
+      className={`app-shell ${panelCollapsed ? "is-panel-collapsed" : ""}`}
+      initial={{ opacity: 0, y: 6 }}
+      animate={isBooting ? { opacity: 0, y: 6 } : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+      style={{ pointerEvents: isBooting ? "none" : "auto" }}
+    >
+      {/* ── Row 2 Portal: Context Bar ── */}
+      {isActive && contextBarTarget && createPortal(
+        <div className="ctx-bar-inner">
+          <div className="ctx-bar-left">
+            <button
+              type="button"
+              className="ctx-bar-toggle"
+              onClick={() => setPanelCollapsed((prev) => !prev)}
+              title={panelCollapsed ? "Show panel" : "Hide panel"}
+            >
+              <PanelLeft className="w-3.5 h-3.5" />
+            </button>
+
+          </div>
+
+          <div className="ctx-bar-drag-pad" aria-hidden="true" />
+
+          <div className="ctx-bar-center">
+            {!cameraControlsInPanel && (
+              <>
+                    <span className="ctx-bar-group-label">Camera</span>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("front")} title="Front view">Front</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("back")} title="Rear view">Back</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("side")} title="Side view">Side</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("angle")} title="3/4 angle view">3/4</button>
+                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("top")} title="Top-down view">Top</button>
+                    <div className="ctx-bar-sep" />
+                    <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={handleCenterCamera} disabled={!viewerReady} title="Re-center camera on model">
+                      <RotateCcw className="w-3 h-3" style={{ marginRight: 3 }} />Center
+                    </button>
+                    {textureMode !== "multi" && (
+                      <>
+                        <div className="ctx-bar-sep" />
+                        <span className="ctx-bar-group-label">Rotate</span>
+                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("x")} title="Rotate 90° on X axis">
+                          <span style={{ color: "#f87171" }}>X</span>
+                        </button>
+                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("y")} title="Rotate 90° on Y axis">
+                          <span style={{ color: "#4ade80" }}>Y</span>
+                        </button>
+                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("z")} title="Rotate 90° on Z axis">
+                          <span style={{ color: "#60a5fa" }}>Z</span>
+                        </button>
+                        <div className="ctx-bar-sep" />
+                      </>
+                    )}
+              </>
+            )}
+          </div>
+
+          <div className="ctx-bar-drag-pad" aria-hidden="true" />
+
+          <div className="ctx-bar-right">
+          </div>
+        </div>,
+        contextBarTarget
+      )}
+
+      <CyberPanel collapsed={panelCollapsed} isBooting={isBooting} statusBar={
+        <div className="cs-status-bar">
+          <div className="cs-status-left">
+            <span className={watchStatus === "watching" ? "status-dot" : "cs-status-dot-idle"} style={watchStatus === "error" ? { background: "#ef4444" } : {}} />
+            <span className="cs-status-text">
+              {watchStatus === "watching"
+                ? "Watching"
+                : watchStatus === "error"
+                  ? "Watcher error"
+                  : "Idle"}
+            </span>
+            {watchStatus === "watching" && texturePath && (
+              <span className="cs-status-file" title={texturePath}>
+                {texturePath.split(/[\\/]/).pop()}
+              </span>
+            )}
+          </div>
+          <span className="cs-status-timestamp">{lastUpdate}</span>
+        </div>
+      }>
+          {textureMode !== "multi" && (textureError || windowTextureError) ? (
+            <CyberCard className="mb-3 border border-[var(--mg-border)]">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-[var(--mg-warning)] mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  {textureError ? (
+                    <div className="text-[10px] text-[var(--mg-muted)] leading-snug break-words">
+                      <span className="text-[var(--mg-warning)] mr-1">Texture:</span>
+                      {textureError}
+                    </div>
+                  ) : null}
+                  {windowTextureError ? (
+                    <div className="text-[10px] text-[var(--mg-muted)] leading-snug break-words mt-1">
+                      <span className="text-[var(--mg-warning)] mr-1">Window:</span>
+                      {windowTextureError}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </CyberCard>
+          ) : null}
+
+          {textureMode !== "multi" ? (
+            <CyberSection
+              title="Model"
+              caption={modelLabel}
+              open={panelOpen.model}
+              onToggle={() => togglePanel("model")}
+              contentId="panel-model"
+              icon={Car}
+              color="blue"
+            >
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <CyberButton
+                    onClick={selectModel}
+                    variant="blue"
+                    className="flex-1"
+                  >
+                    {modelPath ? "Change Model" : "Select Model"}
+                  </CyberButton>
+                  {modelPath ? (
+                    <UnloadButton
+                      className="flex-1"
+                      onClick={() => {
+                        setModelPath("");
+                        setModelSourcePath("");
+                        setDialogError("");
+                        setGeneratedTemplateMap(null);
+                        setTemplateMapError("");
+                      }}
+                      title="Unload model"
+                    />
+                  ) : null}
+                </div>
+                <CyberButton
+                  onClick={handleDownloadTemplateMap}
+                  hidden={textureMode !== "templategen"}
+                  variant="secondary"
+                  className="flex-1"
+                  disabled={!hasTemplateMap}
+                  title={hasTemplateMap ? "Download generated template map JSON" : "Load a .yft model to generate a template map"}
+                >
+                  Download Template
+                </CyberButton>
+                <div className={`text-[9px] ${templateMapError ? "text-[var(--mg-destructive)]" : "text-[var(--mg-muted)]"}`}>
+                  {templateStatusLabel}
+                </div>
+                {modelLoading ? <div className="text-[10px] text-[var(--mg-primary)] animate-pulse">Initializing construct...</div> : null}
+              </div>
+            </CyberSection>
+          ) : null}
+
+          {textureMode === "livery" ? (
+            <div className="space-y-4" id="mode-panel-livery" role="tabpanel">
+              <CyberSection
+                title="Livery"
+                caption={primaryTemplateLabel}
+
+                open={panelOpen.templates}
+                onToggle={() => togglePanel("templates")}
+                contentId="panel-templates"
+                icon={Layers}
+                color="blue"
+              >
+                <div className="flex flex-col gap-0">
+                    <div className="flex gap-2">
+                      <CyberButton
+                        onClick={selectTexture}
+                        variant="blue"
+                        className="flex-1"
+                      >
+                    {texturePath ? "Change Livery" : "Select Livery"}
+                  </CyberButton>
+                      {texturePath ? (
+                        <UnloadButton
+                          className="flex-1"
+                          onClick={() => setTexturePath("")}
+                          title="Unload texture"
+                        />
+                      ) : null}
+                    </div>
+                </div>
+                <CyberCard className={`mt-2 cs-livery-target-card${liveryTargetToneClass}`}>
+                  <div className="cs-livery-target-row">
+                    <span className="cs-livery-target-tag">AUTO</span>
+                    <span className="cs-livery-target-message">{liveryTargetMessage}</span>
+                  </div>
+                </CyberCard>
+              </CyberSection>
+
+              <CyberSection
+                title="Glass Overlay"
+                caption={overlayLabel}
+                open={panelOpen.overlays}
+                onToggle={() => togglePanel("overlays")}
+                contentId="panel-overlays"
+                icon={Disc}
+                color="blue"
+              >
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <CyberLabel className="mb-0">Enabled</CyberLabel>
+                    <button
+                      type="button"
+                      className={`settings-toggle ${windowTemplateEnabled ? "is-on" : ""}`}
+                      onClick={() => setWindowTemplateEnabled(!windowTemplateEnabled)}
+                      aria-pressed={windowTemplateEnabled}
+                      aria-label="Toggle glass overlay"
+                    >
+                      <span className="settings-toggle-dot" />
+                    </button>
+                  </div>
+                  {windowTemplateEnabled ? (
+                    <>
+                      <div className="flex flex-col gap-0">
+                        <div className="flex gap-2">
+                          <CyberButton
+                            onClick={selectWindowTexture}
+                            variant="blue"
+                            className="flex-1"
+                          >
+                    {windowTexturePath ? "Change Glass" : "Select Glass"}
+                  </CyberButton>
+                          {windowTexturePath ? (
+                            <UnloadButton
+                              className="flex-1"
+                              onClick={() => setWindowTexturePath("")}
+                              title="Unload window template"
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="mt-1">
+                        <CyberLabel>Override Target</CyberLabel>
+                        <Select value={liveryWindowOverride || "auto"} onValueChange={(val) => setLiveryWindowOverride(val === "auto" ? "" : val)}>
+                          <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                            <SelectValue placeholder="Select target" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                            <SelectItem value="auto">
+                              {windowLiveryTarget
+                                ? `Auto (${windowStatusLabel})`
+                                : "Auto (no material detected)"}
+                            </SelectItem>
+                            {textureTargets.map((target) => (
+                              <SelectItem key={target.value} value={target.value}>
+                                {target.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-[9px] text-[var(--mg-primary)]/50">Enable to apply a glass texture overlay.</div>
+                  )}
+                </div>
+              </CyberSection>
+
+              <CyberSection
+                title="Visibility"
+                caption={viewLabel}
+                open={panelOpen.view}
+                onToggle={() => togglePanel("view")}
+                contentId="panel-visibility"
+                icon={Eye}
+                color="blue"
+              >
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <CyberLabel className="mb-0">Exterior Only</CyberLabel>
+<Toggle
+                      checked={liveryExteriorOnly}
+                      onChange={setLiveryExteriorOnly}
+                      ariaLabel="Toggle exterior only visibility"
+                    />
+                  </div>
+                  <div className="text-[9px] text-[var(--mg-primary)]/50">Hides interior, glass, and wheel meshes.</div>
+                </div>
+              </CyberSection>
+            </div>
+          ) : null}
+
+          {textureMode === "everything" ? (
+            <div className="space-y-4" id="mode-panel-everything" role="tabpanel">
+              <CyberSection
+                title="Texture"
+                caption={primaryTemplateLabel}
+                open={panelOpen.templates}
+                onToggle={() => togglePanel("templates")}
+                contentId="panel-templates"
+                icon={Layers}
+                color="blue"
+              >
+                <div className="flex flex-col gap-0">
+                    <div className="flex gap-2">
+                      <CyberButton
+                        onClick={selectTexture}
+                        variant="blue"
+                        className="flex-1"
+                      >
+                    {texturePath ? "Change Texture" : "Select Texture"}
+                  </CyberButton>
+                      {texturePath ? (
+                        <UnloadButton
+                          className="flex-1"
+                          onClick={() => setTexturePath("")}
+                          title="Unload texture"
+                        />
+                      ) : null}
+                    </div>
+                </div>
+                <CyberCard className="mt-2">
+                  <CyberLabel>Apply To</CyberLabel>
+                  <Select value={textureTarget} onValueChange={setTextureTarget}>
+                    <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                      <SelectValue placeholder="Select target" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                      <SelectItem value="all">All meshes</SelectItem>
+                      {textureTargets.map((target) => (
+                        <SelectItem key={target.value} value={target.value}>
+                          {target.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </CyberCard>
+              </CyberSection>
+
+              <CyberSection
+                title="Overlay"
+                caption={overlayLabel}
+                open={panelOpen.overlays}
+                onToggle={() => togglePanel("overlays")}
+                contentId="panel-overlays"
+                icon={Disc}
+                color="blue"
+              >
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <CyberLabel className="mb-0">Secondary Texture</CyberLabel>
+<Toggle
+                                checked={rotationEnabled}
+                                onChange={(next) => setRotationEnabled(next)}
+                                ariaLabel="Toggle rotation"
+                              />
+                  </div>
+                  {windowTemplateEnabled ? (
+                    <>
+                        <div className="flex flex-col gap-0">
+                          <div className="flex gap-2">
+                            <CyberButton
+                              onClick={selectWindowTexture}
+                              variant="blue"
+                              className="flex-1"
+                            >
+                    {windowTexturePath ? "Change Secondary" : "Select Secondary"}
+                  </CyberButton>
+                            {windowTexturePath ? (
+                              <UnloadButton
+                                className="flex-1"
+                                onClick={() => setWindowTexturePath("")}
+                                title="Unload secondary texture"
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+                      <Select value={windowTextureTarget} onValueChange={setWindowTextureTarget}>
+                        <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                          <SelectValue placeholder="Select target" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                          <SelectItem value="auto">Auto (window materials)</SelectItem>
+                          <SelectItem value="none">None</SelectItem>
+                          <SelectItem value="all">All meshes</SelectItem>
+                          {textureTargets.map((target) => (
+                            <SelectItem key={target.value} value={target.value}>
+                              {target.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  ) : (
+                    <div className="text-[9px] text-[var(--mg-primary)]/50">Enable to overlay a secondary texture.</div>
+                  )}
+                </div>
+              </CyberSection>
+              <CyberSection
+                title="Visibility"
+                caption={viewLabel}
+                open={panelOpen.view}
+                onToggle={() => togglePanel("view")}
+                contentId="panel-visibility"
+                icon={Eye}
+                color="blue"
+              >
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <CyberLabel className="mb-0">Exterior Only</CyberLabel>
+<Toggle
+                      checked={liveryExteriorOnly}
+                      onChange={setLiveryExteriorOnly}
+                      ariaLabel="Toggle exterior only visibility"
+                    />
+                  </div>
+                  <div className="text-[9px] text-[var(--mg-primary)]/50">Hides interior, glass, and wheel meshes.</div>
+                </div>
+              </CyberSection>
+            </div>
+          ) : null}
+
+          {textureMode === "eup" ? (
+            <div className="space-y-4" id="mode-panel-eup" role="tabpanel">
+              <CyberSection
+                title="Uniform"
+                caption={primaryTemplateLabel}
+                open={panelOpen.templates}
+                onToggle={() => togglePanel("templates")}
+                contentId="panel-templates"
+                icon={Layers}
+                color="blue"
+              >
+                <div className="flex flex-col gap-0">
+                    <div className="flex gap-2">
+                      <CyberButton
+                        onClick={selectTexture}
+                        variant="blue"
+                        className="flex-1"
+                      >
+                    {texturePath ? "Change Uniform" : "Select Uniform"}
+                  </CyberButton>
+                      {texturePath ? (
+                        <UnloadButton
+                          className="flex-1"
+                          onClick={() => setTexturePath("")}
+                          title="Unload texture"
+                        />
+                      ) : null}
+                    </div>
+                </div>
+                <CyberCard className="mt-2">
+                  <CyberLabel>Apply To</CyberLabel>
+                  <Select value={textureTarget} onValueChange={setTextureTarget}>
+                    <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                      <SelectValue placeholder="Select target" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                      <SelectItem value="all">All meshes</SelectItem>
+                      {textureTargets.map((target) => (
+                        <SelectItem key={target.value} value={target.value}>
+                          {target.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </CyberCard>
+              </CyberSection>
+            </div>
+          ) : null}
+
+          {textureMode === "multi" ? (
+            <div className="space-y-4" id="mode-panel-multi" role="tabpanel">
+              <div className="flex bg-[var(--mg-bg)] p-1 border border-[var(--mg-border)] rounded-none">
+                <button
+                  type="button"
+                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "livery" ? "bg-[var(--mg-surface)] text-[var(--mg-primary)]" : "text-[var(--mg-primary)]/50 hover:text-[var(--mg-primary)]"}`}
+                  onClick={() => setDualTextureMode("livery")}
+                >
+                  <Car className="h-3 w-3" />
+                  <span>Livery</span>
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "eup" ? "bg-[var(--mg-surface)] text-[var(--mg-primary)]" : "text-[var(--mg-primary)]/50 hover:text-[var(--mg-primary)]"}`}
+                  onClick={() => setDualTextureMode("eup")}
+                >
+                  <Shirt className="h-3 w-3" />
+                  <span>EUP</span>
+                </button>
+              </div>
+
+              <div className="cs-multi-slot-card">
+                {/* Header */}
+                <div className="cs-multi-slot-header">
+                  <span className="cs-multi-slot-header-label">Active Slot</span>
+                  <div className="cs-multi-slot-pips">
+                    <div className={`cs-multi-slot-pip cs-multi-slot-pip--a ${dualSelectedSlot === "A" ? "is-active" : ""}`} />
+                    <div className={`cs-multi-slot-pip cs-multi-slot-pip--b ${dualSelectedSlot === "B" ? "is-active" : ""}`} />
+                  </div>
+                </div>
+
+                {/* Slot switcher */}
+                <div className="cs-multi-slot-switcher">
+                  <button
+                    type="button"
+                    className={`cs-multi-slot-btn cs-multi-slot-btn--a ${dualSelectedSlot === "A" ? "is-active" : ""}`}
+                    onClick={() => setDualSelectedSlot("A")}
+                  >
+                    <div className="cs-multi-slot-btn-bar" />
+                    <span className="cs-multi-slot-btn-glyph">A</span>
+                    <span className="cs-multi-slot-btn-sublabel">Slot</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`cs-multi-slot-btn cs-multi-slot-btn--b ${dualSelectedSlot === "B" ? "is-active" : ""}`}
+                    onClick={() => setDualSelectedSlot("B")}
+                  >
+                    <div className="cs-multi-slot-btn-bar" />
+                    <span className="cs-multi-slot-btn-glyph">B</span>
+                    <span className="cs-multi-slot-btn-sublabel">Slot</span>
+                  </button>
+                </div>
+
+                {/* Action bar */}
+                <div className="cs-multi-slot-actions">
+                  <button
+                    type="button"
+                    className="cs-multi-slot-action"
+                    onClick={() => dualViewerApiRef.current?.snapTogether?.()}
+                    title="Snap models together"
+                  >
+                    <Link2 className="w-3 h-3" />
+                    <span>Snap</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="cs-multi-slot-action"
+                    onClick={handleCenterCamera}
+                    title="Re-center camera"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Center</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`cs-multi-slot-action ${dualGizmoVisible ? "cs-multi-slot-action--gizmo-on" : ""}`}
+                    onClick={() => setDualGizmoVisible((p) => !p)}
+                    title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}
+                  >
+                    {dualGizmoVisible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                    <span>Gizmo</span>
+                  </button>
+                </div>
+              </div>
+
+              <CyberSection
+                title={dualSelectedSlot === "A" ? "Slot A" : "Slot B"}
+                caption={dualSelectedSlot === "A" ? getFileLabel(dualModelAPath, "No model") : getFileLabel(dualModelBPath, "No model")}
+                open={true}
+                onToggle={() => {}}
+                contentId="panel-dual-selected-slot"
+                icon={Aperture}
+                color={dualSelectedSlot === "A" ? "orange" : "purple"}
+              >
+                {dualSelectedSlot === "A" ? (
+                  <div className="flex flex-col gap-3">
+                    <CyberCard>
+                      <CyberLabel>Model</CyberLabel>
+                      <div className="flex flex-col gap-0">
+                        <div className="flex gap-2">
+                          <CyberButton
+                            variant="secondary"
+                            className="flex-1"
+                            onClick={() => selectDualModel("A")}
+                          >
+                    {dualModelAPath ? "Change Model A" : "Select Model A"}
+                  </CyberButton>
+                          {dualModelAPath ? (
+                            <UnloadButton
+                              className="flex-1"
+                              onClick={() => { setDualModelAPath(""); setDualModelAError(""); }}
+                              title="Unload model A"
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                      {dualModelALoading ? <div className="text-[9px] text-[var(--mg-primary)] animate-pulse mt-1">Loading...</div> : null}
+                      {dualModelAError ? <div className="text-[9px] text-red-400 mt-1">{dualModelAError}</div> : null}
+                    </CyberCard>
+                    <CyberCard>
+                      <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
+                      <div className="flex flex-col gap-0">
+                        <div className="flex gap-2">
+                          <CyberButton
+                            variant="secondary"
+                            className="flex-1"
+                            onClick={() => selectDualTexture("A")}
+                          >
+                    {dualTextureAPath ? dualTextureMode === "eup" ? "Change Uniform A" : "Change Livery A" : dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
+                  </CyberButton>
+                          {dualTextureAPath ? (
+                            <UnloadButton
+                              className="flex-1"
+                              onClick={() => setDualTextureAPath("")}
+                              title="Unload texture A"
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                    </CyberCard>
+                    {dualTextureMode === "livery" ? (
+                      <CyberCard>
+                        <CyberLabel>Window Design</CyberLabel>
+                        <div className="flex flex-col gap-0">
+                          <div className="flex gap-2">
+                            <CyberButton
+                              variant="secondary"
+                              className="flex-1"
+                              onClick={selectWindowTexture}
+                            >
+                    {dualWindowTextureAPath ? "Change Window A" : "Select Window A"}
+                  </CyberButton>
+                            {dualWindowTextureAPath ? (
+                              <UnloadButton
+                                className="flex-1"
+                                onClick={() => setDualWindowTextureAPath("")}
+                                title="Unload window design A"
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <CyberLabel>Apply To</CyberLabel>
+                          <Select value={dualWindowTextureATarget} onValueChange={setDualWindowTextureATarget}>
+                            <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                              <SelectValue placeholder="Select target" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                              <SelectItem value="auto">
+                                {selectedDualWindowAutoTarget
+                                  ? `Auto (${selectedDualWindowAutoLabel || selectedDualWindowAutoTarget.replace("material:", "")})`
+                                  : "Auto (no material detected)"}
+                              </SelectItem>
+                              <SelectItem value="none">None</SelectItem>
+                              <SelectItem value="all">All meshes</SelectItem>
+                              {selectedDualTargets.map((target) => (
+                                <SelectItem key={`dual-a-window-${target.value}`} value={target.value}>
+                                  {target.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </CyberCard>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <CyberCard>
+                      <CyberLabel>Model</CyberLabel>
+                      <div className="flex flex-col gap-0">
+                        <div className="flex gap-2">
+                          <CyberButton
+                            variant="secondary"
+                            className="flex-1"
+                            onClick={() => selectDualModel("B")}
+                          >
+                    {dualModelBPath ? "Change Model B" : "Select Model B"}
+                  </CyberButton>
+                          {dualModelBPath ? (
+                            <UnloadButton
+                              className="flex-1"
+                              onClick={() => { setDualModelBPath(""); setDualModelBError(""); }}
+                              title="Unload model B"
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                      {dualModelBLoading ? <div className="text-[9px] text-[#a78bfa] animate-pulse mt-1">Loading...</div> : null}
+                      {dualModelBError ? <div className="text-[9px] text-red-400 mt-1">{dualModelBError}</div> : null}
+                    </CyberCard>
+                    <CyberCard>
+                      <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
+                      <div className="flex flex-col gap-0">
+                        <div className="flex gap-2">
+                          <CyberButton
+                            variant="secondary"
+                            className="flex-1"
+                            onClick={() => selectDualTexture("B")}
+                          >
+                    {dualTextureBPath ? dualTextureMode === "eup" ? "Change Uniform B" : "Change Livery B" : dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
+                  </CyberButton>
+                          {dualTextureBPath ? (
+                            <UnloadButton
+                              className="flex-1"
+                              onClick={() => setDualTextureBPath("")}
+                              title="Unload texture B"
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                    </CyberCard>
+                    {dualTextureMode === "livery" ? (
+                      <CyberCard>
+                        <CyberLabel>Window Design</CyberLabel>
+                        <div className="flex flex-col gap-0">
+                          <div className="flex gap-2">
+                            <CyberButton
+                              variant="secondary"
+                              className="flex-1"
+                              onClick={selectWindowTexture}
+                            >
+                    {dualWindowTextureBPath ? "Change Window B" : "Select Window B"}
+                  </CyberButton>
+                            {dualWindowTextureBPath ? (
+                              <UnloadButton
+                                className="flex-1"
+                                onClick={() => setDualWindowTextureBPath("")}
+                                title="Unload window design B"
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <CyberLabel>Apply To</CyberLabel>
+                          <Select value={dualWindowTextureBTarget} onValueChange={setDualWindowTextureBTarget}>
+                            <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                              <SelectValue placeholder="Select target" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
+                              <SelectItem value="auto">
+                                {selectedDualWindowAutoTarget
+                                  ? `Auto (${selectedDualWindowAutoLabel || selectedDualWindowAutoTarget.replace("material:", "")})`
+                                  : "Auto (no material detected)"}
+                              </SelectItem>
+                              <SelectItem value="none">None</SelectItem>
+                              <SelectItem value="all">All meshes</SelectItem>
+                              {selectedDualTargets.map((target) => (
+                                <SelectItem key={`dual-b-window-${target.value}`} value={target.value}>
+                                  {target.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </CyberCard>
+                    ) : null}
+                  </div>
+                )}
+              </CyberSection>
+            </div>
+          ) : null}
+
+
+          <CyberSection
+            title="Appearance"
+            caption="Colors"
+            open={colorsOpen}
+            onToggle={() => setColorsOpen((prev) => !prev)}
+            contentId="panel-colors"
+            icon={Palette}
+            color="blue"
+          >
+            <div className="space-y-3">
+              {textureMode === "multi" ? (
+                <>
+                  <CyberCard>
+                    <CyberLabel>Slot A Body Color</CyberLabel>
+                    <div className="flex items-center gap-2">
+                      <div className="color-swatch-wrapper">
+                        <div className="color-swatch" style={{ background: dualBodyColorA }} />
+                        <input
+                          type="color"
+                          value={dualBodyColorA}
+                          onChange={(event) => setDualBodyColorA(event.currentTarget.value)}
+                          className="color-picker-native"
+                          aria-label="Slot A body color picker"
+                        />
+                      </div>
+                      <Input
+                        className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+                        style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
+                        value={dualBodyColorA}
+                        onChange={(event) => setDualBodyColorA(event.currentTarget.value)}
+                      />
+                      <button type="button" className="cs-copy-btn" onClick={() => copyHex(dualBodyColorA)} title="Copy hex"><Copy className="h-3 w-3" /></button>
+                      <button
+                        type="button"
+                        className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
+                        onClick={() => setDualBodyColorA(DEFAULT_BODY)}
+                        title="Reset Slot A color"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <div className="cs-swatches">
+                      {COLOR_SWATCHES.map(c => (
+                        <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setDualBodyColorA(c)} title={c} />
+                      ))}
+                    </div>
+                  </CyberCard>
+
+                  <CyberCard>
+                    <CyberLabel>Slot B Body Color</CyberLabel>
+                    <div className="flex items-center gap-2">
+                      <div className="color-swatch-wrapper">
+                        <div className="color-swatch" style={{ background: dualBodyColorB }} />
+                        <input
+                          type="color"
+                          value={dualBodyColorB}
+                          onChange={(event) => setDualBodyColorB(event.currentTarget.value)}
+                          className="color-picker-native"
+                          aria-label="Slot B body color picker"
+                        />
+                      </div>
+                      <Input
+                        className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+                        style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
+                        value={dualBodyColorB}
+                        onChange={(event) => setDualBodyColorB(event.currentTarget.value)}
+                      />
+                      <button type="button" className="cs-copy-btn" onClick={() => copyHex(dualBodyColorB)} title="Copy hex"><Copy className="h-3 w-3" /></button>
+                      <button
+                        type="button"
+                        className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
+                        onClick={() => setDualBodyColorB(DEFAULT_BODY)}
+                        title="Reset Slot B color"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <div className="cs-swatches">
+                      {COLOR_SWATCHES.map(c => (
+                        <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setDualBodyColorB(c)} title={c} />
+                      ))}
+                    </div>
+                  </CyberCard>
+                </>
+              ) : (
+                <CyberCard>
+                  <CyberLabel>Body Color</CyberLabel>
+                  <div className="flex items-center gap-2">
+                    <div className="color-swatch-wrapper">
+                      <div className="color-swatch" style={{ background: bodyColor }} />
+                      <input
+                        type="color"
+                        value={bodyColor}
+                        onChange={(event) => setBodyColor(event.currentTarget.value)}
+                        className="color-picker-native"
+                        aria-label="Body color picker"
+                      />
+                    </div>
+                    <Input
+                      className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+                      style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
+                      value={bodyColor}
+                      onChange={(event) => setBodyColor(event.currentTarget.value)}
+                    />
+                    <button type="button" className="cs-copy-btn" onClick={() => copyHex(bodyColor)} title="Copy hex"><Copy className="h-3 w-3" /></button>
+                    <button
+                      type="button"
+                      className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
+                      onClick={() => setBodyColor(DEFAULT_BODY)}
+                      title="Revert to default"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <div className="cs-swatches">
+                    {COLOR_SWATCHES.map(c => (
+                      <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setBodyColor(c)} title={c} />
+                    ))}
+                  </div>
+                </CyberCard>
+              )}
+
+              <CyberCard>
+                <CyberLabel>Background Color</CyberLabel>
+                <div className="flex items-center gap-2">
+                  <div className="color-swatch-wrapper">
+                    <div className="color-swatch" style={{ background: backgroundColor }} />
+                    <input
+                      type="color"
+                      value={backgroundColor}
+                      onChange={(event) => setBackgroundColor(event.currentTarget.value)}
+                      className="color-picker-native"
+                      aria-label="Background color picker"
+                    />
+                  </div>
+                  <Input
+                    className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+                    style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
+                    value={backgroundColor}
+                    onChange={(event) => setBackgroundColor(event.currentTarget.value)}
+                  />
+                  <button type="button" className="cs-copy-btn" onClick={() => copyHex(backgroundColor)} title="Copy hex"><Copy className="h-3 w-3" /></button>
+                  <button
+                    type="button"
+                    className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
+                    onClick={() => setBackgroundColor(DEFAULT_BG)}
+                    title="Revert to default"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                </div>
+                <div className="cs-swatches">
+                  {COLOR_SWATCHES.map(c => (
+                    <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setBackgroundColor(c)} title={c} />
+                  ))}
+                </div>
+              </CyberCard>
+
+              <CyberCard>
+                <CyberLabel>Background Image</CyberLabel>
+                <div className="flex flex-col gap-0">
+                  <div className="flex gap-2">
+                    <CyberButton
+                      onClick={selectBackgroundImage}
+                      variant="secondary"
+                      className="flex-1"
+                    >
+                    {backgroundImagePath ? "Change Background" : "Select Background"}
+                  </CyberButton>
+                    {backgroundImagePath ? (
+                      <UnloadButton
+                        className="flex-1"
+                        onClick={() => {
+                          setBackgroundImagePath("");
+                          setBackgroundImageReloadToken((token) => token + 1);
+                        }}
+                        title="Remove background image"
+                      />
+                    ) : null}
+                  </div>
+                  {backgroundImagePath ? (
+                    <div className="mt-3">
+                      <MaterialSlider
+                        label="Blur"
+                        value={backgroundImageBlur}
+                        onChange={(nextValue) => setBackgroundImageBlur(clampBackgroundImageBlur(nextValue))}
+                        min={0}
+                        max={MAX_BACKGROUND_IMAGE_BLUR}
+                        step={1}
+                        unit="px"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </CyberCard>
+
+            </div>
+          </CyberSection>
+
+          {/* ── Vehicle Materials Section ── */}
+          <CyberSection
+            title="Materials"
+            caption={`${materialType.charAt(0).toUpperCase() + materialType.slice(1)} & Surface`}
+            open={materialsOpen}
+            onToggle={() => setMaterialsOpen((prev) => !prev)}
+            contentId="panel-materials"
+            icon={Gem}
+            color="blue"
+            badge="NEW"
+          >
+            <div className="space-y-4">
+              <div>
+                <CyberLabel>Surface Type</CyberLabel>
+                <MaterialTypeSelector value={materialType} onChange={setMaterialType} />
+              </div>
+
+              <div>
+                <CyberLabel>Properties</CyberLabel>
+                <div className="flex flex-col gap-3">
+                  <MaterialSlider
+                    label="Light Int"
+                    value={matLightIntensity}
+                    onChange={setMatLightIntensity}
+                    min={0}
+                    max={3}
+                    step={0.05}
+                  />
+                  <MaterialSlider
+                    label="Glossiness"
+                    value={matGlossiness}
+                    onChange={setMatGlossiness}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    unit="%"
+                  />
+                  <MaterialSlider
+                    label="Roughness"
+                    value={matRoughness}
+                    onChange={setMatRoughness}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    unit="%"
+                  />
+                  <MaterialSlider
+                    label="Clearcoat"
+                    value={matClearcoat}
+                    onChange={setMatClearcoat}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    unit="%"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <CyberLabel>Textures</CyberLabel>
+                <TextureUploadGrid
+                  textures={materialTextures}
+                  onAdd={selectMaterialTexture}
+                  onRemove={removeMaterialTexture}
+                  maxSlots={6}
+                />
+              </div>
+            </div>
+          </CyberSection>
+
+          {/* ── Scene Lighting ── */}
+          <CyberSection
+            title="Lighting"
+            caption="Scene illumination"
+            open={lightingOpen}
+            onToggle={() => setLightingOpen((prev) => !prev)}
+            contentId="panel-lighting"
+            icon={Sun}
+            color="yellow"
+          >
+              {(() => {
+                const elRad = lightElevation * (Math.PI / 180);
+                const elRadius = 35;
+                const elX = 50 + elRadius * Math.cos(elRad); 
+                const elY = 40 - elRadius * Math.sin(elRad);
+
+                const azRad = lightAzimuth * (Math.PI / 180);
+                const azRadius = 24;
+                const azX = 50 + azRadius * Math.sin(azRad);
+                const azY = 30 - azRadius * Math.cos(azRad);
+
+                // Drag handler for azimuth — click/drag anywhere in SVG sets the orbital angle
+                const onAzPointerDown = (e) => {
+                  e.preventDefault();
+                  const svg = e.currentTarget;
+                  svg.setPointerCapture(e.pointerId);
+                  const compute = (cx, cy) => {
+                    const rect = svg.getBoundingClientRect();
+                    const sx = ((cx - rect.left) / rect.width) * 100;
+                    const sy = ((cy - rect.top) / rect.height) * 60;
+                    let deg = Math.atan2(sx - 50, -(sy - 30)) * (180 / Math.PI);
+                    if (deg < 0) deg += 360;
+                    return Math.round(deg);
+                  };
+                  const onMove = (ev) => handleLightAzimuthChange(compute(ev.clientX, ev.clientY));
+                  const onUp = () => {
+                    svg.style.cursor = 'crosshair';
+                    svg.removeEventListener('pointermove', onMove);
+                    svg.removeEventListener('pointerup', onUp);
+                  };
+                  svg.style.cursor = 'grabbing';
+                  handleLightAzimuthChange(compute(e.clientX, e.clientY));
+                  svg.addEventListener('pointermove', onMove);
+                  svg.addEventListener('pointerup', onUp);
+                };
+
+                // Drag handler for elevation — click/drag anywhere in SVG sets the dome angle
+                const onElPointerDown = (e) => {
+                  e.preventDefault();
+                  const svg = e.currentTarget;
+                  svg.setPointerCapture(e.pointerId);
+                  const compute = (cx, cy) => {
+                    const rect = svg.getBoundingClientRect();
+                    const sx = ((cx - rect.left) / rect.width) * 100;
+                    const sy = ((cy - rect.top) / rect.height) * 60;
+                    const deg = Math.atan2(40 - sy, sx - 50) * (180 / Math.PI);
+                    return Math.max(0, Math.min(90, Math.round(deg)));
+                  };
+                  const onMove = (ev) => handleLightElevationChange(compute(ev.clientX, ev.clientY));
+                  const onUp = () => {
+                    svg.style.cursor = 'crosshair';
+                    svg.removeEventListener('pointermove', onMove);
+                    svg.removeEventListener('pointerup', onUp);
+                  };
+                  svg.style.cursor = 'grabbing';
+                  handleLightElevationChange(compute(e.clientX, e.clientY));
+                  svg.addEventListener('pointermove', onMove);
+                  svg.addEventListener('pointerup', onUp);
+                };
+
+                return (
+                  <div className="space-y-3">
+                    {/* === HUD VISUALS === */}
+                    <div className="flex space-x-1.5">
+                      {/* Azimuth HUD (Top-Down View) */}
+                      <div
+                        className="flex-1 rounded-sm p-2 relative"
+                        style={{ background: '#100F0D', border: '1px solid rgba(220,215,206,0.1)' }}
+                      >
+                        <div className="flex justify-between items-center mb-1.5">
+                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '8px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--mg-muted)', opacity: 0.75 }}>Azimuth</span>
+                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '9px', color: '#D97952', fontVariantNumeric: 'tabular-nums' }}>{lightAzimuth}°</span>
+                        </div>
+                        <div className="w-full aspect-video relative flex items-center justify-center">
+                          <svg
+                            viewBox="0 0 100 60"
+                            preserveAspectRatio="none"
+                            className="w-full h-full"
+                            style={{ cursor: 'crosshair', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                            onPointerDown={onAzPointerDown}
+                          >
+                            {/* Ghost outer ring */}
+                            <circle cx="50" cy="30" r="26.5" fill="none" stroke="rgba(90,85,79,0.12)" strokeWidth="0.5" style={{ pointerEvents: 'none' }} />
+                            {/* Orbital ring */}
+                            <circle cx="50" cy="30" r="24" fill="none" stroke="rgba(90,85,79,0.4)" strokeWidth="0.7" strokeDasharray="1.5 2.5" style={{ pointerEvents: 'none' }} />
+                            {/* Cardinal ticks at N/E/S/W */}
+                            {[0, 90, 180, 270].map(deg => {
+                              const r = deg * (Math.PI / 180);
+                              return <line key={deg} x1={50 + 22 * Math.sin(r)} y1={30 - 22 * Math.cos(r)} x2={50 + 26 * Math.sin(r)} y2={30 - 26 * Math.cos(r)} stroke="rgba(90,85,79,0.5)" strokeWidth="0.8" style={{ pointerEvents: 'none' }} />;
+                            })}
+                            {/* Spoke from center to sun */}
+                            <line x1="50" y1="30" x2={azX} y2={azY} stroke="rgba(217,121,82,0.38)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
+                            {/* Top-Down Car Silhouette */}
+                            <g style={{ pointerEvents: 'none' }}>
+                              <rect x="39" y="20" width="3" height="7" rx="0.5" fill="#0B0A09" />
+                              <rect x="58" y="20" width="3" height="7" rx="0.5" fill="#0B0A09" />
+                              <rect x="39" y="33" width="3" height="7" rx="0.5" fill="#0B0A09" />
+                              <rect x="58" y="33" width="3" height="7" rx="0.5" fill="#0B0A09" />
+                              <rect x="42" y="15" width="16" height="30" rx="3.5" fill="#1C1A17" />
+                              <path d="M 44 23 Q 50 20.5 56 23 L 55 27 L 45 27 Z" fill="#221F1C" />
+                              <path d="M 45 34 L 55 34 L 54 37 Q 50 39 46 37 Z" fill="#221F1C" />
+                              <path d="M 44 16 L 47 16 L 46 17.5 L 44 17.5 Z" fill="rgba(217,121,82,0.2)" />
+                              <path d="M 53 16 L 56 16 L 56 17.5 L 54 17.5 Z" fill="rgba(217,121,82,0.2)" />
+                            </g>
+                            {/* Sun dot */}
+                            <g style={{ transform: `translate(${azX}px, ${azY}px)`, pointerEvents: 'none' }}>
+                              <circle cx="0" cy="0" r="6" fill="rgba(217,121,82,0.12)" />
+                              <circle cx="0" cy="0" r="3" fill="#D97952" />
+                              <circle cx="0" cy="0" r="1.3" fill="rgba(252,248,240,0.85)" />
+                            </g>
+                          </svg>
+                        </div>
+                      </div>
+
+                      {/* Elevation HUD (Side View) */}
+                      <div
+                        className="flex-1 rounded-sm p-2 relative"
+                        style={{ background: '#100F0D', border: '1px solid rgba(220,215,206,0.1)' }}
+                      >
+                        <div className="flex justify-between items-center mb-1.5">
+                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '8px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--mg-muted)', opacity: 0.75 }}>Elevation</span>
+                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '9px', color: '#D97952', fontVariantNumeric: 'tabular-nums' }}>{lightElevation}°</span>
+                        </div>
+                        <div className="w-full aspect-video relative flex items-center justify-center">
+                          <svg
+                            viewBox="0 0 100 60"
+                            preserveAspectRatio="none"
+                            className="w-full h-full"
+                            style={{ cursor: 'crosshair', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                            onPointerDown={onElPointerDown}
+                          >
+                            {/* Dome arc */}
+                            <path d="M 15 40 A 35 35 0 0 1 85 40" fill="none" stroke="rgba(90,85,79,0.4)" strokeWidth="0.7" strokeDasharray="1.5 2.5" style={{ pointerEvents: 'none' }} />
+                            {/* Elevation angle ticks at 0°, 30°, 60°, 90° */}
+                            {[0, 30, 60, 90].map(deg => {
+                              const r = deg * (Math.PI / 180);
+                              return <line key={deg} x1={50 + 33 * Math.cos(r)} y1={40 - 33 * Math.sin(r)} x2={50 + 37 * Math.cos(r)} y2={40 - 37 * Math.sin(r)} stroke="rgba(90,85,79,0.5)" strokeWidth="0.8" style={{ pointerEvents: 'none' }} />;
+                            })}
+                            {/* Ground line */}
+                            <line x1="5" y1="45" x2="95" y2="45" stroke="rgba(90,85,79,0.25)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
+                            {/* Spoke from horizon center to sun */}
+                            <line x1="50" y1="40" x2={elX} y2={elY} stroke="rgba(217,121,82,0.38)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
+                            {/* Side Car Silhouette */}
+                            <g style={{ pointerEvents: 'none' }}>
+                              <circle cx="34" cy="41" r="3.5" fill="#0B0A09" />
+                              <circle cx="66" cy="41" r="3.5" fill="#0B0A09" />
+                              <path d="M 26 38 L 26 30 L 36 22 L 54 22 L 66 30 L 76 30 L 76 38 Z" fill="#1C1A17" />
+                              <path d="M 38 30 L 44 24 L 48 24 L 48 30 Z" fill="#221F1C" />
+                              <path d="M 50 30 L 50 24 L 58 30 Z" fill="#221F1C" />
+                              <path d="M 74 32 L 76 32 L 76 35 L 74 35 Z" fill="rgba(217,121,82,0.18)" />
+                            </g>
+                            {/* Sun dot */}
+                            <g style={{ transform: `translate(${elX}px, ${elY}px)`, pointerEvents: 'none' }}>
+                              <circle cx="0" cy="0" r="6" fill="rgba(217,121,82,0.12)" />
+                              <circle cx="0" cy="0" r="3" fill="#D97952" />
+                              <circle cx="0" cy="0" r="1.3" fill="rgba(252,248,240,0.85)" />
+                            </g>
+                          </svg>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <MaterialSlider
+                        label="Intensity"
+                        value={lightIntensity}
+                        onChange={handleLightIntensityChange}
+                        min={0}
+                        max={3}
+                        step={0.05}
+                      />
+                      <MaterialSlider
+                        label="Azimuth"
+                        value={lightAzimuth}
+                        onChange={handleLightAzimuthChange}
+                        min={0}
+                        max={360}
+                        step={1}
+                        unit="°"
+                      />
+                      <MaterialSlider
+                        label="Elevation"
+                        value={lightElevation}
+                        onChange={handleLightElevationChange}
+                        min={0}
+                        max={90}
+                        step={1}
+                        unit="°"
+/>
+                      <button
+                        type="button"
+                        className="panel-cam-action-btn w-full mt-1"
+                        onClick={resetLighting}
+                        title="Reset lighting to defaults"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </CyberSection>
+
+          {/* ── Camera Controls in Panel ── */}
+          {cameraControlsInPanel && (
+            <CyberSection
+              title="Camera"
+              caption="Presets & rotation"
+              open={panelOpen.camera !== false}
+              onToggle={() => togglePanel("camera")}
+              contentId="panel-camera"
+              icon={Camera}
+              color="blue"
+            >
+              <div className="space-y-3">
+                <div>
+                  <CyberLabel>Presets</CyberLabel>
+                  <div className="panel-cam-presets">
+                    {[
+                      { key: "front", label: "Front" },
+                      { key: "back", label: "Back" },
+                      { key: "side", label: "Side" },
+                      { key: "angle", label: "3/4" },
+                      { key: "top", label: "Top" },
+                    ].map(({ key, label }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className="panel-cam-preset-btn"
+                        onClick={() => handleSetCameraPreset(key)}
+                        title={`${label} view`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    className="panel-cam-action-btn flex-1"
+                    onClick={handleCenterCamera}
+                    disabled={!viewerReady}
+                    title="Re-center camera"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Center
+                  </button>
+                  <button
+                    type="button"
+                    className={`panel-cam-action-btn ${showWireframe ? "is-active" : ""}`}
+                    onClick={() => setShowWireframe((prev) => !prev)}
+                    title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
+                  >
+                    <Box className="w-3 h-3" />
+                    Wire
+                  </button>
+                  <button
+                    type="button"
+                    className={`panel-cam-action-btn ${showCageWireframe ? "is-active" : ""}`}
+                    onClick={() => setShowCageWireframe((prev) => !prev)}
+                    title={showCageWireframe ? "Disable cage wireframe" : "Enable cage wireframe"}
+                  >
+                    <Boxes className="w-3 h-3" />
+                    Cage
+                  </button>
+                </div>
+                {textureMode !== "multi" && (
+                  <div>
+                    <CyberLabel>Rotate Model</CyberLabel>
+                    <div className="flex gap-1.5 mt-1">
+                      <button
+                        type="button"
+                        className="panel-cam-axis-btn flex-1"
+                        onClick={() => handleRotateModel("x")}
+                        title="Rotate 90° on X axis"
+                      >
+                        <span style={{ color: "#f87171", fontWeight: 700 }}>X</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="panel-cam-axis-btn flex-1"
+                        onClick={() => handleRotateModel("y")}
+                        title="Rotate 90° on Y axis"
+                      >
+                        <span style={{ color: "#4ade80", fontWeight: 700 }}>Y</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="panel-cam-axis-btn flex-1"
+                        onClick={() => handleRotateModel("z")}
+                        title="Rotate 90° on Z axis"
+                      >
+                        <span style={{ color: "#60a5fa", fontWeight: 700 }}>Z</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+          </CyberSection>
+          )}
+
+          {/* ── Capture Preview ── */}
+          {textureMode !== "multi" && (
+            <div className="panel-capture-section">
+              <button
+                type="button"
+                className={`panel-capture-btn${generatingPreview ? " is-generating" : ""}`}
+                onClick={() => {
+                  if (generatingPreview || !viewerReady) return;
+                  setPreviewZoomDraft(previewZoom || 1);
+                  setPreviewPromptOpen(true);
+                  setPreviewZoomPreview("");
+                }}
+                disabled={generatingPreview || !viewerReady || !hasModel}
+                title={previewCaptureTooltip}
+              >
+                <Camera className="panel-capture-icon" />
+                <span className="panel-capture-label">
+                  {generatingPreview
+                    ? `${previewProgress.current} / ${previewProgress.total}`
+                    : "Capture Preview"}
+                </span>
+                {generatingPreview && previewProgress.total > 0 && (
+                  <div
+                    className="panel-capture-bar-fill"
+                    style={{ width: `${(previewProgress.current / previewProgress.total) * 100}%` }}
+                  />
+                )}
+              </button>
+            </div>
+          )}
+
+      </CyberPanel>
+
+      <motion.section
+        className={`viewer-shell ${isDragging ? "is-dragging" : ""}`}
+        initial={{ opacity: 0, y: 6 }}
+        animate={isBooting ? { opacity: 0, y: 6 } : { opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
+        onDragEnter={handleDragOver}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+          {isDragging ? (
+            <div className="drop-overlay">
+            <div className="drop-card">Drop {modelDropLabel} to load</div>
+            </div>
+          ) : null}
+        {textureMode === "multi" ? (
+          <DualModelViewer
+            modelAPath={dualModelAPath}
+            modelBPath={dualModelBPath}
+            textureAPath={dualTextureAPath}
+            textureBPath={dualTextureBPath}
+            windowTextureAPath={dualTextureMode === "livery" ? dualWindowTextureAPath : ""}
+            windowTextureBPath={dualTextureMode === "livery" ? dualWindowTextureBPath : ""}
+            windowTextureATarget={resolvedDualWindowTextureATarget}
+            windowTextureBTarget={resolvedDualWindowTextureBTarget}
+            textureAReloadToken={dualTextureAReloadToken}
+            textureBReloadToken={dualTextureBReloadToken}
+            bodyColorA={dualBodyColorA}
+            bodyColorB={dualBodyColorB}
+            backgroundColor={backgroundColor}
+            backgroundImagePath={backgroundImagePath}
+            backgroundImageReloadToken={backgroundImageReloadToken}
+            backgroundImageBlur={backgroundImageBlur}
+            lightIntensity={lightIntensity}
+            lightAzimuth={lightAzimuth}
+            lightElevation={lightElevation}
+            glossiness={glossiness}
+            shadowsEnabled={showShadows}
+            showWireframe={showWireframe}
+            showCageWireframe={showCageWireframe}
+            wasdEnabled={true}
+            selectedSlot={dualSelectedSlot}
+            gizmoVisible={dualGizmoVisible}
+            showGrid={showGrid}
+            textureMode={dualTextureMode}
+            initialPosA={dualModelAPos}
+            initialPosB={dualModelBPos}
+            onSelectSlot={setDualSelectedSlot}
+            onPositionChange={(posA, posB) => {
+              setDualModelAPos(posA);
+              setDualModelBPos(posB);
+            }}
+            onReady={(api) => {
+              dualViewerApiRef.current = api;
+              if (!viewerReady) setViewerReady(true);
+            }}
+            onModelAError={setDualModelAError}
+            onModelBError={setDualModelBError}
+            onModelALoading={setDualModelALoading}
+            onModelBLoading={setDualModelBLoading}
+            onModelAInfo={handleDualModelAInfo}
+            onModelBInfo={handleDualModelBInfo}
+            onFormatWarning={handleFormatWarning}
+          />
+        ) : (
+          <Viewer
+            modelPath={modelPath}
+            texturePath={texturePath}
+            windowTexturePath={windowTemplateEnabled ? windowTexturePath : ""}
+            bodyColor={bodyColor}
+            backgroundColor={backgroundColor}
+            backgroundImagePath={backgroundImagePath}
+            backgroundImageReloadToken={backgroundImageReloadToken}
+            backgroundImageBlur={backgroundImageBlur}
+            showGrid={showGrid}
+            textureReloadToken={textureReloadToken}
+            windowTextureReloadToken={windowTextureReloadToken}
+            textureTarget={resolvedTextureTarget}
+            windowTextureTarget={resolvedWindowTextureTarget}
+            textureMode={textureMode}
+            showWireframe={showWireframe}
+            showCageWireframe={showCageWireframe}
+            wasdEnabled={true}
+            liveryExteriorOnly={(textureMode === "livery" || textureMode === "everything") && liveryExteriorOnly}
+            lightIntensity={lightIntensity}
+            lightAzimuth={lightAzimuth}
+            lightElevation={lightElevation}
+            glossiness={glossiness}
+            shadowsEnabled={showShadows}
+            materialType={materialType}
+            materialLightIntensity={matLightIntensity}
+            materialGlossiness={matGlossiness}
+            materialRoughness={matRoughness}
+            materialClearcoat={matClearcoat}
+            materialTexturePath={activeMaterialTexturePath}
+            onModelInfo={handleModelInfo}
+            onModelError={handleModelError}
+            onModelLoading={handleModelLoading}
+            onReady={(api) => {
+              viewerApiRef.current = api;
+              setViewerReady(true);
+            }}
+            onTextureReload={onTextureReload}
+            onTextureError={handleTextureError}
+            onWindowTextureError={handleWindowTextureError}
+            onFormatWarning={handleFormatWarning}
+          />
+        )}
+
+        <AnimatePresence>
+          {(modelLoading || (textureMode === "multi" && (dualModelALoading || dualModelBLoading))) ? <AppLoader variant="background" /> : null}
+        </AnimatePresence>
+
+        {/* Controls now integrated into viewer-toolbar-bar above */}
+
+        {showHints ? (
+          <div className="viewer-hints">
+            <span>Left drag: Rotate</span>
+            <span>Right drag: Pan</span>
+            <span>Scroll: Zoom</span>
+          </div>
+        ) : null}
+
+        {/* Update notification toast */}
+        <AnimatePresence>
+          {update.available && !update.dismissed ? (
+            <motion.div
+              className="update-toast"
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.97 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <div className="update-toast-content">
+                <div className="update-toast-header">
+                  <div className="update-toast-title-row">
+                    <span className="update-toast-label">Update available</span>
+                    <span className="update-toast-version">v{update.latest}</span>
+                  </div>
+                  <div className="update-toast-desc">
+                    A new version of Cortex Studio is available to download. Would you like to download it now?
+                  </div>
+                </div>
+                
+                <div className="update-toast-footer status-strip">
+                  <button
+                    type="button"
+                    className="update-toast-dismiss-btn update-toast-link-blue"
+                    disabled={update.installing}
+                    onClick={async () => {
+                      const installed = await update.install();
+                      if (installed) {
+                        showToast("Update installed. Restart Cortex Studio to finish.");
+                      }
+                    }}
+                  >
+                    {update.installing
+                      ? `Installing...${update.progressPercent > 0 ? ` ${update.progressPercent}%` : ""}`
+                      : "Download & Install"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="update-toast-dismiss-btn"
+                    onClick={update.dismiss}
+                  >
+                    Not now
+                  </button>
+                </div>
+                {update.error ? (
+                  <div className="update-toast-desc text-[var(--es-danger)] pt-2">{update.error}</div>
+                ) : null}
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        {/* Action toasts */}
+        <div className="cs-toast-stack">
+          <AnimatePresence>
+            {toasts.map(t => (
+              <motion.div
+                key={t.id}
+                className="cs-toast-item"
+                initial={{ opacity: 0, y: 16, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <Check className="h-3 w-3 text-[var(--es-success)]" />
+                <span>{t.message}</span>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      </motion.section>
+
+      <AnimatePresence>{isBooting ? <AppLoader /> : null}</AnimatePresence>
+      {/* Onboarding handled by Shell */}
+
+      {/* Format Warning Modal */}
+      <AnimatePresence>
+        {formatWarning ? (
+          <motion.div
+            className="warning-modal-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setFormatWarning(null)}
+          >
+            <motion.div
+              className="warning-modal"
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="warning-modal-header">
+                <AlertTriangle className="warning-modal-icon" />
+                <div className="warning-modal-title-group">
+                  <div className="warning-modal-title">
+                    {formatWarning.type === "non-hi-model"
+                      ? "Standard Detail Model Detected"
+                      : formatWarning.type === "unsupported-format"
+                        ? "Unsupported Image Format"
+                        : `${formatWarning.bitDepth}-Bit PSD Not Supported`}
+                  </div>
+                  <div className="warning-modal-subtitle">
+                    {formatWarning.type === "non-hi-model"
+                      ? "Recommendation: Use _hi.yft"
+                      : formatWarning.type === "unsupported-format"
+                        ? `Cannot load .${formatWarning.ext} files`
+                        : "High bit depth format detected"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="warning-modal-body">
+                {formatWarning.type === "unsupported-format" ? (
+                  <div className="warning-modal-content">
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-text">
+                        The file <strong>{formatWarning.path}</strong> uses the <strong>.{formatWarning.ext}</strong> format, which is not supported and cannot be loaded.
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">Supported Formats</div>
+                      <div className="warning-modal-steps">
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">1</span>
+                          <span className="warning-modal-step-text"><strong>PNG</strong> — Recommended for lossless textures</span>
+                        </div>
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">2</span>
+                          <span className="warning-modal-step-text"><strong>JPG / JPEG</strong> — Smaller file size, lossy compression</span>
+                        </div>
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">3</span>
+                          <span className="warning-modal-step-text"><strong>PSD</strong> — Photoshop files (8-bit only)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">How to Fix</div>
+                      <div className="warning-modal-text">
+                        Open your <strong>.{formatWarning.ext}</strong> file in an image editor and export it as <strong>PNG</strong> or <strong>JPEG</strong> before loading it here.
+                      </div>
+                    </div>
+                  </div>
+                ) : formatWarning.type === "non-hi-model" ? (
+                  <div className="warning-modal-content">
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-text">
+                        You have loaded <strong>{formatWarning.path}</strong>. It is strongly recommended to use the high-detail version (ending in <strong>_hi.yft</strong>) whenever available.
+                      </div>
+                    </div>
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">Missing Features</div>
+                      <div className="warning-modal-text">
+                        Standard models often lack critical features such as <strong>window templates</strong>, high-quality material slots, and detailed geometry. Depending on the developer, this may affect what you see in the viewer.
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="warning-modal-content">
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-text">
+                        This PSD file uses <strong>{formatWarning.bitDepth}-bit</strong> color depth (high dynamic range), 
+                        which cannot be loaded directly.
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">How to Convert</div>
+                      <div className="warning-modal-steps">
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">1</span>
+                          <span className="warning-modal-step-text">Open the file in <strong>Photoshop</strong></span>
+                        </div>
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">2</span>
+                          <span className="warning-modal-step-text">
+                            Go to <span className="warning-modal-code">Image → Mode → 8 Bits/Channel</span>
+                          </span>
+                        </div>
+                        <div className="warning-modal-step">
+                          <span className="warning-modal-step-num">3</span>
+                          <span className="warning-modal-step-text">Save the file and reload it here</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">Trade-offs</div>
+                      <div className="warning-modal-note">
+                        8-bit has 256 color levels per channel vs {formatWarning.bitDepth === 16 ? "65,536" : "billions"} in {formatWarning.bitDepth}-bit. 
+                        For game textures, 8-bit is typically sufficient and more widely compatible.
+                      </div>
+                    </div>
+
+                    <div className="warning-modal-section">
+                      <div className="warning-modal-section-title">Alternative</div>
+                      <div className="warning-modal-text">
+                        Export as <strong>PNG</strong> or <strong>JPEG</strong> which automatically converts to 8-bit.
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="warning-modal-footer">
+                <button
+                  type="button"
+                  className="warning-modal-btn warning-modal-btn-primary"
+                  onClick={() => {
+                    if (formatWarning.type !== "non-hi-model" && formatWarning.type !== "unsupported-format") {
+                      if (formatWarning.slot === "A") {
+                        if (formatWarning.kind === "window") setDualWindowTextureAPath("");
+                        else setDualTextureAPath("");
+                      } else if (formatWarning.slot === "B") {
+                        if (formatWarning.kind === "window") setDualWindowTextureBPath("");
+                        else setDualTextureBPath("");
+                      } else {
+                        if (formatWarning.kind === "window") setWindowTexturePath("");
+                        else setTexturePath("");
+                      }
+                      setTextureError("");
+                      setWindowTextureError("");
+                    }
+                    setFormatWarning(null);
+                  }}
+                >
+                  GOT IT
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      {/* Session prompt removed — workspace state is now auto-restored via initialState prop */}
+
+      {/* Generate Preview — zoom prompt */}
+      <AnimatePresence>
+        {previewPromptOpen && (
+          <motion.div
+            className="preview-zoom-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setPreviewPromptOpen(false)}
+          >
+            <motion.div
+              className="preview-zoom-card"
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="preview-zoom-header">
+                <Camera className="preview-zoom-icon" />
+                <div>
+                  <div className="preview-zoom-title">Preview Zoom</div>
+                  <div className="preview-zoom-sub">Choose how close the export screenshots should be.</div>
+                </div>
+              </div>
+
+              <div className="preview-zoom-preview">
+                {previewZoomPreview && !previewZoomLoading ? (
+                  <img src={previewZoomPreview} alt="Preview zoom" />
+                ) : (
+                  <div className="preview-zoom-placeholder">
+                    <div className="vp-spinner" />
+                    <span>{previewZoomLoading ? "Updating preview..." : "Preview pending"}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="preview-zoom-controls">
+                <div className="preview-zoom-row">
+                  <span>Zoom</span>
+                  <span>{previewZoomDraft.toFixed(2)}x</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.6"
+                  max="1.8"
+                  step="0.02"
+                  value={previewZoomDraft}
+                  onChange={(e) => setPreviewZoomDraft(parseFloat(e.target.value))}
+                  className="preview-zoom-slider"
+                />
+              </div>
+
+              <div className="preview-angles-section">
+                <div className="preview-angles-header">
+                  <div className="preview-angles-label">
+                    <Aperture className="w-3.5 h-3.5" />
+                    <span>Capture Angles</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="preview-angles-toggle-all"
+                    onClick={toggleAllPreviewCapturePresets}
+                  >
+                    {allPreviewPresetsSelected ? "Clear" : "All"}
+                  </button>
+                </div>
+                <div className="preview-angles-grid">
+                  {PREVIEW_CAPTURE_PRESETS.map((preset) => {
+                    const isActive = previewCapturePresets.includes(preset.key);
+                    return (
+                      <button
+                        key={preset.key}
+                        type="button"
+                        className={`preview-angle-btn${isActive ? " is-active" : ""}`}
+                        onClick={() => togglePreviewCapturePreset(preset.key)}
+                        aria-pressed={isActive}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="preview-angles-count">
+                  {selectedPreviewPresetCount} / {PREVIEW_CAPTURE_PRESET_KEYS.length} selected
+                </div>
+                {selectedPreviewPresetCount === 0 ? (
+                  <div className="preview-angles-help">Select at least one angle to continue.</div>
+                ) : null}
+              </div>
+
+              <div className="preview-zoom-actions">
+                <button
+                  type="button"
+                  className="preview-zoom-btn preview-zoom-btn--cancel"
+                  onClick={() => setPreviewPromptOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="preview-zoom-btn preview-zoom-btn--confirm"
+                  disabled={selectedPreviewPresetCount === 0}
+                  onClick={() => {
+                    setPreviewZoom(previewZoomDraft);
+                    setPreviewPromptOpen(false);
+                    handleGeneratePreview(previewZoomDraft, previewCapturePresets);
+                  }}
+                >
+                  {selectedPreviewPresetCount > 0
+                    ? `Capture ${selectedPreviewPresetCount} Angle${selectedPreviewPresetCount === 1 ? "" : "s"}`
+                    : "Select Angles"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Generate Preview — progress overlay */}
+      <AnimatePresence>
+        {generatingPreview && (
+          <motion.div
+            className="gen-preview-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <motion.div
+              className="gen-preview-card"
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <Camera className="gen-preview-icon" />
+              <div className="gen-preview-title">Generating Preview</div>
+              <div className="gen-preview-sub">{previewProgress.preset || "Starting..."}</div>
+              <div className="gen-preview-bar-track">
+                <motion.div
+                  className="gen-preview-bar-fill"
+                  animate={{ width: `${previewProgress.total > 0 ? (previewProgress.current / previewProgress.total) * 100 : 0}%` }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
+              <div className="gen-preview-count">{previewProgress.current} / {previewProgress.total}</div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Generate Preview — completion modal */}
+      <AnimatePresence>
+        {previewComplete && (
+          <motion.div
+            className="gen-preview-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setPreviewComplete(false)}
+          >
+            <motion.div
+              className="gen-preview-card"
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <motion.div
+                className="gen-preview-done-check"
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", stiffness: 400, damping: 20, delay: 0.1 }}
+              >
+                <Check className="w-6 h-6" />
+              </motion.div>
+              <div className="gen-preview-title">Preview Complete</div>
+              <div className="gen-preview-sub">
+                {previewExportCount} screenshot{previewExportCount === 1 ? "" : "s"} exported successfully
+              </div>
+              <div className="gen-preview-actions">
+                <button
+                  type="button"
+                  className="gen-preview-btn gen-preview-btn--open"
+                  onClick={async () => {
+                    if (isTauriRuntime && previewOutputPath) {
+                      const prefs = loadPrefs() || {};
+                      const fallbackFolder = prefs?.defaults?.previewFolder || "";
+                      const targetFolder = await resolveExistingFolder(previewOutputPath, fallbackFolder);
+                      if (!targetFolder) {
+                        showToast("Preview export folder no longer exists. Choose a new folder before capturing again.");
+                        return;
+                      }
+
+                      const opened = await openFolderPath(targetFolder);
+                      if (!opened) {
+                        console.error("Failed to open preview folder:", targetFolder);
+                        showToast("Failed to open the preview export folder.");
+                        return;
+                      }
+
+                      setPreviewComplete(false);
+                    }
+                  }}
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  Open Folder
+                </button>
+                <button
+                  type="button"
+                  className="gen-preview-btn gen-preview-btn--close"
+                  onClick={() => setPreviewComplete(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+    </motion.div>
+  );
+}
+
+export default App;

@@ -1,0 +1,13 @@
+{
+  "title": "User Guide",
+  "pages": [
+    "index",
+    "viewer-modes",
+    "viewer-controls",
+    "targeting",
+    "variant-builder",
+    "settings",
+    "hotkeys",
+    "workspaces"
+  ]
+}
