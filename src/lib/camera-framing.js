@@ -3,6 +3,7 @@ import * as THREE from "three";
 const DEFAULT_CAMERA_FOV = 45;
 const MIN_CAMERA_DISTANCE = 2.4;
 const DEFAULT_FIT_PADDING = 1.12;
+export const TOP_PRESET_FORWARD_BIAS = 0.02;
 
 export const CAMERA_PRESETS = {
   front: {
@@ -27,8 +28,8 @@ export const CAMERA_PRESETS = {
   },
   top: {
     key: "top",
-    direction: new THREE.Vector3(0, 1, 0),
-    up: new THREE.Vector3(0, 0, -1),
+    direction: new THREE.Vector3(0, 1, TOP_PRESET_FORWARD_BIAS).normalize(),
+    up: new THREE.Vector3(0, 1, 0),
   },
 };
 

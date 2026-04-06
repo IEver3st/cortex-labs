@@ -22,6 +22,7 @@ import {
   CAMERA_PRESET_KEYS,
   DEFAULT_CAMERA_PRESET,
 } from "../lib/camera-framing.js";
+import { syncViewerCameraPose } from "../lib/camera-state.js";
 import {
   applyShadowFlags,
   configureShadowLight,
@@ -248,15 +249,17 @@ export default function DualModelViewer({
         zoomFactor,
       });
 
-      camera.up.copy(framing.up);
-      camera.near = framing.near;
-      camera.far = framing.far;
-      camera.position.copy(framing.position);
-      camera.updateProjectionMatrix();
-      controls.target.copy(framing.target);
-      controls.minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
-      controls.maxDistance = Math.max(framing.baseDistance * 10, 10);
-      controls.update();
+      syncViewerCameraPose({
+        camera,
+        controls,
+        position: framing.position,
+        target: framing.target,
+        up: framing.up,
+        near: framing.near,
+        far: framing.far,
+        minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
+        maxDistance: Math.max(framing.baseDistance * 10, 10),
+      });
 
       fitRef.current = {
         ...fitRef.current,
@@ -1019,15 +1022,17 @@ export default function DualModelViewer({
         presetKey: framing.presetKey,
         zoomFactor,
       };
-      cameraRef.current.up.copy(framing.up);
-      cameraRef.current.near = framing.near;
-      cameraRef.current.far = framing.far;
-      cameraRef.current.position.copy(framing.position);
-      cameraRef.current.updateProjectionMatrix();
-      controlsRef.current.target.copy(framing.target);
-      controlsRef.current.minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
-      controlsRef.current.maxDistance = Math.max(framing.baseDistance * 10, 10);
-      controlsRef.current.update();
+      syncViewerCameraPose({
+        camera: cameraRef.current,
+        controls: controlsRef.current,
+        position: framing.position,
+        target: framing.target,
+        up: framing.up,
+        near: framing.near,
+        far: framing.far,
+        minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
+        maxDistance: Math.max(framing.baseDistance * 10, 10),
+      });
     }
     if (shadowsEnabled) {
       updateDirectionalShadowFrustum(lightsRef.current.key, fitRef.current.distance);

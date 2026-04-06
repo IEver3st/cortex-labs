@@ -4,6 +4,13 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [3.8.1] - 2026-04-06
+
+### Fixed
+- Fixed camera bugs
+
+---
+
 ## [3.8.0] - 2026-03-31
 
 ### Added
