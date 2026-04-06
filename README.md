@@ -87,7 +87,8 @@ Livery work is iterative. In-game testing is slow and breaks your flow. Cortex S
 ## Project Structure
 
 - `src/` - React UI, Three.js viewer, and logic.
-- `src/components/VariantsPage.jsx` - The new PSD Variant Builder.
+- `src/components/VariantsPage.jsx` - The PSD Variant Builder.
+- `src/components/TemplateGenerator/` - Template Generator workspace for auto-generating PSD templates.
 - `src/lib/yft.js` - High-performance YFT/YDD parser.
 - `src-tauri/` - Rust-based Tauri v2 backend for file system access and performance.
 
