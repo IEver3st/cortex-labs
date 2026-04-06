@@ -1,4 +1,4 @@
-## Cortex Studio v3.5
+## Cortex Studio v3.8
 ![Cortex Studio UI](https://cdn.discordapp.com/attachments/1346902689744949270/1472021146311331871/image.png?ex=699af146&is=69999fc6&hm=6b2bf8b46a7498275f98db8eebed9bf07ec208901a893c1b59ddf2a89c0e56b0&)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C1C41TSVBX)
 
@@ -11,8 +11,21 @@ Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/relea
 
 ---
 
-## New: PSD Variant Builder
-The centerpiece of v3.1 is the **Variant Builder**, a dedicated environment for managing complex livery projects with multiple variants.
+## New in v3.8: Model Shadows & Template Generator
+
+### Model Shadows (v3.8)
+Enhanced depth perception with real-time shadow rendering on your models.
+
+### Template Generator (beta) (v3.7)
+The **Template Generator** auto-creates layered PSD templates directly from your `.yft` models—no more manual UV mapping or guessing template layouts.
+
+- **Live Preview:** See your template being generated in real-time
+- **Manual Marker Selection:** Pick individual markers with Alt/Ctrl/Shift + click in "Marker Edit Mode"
+- **Flexible Exports:** Save templates as `.psd`, `.png`, or both formats
+- **Cage Wireframe Overlay:** Inspect your model's mesh structure with optional cage-style overlay
+
+### PSD Variant Builder
+The dedicated environment for managing complex livery projects with multiple variants.
 
 - **PSD Native Workflow:** Load your Photoshop files directly. Cortex Studio parses layers and groups with full hierarchy support.
 - **Variant Management:** Create, duplicate, and rename variants. Each variant stores its own unique set of layer visibilities.
@@ -25,15 +38,21 @@ The centerpiece of v3.1 is the **Variant Builder**, a dedicated environment for 
 
 ## Key Features
 
+- **Template Generator (beta):** Auto-generate layered PSD templates directly from `.yft` models with live preview and manual marker selection.
+- **PSD Variant Builder:** Manage complex livery projects with multiple variants, layer groups, and batch export to PNG.
 - **Live Texture Reloading:** Uses a native file watcher to detect saves in your design software and reloads textures in milliseconds.
-- **Four Powerful Viewing Modes:**
+- **Five Powerful Viewing Modes:**
     - **Livery Mode:** Intelligently auto-targets vehicle carpaint and livery materials.
     - **All Textures:** Applies the loaded texture to every mesh on the model (great for checking templates).
     - **EUP Mode:** Specialized support for Emergency Uniform Packs and clothing models (`.ydd`).
     - **Multi-Model Viewer:** Compare two models side-by-side with independent texture controls.
+    - **Template Mode:** Dedicated workspace for template generation with cage wireframe overlay.
+- **Model Shadows:** Real-time shadow rendering for improved depth perception.
+- **Workspace Persistence:** Recent projects restore their full state (model paths, textures, colors, camera positions) on relaunch.
 - **Native GTA V Support:** Direct parsing of `.yft` (vehicles) and `.ydd` (clothing) files.
 - **Full Camera Control:** Quick presets (Front, Side, 3/4, Top), center action, and optional WASD flight controls.
 - **Material Controls:** Fine-tune body color, background color, glossiness, and light intensity to see how your design looks in different conditions.
+- **Light & Dark Theme:** Branded light and dark modes with native system integration.
 - **Fully Local & Private:** No cloud dependencies, no accounts, no data leaves your machine.
 - **Tauri v2 Core:** Built on the latest Tauri framework for maximum performance and a tiny footprint.
 
@@ -105,10 +124,14 @@ bun run tauri build
 
 ## Workflow Tips
 
+- **Template Generator:** Start a new project from the home screen to auto-generate a PSD template from your `.yft` model—no more manual UV mapping.
+- **Manual Marker Selection:** In Template Generator, use Alt/Ctrl/Shift + click to pick individual markers. Selections stay staged until you confirm.
 - **The Variant Sidebar:** Use it to create "Night", "High-Vis", or "Stealth" versions of your liveries in one project file.
 - **Double-Click Layers:** In the Variant Builder, double-click a layer in the panel to "Solo" it.
 - **Alt + 1-4:** Use these hotkeys to quickly switch between viewing modes.
 - **Custom Hotkeys:** Check the Settings menu to customize every action to your liking.
+- **Pinned Projects:** Pin frequently used projects to your home screen for quick access.
+- **Workspace Restoration:** Your project state (models, textures, camera position) auto-saves and restores when you reopen the app.
 
 ---
 
