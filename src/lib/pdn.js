@@ -708,12 +708,24 @@ function readLayerChunkedData(bytes, offset, expectedLength) {
 
         // Gzip compressed
         const decompressed = pako.ungzip(rawData);
+        if (decompressed.length < actualChunkSize) {
+          pdnWarn(`Chunk ${chunkNumber} decompressed short; remainder left as zeros`, {
+            got: decompressed.length,
+            expected: actualChunkSize,
+          });
+        }
         data.set(
           decompressed.subarray(0, Math.min(decompressed.length, actualChunkSize)),
           chunkOffset,
         );
       } else {
         // Uncompressed
+        if (rawData.length < actualChunkSize) {
+          pdnWarn(`Chunk ${chunkNumber} raw data short; remainder left as zeros`, {
+            got: rawData.length,
+            expected: actualChunkSize,
+          });
+        }
         data.set(
           rawData.subarray(0, Math.min(rawData.length, actualChunkSize)),
           chunkOffset,

@@ -17,7 +17,7 @@ import { emitPrefsUpdated, loadOnboarded, loadPrefs, savePrefs, setOnboarded, sa
 import { openFolderPath } from "./lib/open-folder";
 import { captureTemporaryViewerFrame } from "./lib/preview-capture";
 import { ensurePreviewExportFolder, resolveExistingPreviewFolderPath } from "./lib/preview-folder";
-import { updateWorkspace } from "./lib/workspace";
+import { updateWorkspace, WORKSPACE_SAVE_FAILED_EVENT } from "./lib/workspace";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_ACTIONS,
@@ -116,7 +116,11 @@ const BUILT_IN_DEFAULTS = {
 
 function sanitizeStoredDefaults(stored) {
   if (!stored || typeof stored !== "object") return {};
-  const { showAmbientOcclusion: _removedAmbientOcclusion, ...rest } = stored;
+  const {
+    showAmbientOcclusion: _removedAmbientOcclusion,
+    autoModelTexturesEnabled: _removedAutoModelTexturesEnabled,
+    ...rest
+  } = stored;
   return rest;
 }
 
@@ -148,11 +152,79 @@ function getFileLabel(path, emptyLabel) {
 return path.split(/[\\/]/).pop();
 }
 
+function buildVehicleSlotColors(baseColor = DEFAULT_BODY) {
+  const resolved = baseColor || DEFAULT_BODY;
+  return {
+    primary: resolved,
+    secondary: resolved,
+    accent: resolved,
+    glass: resolved,
+  };
+}
+
+function normalizeVehicleSlotColors(slotColors, baseColor = DEFAULT_BODY) {
+  const fallback = buildVehicleSlotColors(baseColor);
+  if (!slotColors || typeof slotColors !== "object") return fallback;
+  return {
+    ...fallback,
+    ...slotColors,
+  };
+}
+
 function UnloadButton({ onClick, title, className }) {
   return (
     <CyberButton variant="danger" className={className} onClick={onClick} title={title}>
       <span className="font-bold tracking-[0.2em] text-[9px]">UNLOAD</span>
     </CyberButton>
+  );
+}
+
+function ColorValueCard({
+  label,
+  value,
+  onChange,
+  onReset,
+  onCopy,
+  swatches,
+  pickerLabel,
+  resetTitle,
+}) {
+  return (
+    <CyberCard>
+      <CyberLabel>{label}</CyberLabel>
+      <div className="flex items-center gap-2">
+        <div className="color-swatch-wrapper">
+          <div className="color-swatch" style={{ background: value }} />
+          <input
+            type="color"
+            value={value}
+            onChange={(event) => onChange(event.currentTarget.value)}
+            className="color-picker-native"
+            aria-label={pickerLabel}
+          />
+        </div>
+        <Input
+          className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
+          style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
+          value={value}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        />
+        <button type="button" className="cs-copy-btn" onClick={() => onCopy(value)} title="Copy hex"><Copy className="h-3 w-3" /></button>
+        <button
+          type="button"
+          className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
+          onClick={onReset}
+          title={resetTitle}
+        >
+          <RotateCcw className="h-3 w-3" />
+        </button>
+      </div>
+      <div className="cs-swatches">
+        {swatches.map((color) => (
+          <button key={color} className="cs-swatch-dot" style={{ background: color }} onClick={() => onChange(color)} title={color} />
+        ))}
+      </div>
+    </CyberCard>
   );
 }
 
@@ -175,11 +247,29 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   // Toast notification system
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
+  const toastTimersRef = useRef(new Set());
   const showToast = useCallback((message, type = "info") => {
     const id = ++toastIdRef.current;
     setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3200);
+    const timer = setTimeout(() => {
+      toastTimersRef.current.delete(timer);
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3200);
+    toastTimersRef.current.add(timer);
   }, []);
+  useEffect(() => {
+    const timers = toastTimersRef.current;
+    return () => {
+      timers.forEach(clearTimeout);
+      timers.clear();
+    };
+  }, []);
+  useEffect(() => {
+    if (!isActive) return;
+    const onSaveFailed = () => showToast("Workspace save failed — storage is full. Free up space or remove old workspaces.", "error");
+    window.addEventListener(WORKSPACE_SAVE_FAILED_EVENT, onSaveFailed);
+    return () => window.removeEventListener(WORKSPACE_SAVE_FAILED_EVENT, onSaveFailed);
+  }, [isActive, showToast]);
 
   // Color swatch presets
   const COLOR_SWATCHES = ["#e7ebf0", "#1a1a2e", "#0f3460", "#16213e", "#533483", "#e94560", "#f5f5dc", "#2c3e50", "#000000", "#ffffff"];
@@ -197,6 +287,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [windowTemplateEnabled, setWindowTemplateEnabled] = useState(() => Boolean(getInitialDefaults().windowTemplateEnabled));
   const [windowTexturePath, setWindowTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
+  const [vehicleSlotColors, setVehicleSlotColors] = useState(() => buildVehicleSlotColors(getInitialDefaults().bodyColor));
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
   const [backgroundImagePath, setBackgroundImagePath] = useState("");
   const [backgroundImageBlur, setBackgroundImageBlur] = useState(0);
@@ -357,6 +448,16 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     });
   }, [lightAzimuth, scheduleLightDirectionUpdate]);
 
+  const setVehicleSlotColor = useCallback((slot, value) => {
+    if (slot === "primary") {
+      setBodyColor(value);
+    }
+    setVehicleSlotColors((prev) => ({
+      ...prev,
+      [slot]: value,
+    }));
+  }, []);
+
   const resetLighting = useCallback(() => {
     if (lightIntensityRafRef.current) {
       cancelAnimationFrame(lightIntensityRafRef.current);
@@ -393,6 +494,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setShowGrid(Boolean(merged.showGrid));
     setShowShadows(Boolean(merged.showShadows));
     setBodyColor(merged.bodyColor);
+    setVehicleSlotColors(buildVehicleSlotColors(merged.bodyColor));
     setDualBodyColorA(merged.bodyColor);
     setDualBodyColorB(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
@@ -525,6 +627,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         windowTemplateEnabled,
         liveryWindowOverride,
         bodyColor,
+        vehicleSlotColors,
         backgroundColor,
         backgroundImagePath,
         backgroundImageBlur,
@@ -566,7 +669,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [
     isBooting, showOnboarding, textureMode,
     modelPath, modelSourcePath, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
-    liveryWindowOverride, bodyColor, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, lightIntensity, glossiness, liveryExteriorOnly,
+    liveryWindowOverride, bodyColor, vehicleSlotColors, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, lightIntensity, glossiness, liveryExteriorOnly,
     dualBodyColorA, dualBodyColorB,
     dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
     dualWindowTextureAPath, dualWindowTextureBPath,
@@ -745,6 +848,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setShowGrid(Boolean(merged.showGrid));
     setShowShadows(Boolean(merged.showShadows));
     setBodyColor(merged.bodyColor);
+    setVehicleSlotColors(buildVehicleSlotColors(merged.bodyColor));
     setDualBodyColorA(merged.bodyColor);
     setDualBodyColorB(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
@@ -824,6 +928,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     if (typeof state.liveryWindowOverride === "string") setLiveryWindowOverride(state.liveryWindowOverride);
     if (typeof state.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(state.windowTemplateEnabled);
     if (state.bodyColor) setBodyColor(state.bodyColor);
+    if (state.vehicleSlotColors) setVehicleSlotColors(normalizeVehicleSlotColors(state.vehicleSlotColors, state.bodyColor || DEFAULT_BODY));
+    else if (state.bodyColor) setVehicleSlotColors(buildVehicleSlotColors(state.bodyColor));
     if (state.dualBodyColorA) setDualBodyColorA(state.dualBodyColorA);
     else if (state.bodyColor) setDualBodyColorA(state.bodyColor);
     if (state.dualBodyColorB) setDualBodyColorB(state.dualBodyColorB);
@@ -1627,6 +1733,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       : textureTargets.find((target) => target.value === textureTarget)?.label || "Custom target";
   const targetingLabel = textureMode === "livery" ? (liveryTarget ? "Auto" : "No target") : manualTargetLabel;
   const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
+  const showVehicleSlotColorCards = textureMode === "livery" || textureMode === "everything";
 
   const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
   const currentModeLabel = modeLabels[textureMode] || "Preview";
@@ -1981,11 +2088,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <CyberLabel className="mb-0">Secondary Texture</CyberLabel>
-<Toggle
-                                checked={rotationEnabled}
-                                onChange={(next) => setRotationEnabled(next)}
-                                ariaLabel="Toggle rotation"
-                              />
+                    <Toggle
+                      checked={windowTemplateEnabled}
+                      onChange={setWindowTemplateEnabled}
+                      ariaLabel="Toggle secondary texture"
+                    />
                   </div>
                   {windowTemplateEnabled ? (
                     <>
@@ -2469,42 +2576,60 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     </div>
                   </CyberCard>
                 </>
+              ) : showVehicleSlotColorCards ? (
+                <>
+                  <ColorValueCard
+                    label="Primary Paint"
+                    value={vehicleSlotColors.primary}
+                    onChange={(value) => setVehicleSlotColor("primary", value)}
+                    onReset={() => setVehicleSlotColor("primary", DEFAULT_BODY)}
+                    onCopy={copyHex}
+                    swatches={COLOR_SWATCHES}
+                    pickerLabel="Primary paint color picker"
+                    resetTitle="Reset primary paint color"
+                  />
+                  <ColorValueCard
+                    label="Secondary Paint"
+                    value={vehicleSlotColors.secondary}
+                    onChange={(value) => setVehicleSlotColor("secondary", value)}
+                    onReset={() => setVehicleSlotColor("secondary", DEFAULT_BODY)}
+                    onCopy={copyHex}
+                    swatches={COLOR_SWATCHES}
+                    pickerLabel="Secondary paint color picker"
+                    resetTitle="Reset secondary paint color"
+                  />
+                  <ColorValueCard
+                    label="Lightbar / Accent"
+                    value={vehicleSlotColors.accent}
+                    onChange={(value) => setVehicleSlotColor("accent", value)}
+                    onReset={() => setVehicleSlotColor("accent", DEFAULT_BODY)}
+                    onCopy={copyHex}
+                    swatches={COLOR_SWATCHES}
+                    pickerLabel="Lightbar and accent color picker"
+                    resetTitle="Reset accent color"
+                  />
+                  <ColorValueCard
+                    label="Glass Tint"
+                    value={vehicleSlotColors.glass}
+                    onChange={(value) => setVehicleSlotColor("glass", value)}
+                    onReset={() => setVehicleSlotColor("glass", DEFAULT_BODY)}
+                    onCopy={copyHex}
+                    swatches={COLOR_SWATCHES}
+                    pickerLabel="Glass tint color picker"
+                    resetTitle="Reset glass tint"
+                  />
+                </>
               ) : (
-                <CyberCard>
-                  <CyberLabel>Body Color</CyberLabel>
-                  <div className="flex items-center gap-2">
-                    <div className="color-swatch-wrapper">
-                      <div className="color-swatch" style={{ background: bodyColor }} />
-                      <input
-                        type="color"
-                        value={bodyColor}
-                        onChange={(event) => setBodyColor(event.currentTarget.value)}
-                        className="color-picker-native"
-                        aria-label="Body color picker"
-                      />
-                    </div>
-                    <Input
-                      className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
-                      style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
-                      value={bodyColor}
-                      onChange={(event) => setBodyColor(event.currentTarget.value)}
-                    />
-                    <button type="button" className="cs-copy-btn" onClick={() => copyHex(bodyColor)} title="Copy hex"><Copy className="h-3 w-3" /></button>
-                    <button
-                      type="button"
-                      className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
-                      onClick={() => setBodyColor(DEFAULT_BODY)}
-                      title="Revert to default"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div className="cs-swatches">
-                    {COLOR_SWATCHES.map(c => (
-                      <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setBodyColor(c)} title={c} />
-                    ))}
-                  </div>
-                </CyberCard>
+                <ColorValueCard
+                  label="Body Color"
+                  value={bodyColor}
+                  onChange={(value) => setVehicleSlotColor("primary", value)}
+                  onReset={() => setVehicleSlotColor("primary", DEFAULT_BODY)}
+                  onCopy={copyHex}
+                  swatches={COLOR_SWATCHES}
+                  pickerLabel="Body color picker"
+                  resetTitle="Revert to default"
+                />
               )}
 
               <CyberCard>
@@ -2693,11 +2818,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     svg.style.cursor = 'crosshair';
                     svg.removeEventListener('pointermove', onMove);
                     svg.removeEventListener('pointerup', onUp);
+                    svg.removeEventListener('pointercancel', onUp);
                   };
                   svg.style.cursor = 'grabbing';
                   handleLightAzimuthChange(compute(e.clientX, e.clientY));
                   svg.addEventListener('pointermove', onMove);
                   svg.addEventListener('pointerup', onUp);
+                  svg.addEventListener('pointercancel', onUp);
                 };
 
                 // Drag handler for elevation — click/drag anywhere in SVG sets the dome angle
@@ -2717,11 +2844,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     svg.style.cursor = 'crosshair';
                     svg.removeEventListener('pointermove', onMove);
                     svg.removeEventListener('pointerup', onUp);
+                    svg.removeEventListener('pointercancel', onUp);
                   };
                   svg.style.cursor = 'grabbing';
                   handleLightElevationChange(compute(e.clientX, e.clientY));
                   svg.addEventListener('pointermove', onMove);
                   svg.addEventListener('pointerup', onUp);
+                  svg.addEventListener('pointercancel', onUp);
                 };
 
                 return (
@@ -3070,6 +3199,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             texturePath={texturePath}
             windowTexturePath={windowTemplateEnabled ? windowTexturePath : ""}
             bodyColor={bodyColor}
+            slotColors={vehicleSlotColors}
             backgroundColor={backgroundColor}
             backgroundImagePath={backgroundImagePath}
             backgroundImageReloadToken={backgroundImageReloadToken}

@@ -34,6 +34,29 @@ import {
 } from "../lib/viewer-render-effects.js";
 import { stabilizeObjectForWorld } from "../lib/model-normalization.js";
 
+const DEFAULT_DUAL_BODY = "#e7ebf0";
+
+function buildDualVehicleSlotColors(baseColor = DEFAULT_DUAL_BODY) {
+  const resolved = baseColor || DEFAULT_DUAL_BODY;
+  return {
+    primary: resolved,
+    secondary: resolved,
+    accent: resolved,
+    glass: resolved,
+  };
+}
+
+function normalizeDualVehicleSlotColors(slotColors, baseColor = DEFAULT_DUAL_BODY) {
+  const fallback = buildDualVehicleSlotColors(baseColor);
+  if (!slotColors || typeof slotColors !== "object") return fallback;
+  return {
+    primary: slotColors.primary || fallback.primary,
+    secondary: slotColors.secondary || fallback.secondary,
+    accent: slotColors.accent || fallback.accent,
+    glass: slotColors.glass || fallback.glass,
+  };
+}
+
 export default function DualModelViewer({
   modelAPath,
   modelBPath,
@@ -49,6 +72,8 @@ export default function DualModelViewer({
   windowTextureBReloadToken = 0,
   bodyColorA,
   bodyColorB,
+  slotColorsA,
+  slotColorsB,
   backgroundColor,
   backgroundImagePath = "",
   backgroundImageReloadToken = 0,
@@ -118,6 +143,14 @@ export default function DualModelViewer({
   const [modelBVersion, setModelBVersion] = useState(0);
 
   const textureLoader = useMemo(() => new THREE.TextureLoader(), []);
+  const resolvedSlotColorsA = useMemo(
+    () => normalizeDualVehicleSlotColors(slotColorsA, bodyColorA),
+    [slotColorsA, bodyColorA],
+  );
+  const resolvedSlotColorsB = useMemo(
+    () => normalizeDualVehicleSlotColors(slotColorsB, bodyColorB),
+    [slotColorsB, bodyColorB],
+  );
 
   const onReadyRef = useRef(onReady);
   const onModelAErrorRef = useRef(onModelAError);
@@ -192,6 +225,13 @@ export default function DualModelViewer({
       });
     }
   }, []);
+
+  const applyModelAppearance = useCallback((model, bodyColor, texture, resolvedSlotColors) => {
+    if (!model) return;
+    const applyFn = textureMode === "eup" ? applyTextureToAll : applyLiveryToModel;
+    applyFn(model, bodyColor, texture, resolvedSlotColors);
+    applyGlossinessToObject(model);
+  }, [textureMode, applyGlossinessToObject]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -807,15 +847,13 @@ export default function DualModelViewer({
   useEffect(() => {
     if (!sceneReady) return;
     let cancelled = false;
-    const applyFn = textureMode === "eup" ? applyTextureToAll : applyLiveryToModel;
 
     (async () => {
       if (!textureAPath) {
         textureAStateRef.current = { path: "", reloadToken: -1 };
         if (textureARef.current) { textureARef.current.dispose?.(); textureARef.current = null; }
         if (modelARef.current) {
-          applyFn(modelARef.current, bodyColorA, null);
-          applyGlossinessToObject(modelARef.current);
+          applyModelAppearance(modelARef.current, bodyColorA, null, resolvedSlotColorsA);
           requestRender();
         }
         return;
@@ -827,8 +865,7 @@ export default function DualModelViewer({
         textureAStateRef.current.reloadToken === textureAReloadToken
       ) {
         if (modelARef.current) {
-          applyFn(modelARef.current, bodyColorA, textureARef.current);
-          applyGlossinessToObject(modelARef.current);
+          applyModelAppearance(modelARef.current, bodyColorA, textureARef.current, resolvedSlotColorsA);
           requestRender();
         }
         return;
@@ -841,8 +878,7 @@ export default function DualModelViewer({
         textureARef.current = tex;
         textureAStateRef.current = { path: textureAPath, reloadToken: textureAReloadToken };
         if (modelARef.current) {
-          applyFn(modelARef.current, bodyColorA, tex);
-          applyGlossinessToObject(modelARef.current);
+          applyModelAppearance(modelARef.current, bodyColorA, tex, resolvedSlotColorsA);
           requestRender();
         }
       } catch (err) {
@@ -853,20 +889,18 @@ export default function DualModelViewer({
     })();
 
     return () => { cancelled = true; };
-  }, [textureAPath, textureAReloadToken, sceneReady, modelAVersion, textureMode, bodyColorA, applyGlossinessToObject]);
+  }, [textureAPath, textureAReloadToken, sceneReady, modelAVersion, bodyColorA, resolvedSlotColorsA, applyModelAppearance]);
 
   useEffect(() => {
     if (!sceneReady) return;
     let cancelled = false;
-    const applyFn = textureMode === "eup" ? applyTextureToAll : applyLiveryToModel;
 
     (async () => {
       if (!textureBPath) {
         textureBStateRef.current = { path: "", reloadToken: -1 };
         if (textureBRef.current) { textureBRef.current.dispose?.(); textureBRef.current = null; }
         if (modelBRef.current) {
-          applyFn(modelBRef.current, bodyColorB, null);
-          applyGlossinessToObject(modelBRef.current);
+          applyModelAppearance(modelBRef.current, bodyColorB, null, resolvedSlotColorsB);
           requestRender();
         }
         return;
@@ -878,8 +912,7 @@ export default function DualModelViewer({
         textureBStateRef.current.reloadToken === textureBReloadToken
       ) {
         if (modelBRef.current) {
-          applyFn(modelBRef.current, bodyColorB, textureBRef.current);
-          applyGlossinessToObject(modelBRef.current);
+          applyModelAppearance(modelBRef.current, bodyColorB, textureBRef.current, resolvedSlotColorsB);
           requestRender();
         }
         return;
@@ -892,8 +925,7 @@ export default function DualModelViewer({
         textureBRef.current = tex;
         textureBStateRef.current = { path: textureBPath, reloadToken: textureBReloadToken };
         if (modelBRef.current) {
-          applyFn(modelBRef.current, bodyColorB, tex);
-          applyGlossinessToObject(modelBRef.current);
+          applyModelAppearance(modelBRef.current, bodyColorB, tex, resolvedSlotColorsB);
           requestRender();
         }
       } catch (err) {
@@ -904,7 +936,7 @@ export default function DualModelViewer({
     })();
 
     return () => { cancelled = true; };
-  }, [textureBPath, textureBReloadToken, sceneReady, modelBVersion, textureMode, bodyColorB, applyGlossinessToObject]);
+  }, [textureBPath, textureBReloadToken, sceneReady, modelBVersion, bodyColorB, resolvedSlotColorsB, applyModelAppearance]);
 
   useEffect(() => {
     if (!sceneReady) return;
@@ -915,7 +947,7 @@ export default function DualModelViewer({
         if (windowTextureARef.current) { windowTextureARef.current.dispose?.(); windowTextureARef.current = null; }
         if (modelARef.current) {
           applyWindowDesignToModel(modelARef.current, null, windowTextureATarget);
-          applyGlossinessToObject(modelARef.current);
+          applyModelAppearance(modelARef.current, bodyColorA, textureARef.current, resolvedSlotColorsA);
           requestRender();
         }
         return;
@@ -927,6 +959,7 @@ export default function DualModelViewer({
         if (windowTextureARef.current && windowTextureARef.current !== tex) windowTextureARef.current.dispose?.();
         windowTextureARef.current = tex;
         if (modelARef.current) {
+          applyModelAppearance(modelARef.current, bodyColorA, textureARef.current, resolvedSlotColorsA);
           applyWindowDesignToModel(modelARef.current, tex, windowTextureATarget);
           applyGlossinessToObject(modelARef.current);
           requestRender();
@@ -939,7 +972,7 @@ export default function DualModelViewer({
     })();
 
     return () => { cancelled = true; };
-  }, [windowTextureAPath, windowTextureAReloadToken, windowTextureATarget, sceneReady, modelAVersion, textureMode, applyGlossinessToObject]);
+  }, [windowTextureAPath, windowTextureAReloadToken, windowTextureATarget, sceneReady, modelAVersion, textureMode, bodyColorA, textureAPath, textureAReloadToken, resolvedSlotColorsA, applyGlossinessToObject, applyModelAppearance]);
 
   useEffect(() => {
     if (!sceneReady) return;
@@ -950,7 +983,7 @@ export default function DualModelViewer({
         if (windowTextureBRef.current) { windowTextureBRef.current.dispose?.(); windowTextureBRef.current = null; }
         if (modelBRef.current) {
           applyWindowDesignToModel(modelBRef.current, null, windowTextureBTarget);
-          applyGlossinessToObject(modelBRef.current);
+          applyModelAppearance(modelBRef.current, bodyColorB, textureBRef.current, resolvedSlotColorsB);
           requestRender();
         }
         return;
@@ -962,6 +995,7 @@ export default function DualModelViewer({
         if (windowTextureBRef.current && windowTextureBRef.current !== tex) windowTextureBRef.current.dispose?.();
         windowTextureBRef.current = tex;
         if (modelBRef.current) {
+          applyModelAppearance(modelBRef.current, bodyColorB, textureBRef.current, resolvedSlotColorsB);
           applyWindowDesignToModel(modelBRef.current, tex, windowTextureBTarget);
           applyGlossinessToObject(modelBRef.current);
           requestRender();
@@ -974,7 +1008,7 @@ export default function DualModelViewer({
     })();
 
     return () => { cancelled = true; };
-  }, [windowTextureBPath, windowTextureBReloadToken, windowTextureBTarget, sceneReady, modelBVersion, textureMode, applyGlossinessToObject]);
+  }, [windowTextureBPath, windowTextureBReloadToken, windowTextureBTarget, sceneReady, modelBVersion, textureMode, bodyColorB, textureBPath, textureBReloadToken, resolvedSlotColorsB, applyGlossinessToObject, applyModelAppearance]);
 
   const refitCamera = useCallback((
     presetKey = cameraStateRef.current?.presetKey || DEFAULT_CAMERA_PRESET,
@@ -1061,7 +1095,7 @@ function applyWindowDesignToModel(object, texture, windowTarget) {
 
     if (!shouldApply) {
       if (child.userData.windowMaterial && child.material === child.userData.windowMaterial) {
-        child.material = child.userData.baseMaterial;
+        child.material = child.userData.dualMaterial || child.userData.baseMaterial;
       }
       return;
     }
@@ -1077,6 +1111,8 @@ function applyWindowDesignToModel(object, texture, windowTarget) {
         transparent: true,
         opacity: typeof baseMaterial?.opacity === "number" ? baseMaterial.opacity : 0.5,
       });
+      material.userData.baseRoughness = baseMaterial?.userData?.baseRoughness ?? baseMaterial?.roughness ?? 0.2;
+      material.userData.baseOpacity = typeof baseMaterial?.opacity === "number" ? baseMaterial.opacity : 0.5;
       material.name = baseMaterial?.name || "";
       child.userData.windowMaterial = material;
     } else if (child.userData.windowMaterial.map !== texture) {

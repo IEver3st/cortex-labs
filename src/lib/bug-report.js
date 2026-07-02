@@ -244,13 +244,22 @@ export async function buildBugReportPayload(draft, options = {}) {
 }
 
 export async function submitBugReport(payload, endpoint = BUG_REPORT_ENDPOINT) {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (err) {
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+      throw new Error("Bug report submission timed out. Check your connection and try again.");
+    }
+    throw err;
+  }
 
   let responseBody = null;
   try {

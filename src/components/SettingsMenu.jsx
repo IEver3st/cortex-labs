@@ -56,7 +56,11 @@ const BUILT_IN_DEFAULTS = {
 
 function sanitizeStoredDefaults(stored) {
   if (!stored || typeof stored !== "object") return {};
-  const { showAmbientOcclusion: _removedAmbientOcclusion, ...rest } = stored;
+  const {
+    showAmbientOcclusion: _removedAmbientOcclusion,
+    autoModelTexturesEnabled: _removedAutoModelTexturesEnabled,
+    ...rest
+  } = stored;
   return rest;
 }
 

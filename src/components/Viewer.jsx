@@ -4,8 +4,10 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { DDSLoader } from "three/examples/jsm/loaders/DDSLoader";
 import { TGALoader } from "three/examples/jsm/loaders/TGALoader";
 import { DFFLoader } from "dff-loader";
+import { invoke } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "../lib/yft";
+import { parseClmesh } from "../lib/clmesh.js";
 import { parseDDS } from "../lib/dds";
 import { buildYftTemplateMap, buildYftTemplatePsdSource } from "../lib/template-map";
 import {
@@ -62,6 +64,7 @@ const MESH_TARGET_PREFIX = "mesh:";
 const LIVERY_TOKEN_SPLIT = /[^a-z0-9]+/g;
 const EXTERIOR_INCLUDE_TOKENS = [
   "carpaint",
+  "vehicle_paint",
   "car_paint",
   "car-paint",
   "livery",
@@ -87,6 +90,15 @@ const EXTERIOR_INCLUDE_TOKENS = [
   "spoiler",
   "mirror",
   "lid",
+  "light",
+  "lights",
+  "lightbar",
+  "emissive",
+  "beacon",
+  "siren",
+  "badge",
+  "badges",
+  "detail",
 ];
 const EXTERIOR_EXCLUDE_TOKENS = [
   "glass",
@@ -125,9 +137,104 @@ const MATERIAL_TYPE_PRESETS = {
 };
 const LIVERY_UV_MIN_CONFIDENCE = 0.55;
 const LIVERY_UV_FALLBACK_MARGIN = 0.2;
+const AUTO_TEXTURE_NEUTRAL_COLOR = new THREE.Color(0xffffff);
+const AUTO_TEXTURE_BLACK = new THREE.Color(0x000000);
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function buildVehicleSlotColors(baseColor = defaultBody) {
+  const resolved = baseColor || defaultBody;
+  return {
+    primary: resolved,
+    secondary: resolved,
+    accent: resolved,
+    glass: resolved,
+  };
+}
+
+function normalizeVehicleSlotColors(slotColors, baseColor = defaultBody) {
+  const fallback = buildVehicleSlotColors(baseColor);
+  if (!slotColors || typeof slotColors !== "object") return fallback;
+  return {
+    primary: slotColors.primary || fallback.primary,
+    secondary: slotColors.secondary || fallback.secondary,
+    accent: slotColors.accent || fallback.accent,
+    glass: slotColors.glass || fallback.glass,
+  };
+}
+
+function getVehicleSlotColor(slotColors, slot) {
+  const fallbackOrder = {
+    primary: ["primary"],
+    secondary: ["secondary", "primary"],
+    accent: ["accent", "secondary", "primary"],
+    glass: ["glass", "primary"],
+  };
+  const keys = fallbackOrder[slot] || fallbackOrder.primary;
+  for (const key of keys) {
+    const value = slotColors?.[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return defaultBody;
+}
+
+function detectVehicleColorSlot(names, isGlass) {
+  if (isGlass) return "glass";
+  const raw = names
+    .map((name) => (typeof name === "string" ? name.trim().toLowerCase() : ""))
+    .filter(Boolean)
+    .join(" ");
+
+  if (!raw) return null;
+
+  if (
+    /vehicle[_-]?paint[_-]?2\b/.test(raw) ||
+    /car[_-]?paint[_-]?2\b/.test(raw) ||
+    /\bcarpaint2\b/.test(raw) ||
+    /\bsecondary\b/.test(raw)
+  ) {
+    return "secondary";
+  }
+
+  if (
+    /vehicle[_-]?paint[_-]?[3-9]\d*\b/.test(raw) ||
+    /car[_-]?paint[_-]?[3-9]\d*\b/.test(raw) ||
+    /\bcarpaint[3-9]\d*\b/.test(raw) ||
+    raw.includes("vehicle_lightsemissive") ||
+    raw.includes("vehicle_lights") ||
+    raw.includes("lightsemissive") ||
+    raw.includes("lightbar") ||
+    raw.includes("emissive") ||
+    raw.includes("siren") ||
+    raw.includes("beacon") ||
+    raw.includes("vehicle_detail") ||
+    raw.includes("vehicle_badge") ||
+    raw.includes("vehicle_badges") ||
+    raw.includes("badge") ||
+    raw.includes("accent") ||
+    raw.includes("trim")
+  ) {
+    return "accent";
+  }
+
+  if (
+    raw.includes("vehicle_paint") ||
+    raw.includes("carpaint") ||
+    raw.includes("car_paint") ||
+    raw.includes("car-paint") ||
+    raw.includes("livery") ||
+    raw.includes("vehicle_sign") ||
+    raw.includes("decal") ||
+    raw.includes("logo") ||
+    raw.includes("wrap") ||
+    matchesExteriorIncludedName(raw)
+  ) {
+    return "primary";
+  }
+
+  return null;
 }
 
 function getTextureCacheKey(path, flipY, reloadToken) {
@@ -253,11 +360,70 @@ function cloneCachedModelTemplate(template) {
   return clone;
 }
 
+function isTauriRuntimeAvailable() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__ !== "undefined" &&
+    typeof window.__TAURI_INTERNALS__?.invoke === "function"
+  );
+}
+
+function decodeUtf8(bytes) {
+  if (!bytes) return "";
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+async function readJsonFile(path) {
+  if (!path) return null;
+  const bytes = await readFile(path);
+  return JSON.parse(decodeUtf8(bytes));
+}
+
+function isAbsolutePath(path) {
+  if (typeof path !== "string") return false;
+  return /^[a-z]:[\\/]/i.test(path) || path.startsWith("\\\\") || path.startsWith("/");
+}
+
+function normalizeStringMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const normalized = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry !== "string") continue;
+    const nextValue = entry.trim();
+    if (!nextValue) continue;
+    normalized[key] = nextValue;
+  }
+  return normalized;
+}
+
+function applyBridgeManifestToMeshes(meshes, manifest) {
+  if (!Array.isArray(meshes) || meshes.length === 0 || !manifest) return meshes;
+
+  const meshEntries = Array.isArray(manifest?.meshes) ? manifest.meshes : [];
+  const meshEntriesByName = new Map();
+
+  for (const entry of meshEntries) {
+    const name = typeof entry?.name === "string" ? entry.name.trim() : "";
+    if (!name) continue;
+    meshEntriesByName.set(name, entry);
+  }
+
+  return meshes.map((mesh) => {
+    const entry = meshEntriesByName.get(mesh?.name);
+    if (!entry) return mesh;
+    return {
+      ...mesh,
+      textureRefs: normalizeStringMap(entry.textureRefs),
+    };
+  });
+}
+
 function ViewerComponent({
   modelPath,
   texturePath,
   windowTexturePath,
   bodyColor,
+  slotColors,
   backgroundColor,
   backgroundImagePath = "",
   backgroundImageReloadToken = 0,
@@ -359,8 +525,13 @@ function ViewerComponent({
   });
 
   const resolvedBodyColor = bodyColor || defaultBody;
+  const resolvedSlotColors = useMemo(
+    () => normalizeVehicleSlotColors(slotColors, resolvedBodyColor),
+    [slotColors, resolvedBodyColor],
+  );
 
   const textureLoader = useMemo(() => new THREE.TextureLoader(), []);
+  const isTauriRuntime = isTauriRuntimeAvailable();
 
   useEffect(() => {
     onReadyRef.current = onReady;
@@ -415,6 +586,7 @@ function ViewerComponent({
     };
     materialStateRef.current = {
       bodyColor: resolvedBodyColor,
+      slotColors: resolvedSlotColors,
       textureTarget,
       windowTextureTarget,
       liveryExteriorOnly,
@@ -428,9 +600,11 @@ function ViewerComponent({
       modelRef.current.userData = modelRef.current.userData || {};
       modelRef.current.userData.materialConfig = materialConfig;
       modelRef.current.userData.materialDetailTexture = materialTextureRef.current || null;
+      modelRef.current.userData.slotColors = resolvedSlotColors;
     }
   }, [
     resolvedBodyColor,
+    resolvedSlotColors,
     textureTarget,
     windowTextureTarget,
     liveryExteriorOnly,
@@ -882,8 +1056,16 @@ function ViewerComponent({
       if (scene.background === backgroundTextureRef.current) {
         scene.background = null;
       }
+      if (modelRef.current) {
+        disposeObject(modelRef.current);
+        modelRef.current = null;
+      }
       backgroundTextureRef.current?.dispose?.();
       backgroundTextureRef.current = null;
+      releaseTexture(textureRef.current);
+      textureRef.current = null;
+      releaseTexture(windowTextureRef.current);
+      windowTextureRef.current = null;
       releaseTexture(materialTextureRef.current);
       materialTextureRef.current = null;
       disposeShadowReceiver(shadowReceiverRef.current);
@@ -1106,10 +1288,13 @@ function ViewerComponent({
 
     const loadModel = async () => {
       onModelLoadingRef.current?.(true);
+      let object = null;
+      let templateSourceObject = null;
       try {
         const extension = getFileExtension(modelPath);
-        let object = null;
-        const cachedTemplate = getCachedModelTemplate(modelPath);
+        const shouldPreferBridgeYft = extension === "yft" && isTauriRuntime && !includeTemplateGeometry;
+        const cachedTemplate = shouldPreferBridgeYft ? null : getCachedModelTemplate(modelPath);
+        let shouldCacheModelTemplate = !shouldPreferBridgeYft;
         if (cachedTemplate) {
           object = cloneCachedModelTemplate(cachedTemplate);
         }
@@ -1123,34 +1308,94 @@ function ViewerComponent({
           }
 
           if (extension === "yft") {
-            let bytes = null;
-            try {
-              bytes = await readFile(modelPath);
-            } catch {
-              onModelErrorRef.current?.("Failed to read YFT file.");
-              return;
-            }
-            if (cancelled) return;
-            const name = getFileNameWithoutExtension(modelPath) || "yft_model";
-            let drawable = null;
-            try {
-              drawable = parseYft(bytes, name);
-            } catch (err) {
-              console.error("[YFT] Parse error:", err);
-              onModelErrorRef.current?.("YFT parsing failed.");
-              return;
-            }
-            if (!drawable || !drawable.models?.length) {
-              onModelErrorRef.current?.("YFT parsing returned no drawable data.");
-              return;
+            if (shouldPreferBridgeYft) {
+              try {
+                const bridgeResult = await invoke("parse_yft", { path: modelPath });
+                if (cancelled) return;
+
+                const meshPath = typeof bridgeResult?.meshPath === "string" ? bridgeResult.meshPath.trim() : "";
+                const manifestPath = typeof bridgeResult?.manifestPath === "string" ? bridgeResult.manifestPath.trim() : "";
+                if (meshPath) {
+                  let meshBytes = null;
+                  try {
+                    meshBytes = await readFile(meshPath);
+                  } catch {
+                    meshBytes = null;
+                  }
+
+                  if (meshBytes) {
+                    let bridgeMeshes = parseClmesh(meshBytes);
+                    if (manifestPath) {
+                      try {
+                        const manifest = await readJsonFile(manifestPath);
+                        bridgeMeshes = applyBridgeManifestToMeshes(bridgeMeshes, manifest);
+                      } catch (error) {
+                        console.warn("[YFT] Failed to read bridge manifest:", error);
+                      }
+                    }
+
+                    if (bridgeMeshes?.length) {
+                      object = buildClmeshObject(bridgeMeshes);
+                      object.userData.sourceFormat = "yft";
+                      if (!hasRenderableMeshes(object)) {
+                        disposeObject(object);
+                        object = null;
+                      }
+                    }
+                  }
+                }
+              } catch (error) {
+                console.warn("[YFT] Bridge load failed, falling back to JS parser:", error);
+              }
             }
 
-            object = buildDrawableObject(drawable, { useVertexColors: false });
-            if (!hasRenderableMeshes(object)) {
-              onModelErrorRef.current?.("YFT parsed but no mesh data was generated.");
-              return;
+            if (!object) {
+              let bytes = null;
+              try {
+                bytes = await readFile(modelPath);
+              } catch {
+                onModelErrorRef.current?.("Failed to read YFT file.");
+                return;
+              }
+              if (cancelled) return;
+              const name = getFileNameWithoutExtension(modelPath) || "yft_model";
+              let drawable = null;
+              try {
+                drawable = parseYft(bytes, name);
+              } catch (err) {
+                console.error("[YFT] Parse error:", err);
+                onModelErrorRef.current?.("YFT parsing failed.");
+                return;
+              }
+              if (!drawable || !drawable.models?.length) {
+                onModelErrorRef.current?.("YFT parsing returned no drawable data.");
+                return;
+              }
+
+              object = buildDrawableObject(drawable, { useVertexColors: false });
+              if (!hasRenderableMeshes(object)) {
+                onModelErrorRef.current?.("YFT parsed but no mesh data was generated.");
+                return;
+              }
+              shouldCacheModelTemplate = true;
             }
             object.userData.sourceFormat = "yft";
+
+            if (shouldPreferBridgeYft) {
+              try {
+                const bytes = await readFile(modelPath);
+                if (!cancelled) {
+                  const name = getFileNameWithoutExtension(modelPath) || "yft_model";
+                  const drawable = parseYft(bytes, name);
+                  if (drawable?.models?.length) {
+                    templateSourceObject = buildDrawableObject(drawable, { useVertexColors: false });
+                    templateSourceObject.userData.sourceFormat = "yft";
+                  }
+                }
+              } catch (error) {
+                console.warn("[YFT] Template source fallback failed:", error);
+              }
+            }
 
           } else if (extension === "ydd") {
             let bytes = null;
@@ -1221,9 +1466,11 @@ function ViewerComponent({
           }
 
           normalizeLoadedMeshes(object);
-          const modelTemplate = cloneCachedModelTemplate(object);
-          if (modelTemplate) {
-            cacheModelTemplate(modelPath, modelTemplate);
+          if (shouldCacheModelTemplate) {
+            const modelTemplate = cloneCachedModelTemplate(object);
+            if (modelTemplate) {
+              cacheModelTemplate(modelPath, modelTemplate);
+            }
           }
         }
 
@@ -1248,11 +1495,12 @@ function ViewerComponent({
         let templateMapError = "";
         let templatePsdSource = null;
         let templatePsdSourceError = "";
+        const templateObject = templateSourceObject || object;
 
-        if (object?.userData?.sourceFormat === "yft") {
+        if (templateObject?.userData?.sourceFormat === "yft") {
           try {
             templateMap = buildYftTemplateMap({
-              object,
+              object: templateObject,
               modelPath,
               liveryTarget: liveryTarget?.value || "",
               windowTarget: windowTarget?.value || "",
@@ -1265,7 +1513,7 @@ function ViewerComponent({
           if (includeTemplateGeometry) {
             try {
               templatePsdSource = buildYftTemplatePsdSource({
-                object,
+                object: templateObject,
                 modelPath,
                 preferUv2: true,
               });
@@ -1306,9 +1554,11 @@ function ViewerComponent({
           centerXZ: true,
           groundToZero: true,
         }) || object;
+        const materialState = materialStateRef.current;
         sceneObject.userData = sceneObject.userData || {};
-        sceneObject.userData.materialConfig = materialStateRef.current.materialConfig || DEFAULT_MATERIAL_CONFIG;
+        sceneObject.userData.materialConfig = materialState.materialConfig || DEFAULT_MATERIAL_CONFIG;
         sceneObject.userData.materialDetailTexture = materialTextureRef.current || null;
+        sceneObject.userData.slotColors = materialState.slotColors || buildVehicleSlotColors(materialState.bodyColor);
         applyShadowFlags(sceneObject, shadowsEnabled);
 
         if (modelRef.current) {
@@ -1392,15 +1642,15 @@ function ViewerComponent({
 
         applyMaterials(
           sceneObject,
-          resolvedBodyColor,
+          materialState.bodyColor,
           textureRef.current,
-          textureTarget,
+          materialState.textureTarget,
           windowTextureRef.current,
-          windowTextureTarget,
-          liveryExteriorOnly,
-          textureMode,
-          glossiness,
-          showWireframe,
+          materialState.windowTextureTarget,
+          materialState.liveryExteriorOnly,
+          materialState.textureMode,
+          materialState.glossiness,
+          materialState.showWireframe,
         );
         // Rebuild cage overlay if it was enabled
         if (materialStateRef.current.showCageWireframe) {
@@ -1415,6 +1665,9 @@ function ViewerComponent({
         onModelErrorRef.current?.(message);
         console.error(error);
       } finally {
+        if (templateSourceObject && templateSourceObject !== object) {
+          disposeObject(templateSourceObject);
+        }
         if (!cancelled) onModelLoadingRef.current?.(false);
       }
     };
@@ -1425,7 +1678,7 @@ function ViewerComponent({
       cancelled = true;
       onModelLoadingRef.current?.(false);
     };
-  }, [modelPath, sceneReady, includeTemplateGeometry]);
+  }, [modelPath, sceneReady, includeTemplateGeometry, isTauriRuntime, textureLoader]);
 
   useEffect(() => {
     if (!modelRef.current) return;
@@ -1814,14 +2067,14 @@ function ViewerComponent({
           textureRef.current,
           materialState.textureTarget,
           null,
-              materialState.windowTextureTarget,
-              materialState.liveryExteriorOnly,
-              materialState.textureMode,
-              materialState.glossiness,
-              materialState.showWireframe,
-            );
-            requestRender();
-          }
+          materialState.windowTextureTarget,
+          materialState.liveryExteriorOnly,
+          materialState.textureMode,
+          materialState.glossiness,
+          materialState.showWireframe,
+        );
+        requestRender();
+      }
       onWindowTextureErrorRef.current?.("");
     };
 
@@ -1856,6 +2109,7 @@ function ViewerComponent({
             materialState.liveryExteriorOnly,
             materialState.textureMode,
             materialState.glossiness,
+            materialState.showWireframe,
           );
           requestRender();
         }
@@ -2187,6 +2441,15 @@ function buildClmeshObject(meshes) {
     if (mesh.uvs) {
       geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
     }
+    if (mesh.uvs2) {
+      geometry.setAttribute("uv2", new THREE.BufferAttribute(mesh.uvs2, 2));
+    }
+    if (mesh.uvs3) {
+      geometry.setAttribute("uv3", new THREE.BufferAttribute(mesh.uvs3, 2));
+    }
+    if (mesh.uvs4) {
+      geometry.setAttribute("uv4", new THREE.BufferAttribute(mesh.uvs4, 2));
+    }
     if (mesh.indices) {
       geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
     }
@@ -2210,105 +2473,6 @@ function buildClmeshObject(meshes) {
   return root;
 }
 
-function parseClmesh(bytes) {
-  if (!bytes || bytes.length < 8) {
-    throw new Error("Invalid mesh cache.");
-  }
-
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let offset = 0;
-  const magic = readClmeshMagic(bytes, offset);
-  if (magic !== "CLM1") {
-    throw new Error("Mesh cache magic mismatch.");
-  }
-  offset += 4;
-
-  const version = view.getUint16(offset, true);
-  offset += 2;
-  if (version !== 1) {
-    throw new Error(`Unsupported mesh cache version ${version}.`);
-  }
-
-  const meshCount = view.getUint16(offset, true);
-  offset += 2;
-
-  const decoder = new TextDecoder("utf-8");
-  const meshes = [];
-
-  for (let i = 0; i < meshCount; i += 1) {
-    const name = readClmeshString(view, bytes, decoder, () => offset, (next) => {
-      offset = next;
-    });
-    const materialName = readClmeshString(view, bytes, decoder, () => offset, (next) => {
-      offset = next;
-    });
-
-    const vertexCount = view.getUint32(offset, true);
-    offset += 4;
-    const indexCount = view.getUint32(offset, true);
-    offset += 4;
-    const flags = view.getUint8(offset);
-    offset += 1;
-
-    const positions = readClmeshFloatArray(bytes, offset, vertexCount * 3);
-    offset += vertexCount * 3 * 4;
-
-    let normals = null;
-    if (flags & 0x1) {
-      normals = readClmeshFloatArray(bytes, offset, vertexCount * 3);
-      offset += vertexCount * 3 * 4;
-    }
-
-    let uvs = null;
-    if (flags & 0x2) {
-      uvs = readClmeshFloatArray(bytes, offset, vertexCount * 2);
-      offset += vertexCount * 2 * 4;
-    }
-
-    const indices = readClmeshUintArray(bytes, offset, indexCount);
-    offset += indexCount * 4;
-
-    meshes.push({ name, materialName, positions, normals, uvs, indices });
-  }
-
-  return meshes;
-}
-
-function readClmeshMagic(bytes, offset) {
-  if (offset + 4 > bytes.length) return "";
-  return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
-}
-
-function readClmeshString(view, bytes, decoder, getOffset, setOffset) {
-  let offset = getOffset();
-  if (offset + 2 > bytes.length) return "";
-  const length = view.getUint16(offset, true);
-  offset += 2;
-  const end = offset + length;
-  if (end > bytes.length) {
-    setOffset(bytes.length);
-    return "";
-  }
-  const value = decoder.decode(bytes.subarray(offset, end));
-  setOffset(end);
-  return value;
-}
-
-function readClmeshFloatArray(bytes, offset, count) {
-  const length = count * 4;
-  if (offset + length > bytes.length) {
-    throw new Error("Mesh cache is truncated.");
-  }
-  return new Float32Array(bytes.buffer, bytes.byteOffset + offset, count);
-}
-
-function readClmeshUintArray(bytes, offset, count) {
-  const length = count * 4;
-  if (offset + length > bytes.length) {
-    throw new Error("Mesh cache is truncated.");
-  }
-  return new Uint32Array(bytes.buffer, bytes.byteOffset + offset, count);
-}
 
 function getMeshList(object) {
   if (!object) return [];
@@ -2342,6 +2506,7 @@ function getOrCreateAppliedMaterial(mesh, color) {
     roughness: baseRoughness,
     clearcoat: 0,
     clearcoatRoughness: 0.35,
+    emissive: 0x000000,
   });
   material.userData.baseRoughness = baseRoughness;
   material.userData.baseMetalness = baseMetalness;
@@ -2353,11 +2518,58 @@ function getOrCreateAppliedMaterial(mesh, color) {
 }
 
 function updateAppliedMaterial(material, color, map) {
+  const resolved = map && typeof map === "object" && !map.isTexture && !Array.isArray(map)
+    ? map
+    : { map: map || null };
   material.color.copy(color);
-  if (material.map !== map) {
-    material.map = map || null;
+
+  const nextMap = resolved.map || null;
+  const nextNormalMap = resolved.normalMap || null;
+  const nextEmissiveMap = resolved.emissiveMap || null;
+  const nextAoMap = resolved.ambientOcclusionMap || null;
+  const nextSpecularMap = resolved.specularMap || null;
+
+  let needsUpdate = false;
+  if (material.map !== nextMap) {
+    material.map = nextMap;
+    needsUpdate = true;
+  }
+  if (material.normalMap !== nextNormalMap) {
+    material.normalMap = nextNormalMap;
+    needsUpdate = true;
+  }
+  if (material.emissiveMap !== nextEmissiveMap) {
+    material.emissiveMap = nextEmissiveMap;
+    needsUpdate = true;
+  }
+  if (material.aoMap !== nextAoMap) {
+    material.aoMap = nextAoMap;
+    needsUpdate = true;
+  }
+  if ("specularIntensityMap" in material && material.specularIntensityMap !== nextSpecularMap) {
+    material.specularIntensityMap = nextSpecularMap;
+    needsUpdate = true;
+  }
+  if ("specularColorMap" in material && material.specularColorMap !== nextSpecularMap) {
+    material.specularColorMap = nextSpecularMap;
+    needsUpdate = true;
+  }
+
+  material.emissive.copy(nextEmissiveMap ? AUTO_TEXTURE_NEUTRAL_COLOR : AUTO_TEXTURE_BLACK);
+  if (nextNormalMap && material.normalScale) {
+    material.normalScale.set(1, 1);
+  }
+  if ("specularIntensity" in material) {
+    material.specularIntensity = nextSpecularMap ? 1 : material.specularIntensity;
+  }
+
+  if (needsUpdate) {
     material.needsUpdate = true;
   }
+}
+
+function buildActiveTextureSet(baseTexture) {
+  return baseTexture ? { map: baseTexture } : null;
 }
 
 function applyMaterialProfile(material, color, materialConfig, showWireframe) {
@@ -2437,7 +2649,13 @@ function applyMaterials(
 ) {
   if (!object) return;
 
-  const color = new THREE.Color(bodyColor || defaultBody);
+  const slotColors = normalizeVehicleSlotColors(object.userData?.slotColors, bodyColor || defaultBody);
+  const colorBySlot = {
+    primary: new THREE.Color(getVehicleSlotColor(slotColors, "primary")),
+    secondary: new THREE.Color(getVehicleSlotColor(slotColors, "secondary")),
+    accent: new THREE.Color(getVehicleSlotColor(slotColors, "accent")),
+    glass: new THREE.Color(getVehicleSlotColor(slotColors, "glass")),
+  };
   const vehicleTarget = textureTarget || ALL_TARGET;
   const windowTarget = windowTextureTarget || ALL_TARGET;
   const exteriorOnly = Boolean(liveryExteriorOnly);
@@ -2462,17 +2680,29 @@ function applyMaterials(
     const matchesVehicleRaw = matchesTextureTarget(child, vehicleTarget);
     const matchesVehicle = preferUv2 && isGlass ? false : matchesVehicleRaw;
     const matchesWindow = Boolean(windowTexture) && matchesTextureTarget(child, windowTarget);
-    const shouldApply = matchesVehicle || matchesWindow;
-    const activeTexture = matchesWindow
-      ? windowTexture
+    const slotRole = getMeshMeta(child).slotRole;
+    const effectiveSlotRole = matchesWindow
+      ? "glass"
+      : (slotRole || (matchesVehicle ? "primary" : null));
+    const meshColor = effectiveSlotRole ? colorBySlot[effectiveSlotRole] : AUTO_TEXTURE_NEUTRAL_COLOR;
+    const shouldApplySlotColor =
+      Boolean(slotRole) ||
+      matchesWindow ||
+      matchesVehicle;
+    const shouldApply = matchesVehicle || matchesWindow || shouldApplySlotColor;
+    const activeTextureSet = matchesWindow
+      ? buildActiveTextureSet(windowTexture)
       : matchesVehicle
-        ? vehicleTexture
+        ? buildActiveTextureSet(vehicleTexture)
         : null;
-    const preferUv2ForMesh = matchesWindow ? false : preferUv2;
-    child.userData.templateMarkerInteractive = Boolean(matchesVehicle && activeTexture);
+    const activeTexture = activeTextureSet?.map || null;
+    const preferredUvSelection = matchesWindow
+      ? false
+      : (matchesVehicle && Boolean(vehicleTexture) ? preferUv2 : false);
+    child.userData.templateMarkerInteractive = Boolean(matchesVehicle && vehicleTexture);
 
-    if (activeTexture && child.geometry) {
-      if (!applyTextureUVSet(child.geometry, preferUv2ForMesh)) {
+    if (activeTextureSet && child.geometry) {
+      if (!applyTextureUVSet(child.geometry, preferredUvSelection)) {
         generateBoxProjectionUVs(child.geometry);
       }
     } else if (!shouldApply && child.geometry) {
@@ -2483,7 +2713,7 @@ function applyMaterials(
       child.visible = shouldShowExteriorDual(
         child,
         vehicleTarget,
-        matchesVehicle,
+        matchesVehicle || (shouldApplySlotColor && slotRole !== "glass"),
         windowTarget,
         matchesWindow,
       );
@@ -2491,10 +2721,14 @@ function applyMaterials(
       child.visible = true;
     }
 
-    if (shouldApply && (activeTexture || matchesVehicle)) {
-      const appliedMaterial = getOrCreateAppliedMaterial(child, color);
-      updateAppliedMaterial(appliedMaterial, color, activeTexture);
-      applyMaterialProfile(appliedMaterial, color, materialConfig, showWireframe);
+    if (shouldApply && (activeTexture || matchesVehicle || shouldApplySlotColor)) {
+      const appliedMaterial = getOrCreateAppliedMaterial(child, meshColor);
+      updateAppliedMaterial(appliedMaterial, meshColor, activeTextureSet);
+      const effectiveMaterialConfig =
+        effectiveSlotRole === "glass" || isGlass
+          ? { ...materialConfig, type: "glass" }
+          : materialConfig;
+      applyMaterialProfile(appliedMaterial, meshColor, effectiveMaterialConfig, showWireframe);
       if (child.material !== appliedMaterial) {
         child.material = appliedMaterial;
       }
@@ -2598,6 +2832,11 @@ function hasUVVariation(attribute) {
 function chooseUVAttribute(geometry, preferUv2) {
   const { uv0, uv1, uv2, uv3 } = getBaseUVs(geometry);
   const candidates = [uv0, uv1, uv2, uv3];
+
+  if (Number.isInteger(preferUv2) && preferUv2 >= 0 && preferUv2 <= 3) {
+    if (candidates[preferUv2]) return candidates[preferUv2];
+    return candidates.find(Boolean) || null;
+  }
 
   if (preferUv2) {
     const preferredOrder = [1, 2, 3, 0];
@@ -2750,8 +2989,10 @@ function getMeshMeta(child) {
       baseMaterial: null,
       meshLabel: "",
       materialNames: [],
+      searchNames: [],
       targetSet: new Set(),
       isGlass: false,
+      slotRole: null,
     };
   }
   const baseMaterial = child.userData?.baseMaterial || child.material;
@@ -2760,6 +3001,10 @@ function getMeshMeta(child) {
 
   const meshLabel = ensureMeshLabel(child);
   const materialNames = getMaterialNames(baseMaterial);
+  const textureRefNames = Object.values(child.userData?.textureRefs || {}).filter(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+  const searchNames = [meshLabel, ...materialNames, ...textureRefNames];
   const targetSet = new Set(materialNames.map((name) => `${MATERIAL_TARGET_PREFIX}${name}`));
   targetSet.add(`${MESH_TARGET_PREFIX}${meshLabel}`);
   const labelLower = meshLabel.toLowerCase();
@@ -2768,7 +3013,8 @@ function getMeshMeta(child) {
     return lower.includes("glass") || lower.includes("window") || lower.includes("vehglass");
   }) || labelLower.includes("glass") || labelLower.includes("window");
 
-  const meta = { baseMaterial, meshLabel, materialNames, targetSet, isGlass };
+  const slotRole = detectVehicleColorSlot(searchNames, isGlass);
+  const meta = { baseMaterial, meshLabel, materialNames, searchNames, targetSet, isGlass, slotRole };
   child.userData.textureMeta = meta;
   return meta;
 }

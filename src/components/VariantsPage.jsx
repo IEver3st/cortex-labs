@@ -109,8 +109,14 @@ const HResizer = memo(function HResizer({ onResize }) {
   const onPointerUp = useCallback(() => {
     dragging.current = false; document.body.style.cursor = ""; document.body.style.userSelect = "";
   }, []);
+  useEffect(() => () => {
+    if (dragging.current) {
+      dragging.current = false;
+      document.body.style.cursor = ""; document.body.style.userSelect = "";
+    }
+  }, []);
   return (
-    <div className="vp-resizer vp-resizer--h" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+    <div className="vp-resizer vp-resizer--h" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
       <div className="vp-resizer-grip" />
     </div>
   );
@@ -132,8 +138,14 @@ const VResizer = memo(function VResizer({ onResize }) {
   const onPointerUp = useCallback(() => {
     dragging.current = false; document.body.style.cursor = ""; document.body.style.userSelect = "";
   }, []);
+  useEffect(() => () => {
+    if (dragging.current) {
+      dragging.current = false;
+      document.body.style.cursor = ""; document.body.style.userSelect = "";
+    }
+  }, []);
   return (
-    <div className="vp-resizer vp-resizer--v" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+    <div className="vp-resizer vp-resizer--v" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
       <div className="vp-resizer-grip vp-resizer-grip--v" />
     </div>
   );

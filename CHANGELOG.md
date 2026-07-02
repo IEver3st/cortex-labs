@@ -4,6 +4,10 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [4.0.0] - 2026-07-01
+
+---
+
 ## [3.8.1] - 2026-04-06
 
 ### Fixed

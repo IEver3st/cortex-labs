@@ -13,6 +13,8 @@ This document defines the required CLI contract for the parser sidecar.
 
 The app looks for the binary in:
 
+- Dev: `tools/codewalker-bridge/bin/Release/net10.0/CodeWalkerBridge.exe`
+- Dev (fallback): `tools/codewalker-bridge/bin/Debug/net10.0/CodeWalkerBridge.exe`
 - Dev: `tools/codewalker-bridge/bin/Release/net8.0/CodeWalkerBridge.exe`
 - Dev (fallback): `tools/codewalker-bridge/bin/Debug/net8.0/CodeWalkerBridge.exe`
 - Bundled: `<resourceDir>/bin/codewalker-bridge/CodeWalkerBridge.exe`
@@ -26,6 +28,8 @@ CodeWalkerBridge.exe --input <path-to-yft> --output <path-to-clmesh>
 ## Output
 
 - Writes the mesh cache to the `--output` path.
+- Writes `manifest.json` next to the mesh cache.
+- Writes exported DDS textures under `textures/` when sibling `.ytd` or embedded textures are available.
 - Prints a JSON object to stdout with counts:
 
 ```json
@@ -33,9 +37,31 @@ CodeWalkerBridge.exe --input <path-to-yft> --output <path-to-clmesh>
   "meshCount": 12,
   "vertexCount": 44123,
   "indexCount": 88246,
-  "materialCount": 8
+  "materialCount": 8,
+  "textureCount": 19,
+  "manifestPath": "C:/Users/.../model-cache/manifest.json"
 }
 ```
+
+## Manifest
+
+`manifest.json` includes exported texture inventory plus per-mesh binding metadata used by the frontend.
+
+- `version`
+- `inputPath`
+- `generatedAtUtc`
+- `meshCount`
+- `textureCount`
+- `textures[]`: `name`, `source`, `relativePath`, `nameHash`
+- `meshes[]`: `name`, `materialName`, `shaderName`, `shaderHash`, `shaderFileName`, `renderBucket`, `drawableIndex`, `modelIndex`, `geometryIndex`, `uvSets`, `textureBindings`, `textureRefs`, `resolvedTexturePaths`
+
+Each `textureBindings[]` entry includes `paramName`, `textureName`, `relativePath`, `source`, `nameHash`, `usage`, and optional `uvSet`.
+
+## Mesh cache schema
+
+- Magic: `CLM1`
+- Version `1`: positions, optional normals, optional `uv0`, indices
+- Version `2`: adds optional `uv1`, `uv2`, and `uv3` payloads after `uv0`
 
 ## Exit codes
 
@@ -51,3 +77,4 @@ CodeWalkerBridge.exe --input <path-to-yft> --output <path-to-clmesh>
 
 - The app caches parsed meshes based on input path + modified time + file size.
 - The `.clmesh` cache is parsed in the frontend into Three.js geometry.
+- Frontend texture binding is best-effort Three.js material assignment, not full GTA shader parity.

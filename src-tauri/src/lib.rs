@@ -36,6 +36,26 @@ fn is_supported_open_model(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn normalize_open_file_arg(raw: &str) -> Option<String> {
     let mut candidate = raw.trim().trim_matches('"').to_string();
     if candidate.is_empty() {
@@ -43,7 +63,7 @@ fn normalize_open_file_arg(raw: &str) -> Option<String> {
     }
 
     if let Some(rest) = candidate.strip_prefix("file://") {
-        let mut normalized = rest.replace("%20", " ");
+        let mut normalized = percent_decode(rest);
         if cfg!(windows) {
             if normalized.starts_with('/') && normalized.chars().nth(2) == Some(':') {
                 normalized = normalized.chars().skip(1).collect();
@@ -70,7 +90,12 @@ fn queue_open_file(app: &tauri::AppHandle, file_path: String) {
         return;
     }
 
-    if let Ok(mut pending) = app.state::<PendingOpenFileState>().path.lock() {
+    {
+        let state = app.state::<PendingOpenFileState>();
+        let mut pending = state
+            .path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *pending = Some(file_path.clone());
     }
 
@@ -186,7 +211,7 @@ fn run_yft_converter(
 
     if let Some(ytd) = input_ytd {
         let staged_ytd = work_dir.join("model.ytd");
-        let _ = std::fs::copy(ytd, &staged_ytd);
+        std::fs::copy(ytd, &staged_ytd).map_err(|e| format!("Failed to stage YTD: {e}"))?;
     }
 
     let output = std::process::Command::new(&staged_exe)
@@ -639,6 +664,126 @@ fn stop_model_watch(state: State<ModelWatchState>) -> Result<(), String> {
     Ok(())
 }
 
+fn codewalker_bridge_candidates(app: &tauri::AppHandle, exe_name: &str) -> Vec<PathBuf> {
+    let tools_bridge_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tools")
+        .join("codewalker-bridge");
+
+    let mut candidates = vec![
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("bin")
+            .join("codewalker-bridge")
+            .join(exe_name),
+        tools_bridge_root
+            .join("bin")
+            .join("Release")
+            .join("net10.0")
+            .join(exe_name),
+        tools_bridge_root
+            .join("bin")
+            .join("Release")
+            .join("net10.0")
+            .join("publish")
+            .join(exe_name),
+        tools_bridge_root
+            .join("bin")
+            .join("Debug")
+            .join("net10.0")
+            .join(exe_name),
+        tools_bridge_root
+            .join("bin")
+            .join("Release")
+            .join("net8.0")
+            .join(exe_name),
+        tools_bridge_root
+            .join("bin")
+            .join("Release")
+            .join("net8.0")
+            .join("publish")
+            .join(exe_name),
+        tools_bridge_root
+            .join("bin")
+            .join("Debug")
+            .join("net8.0")
+            .join(exe_name),
+    ];
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(
+            resource_dir
+                .join("bin")
+                .join("codewalker-bridge")
+                .join(exe_name),
+        );
+    }
+
+    candidates
+}
+
+fn try_find_codewalker_bridge(app: &tauri::AppHandle, exe_name: &str) -> Option<PathBuf> {
+    codewalker_bridge_candidates(app, exe_name)
+        .into_iter()
+        .find(|path| path.exists())
+}
+
+fn build_codewalker_bridge() -> Result<(), String> {
+    let project_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tools")
+        .join("codewalker-bridge");
+    let project_file = project_dir.join("CodeWalkerBridge.csproj");
+
+    if !project_file.exists() {
+        return Err(format!(
+            "Missing CodeWalker bridge executable, and source project was not found at `{}`.",
+            project_file.display()
+        ));
+    }
+
+    let output = Command::new("dotnet")
+        .current_dir(&project_dir)
+        .arg("build")
+        .arg(&project_file)
+        .arg("-c")
+        .arg("Release")
+        .arg("--nologo")
+        .output()
+        .map_err(|e| format!("Failed to start `dotnet build` for CodeWalker bridge: {e}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "Failed to build CodeWalker bridge with `dotnet build -c Release`.\nSTDERR:\n{}\nSTDOUT:\n{}",
+        stderr.trim(),
+        stdout.trim()
+    ))
+}
+
+fn ensure_codewalker_bridge(app: &tauri::AppHandle, exe_name: &str) -> Result<PathBuf, String> {
+    if let Some(bridge) = try_find_codewalker_bridge(app, exe_name) {
+        return Ok(bridge);
+    }
+
+    build_codewalker_bridge()?;
+
+    try_find_codewalker_bridge(app, exe_name).ok_or_else(|| {
+        let expected = codewalker_bridge_candidates(app, exe_name)
+            .into_iter()
+            .map(|path| format!("- {}", path.display()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "CodeWalker bridge was built, but executable was still not found. Checked:\n{}",
+            expected
+        )
+    })
+}
+
 #[tauri::command]
 fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     if !is_yft(&path) {
@@ -655,66 +800,7 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
         "CodeWalkerBridge"
     };
 
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("bin")
-            .join("codewalker-bridge")
-            .join(exe_name),
-    );
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("tools")
-            .join("codewalker-bridge")
-            .join("bin")
-            .join("Release")
-            .join("net10.0")
-            .join(exe_name),
-    );
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("tools")
-            .join("codewalker-bridge")
-            .join("bin")
-            .join("Debug")
-            .join("net10.0")
-            .join(exe_name),
-    );
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("tools")
-            .join("codewalker-bridge")
-            .join("bin")
-            .join("Release")
-            .join("net8.0")
-            .join(exe_name),
-    );
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("tools")
-            .join("codewalker-bridge")
-            .join("bin")
-            .join("Debug")
-            .join("net8.0")
-            .join(exe_name),
-    );
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(
-            resource_dir
-                .join("bin")
-                .join("codewalker-bridge")
-                .join(exe_name),
-        );
-    }
-
-    let bridge = candidates.into_iter().find(|p| p.exists()).ok_or_else(|| {
-        "Missing CodeWalker bridge executable. Build it with `dotnet publish -c Release` in `tools/codewalker-bridge`."
-            .to_string()
-    })?;
+    let bridge = ensure_codewalker_bridge(&app, exe_name)?;
 
     let cache_root = app
         .path()
@@ -735,6 +821,7 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     use std::hash::Hasher;
+    hasher.write(b"parse_yft_v5");
     hasher.write(path.as_bytes());
     hasher.write_u64(mtime);
     hasher.write_u64(size);
@@ -743,33 +830,8 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
     let out_dir = cache_root.join(&key);
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("Failed to create output dir: {e}"))?;
     let out_mesh = out_dir.join("model.clmesh");
+    let out_manifest = out_dir.join("manifest.json");
     let out_meta = out_dir.join("meta.json");
-
-    // Check for sibling YTD file (auto-discovery)
-    let path_buf = PathBuf::from(&path);
-    let file_stem = path_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    let parent = path_buf
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-
-    // Try exact match first: model.yft -> model.ytd
-    let mut ytd_path_buf = parent.join(format!("{}.ytd", file_stem));
-
-    // If not found, try stripping _hi / +hi suffix: model_hi.yft -> model.ytd
-    if !ytd_path_buf.exists() {
-        if let Some(stripped) = file_stem
-            .strip_suffix("_hi")
-            .or_else(|| file_stem.strip_suffix("+hi"))
-        {
-            ytd_path_buf = parent.join(format!("{}.ytd", stripped));
-        }
-    }
-
-    let found_ytd = if ytd_path_buf.exists() {
-        Some(ytd_path_buf.to_string_lossy().to_string())
-    } else {
-        None
-    };
 
     if out_mesh.exists() {
         let meta_json = if out_meta.exists() {
@@ -782,10 +844,10 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
         };
         return Ok(serde_json::json!({
             "meshPath": out_mesh.to_string_lossy().to_string(),
+            "manifestPath": out_manifest.exists().then(|| out_manifest.to_string_lossy().to_string()),
             "cacheKey": key,
             "cached": true,
-            "meta": meta_json,
-            "ytdPath": found_ytd
+            "meta": meta_json
         }));
     }
 
@@ -818,10 +880,10 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
 
     Ok(serde_json::json!({
         "meshPath": out_mesh.to_string_lossy().to_string(),
+        "manifestPath": out_manifest.exists().then(|| out_manifest.to_string_lossy().to_string()),
         "cacheKey": key,
         "cached": false,
-        "meta": meta_json,
-        "ytdPath": found_ytd
+        "meta": meta_json
     }))
 }
 
@@ -987,7 +1049,7 @@ STDERR:\n{}\nSTDOUT:\n{}\nLOG:\n{}",
 
     std::fs::copy(&run.0, &out_dff).map_err(|e| format!("Failed to store .dff: {e}"))?;
     if let Some(txd) = run.1.as_ref() {
-        let _ = std::fs::copy(txd, &out_txd);
+        std::fs::copy(txd, &out_txd).map_err(|e| format!("Failed to store .txd: {e}"))?;
     }
 
     Ok(serde_json::json!({
@@ -1005,8 +1067,8 @@ fn consume_pending_open_file(state: State<PendingOpenFileState>) -> Option<Strin
     state
         .path
         .lock()
-        .ok()
-        .and_then(|mut pending| pending.take())
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
 }
 
 #[tauri::command]
@@ -1484,9 +1546,12 @@ pub fn run() {
             // Queue it so the frontend can consume it once listeners are mounted.
             let args: Vec<String> = std::env::args().collect();
             if let Some(file_path) = extract_open_file_arg(&args) {
-                if let Ok(mut pending) = app.state::<PendingOpenFileState>().path.lock() {
-                    *pending = Some(file_path);
-                }
+                let state = app.state::<PendingOpenFileState>();
+                let mut pending = state
+                    .path
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                *pending = Some(file_path);
             }
             Ok(())
         })

@@ -1,13 +1,14 @@
 {
   "name": "cortex-studio",
   "private": true,
-  "version": "3.8.1",
+  "version": "4.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "bun tools/tauri-wrapper.mjs",
+    "test:clmesh": "node --test src/lib/clmesh.test.mjs",
     "test:pdn": "node --test src/lib/pdn.test.mjs"
   },
   "dependencies": {

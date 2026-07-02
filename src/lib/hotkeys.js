@@ -140,13 +140,34 @@ export function parseKeyEvent(event) {
   };
 }
 
+const PUNCTUATION_CODES = {
+  "\\": "Backslash",
+  "/": "Slash",
+  "[": "BracketLeft",
+  "]": "BracketRight",
+  ";": "Semicolon",
+  "'": "Quote",
+  ",": "Comma",
+  ".": "Period",
+  "-": "Minus",
+  "=": "Equal",
+  "`": "Backquote",
+};
+
+function keyToCode(key) {
+  if (key === " ") return "Space";
+  if (/^[a-z]$/i.test(key)) return `Key${key.toUpperCase()}`;
+  if (/^[0-9]$/.test(key)) return `Digit${key}`;
+  return PUNCTUATION_CODES[key] || key;
+}
+
 export function hotkeyMatches(hotkey, event) {
   if (!hotkey || !hotkey.key) return false;
 
   const eventKey = event.key.toLowerCase();
   const hotkeyKey = hotkey.key.toLowerCase();
 
-  const keyMatches = eventKey === hotkeyKey || event.code === `Key${hotkey.key.toUpperCase()}`;
+  const keyMatches = eventKey === hotkeyKey || event.code === keyToCode(hotkey.key);
   const ctrlMatches = Boolean(hotkey.ctrl) === Boolean(event.ctrlKey || event.metaKey);
   const altMatches = Boolean(hotkey.alt) === Boolean(event.altKey);
   const shiftMatches = Boolean(hotkey.shift) === Boolean(event.shiftKey);

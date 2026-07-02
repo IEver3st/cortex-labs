@@ -676,10 +676,15 @@ function parseDrawable(reader, offset, name) {
     }
   }
 
-  return parseDrawableModels(reader, baseOffset, name, drawable);
+  const skeletonPtr = reader.u64(baseOffset + 0x18);
+  const skeleton = reader.validPtr(skeletonPtr)
+    ? parseSkeleton(reader, reader.resolvePtr(skeletonPtr))
+    : null;
+
+  return parseDrawableModels(reader, baseOffset, name, drawable, skeleton);
 }
 
-function parseDrawableModels(reader, baseOffset, name, drawable) {
+function parseDrawableModels(reader, baseOffset, name, drawable, skeleton) {
   const lodOffsets = [
     { offset: 0x50, name: "high" },
     { offset: 0x58, name: "med" },
@@ -697,6 +702,7 @@ function parseDrawableModels(reader, baseOffset, name, drawable) {
       name,
       lod.name,
       drawable.shaders,
+      skeleton,
     );
     if (models.length > 0) {
       drawable.models = models;
@@ -716,6 +722,7 @@ function parseDrawableModels(reader, baseOffset, name, drawable) {
         name,
         "high",
         drawable.shaders,
+        skeleton,
       );
       if (models.length > 0) {
         drawable.models = models;
@@ -908,20 +915,24 @@ function identifyMaterialName(hash, hashHex) {
   return `material_${hashHex}`;
 }
 
-function parseModelsPointerArray(reader, offset, baseName, lodName, shaders) {
+function parseModelsPointerArray(reader, offset, baseName, lodName, shaders, skeleton) {
   if (!reader.valid(offset) || offset + 16 > reader.len) return [];
   const models = [];
   const arrayPtr = reader.u64(offset);
   let count = reader.u16(offset + 8);
 
-  if (count === 0 || count > MAX_MODELS) {
-    const directModel = parseDrawableModel(
-      reader,
-      offset,
-      `${baseName}_${lodName}_0`,
-      shaders,
-    );
-    if (directModel && directModel.meshes.length > 0) return [directModel];
+  if (count === 0) return [];
+  if (count > MAX_MODELS) {
+    if (!reader.validPtr(arrayPtr)) {
+      const directModel = parseDrawableModel(
+        reader,
+        offset,
+        `${baseName}_${lodName}_0`,
+        shaders,
+        skeleton,
+      );
+      if (directModel && directModel.meshes.length > 0) return [directModel];
+    }
     return [];
   }
 
@@ -937,23 +948,133 @@ function parseModelsPointerArray(reader, offset, baseName, lodName, shaders) {
       modelOffset,
       `${baseName}_${lodName}_${i}`,
       shaders,
+      skeleton,
     );
     if (model && model.meshes.length > 0) models.push(model);
   }
   return models;
 }
 
-function parseDrawableModel(reader, offset, name, shaders) {
+function parseSkeleton(reader, offset) {
+  if (!reader.valid(offset) || offset + 112 > reader.len) return null;
+
+  const bonesPtr = reader.u64(offset + 0x20);
+  const bonesCount = reader.u16(offset + 0x5E);
+
+  if (!reader.validPtr(bonesPtr) || bonesCount === 0 || bonesCount > 256) return null;
+
+  const bonesOffset = reader.resolvePtr(bonesPtr);
+  const bonesDataOffset = bonesOffset + 16;
+
+  const bones = [];
+  for (let i = 0; i < bonesCount; i++) {
+    const bo = bonesDataOffset + i * 80;
+    if (bo + 80 > reader.len) break;
+    bones.push({
+      qx: reader.f32(bo + 0x00),
+      qy: reader.f32(bo + 0x04),
+      qz: reader.f32(bo + 0x08),
+      qw: reader.f32(bo + 0x0C),
+      tx: reader.f32(bo + 0x10),
+      ty: reader.f32(bo + 0x14),
+      tz: reader.f32(bo + 0x18),
+      parentIndex: reader.u16(bo + 0x32),
+      tag: reader.u16(bo + 0x44),
+      worldQx: 0, worldQy: 0, worldQz: 0, worldQw: 1,
+      worldTx: 0, worldTy: 0, worldTz: 0,
+      _resolved: false,
+    });
+  }
+
+  for (let i = 0; i < bones.length; i++) {
+    resolveBoneWorldTransform(bones, i);
+  }
+
+  return { bones };
+}
+
+function resolveBoneWorldTransform(bones, i) {
+  const bone = bones[i];
+  if (bone._resolved) return;
+  bone._resolved = true;
+
+  const parentIdx = bone.parentIndex;
+  if (parentIdx > 0 && parentIdx < bones.length && parentIdx !== i) {
+    resolveBoneWorldTransform(bones, parentIdx);
+    const p = bones[parentIdx];
+    bone.worldQx = p.worldQx * bone.qw + p.worldQw * bone.qx + p.worldQy * bone.qz - p.worldQz * bone.qy;
+    bone.worldQy = p.worldQy * bone.qw + p.worldQw * bone.qy + p.worldQz * bone.qx - p.worldQx * bone.qz;
+    bone.worldQz = p.worldQz * bone.qw + p.worldQw * bone.qz + p.worldQx * bone.qy - p.worldQy * bone.qx;
+    bone.worldQw = p.worldQw * bone.qw - p.worldQx * bone.qx - p.worldQy * bone.qy - p.worldQz * bone.qz;
+    const r = rotateVec3ByQuat(p.worldQx, p.worldQy, p.worldQz, p.worldQw, bone.tx, bone.ty, bone.tz);
+    bone.worldTx = r[0] + p.worldTx;
+    bone.worldTy = r[1] + p.worldTy;
+    bone.worldTz = r[2] + p.worldTz;
+  } else {
+    bone.worldQx = bone.qx;
+    bone.worldQy = bone.qy;
+    bone.worldQz = bone.qz;
+    bone.worldQw = bone.qw;
+    bone.worldTx = bone.tx;
+    bone.worldTy = bone.ty;
+    bone.worldTz = bone.tz;
+  }
+}
+
+function rotateVec3ByQuat(qx, qy, qz, qw, vx, vy, vz) {
+  const tx = 2 * (qy * vz - qz * vy);
+  const ty = 2 * (qz * vx - qx * vz);
+  const tz = 2 * (qx * vy - qy * vx);
+  return [
+    vx + qw * tx + qy * tz - qz * ty,
+    vy + qw * ty + qz * tx - qx * tz,
+    vz + qw * tz + qx * ty - qy * tx,
+  ];
+}
+
+function applyBoneTransformToPositions(positions, bone) {
+  for (let i = 0; i < positions.length; i += 3) {
+    const r = rotateVec3ByQuat(
+      bone.worldQx, bone.worldQy, bone.worldQz, bone.worldQw,
+      positions[i], positions[i + 1], positions[i + 2],
+    );
+    positions[i] = r[0] + bone.worldTx;
+    positions[i + 1] = r[1] + bone.worldTy;
+    positions[i + 2] = r[2] + bone.worldTz;
+  }
+}
+
+function applyBoneTransformToNormals(normals, bone) {
+  if (!normals) return;
+  for (let i = 0; i < normals.length; i += 3) {
+    const r = rotateVec3ByQuat(
+      bone.worldQx, bone.worldQy, bone.worldQz, bone.worldQw,
+      normals[i], normals[i + 1], normals[i + 2],
+    );
+    normals[i] = r[0];
+    normals[i + 1] = r[1];
+    normals[i + 2] = r[2];
+  }
+}
+
+function parseDrawableModel(reader, offset, name, shaders, skeleton) {
   if (!reader.valid(offset) || offset + 48 > reader.len) return null;
 
   const model = { name, meshes: [] };
   const geometriesPtr = reader.u64(offset + 0x08);
   let geometriesCount = reader.u16(offset + 0x10);
   const shaderMappingPtr = reader.u64(offset + 0x20);
+  const skeletonBinding = reader.u32(offset + 0x28);
+  const renderMaskFlags = reader.u16(offset + 0x2C);
 
   if (geometriesCount === 0 || geometriesCount > MAX_GEOMETRIES)
-    geometriesCount = 1;
+    return null;
   if (!reader.validPtr(geometriesPtr)) return null;
+
+  const boneIndex = (skeletonBinding >> 24) & 0xff;
+  const bone = (skeleton && boneIndex > 0 && boneIndex < skeleton.bones.length)
+    ? skeleton.bones[boneIndex]
+    : null;
 
   const geometriesArrayOffset = reader.resolvePtr(geometriesPtr);
   const shaderMapping = [];
@@ -970,10 +1091,16 @@ function parseDrawableModel(reader, offset, name, shaders) {
     const geomOffset = reader.resolvePtr(geomPtr);
     const mesh = parseGeometry(reader, geomOffset, `${name}_geom${i}`);
     if (mesh && mesh.positions && mesh.positions.length > 0) {
-      const shaderIndex = shaderMapping[i] ?? i;
+      if (bone) {
+        applyBoneTransformToPositions(mesh.positions, bone);
+        applyBoneTransformToNormals(mesh.normals, bone);
+      }
+      const shaderIndex = shaderMapping.length > 0 ? shaderMapping[i] : 0;
       const shader = shaders[shaderIndex];
       mesh.materialName = shader?.name || `material_${shaderIndex}`;
       mesh.textureRefs = shader?.textureRefs || {};
+      mesh.boneIndex = boneIndex;
+      mesh.renderMaskFlags = renderMaskFlags;
       model.meshes.push(mesh);
     }
   }
@@ -1250,19 +1377,16 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
     const vOffset = offset + i * stride;
 
     const posOffset = format.positionOffset ?? 0;
-    let px = reader.f32(vOffset + posOffset);
-    let py = reader.f32(vOffset + posOffset + 4);
-    let pz = reader.f32(vOffset + posOffset + 8);
-
-    if (
-      Math.abs(px) > 50000 ||
-      Math.abs(py) > 50000 ||
-      Math.abs(pz) > 50000 ||
-      !isFinite(px)
-    ) {
+    const posType = format.positionType ?? 6;
+    let px, py, pz;
+    if (posType === 1 || posType === 3) {
       px = halfToFloat(reader.u16(vOffset + posOffset));
       py = halfToFloat(reader.u16(vOffset + posOffset + 2));
       pz = halfToFloat(reader.u16(vOffset + posOffset + 4));
+    } else {
+      px = reader.f32(vOffset + posOffset);
+      py = reader.f32(vOffset + posOffset + 4);
+      pz = reader.f32(vOffset + posOffset + 8);
     }
 
     positions[i * 3] = px;

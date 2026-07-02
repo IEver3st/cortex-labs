@@ -323,6 +323,7 @@ async function installUpdate() {
       }
     });
 
+    await relaunch();
     store.update = null;
     setStoreState((prev) => ({
       ...prev,
@@ -335,13 +336,13 @@ async function installUpdate() {
       error: "",
       dismissed: true,
     }));
-    await relaunch();
     return true;
   } catch (error) {
     console.error("Failed to install update:", error);
     setStoreState((prev) => ({
       ...prev,
       installing: false,
+      dismissed: false,
       error: mapInstallError(error),
     }));
     return false;

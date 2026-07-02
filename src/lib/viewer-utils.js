@@ -627,108 +627,281 @@ export function disposeCageOverlay(root) {
   }
 }
 
-export function applyLiveryToModel(object, bodyColor, texture) {
+const DUAL_DEFAULT_BODY = "#e7ebf0";
+
+function buildVehicleSlotColors(baseColor = DUAL_DEFAULT_BODY) {
+  const resolved = baseColor || DUAL_DEFAULT_BODY;
+  return {
+    primary: resolved,
+    secondary: resolved,
+    accent: resolved,
+    glass: resolved,
+  };
+}
+
+function normalizeVehicleSlotColors(slotColors, baseColor = DUAL_DEFAULT_BODY) {
+  const fallback = buildVehicleSlotColors(baseColor);
+  if (!slotColors || typeof slotColors !== "object") return fallback;
+  return {
+    primary: slotColors.primary || fallback.primary,
+    secondary: slotColors.secondary || fallback.secondary,
+    accent: slotColors.accent || fallback.accent,
+    glass: slotColors.glass || fallback.glass,
+  };
+}
+
+function getVehicleSlotColor(slotColors, slot) {
+  const fallbackOrder = {
+    primary: ["primary"],
+    secondary: ["secondary", "primary"],
+    accent: ["accent", "secondary", "primary"],
+    glass: ["glass", "primary"],
+  };
+  const keys = fallbackOrder[slot] || fallbackOrder.primary;
+  for (const key of keys) {
+    const value = slotColors?.[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return DUAL_DEFAULT_BODY;
+}
+
+function getMaterialNames(material) {
+  if (!material) return [];
+  if (Array.isArray(material)) {
+    return material
+      .map((entry) => entry?.name?.trim())
+      .filter((name) => typeof name === "string" && name.length > 0);
+  }
+  const name = material.name?.trim();
+  return name ? [name] : [];
+}
+
+function ensureMeshLabel(mesh) {
+  if (!mesh?.isMesh) return "";
+  if (mesh.userData?.meshLabel) return mesh.userData.meshLabel;
+  const name = mesh.name?.trim();
+  const label = name || `mesh-${mesh.id}`;
+  mesh.userData.meshLabel = label;
+  return label;
+}
+
+function matchesVehicleLiveryName(name) {
+  if (!name) return false;
+  const raw = name.toString().trim().toLowerCase();
+  if (!raw) return false;
+  return (
+    raw.includes("vehicle_paint") ||
+    raw.includes("carpaint") ||
+    raw.includes("car_paint") ||
+    raw.includes("car-paint") ||
+    raw.includes("livery") ||
+    raw.includes("vehicle_sign") ||
+    raw.includes("sign_1") ||
+    raw.includes("sign-1") ||
+    raw.includes("sign1") ||
+    raw.includes("vehicle_decal") ||
+    raw.includes("decal") ||
+    raw.includes("logo") ||
+    raw.includes("wrap") ||
+    raw.includes("body")
+  );
+}
+
+function detectVehicleColorSlot(names, isGlass) {
+  if (isGlass) return "glass";
+
+  const raw = names
+    .map((name) => (typeof name === "string" ? name.trim().toLowerCase() : ""))
+    .filter(Boolean)
+    .join(" ");
+
+  if (!raw) return null;
+
+  if (
+    /vehicle[_-]?paint[_-]?2\b/.test(raw) ||
+    /car[_-]?paint[_-]?2\b/.test(raw) ||
+    /\bcarpaint2\b/.test(raw) ||
+    /\bsecondary\b/.test(raw)
+  ) {
+    return "secondary";
+  }
+
+  if (
+    /vehicle[_-]?paint[_-]?[3-9]\d*\b/.test(raw) ||
+    /car[_-]?paint[_-]?[3-9]\d*\b/.test(raw) ||
+    /\bcarpaint[3-9]\d*\b/.test(raw) ||
+    raw.includes("vehicle_lightsemissive") ||
+    raw.includes("vehicle_lights") ||
+    raw.includes("lightsemissive") ||
+    raw.includes("lightbar") ||
+    raw.includes("emissive") ||
+    raw.includes("siren") ||
+    raw.includes("beacon") ||
+    raw.includes("vehicle_detail") ||
+    raw.includes("vehicle_badge") ||
+    raw.includes("vehicle_badges") ||
+    raw.includes("badge") ||
+    raw.includes("accent") ||
+    raw.includes("trim")
+  ) {
+    return "accent";
+  }
+
+  if (matchesVehicleLiveryName(raw)) {
+    return "primary";
+  }
+
+  return null;
+}
+
+function getDualMeshMeta(child) {
+  if (!child?.isMesh) {
+    return {
+      baseMaterial: null,
+      materialNames: [],
+      searchNames: [],
+      isGlass: false,
+      slotRole: null,
+      isLiveryTarget: false,
+    };
+  }
+
+  const baseMaterial = child.userData?.baseMaterial || child.material;
+  const cached = child.userData?.dualTextureMeta;
+  if (cached && cached.baseMaterial === baseMaterial) return cached;
+
+  const meshLabel = ensureMeshLabel(child);
+  const materialNames = getMaterialNames(baseMaterial);
+  const textureRefNames = Object.values(child.userData?.textureRefs || {}).filter(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+  const searchNames = [meshLabel, ...materialNames, ...textureRefNames];
+  const isGlass = searchNames.some((name) => {
+    const lower = name.toString().trim().toLowerCase();
+    return (
+      lower.includes("glass") ||
+      lower.includes("window") ||
+      lower.includes("vehglass") ||
+      lower.includes("sign_2") ||
+      lower.includes("sign-2") ||
+      lower.includes("sign2") ||
+      lower.includes("sign_3") ||
+      lower.includes("sign-3") ||
+      lower.includes("sign3")
+    );
+  });
+
+  const slotRole = detectVehicleColorSlot(searchNames, isGlass);
+  const isLiveryTarget = searchNames.some((name) => matchesVehicleLiveryName(name));
+  const meta = { baseMaterial, materialNames, searchNames, isGlass, slotRole, isLiveryTarget };
+  child.userData.dualTextureMeta = meta;
+  return meta;
+}
+
+function getOrCreateDualMaterial(mesh, color, texture, { isGlass = false, useLiveryShader = false } = {}) {
+  const baseMaterial = mesh.userData?.baseMaterial || mesh.material;
+  if (!mesh.userData.dualMaterial) {
+    const baseRoughness = baseMaterial?.userData?.baseRoughness ?? baseMaterial?.roughness ?? (isGlass ? 0.2 : 0.35);
+    const baseMetalness = baseMaterial?.metalness ?? (isGlass ? 0 : 0.35);
+    const baseOpacity = typeof baseMaterial?.opacity === "number" ? baseMaterial.opacity : 1;
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      map: texture || null,
+      side: THREE.DoubleSide,
+      metalness: isGlass ? 0 : baseMetalness,
+      roughness: isGlass ? Math.min(baseRoughness, 0.22) : baseRoughness,
+      transparent: isGlass || baseOpacity < 0.995,
+      opacity: isGlass ? Math.min(baseOpacity, 0.55) : baseOpacity,
+      depthWrite: !isGlass,
+    });
+    material.userData.baseRoughness = baseRoughness;
+    material.userData.baseMetalness = baseMetalness;
+    material.userData.baseOpacity = baseOpacity;
+    material.name = baseMaterial?.name || "";
+    mesh.userData.dualMaterial = material;
+  }
+
+  const material = mesh.userData.dualMaterial;
+  material.color.copy(color);
+  if (material.map !== (texture || null)) {
+    material.map = texture || null;
+    material.needsUpdate = true;
+  }
+
+  const baseRoughness = material.userData.baseRoughness ?? baseMaterial?.roughness ?? (isGlass ? 0.2 : 0.35);
+  const baseMetalness = material.userData.baseMetalness ?? baseMaterial?.metalness ?? (isGlass ? 0 : 0.35);
+  const baseOpacity = material.userData.baseOpacity ?? (typeof baseMaterial?.opacity === "number" ? baseMaterial.opacity : 1);
+
+  material.metalness = isGlass ? 0 : baseMetalness;
+  material.roughness = isGlass ? Math.min(baseRoughness, 0.22) : baseRoughness;
+  material.transparent = isGlass || baseOpacity < 0.995;
+  material.opacity = isGlass ? Math.min(baseOpacity, 0.55) : baseOpacity;
+  material.depthWrite = !isGlass;
+  material.side = THREE.DoubleSide;
+
+  if (useLiveryShader && !material.userData.hasLiveryShader) {
+    setupLiveryShader(material);
+    material.userData.hasLiveryShader = true;
+    material.needsUpdate = true;
+  }
+
+  return material;
+}
+
+export function applyLiveryToModel(object, bodyColor, texture, slotColors) {
   if (!object) return;
-  const color = new THREE.Color(bodyColor || "#e7ebf0");
+  const resolvedSlotColors = normalizeVehicleSlotColors(slotColors, bodyColor || DUAL_DEFAULT_BODY);
 
   object.traverse((child) => {
     if (!child.isMesh) return;
     if (!child.userData.baseMaterial) child.userData.baseMaterial = child.material;
 
-    const matName = (child.material?.name || child.userData.baseMaterial?.name || "").toLowerCase();
-    const isPaint = matName.includes("paint") || matName.includes("carpaint") || matName.includes("livery") ||
-      matName.includes("sign") || matName.includes("decal") || matName.includes("body") || matName.includes("wrap");
+    const meta = getDualMeshMeta(child);
+    const slotRole = meta.slotRole || (meta.isLiveryTarget ? "primary" : null);
+    const shouldTexture = Boolean(texture) && meta.isLiveryTarget && slotRole !== "secondary" && slotRole !== "accent" && slotRole !== "glass";
+    const shouldApply = Boolean(slotRole) || shouldTexture;
 
-    if (isPaint && texture) {
+    if (!shouldApply) {
+      if (child.material === child.userData.dualMaterial) {
+        child.material = child.userData.baseMaterial;
+      }
+      return;
+    }
+
+    const color = new THREE.Color(getVehicleSlotColor(resolvedSlotColors, slotRole || "primary"));
+
+    if (shouldTexture) {
       const liveryUv = chooseLiveryUvAttribute(child.geometry);
       if (liveryUv && child.geometry.attributes.uv !== liveryUv) {
         child.geometry.setAttribute("uv", liveryUv);
         child.geometry.attributes.uv.needsUpdate = true;
       }
-
-      if (!child.userData.dualMaterial) {
-        const mat = new THREE.MeshStandardMaterial({
-          color, map: texture, side: THREE.DoubleSide,
-          metalness: child.userData.baseMaterial?.metalness ?? 0.4,
-          roughness: child.userData.baseMaterial?.roughness ?? 0.3,
-        });
-        setupLiveryShader(mat);
-        mat.name = child.userData.baseMaterial?.name || "";
-        child.userData.dualMaterial = mat;
-      } else {
-        child.userData.dualMaterial.color.copy(color);
-        if (child.userData.dualMaterial.map !== texture) {
-          child.userData.dualMaterial.map = texture;
-          child.userData.dualMaterial.needsUpdate = true;
-        }
-      }
-      if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
-    } else if (isPaint) {
-      if (!child.userData.dualMaterial) {
-        const mat = new THREE.MeshStandardMaterial({
-          color, map: null, side: THREE.DoubleSide,
-          metalness: child.userData.baseMaterial?.metalness ?? 0.4,
-          roughness: child.userData.baseMaterial?.roughness ?? 0.3,
-        });
-        mat.name = child.userData.baseMaterial?.name || "";
-        child.userData.dualMaterial = mat;
-      } else {
-        child.userData.dualMaterial.color.copy(color);
-        if (child.userData.dualMaterial.map !== null) {
-          child.userData.dualMaterial.map = null;
-          child.userData.dualMaterial.needsUpdate = true;
-        }
-      }
-      if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
     }
+
+    const material = getOrCreateDualMaterial(child, color, shouldTexture ? texture : null, {
+      isGlass: slotRole === "glass",
+      useLiveryShader: shouldTexture,
+    });
+    if (child.material !== material) child.material = material;
   });
 }
 
-export function applyTextureToAll(object, bodyColor, texture) {
+export function applyTextureToAll(object, bodyColor, texture, slotColors) {
   if (!object) return;
-  const color = new THREE.Color(bodyColor || "#e7ebf0");
+  const resolvedSlotColors = normalizeVehicleSlotColors(slotColors, bodyColor || DUAL_DEFAULT_BODY);
 
   object.traverse((child) => {
     if (!child.isMesh) return;
     if (!child.userData.baseMaterial) child.userData.baseMaterial = child.material;
 
-    if (texture) {
-      if (!child.userData.dualMaterial) {
-        const mat = new THREE.MeshStandardMaterial({
-          color, map: texture, side: THREE.DoubleSide,
-          metalness: child.userData.baseMaterial?.metalness ?? 0.2,
-          roughness: child.userData.baseMaterial?.roughness ?? 0.6,
-        });
-        mat.name = child.userData.baseMaterial?.name || "";
-        child.userData.dualMaterial = mat;
-      } else {
-        child.userData.dualMaterial.color.copy(color);
-        if (child.userData.dualMaterial.map !== texture) {
-          child.userData.dualMaterial.map = texture;
-          child.userData.dualMaterial.needsUpdate = true;
-        }
-      }
-      if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
-    } else {
-      if (!child.userData.dualMaterial) {
-        const mat = new THREE.MeshStandardMaterial({
-          color,
-          map: null,
-          side: THREE.DoubleSide,
-          metalness: child.userData.baseMaterial?.metalness ?? 0.2,
-          roughness: child.userData.baseMaterial?.roughness ?? 0.6,
-        });
-        mat.name = child.userData.baseMaterial?.name || "";
-        child.userData.dualMaterial = mat;
-      } else {
-        child.userData.dualMaterial.color.copy(color);
-        if (child.userData.dualMaterial.map !== null) {
-          child.userData.dualMaterial.map = null;
-          child.userData.dualMaterial.needsUpdate = true;
-        }
-      }
-      if (child.material !== child.userData.dualMaterial) child.material = child.userData.dualMaterial;
-    }
+    const meta = getDualMeshMeta(child);
+    const slotRole = meta.slotRole || "primary";
+    const color = new THREE.Color(getVehicleSlotColor(resolvedSlotColors, slotRole));
+    const material = getOrCreateDualMaterial(child, color, texture || null, {
+      isGlass: slotRole === "glass",
+      useLiveryShader: false,
+    });
+    if (child.material !== material) child.material = material;
   });
 }
 

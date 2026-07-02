@@ -9,6 +9,7 @@ const ACTIVE_WORKSPACE_KEY = "cortex-studio:active-workspace.v1";
 const RECENT_KEY = "cortex-studio:recent.v1";
 const MAX_RECENT = 12;
 export const WORKSPACE_STORAGE_EVENT = "cortex-studio:workspace-storage-updated";
+export const WORKSPACE_SAVE_FAILED_EVENT = "cortex-studio:workspace-save-failed";
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -52,8 +53,19 @@ export function saveWorkspaces(workspaces) {
   try {
     localStorage.setItem(WORKSPACES_KEY, JSON.stringify(workspaces));
     emitWorkspaceStorageEvent("workspaces");
+    return true;
   } catch (err) {
     console.error("[Workspace] Failed to save:", err);
+    if (typeof window !== "undefined") {
+      try {
+        window.dispatchEvent(
+          new CustomEvent(WORKSPACE_SAVE_FAILED_EVENT, {
+            detail: { message: String(err?.message || err), at: Date.now() },
+          }),
+        );
+      } catch {}
+    }
+    return false;
   }
 }
 

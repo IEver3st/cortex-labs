@@ -34,6 +34,11 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
   const [expandedIdx, setExpandedIdx] = useState(-1);
   const modalRef = useRef(null);
   const primaryRef = useRef(null);
+  const copiedTimerRef = useRef(null);
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (forceOpen) {
@@ -88,7 +93,8 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
     try {
       await navigator.clipboard.writeText(toMarkdown(entry));
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error("[WhatsNew] Copy failed:", err);
     }
