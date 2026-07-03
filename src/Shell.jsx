@@ -517,6 +517,7 @@ export default function Shell() {
   const isToolbarWindowDragTarget = useCallback((target) => {
     if (!(target instanceof Element)) return false;
     if (target.closest(".shell-new-tab-menu")) return false;
+    if (target.closest(".settings-page")) return false;
     return true;
   }, []);
 

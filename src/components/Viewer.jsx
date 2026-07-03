@@ -1700,6 +1700,7 @@ function ViewerComponent({
     requestRender();
   }, [
     resolvedBodyColor,
+    resolvedSlotColors,
     textureTarget,
     windowTextureTarget,
     liveryExteriorOnly,

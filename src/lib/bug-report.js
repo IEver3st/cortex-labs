@@ -1,4 +1,5 @@
 import { getVersion as getTauriAppVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import appMeta from "../../package.json";
 import { getConsoleLogEntries } from "./console-log-buffer";
 
@@ -126,7 +127,9 @@ export async function collectBugReportEnvironment() {
 }
 
 export function getBugReportEndpoint() {
-  return BUG_REPORT_ENDPOINT;
+  if (BUG_REPORT_ENDPOINT) return BUG_REPORT_ENDPOINT;
+  if (isTauriRuntime()) return "tauri://native";
+  return "";
 }
 
 export function formatEnvironmentSummary(environment) {
@@ -243,7 +246,129 @@ export async function buildBugReportPayload(draft, options = {}) {
   };
 }
 
+function escapeCodeFenceText(value) {
+  return value.replace(/```/g, "``\u200b`");
+}
+
+function truncateToChars(value, maxChars) {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, Math.max(0, maxChars - 17))}\n...[truncated]`;
+}
+
+const BUG_REPORT_MAX_LOG_CHARS = 12000;
+const BUG_REPORT_MAX_BODY_CHARS = 60000;
+
+function formatConsoleLogBlock(payload) {
+  if (!payload.consoleLogs?.included || !payload.consoleLogs.entries?.length) {
+    return "Not included";
+  }
+  const text = payload.consoleLogs.entries
+    .map((entry) => `[${entry.timestamp}] [${entry.level?.toUpperCase()}] ${entry.message}`)
+    .join("\n");
+  return escapeCodeFenceText(truncateToChars(text, BUG_REPORT_MAX_LOG_CHARS));
+}
+
+function buildEnvironmentBullets(env) {
+  const browser = [env.browserName, env.browserVersion].filter(Boolean).join(" ") || "Unknown";
+  const os = [env.osName, env.osVersion].filter(Boolean).join(" ") || "Unknown";
+  return [
+    `- App version: \`${env.appVersion || "unknown"}\``,
+    `- Runtime: \`${env.runtime}\``,
+    `- Browser: \`${browser}\``,
+    `- OS: \`${os}\``,
+    `- Device: \`${env.deviceType}\``,
+    `- Locale: \`${env.locale || "n/a"}\``,
+    `- URL: \`${env.currentUrl || "n/a"}\``,
+  ].join("\n");
+}
+
+function formatBugReportIssueTitle(summary) {
+  return `[Bug] ${summary}`;
+}
+
+function formatBugReportIssueBody(payload) {
+  const buildBody = (logsText, metadataText) => `## Summary
+${payload.issue.summary}
+
+## Repro Steps
+${payload.issue.reproSteps}
+
+## Expected Behavior
+${payload.issue.expectedBehavior}
+
+## Actual Behavior
+${payload.issue.actualBehavior}
+
+## Priority
+${payload.issue.priority === "high" ? "High" : "Normal"}
+
+## Environment
+${buildEnvironmentBullets(payload.environment)}
+
+## Console Logs
+\`\`\`text
+${logsText}
+\`\`\`
+
+## Raw Metadata
+\`\`\`json
+${metadataText}
+\`\`\`
+`;
+
+  let logsText = formatConsoleLogBlock(payload);
+  let metadataText = JSON.stringify(payload.environment, null, 2);
+  let body = buildBody(logsText, metadataText);
+
+  if (body.length > BUG_REPORT_MAX_BODY_CHARS) {
+    logsText = truncateToChars(logsText, Math.floor(BUG_REPORT_MAX_LOG_CHARS / 2));
+    body = buildBody(logsText, metadataText);
+  }
+  if (body.length > BUG_REPORT_MAX_BODY_CHARS) {
+    metadataText = JSON.stringify(
+      {
+        appVersion: payload.environment.appVersion,
+        runtime: payload.environment.runtime,
+        browserName: payload.environment.browserName,
+        browserVersion: payload.environment.browserVersion,
+        osName: payload.environment.osName,
+        osVersion: payload.environment.osVersion,
+        deviceType: payload.environment.deviceType,
+        isIOS: payload.environment.isIOS,
+        locale: payload.environment.locale,
+      },
+      null,
+      2,
+    );
+    body = buildBody(logsText, metadataText);
+  }
+
+  return body;
+}
+
+function deriveBugReportLabels(payload) {
+  const labels = ["bug", "from-app"];
+  if (payload.environment?.runtime === "web") labels.push("web");
+  if (payload.environment?.isIOS) labels.push("ios");
+  if (payload.issue?.priority === "high") labels.push("high-priority");
+  return labels;
+}
+
 export async function submitBugReport(payload, endpoint = BUG_REPORT_ENDPOINT) {
+  if (isTauriRuntime() && (!endpoint || endpoint === "tauri://native")) {
+    const title = formatBugReportIssueTitle(payload.issue.summary);
+    const body = formatBugReportIssueBody(payload);
+    const labels = deriveBugReportLabels(payload);
+    const result = await invoke("submit_bug_report", {
+      payload: { title, body, labels },
+    });
+    return {
+      ok: true,
+      issueNumber: result.issue_number,
+      issueUrl: result.issue_url,
+    };
+  }
+
   let response;
   try {
     response = await fetch(endpoint, {

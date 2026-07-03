@@ -86,7 +86,7 @@ const MODES = [
   },
   {
     id: "templategen",
-    label: "Template Gen",
+    label: "Template Generation",
     desc: "Auto-generate layered PSD templates from .yft",
     icon: Zap,
     accent: "#14b8a6",
@@ -185,14 +185,7 @@ const GROUP_LABELS = {
 };
 
 function renderModeLabel(mode, labelClassName) {
-  const label = <span className={labelClassName}>{mode.label}</span>;
-  if (mode.id !== "templategen") return label;
-  return (
-    <span className="template-gen-label">
-      {label}
-      <span className="template-gen-beta-badge">Beta</span>
-    </span>
-  );
+  return <span className={labelClassName}>{mode.label}</span>;
 }
 
 function shouldShowRecents() {
@@ -220,8 +213,10 @@ export default function HomePage({
   const [pinnedIds, setPinnedIds] = useState(() => loadPinned());
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
+  const [olderLimit, setOlderLimit] = useState(8);
   const searchRef = useRef(null);
   const createBtnRef = useRef(null);
+  const sortWrapRef = useRef(null);
 
   const refreshWorkspaceState = useCallback(() => {
     setWorkspaces(loadWorkspaces());
@@ -255,6 +250,17 @@ export default function HomePage({
     window.addEventListener("mousedown", handleClick);
     return () => window.removeEventListener("mousedown", handleClick);
   }, [createOpen]);
+
+  // Close sort dropdown on outside click
+  useEffect(() => {
+    if (!showSortMenu) return;
+    const handleClick = (e) => {
+      if (sortWrapRef.current?.contains(e.target)) return;
+      setShowSortMenu(false);
+    };
+    window.addEventListener("mousedown", handleClick);
+    return () => window.removeEventListener("mousedown", handleClick);
+  }, [showSortMenu]);
 
   const togglePin = useCallback((wsId, e) => {
     if (e) e.stopPropagation();
@@ -399,7 +405,15 @@ export default function HomePage({
     return Car;
   };
 
-  const modeColorForEntry = () => {
+  const modeColorForEntry = (entry) => {
+    const ws = workspaces[entry.workspaceId];
+    const mode = ws?.state?.textureMode || "livery";
+    if (entry.page === "variants") return "#a855f7";
+    if (entry.page === "templategen") return "#14b8a6";
+    if (mode === "livery") return "#14b8a6";
+    if (mode === "everything") return "#3b82f6";
+    if (mode === "eup") return "#f59e0b";
+    if (mode === "multi") return "#ec4899";
     return "var(--mg-primary)";
   };
 
@@ -419,6 +433,7 @@ export default function HomePage({
         <Ctx.Trigger>
           <motion.div
             className={`hp-project-row ${opts.pinned ? "is-pinned" : ""} ${selectedProject?.workspaceId === entry.workspaceId ? "is-selected" : ""}`}
+            style={{ "--project-accent": color }}
             onClick={() => setSelectedProject(entry)}
             onDoubleClick={() => handleOpenRecent(entry)}
             initial={{ opacity: 0, x: -6 }}
@@ -519,12 +534,26 @@ export default function HomePage({
           </span>
         </div>,
       );
-      items.forEach((entry) => {
+      const visible = key === "older" ? items.slice(0, olderLimit) : items;
+      visible.forEach((entry) => {
         elements.push(
           renderProjectRow(entry, idx, { delay: 0.03 + idx * 0.015 }),
         );
         idx++;
       });
+      if (key === "older" && items.length > olderLimit) {
+        const remaining = items.length - olderLimit;
+        elements.push(
+          <button
+            key="load-more"
+            className="hp-load-more"
+            onClick={() => setOlderLimit(olderLimit + 10)}
+          >
+            <ChevronDown className="w-3 h-3" />
+            show {remaining} more
+          </button>,
+        );
+      }
     }
     return elements;
   };
@@ -532,6 +561,7 @@ export default function HomePage({
   return (
     <div className="home-page">
       <div className="hp-bg">
+        <div className="hp-bg-grid" />
         <div className="hp-bg-scanline" />
       </div>
 
@@ -639,7 +669,7 @@ export default function HomePage({
                       </button>
                     )}
                   </div>
-                  <div className="hp-sort-wrap">
+                  <div className="hp-sort-wrap" ref={sortWrapRef}>
                     <button
                       className="hp-sort-btn"
                       onClick={() => setShowSortMenu(!showSortMenu)}
@@ -817,7 +847,7 @@ export default function HomePage({
               <h2 className="hp-projects-title">// CONTEXT</h2>
             </div>
             {selectedProject && workspaces[selectedProject.workspaceId] ? (
-              <div className="hp-context-details">
+              <div className="hp-context-details" style={{ "--project-accent": modeColorForEntry(selectedProject) }}>
                 <div className="hp-context-icon">
                   {React.createElement(modeIconForEntry(selectedProject), {
                     className: "w-8 h-8",
@@ -895,9 +925,11 @@ export default function HomePage({
               </div>
             ) : (
               <div className="hp-context-empty">
-                <Zap className="w-5 h-5" />
-                <p>select a project</p>
-                <span>view details and actions here</span>
+                <div className="hp-context-empty-icon">
+                  <Command className="w-7 h-7" />
+                </div>
+                <p>no project selected</p>
+                <span>click a project to inspect details</span>
               </div>
             )}
           </motion.section>

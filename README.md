@@ -1,4 +1,4 @@
-## Cortex Studio v3.8
+## Cortex Studio v4.0 — ROAN   
 ![Cortex Studio UI](https://cdn.discordapp.com/attachments/1346902689744949270/1472021146311331871/image.png?ex=699af146&is=69999fc6&hm=6b2bf8b46a7498275f98db8eebed9bf07ec208901a893c1b59ddf2a89c0e56b0&)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C1C41TSVBX)
 
@@ -11,18 +11,33 @@ Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/relea
 
 ---
 
-## New in v3.8: Model Shadows & Template Generator
+## New in v4.0 (ROAN)
 
-### Model Shadows (v3.8)
-Enhanced depth perception with real-time shadow rendering on your models.
+> Named after the Roan Mountains / Roan Highlands on the Tennessee–North Carolina border.
 
-### Template Generator (beta) (v3.7)
-The **Template Generator** auto-creates layered PSD templates directly from your `.yft` models—no more manual UV mapping or guessing template layouts.
+### Vehicle Slot Colors (v4.0)
+Per-slot color controls for primary, secondary, accent, and glass materials—paint each region of the vehicle independently instead of one flat body color. Available in Livery and All Textures modes.
 
-- **Live Preview:** See your template being generated in real-time
-- **Manual Marker Selection:** Pick individual markers with Alt/Ctrl/Shift + click in "Marker Edit Mode"
-- **Flexible Exports:** Save templates as `.psd`, `.png`, or both formats
-- **Cage Wireframe Overlay:** Inspect your model's mesh structure with optional cage-style overlay
+### CLMESH Binary Cache (v4.0)
+A new `.clmesh` binary mesh format replaces the old JSON pipeline between the CodeWalker bridge and the viewer. Smaller payloads, faster loads, and proper multi-UV channel support (UV2/UV3/UV4).
+
+### Skeleton Parsing (v4.0)
+The YFT parser now reads skeleton/bone data, enabling correct skinning setup for models that rely on bone transforms.
+
+### Interactive Light Dome (v4.0)
+A drag-to-position hemisphere lighting widget that adjusts both azimuth (0–360°) and elevation (0–90°) simultaneously. Position the sun indicator on the dome to dial in the perfect lighting angle.
+
+### Preview Watermarks (v4.0)
+Automatically stamp preview captures with configurable text watermarks. Choose font family, size, color, opacity, position (corner/center/tiled), and rotation from Settings.
+
+### Context Menus (v4.0)
+Right-click context menus throughout the UI with custom Cortex Studio styling.
+
+### Additional Texture Formats (v4.0)
+TIFF and AVIF texture support added alongside existing PSD, PNG, JPG, TGA, DDS, BMP, WebP, PDN, and AI formats.
+
+### Workspace Save-Fail Toast (v4.0)
+When localStorage runs out of space, you now get a clear toast instead of a silent failure.
 
 ### PSD Variant Builder
 The dedicated environment for managing complex livery projects with multiple variants.
@@ -34,10 +49,27 @@ The dedicated environment for managing complex livery projects with multiple var
 - **Batch Export:** Export all your variants at once to high-quality PNGs (up to 4K resolution) into a dedicated output folder.
 - **Real-time Compositing:** As you toggle layers in the panel, the 3D model updates instantly with the new composited texture.
 
+### Also improved in v4.0
+- **Custom DDS/BC7 Texture Decoder:** Purpose-built DDS parser with DXT1/DXT3/DXT5, BC4, BC5, BC7, and uncompressed format support. Replaces reliance on Three.js DDSLoader and matches CodeWalker's TextureFormat enum exactly.
+- **Multi-Angle Preview Capture:** Preview capture enhanced with selectable camera angles (Front, Back, Side, 3/4, Top), adjustable zoom factor, and progress indicator.
+- **Camera Framing & State Persistence:** Improved auto-framing with better bounds computation and persistent camera state across model swaps and preset switches.
+- **PDN Decoding:** Paint.NET files now decode via dedicated Web Worker with Tauri native fallback for improved reliability.
+
+### Also shipped in recent releases
+- **Model Shadows (v3.8):** Real-time shadow rendering for improved depth perception.
+- **Template Generator (beta) (v3.7):** Auto-create layered PSD templates directly from `.yft` models with live preview, manual marker selection (Alt/Ctrl/Shift + click), flexible `.psd`/`.png` exports, and cage wireframe overlay.
+
 ---
 
 ## Key Features
 
+- **Vehicle Slot Colors:** Independent primary, secondary, accent, and glass color controls for accurate multi-region liveries.
+- **CLMESH Mesh Cache:** Binary `.clmesh` format for fast model loads with multi-UV channel support.
+- **Custom DDS/BC7 Decoder:** In-app DDS parsing with DXT1/3/5, BC4, BC5, BC7, and uncompressed format support.
+- **Interactive Light Dome:** Drag-to-position hemisphere lighting for simultaneous azimuth/elevation control.
+- **Multi-Angle Preview Capture:** Batch screenshot export from selectable camera angles with zoom and watermark support.
+- **Preview Watermarks:** Configurable text watermarks with font, color, opacity, position, and rotation controls.
+- **In-App Bug Reporting:** Submit bug reports with environment detection and optional console logs.
 - **Template Generator (beta):** Auto-generate layered PSD templates directly from `.yft` models with live preview and manual marker selection.
 - **PSD Variant Builder:** Manage complex livery projects with multiple variants, layer groups, and batch export to PNG.
 - **Live Texture Reloading:** Uses a native file watcher to detect saves in your design software and reloads textures in milliseconds.
@@ -48,10 +80,13 @@ The dedicated environment for managing complex livery projects with multiple var
     - **Multi-Model Viewer:** Compare two models side-by-side with independent texture controls.
     - **Template Mode:** Dedicated workspace for template generation with cage wireframe overlay.
 - **Model Shadows:** Real-time shadow rendering for improved depth perception.
+- **Camera Framing:** Auto-framing with persistent camera state across model swaps.
+- **UI Scaling:** Adjustable interface scale for accessibility and high-DPI displays.
+- **Context Menus:** Right-click context menus throughout the UI.
 - **Workspace Persistence:** Recent projects restore their full state (model paths, textures, colors, camera positions) on relaunch.
-- **Native GTA V Support:** Direct parsing of `.yft` (vehicles) and `.ydd` (clothing) files.
+- **Native GTA V Support:** Direct parsing of `.yft` (vehicles) and `.ydd` (clothing) files, with skeleton/bone data.
 - **Full Camera Control:** Quick presets (Front, Side, 3/4, Top), center action, and optional WASD flight controls.
-- **Material Controls:** Fine-tune body color, background color, glossiness, and light intensity to see how your design looks in different conditions.
+- **Material Controls:** Fine-tune body and slot colors, background color, glossiness, and light intensity to see how your design looks in different conditions.
 - **Light & Dark Theme:** Branded light and dark modes with native system integration.
 - **Fully Local & Private:** No cloud dependencies, no accounts, no data leaves your machine.
 - **Tauri v2 Core:** Built on the latest Tauri framework for maximum performance and a tiny footprint.
@@ -66,7 +101,7 @@ The dedicated environment for managing complex livery projects with multiple var
 
 ### Textures
 - **.psd** (Photoshop - Recommended for Variants)
-- **.png, .jpg, .tga, .dds, .bmp, .webp, .tiff**
+- **.png, .jpg, .tga, .dds, .bmp, .webp, .tiff, .avif, .pdn, .ai**
 
 ---
 
@@ -88,9 +123,21 @@ Livery work is iterative. In-game testing is slow and breaks your flow. Cortex S
 
 - `src/` - React UI, Three.js viewer, and logic.
 - `src/components/VariantsPage.jsx` - The PSD Variant Builder.
-- `src/components/TemplateGenerator/` - Template Generator workspace for auto-generating PSD templates.
-- `src/lib/yft.js` - High-performance YFT/YDD parser.
-- `src-tauri/` - Rust-based Tauri v2 backend for file system access and performance.
+- `src/components/TemplateGenerationPage.jsx` - Template Generator workspace for auto-generating PSD templates.
+- `src/components/BugReportModal.jsx` - In-app bug report modal with environment detection.
+- `src/components/LightDome.jsx` - Interactive hemisphere lighting control.
+- `src/components/ContextMenu.jsx` - Radix-based context menu wrapper with Cortex styling.
+- `src/lib/yft.js` - High-performance YFT/YDD parser (with skeleton/bone support).
+- `src/lib/clmesh.js` - Parser for the `.clmesh` binary mesh cache emitted by the CodeWalker bridge.
+- `src/lib/dds.js` - Custom DDS parser with DXT/BC4/BC5/BC7 and uncompressed format support.
+- `src/lib/bc7.js` - BC7 block decoder.
+- `src/lib/camera-framing.js` - Camera bounds computation and auto-framing system.
+- `src/lib/camera-state.js` - Camera state clone/sync for persistence across model swaps.
+- `src/lib/watermark.js` - Preview watermark configuration and rendering.
+- `src/lib/bug-report.js` - Bug report payload builder with environment detection.
+- `src/lib/pdn.js` - Paint.NET file decoder with Web Worker and Tauri fallback.
+- `src-tauri/` - Rust-based Tauri v2 backend for file system access, file watching, and mesh cache management.
+- `tools/codewalker-bridge/` - C# sidecar that parses `.yft` files via CodeWalker.Core and emits `.clmesh` caches.
 
 ---
 
@@ -99,6 +146,7 @@ Livery work is iterative. In-game testing is slow and breaks your flow. Cortex S
 ### Prerequisites
 - **Bun** (Fastest JS runtime & package manager)
 - **Rust toolchain** (Required for building the Tauri app)
+- **.NET 10 SDK** (Optional — only needed to build the CodeWalker bridge from source; bundled builds ship the executable)
 
 ### Installation
 ```bash
@@ -125,6 +173,12 @@ bun run tauri build
 
 ## Workflow Tips
 
+- **Vehicle Slot Colors:** In Livery or All Textures mode, use the per-slot color cards to set primary, secondary, accent, and glass colors independently. Copy hex values between slots with the copy button.
+- **Light Dome:** Drag the sun indicator on the hemisphere widget to adjust both lighting direction and elevation simultaneously.
+- **Multi-Angle Previews:** Click the capture button, select which angles to export, set a zoom level, and generate batch screenshots in one pass.
+- **Preview Watermarks:** Configure automatic text watermarks in Settings → Watermark to stamp all preview captures.
+- **Bug Reports:** Click the bug icon in the toolbar to submit a report with environment details and optional console logs.
+- **UI Scaling:** Adjust the interface scale in Settings if you need larger or smaller UI elements.
 - **Template Generator:** Start a new project from the home screen to auto-generate a PSD template from your `.yft` model—no more manual UV mapping.
 - **Manual Marker Selection:** In Template Generator, use Alt/Ctrl/Shift + click to pick individual markers. Selections stay staged until you confirm.
 - **The Variant Sidebar:** Use it to create "Night", "High-Vis", or "Stealth" versions of your liveries in one project file.
@@ -133,6 +187,7 @@ bun run tauri build
 - **Custom Hotkeys:** Check the Settings menu to customize every action to your liking.
 - **Pinned Projects:** Pin frequently used projects to your home screen for quick access.
 - **Workspace Restoration:** Your project state (models, textures, camera position) auto-saves and restores when you reopen the app.
+- **Bridge Auto-Build:** If you're running from source and the CodeWalker bridge is missing, just open a `.yft`—Cortex will build it automatically if `dotnet` is on your PATH.
 
 ---
 

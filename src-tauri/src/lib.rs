@@ -1062,6 +1062,86 @@ STDERR:\n{}\nSTDOUT:\n{}\nLOG:\n{}",
     }))
 }
 
+#[derive(serde::Deserialize)]
+struct BugReportIssuePayload {
+    title: String,
+    body: String,
+    labels: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct BugReportResult {
+    ok: bool,
+    issue_number: u64,
+    issue_url: String,
+}
+
+#[tauri::command]
+async fn submit_bug_report(payload: BugReportIssuePayload) -> Result<BugReportResult, String> {
+    let token = std::env::var("GITHUB_TOKEN")
+        .map_err(|_| "GITHUB_TOKEN is not configured.".to_string())?;
+    let owner = std::env::var("GITHUB_OWNER")
+        .map_err(|_| "GITHUB_OWNER is not configured.".to_string())?;
+    let repo = std::env::var("GITHUB_REPO")
+        .map_err(|_| "GITHUB_REPO is not configured.".to_string())?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("cortex-studio-bug-reporter")
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+        let api_url = format!("https://api.github.com/repos/{owner}/{repo}/issues");
+
+        let response = client
+            .post(&api_url)
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .json(&serde_json::json!({
+                "title": payload.title,
+                "body": payload.body,
+                "labels": payload.labels,
+            }))
+            .send()
+            .map_err(|e| format!("GitHub API request failed: {e}"))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().unwrap_or_default();
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                if let Some(msg) = parsed.get("message").and_then(|v| v.as_str()) {
+                    return Err(format!("GitHub API: {msg}"));
+                }
+            }
+            return Err(format!("GitHub API request failed with HTTP {status}."));
+        }
+
+        let issue: serde_json::Value = response
+            .json()
+            .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
+
+        let number = issue
+            .get("number")
+            .and_then(|v| v.as_u64())
+            .ok_or("GitHub API response missing issue number.")?;
+        let html_url = issue
+            .get("html_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        Ok(BugReportResult {
+            ok: true,
+            issue_number: number,
+            issue_url: html_url,
+        })
+    })
+    .await
+    .map_err(|e| format!("Failed to join bug report task: {e}"))?
+}
+
 #[tauri::command]
 fn consume_pending_open_file(state: State<PendingOpenFileState>) -> Option<String> {
     state
@@ -1502,8 +1582,40 @@ fn scan_for_dimension(data: &[u8], from: usize) -> u32 {
     0
 }
 
+fn load_dotenv() {
+    let candidates = [
+        PathBuf::from(".env"),
+        PathBuf::from("../.env"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join(".env"),
+    ];
+
+    for path in &candidates {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                let key = key.trim();
+                let value = value.trim().trim_matches('"');
+                if key.is_empty() {
+                    continue;
+                }
+                if std::env::var(key).is_err() {
+                    std::env::set_var(key, value);
+                }
+            }
+        }
+        break;
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    load_dotenv();
     tauri::Builder::default()
         .manage(WatchState::default())
         .manage(WindowWatchState::default())
@@ -1539,7 +1651,8 @@ pub fn run() {
             consume_pending_open_file,
             ensure_dir,
             open_folder_fallback,
-            decode_pdn
+            decode_pdn,
+            submit_bug_report
         ])
         .setup(|app| {
             // On Windows, "Open With" passes the file path as a CLI argument.

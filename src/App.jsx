@@ -35,7 +35,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/select";
-import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel, MaterialTypeSelector, MaterialSlider, TextureUploadGrid } from "./components/CyberUI";
+import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel, MaterialTypeSelector, MaterialSlider, TextureUploadGrid, CyberTabPanel, ColorRow } from "./components/CyberUI";
+import LightDome from "./components/LightDome";
 
 const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
@@ -112,6 +113,7 @@ const BUILT_IN_DEFAULTS = {
   toolbarInTitlebar: false,
   variantExportFolder: "",
   cameraControlsInPanel: false,
+  watermark: { enabled: false, text: "© Cortex Labs", font: "Inter", fontSize: 32, color: "#ffffff", opacity: 0.5, position: "bottom-right", rotation: 0 },
 };
 
 function sanitizeStoredDefaults(stored) {
@@ -176,55 +178,6 @@ function UnloadButton({ onClick, title, className }) {
     <CyberButton variant="danger" className={className} onClick={onClick} title={title}>
       <span className="font-bold tracking-[0.2em] text-[9px]">UNLOAD</span>
     </CyberButton>
-  );
-}
-
-function ColorValueCard({
-  label,
-  value,
-  onChange,
-  onReset,
-  onCopy,
-  swatches,
-  pickerLabel,
-  resetTitle,
-}) {
-  return (
-    <CyberCard>
-      <CyberLabel>{label}</CyberLabel>
-      <div className="flex items-center gap-2">
-        <div className="color-swatch-wrapper">
-          <div className="color-swatch" style={{ background: value }} />
-          <input
-            type="color"
-            value={value}
-            onChange={(event) => onChange(event.currentTarget.value)}
-            className="color-picker-native"
-            aria-label={pickerLabel}
-          />
-        </div>
-        <Input
-          className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
-          style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
-          value={value}
-          onChange={(event) => onChange(event.currentTarget.value)}
-        />
-        <button type="button" className="cs-copy-btn" onClick={() => onCopy(value)} title="Copy hex"><Copy className="h-3 w-3" /></button>
-        <button
-          type="button"
-          className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
-          onClick={onReset}
-          title={resetTitle}
-        >
-          <RotateCcw className="h-3 w-3" />
-        </button>
-      </div>
-      <div className="cs-swatches">
-        {swatches.map((color) => (
-          <button key={color} className="cs-swatch-dot" style={{ background: color }} onClick={() => onChange(color)} title={color} />
-        ))}
-      </div>
-    </CyberCard>
   );
 }
 
@@ -320,7 +273,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     overlays: false,
     view: true,
     camera: true,
+    colors: true,
+    materials: false,
+    lighting: true,
   }));
+  const [activePanelTab, setActivePanelTab] = useState("asset");
   const [textureReloadToken, setTextureReloadToken] = useState(0);
   const [windowTextureReloadToken, setWindowTextureReloadToken] = useState(0);
   const [textureTargets, setTextureTargets] = useState([]);
@@ -887,9 +844,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
   useEffect(() => {
     const prefs = loadPrefs() || {};
-    const ui = { ...(prefs.ui || {}), colorsOpen };
+    const ui = { ...(prefs.ui || {}), colorsOpen: panelOpen.colors };
     savePrefs({ ...prefs, ui });
-  }, [colorsOpen]);
+  }, [panelOpen.colors]);
 
   const selectModelRef = useRef(null);
   const selectTextureRef = useRef(null);
@@ -1362,13 +1319,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         presetKey: "angle",
         zoomFactor: zoomLevel,
         delayMs: 120,
+        watermark: defaults.watermark || null,
       });
       if (token !== previewSnapTokenRef.current) return;
       setPreviewZoomPreview(dataUrl || "");
     } finally {
       if (token === previewSnapTokenRef.current) setPreviewZoomLoading(false);
     }
-  }, [viewerReady]);
+  }, [viewerReady, defaults]);
 
   // Generate Preview — cycle through camera presets and capture screenshots
   const handleGeneratePreview = useCallback(async (zoomLevel = 1, requestedPresets = PREVIEW_CAPTURE_PRESET_KEYS) => {
@@ -1421,6 +1379,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           presetKey: preset,
           zoomFactor: zoomLevel,
           delayMs: 400,
+          watermark: defaults.watermark || null,
         });
         if (!dataUrl) continue;
 
@@ -1457,7 +1416,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       // Restore grid state
       if (gridWasOn) setShowGrid(true);
     }
-  }, [modelPath, generatingPreview, showGrid, resolveExistingFolder, ensurePreviewFolderReady]);
+  }, [modelPath, generatingPreview, showGrid, resolveExistingFolder, ensurePreviewFolderReady, defaults]);
 
   useEffect(() => {
     if (!previewPromptOpen) return;
@@ -1805,7 +1764,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         contextBarTarget
       )}
 
-      <CyberPanel collapsed={panelCollapsed} isBooting={isBooting} statusBar={
+      <CyberPanel
+        collapsed={panelCollapsed}
+        isBooting={isBooting}
+        statusBar={
         <div className="cs-status-bar">
           <div className="cs-status-left">
             <span className={watchStatus === "watching" ? "status-dot" : "cs-status-dot-idle"} style={watchStatus === "error" ? { background: "#ef4444" } : {}} />
@@ -1824,9 +1786,48 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           </div>
           <span className="cs-status-timestamp">{lastUpdate}</span>
         </div>
-      }>
+      }
+        tabs={[
+          { id: "asset", label: "Asset", icon: Car },
+          { id: "aesthetics", label: "Aesthetics", icon: Palette },
+          { id: "environment", label: "Environment", icon: Sun },
+        ]}
+        activeTab={activePanelTab}
+        onTabChange={setActivePanelTab}
+        footer={
+          textureMode !== "multi" ? (
+            <div className="cyber-panel-footer">
+              <button
+                type="button"
+                className={`panel-capture-btn${generatingPreview ? " is-generating" : ""}`}
+                onClick={() => {
+                  if (generatingPreview || !viewerReady) return;
+                  setPreviewZoomDraft(previewZoom || 1);
+                  setPreviewPromptOpen(true);
+                  setPreviewZoomPreview("");
+                }}
+                disabled={generatingPreview || !viewerReady || !hasModel}
+                title={previewCaptureTooltip}
+              >
+                <Camera className="panel-capture-icon" />
+                <span className="panel-capture-label">
+                  {generatingPreview
+                    ? `${previewProgress.current} / ${previewProgress.total}`
+                    : "Capture Preview"}
+                </span>
+                {generatingPreview && previewProgress.total > 0 && (
+                  <div
+                    className="panel-capture-bar-fill"
+                    style={{ width: `${(previewProgress.current / previewProgress.total) * 100}%` }}
+                  />
+                )}
+              </button>
+            </div>
+          ) : null
+        }
+      >
           {textureMode !== "multi" && (textureError || windowTextureError) ? (
-            <CyberCard className="mb-3 border border-[var(--mg-border)]">
+            <CyberCard className="mb-3">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-3.5 w-3.5 text-[var(--mg-warning)] mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
@@ -1847,6 +1848,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             </CyberCard>
           ) : null}
 
+          <CyberTabPanel id="asset" active={activePanelTab === "asset"}>
+
           {textureMode !== "multi" ? (
             <CyberSection
               title="Model"
@@ -1858,7 +1861,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               color="blue"
             >
               <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
+                <div className="cs-btn-row">
                   <CyberButton
                     onClick={selectModel}
                     variant="blue"
@@ -1911,7 +1914,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 color="blue"
               >
                 <div className="flex flex-col gap-0">
-                    <div className="flex gap-2">
+                    <div className="cs-btn-row">
                       <CyberButton
                         onClick={selectTexture}
                         variant="blue"
@@ -1928,12 +1931,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       ) : null}
                     </div>
                 </div>
-                <CyberCard className={`mt-2 cs-livery-target-card${liveryTargetToneClass}`}>
-                  <div className="cs-livery-target-row">
-                    <span className="cs-livery-target-tag">AUTO</span>
-                    <span className="cs-livery-target-message">{liveryTargetMessage}</span>
-                  </div>
-                </CyberCard>
+                <div className={`cs-target-status${liveryTargetToneClass}`}>
+                  <span className="cs-target-status-dot" />
+                  <span className="cs-target-status-text">{liveryTargetMessage}</span>
+                </div>
               </CyberSection>
 
               <CyberSection
@@ -1961,7 +1962,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   {windowTemplateEnabled ? (
                     <>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
+                        <div className="cs-btn-row">
                           <CyberButton
                             onClick={selectWindowTexture}
                             variant="blue"
@@ -2041,7 +2042,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 color="blue"
               >
                 <div className="flex flex-col gap-0">
-                    <div className="flex gap-2">
+                    <div className="cs-btn-row">
                       <CyberButton
                         onClick={selectTexture}
                         variant="blue"
@@ -2097,7 +2098,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   {windowTemplateEnabled ? (
                     <>
                         <div className="flex flex-col gap-0">
-                          <div className="flex gap-2">
+                          <div className="cs-btn-row">
                             <CyberButton
                               onClick={selectWindowTexture}
                               variant="blue"
@@ -2171,7 +2172,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 color="blue"
               >
                 <div className="flex flex-col gap-0">
-                    <div className="flex gap-2">
+                    <div className="cs-btn-row">
                       <CyberButton
                         onClick={selectTexture}
                         variant="blue"
@@ -2307,7 +2308,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberCard>
                       <CyberLabel>Model</CyberLabel>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
+                        <div className="cs-btn-row">
                           <CyberButton
                             variant="secondary"
                             className="flex-1"
@@ -2330,7 +2331,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberCard>
                       <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
+                        <div className="cs-btn-row">
                           <CyberButton
                             variant="secondary"
                             className="flex-1"
@@ -2352,7 +2353,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       <CyberCard>
                         <CyberLabel>Window Design</CyberLabel>
                         <div className="flex flex-col gap-0">
-                          <div className="flex gap-2">
+                          <div className="cs-btn-row">
                             <CyberButton
                               variant="secondary"
                               className="flex-1"
@@ -2399,7 +2400,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberCard>
                       <CyberLabel>Model</CyberLabel>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
+                        <div className="cs-btn-row">
                           <CyberButton
                             variant="secondary"
                             className="flex-1"
@@ -2422,7 +2423,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     <CyberCard>
                       <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
                       <div className="flex flex-col gap-0">
-                        <div className="flex gap-2">
+                        <div className="cs-btn-row">
                           <CyberButton
                             variant="secondary"
                             className="flex-1"
@@ -2444,7 +2445,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                       <CyberCard>
                         <CyberLabel>Window Design</CyberLabel>
                         <div className="flex flex-col gap-0">
-                          <div className="flex gap-2">
+                          <div className="cs-btn-row">
                             <CyberButton
                               variant="secondary"
                               className="flex-1"
@@ -2491,94 +2492,46 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             </div>
           ) : null}
 
+          </CyberTabPanel>
+
+          <CyberTabPanel id="aesthetics" active={activePanelTab === "aesthetics"}>
 
           <CyberSection
             title="Appearance"
             caption="Colors"
-            open={colorsOpen}
-            onToggle={() => setColorsOpen((prev) => !prev)}
+            open={panelOpen.colors}
+            onToggle={() => togglePanel("colors")}
             contentId="panel-colors"
             icon={Palette}
             color="blue"
           >
-            <div className="space-y-3">
+            <div className="cs-color-rows">
               {textureMode === "multi" ? (
                 <>
-                  <CyberCard>
-                    <CyberLabel>Slot A Body Color</CyberLabel>
-                    <div className="flex items-center gap-2">
-                      <div className="color-swatch-wrapper">
-                        <div className="color-swatch" style={{ background: dualBodyColorA }} />
-                        <input
-                          type="color"
-                          value={dualBodyColorA}
-                          onChange={(event) => setDualBodyColorA(event.currentTarget.value)}
-                          className="color-picker-native"
-                          aria-label="Slot A body color picker"
-                        />
-                      </div>
-                      <Input
-                        className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
-                        style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
-                        value={dualBodyColorA}
-                        onChange={(event) => setDualBodyColorA(event.currentTarget.value)}
-                      />
-                      <button type="button" className="cs-copy-btn" onClick={() => copyHex(dualBodyColorA)} title="Copy hex"><Copy className="h-3 w-3" /></button>
-                      <button
-                        type="button"
-                        className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
-                        onClick={() => setDualBodyColorA(DEFAULT_BODY)}
-                        title="Reset Slot A color"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                      </button>
-                    </div>
-                    <div className="cs-swatches">
-                      {COLOR_SWATCHES.map(c => (
-                        <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setDualBodyColorA(c)} title={c} />
-                      ))}
-                    </div>
-                  </CyberCard>
-
-                  <CyberCard>
-                    <CyberLabel>Slot B Body Color</CyberLabel>
-                    <div className="flex items-center gap-2">
-                      <div className="color-swatch-wrapper">
-                        <div className="color-swatch" style={{ background: dualBodyColorB }} />
-                        <input
-                          type="color"
-                          value={dualBodyColorB}
-                          onChange={(event) => setDualBodyColorB(event.currentTarget.value)}
-                          className="color-picker-native"
-                          aria-label="Slot B body color picker"
-                        />
-                      </div>
-                      <Input
-                        className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
-                        style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
-                        value={dualBodyColorB}
-                        onChange={(event) => setDualBodyColorB(event.currentTarget.value)}
-                      />
-                      <button type="button" className="cs-copy-btn" onClick={() => copyHex(dualBodyColorB)} title="Copy hex"><Copy className="h-3 w-3" /></button>
-                      <button
-                        type="button"
-                        className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
-                        onClick={() => setDualBodyColorB(DEFAULT_BODY)}
-                        title="Reset Slot B color"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                      </button>
-                    </div>
-                    <div className="cs-swatches">
-                      {COLOR_SWATCHES.map(c => (
-                        <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setDualBodyColorB(c)} title={c} />
-                      ))}
-                    </div>
-                  </CyberCard>
+                  <ColorRow
+                    label="Slot A Body"
+                    value={dualBodyColorA}
+                    onChange={setDualBodyColorA}
+                    onReset={() => setDualBodyColorA(DEFAULT_BODY)}
+                    onCopy={copyHex}
+                    swatches={COLOR_SWATCHES}
+                    pickerLabel="Slot A body color picker"
+                    resetTitle="Reset Slot A color"
+                  />
+                  <ColorRow
+                    label="Slot B Body"
+                    value={dualBodyColorB}
+                    onChange={setDualBodyColorB}
+                    onReset={() => setDualBodyColorB(DEFAULT_BODY)}
+                    onCopy={copyHex}
+                    swatches={COLOR_SWATCHES}
+                    pickerLabel="Slot B body color picker"
+                    resetTitle="Reset Slot B color"
+                  />
                 </>
               ) : showVehicleSlotColorCards ? (
                 <>
-                  <ColorValueCard
+                  <ColorRow
                     label="Primary Paint"
                     value={vehicleSlotColors.primary}
                     onChange={(value) => setVehicleSlotColor("primary", value)}
@@ -2588,7 +2541,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     pickerLabel="Primary paint color picker"
                     resetTitle="Reset primary paint color"
                   />
-                  <ColorValueCard
+                  <ColorRow
                     label="Secondary Paint"
                     value={vehicleSlotColors.secondary}
                     onChange={(value) => setVehicleSlotColor("secondary", value)}
@@ -2598,7 +2551,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     pickerLabel="Secondary paint color picker"
                     resetTitle="Reset secondary paint color"
                   />
-                  <ColorValueCard
+                  <ColorRow
                     label="Lightbar / Accent"
                     value={vehicleSlotColors.accent}
                     onChange={(value) => setVehicleSlotColor("accent", value)}
@@ -2608,7 +2561,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     pickerLabel="Lightbar and accent color picker"
                     resetTitle="Reset accent color"
                   />
-                  <ColorValueCard
+                  <ColorRow
                     label="Glass Tint"
                     value={vehicleSlotColors.glass}
                     onChange={(value) => setVehicleSlotColor("glass", value)}
@@ -2620,7 +2573,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   />
                 </>
               ) : (
-                <ColorValueCard
+                <ColorRow
                   label="Body Color"
                   value={bodyColor}
                   onChange={(value) => setVehicleSlotColor("primary", value)}
@@ -2632,46 +2585,21 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 />
               )}
 
-              <CyberCard>
-                <CyberLabel>Background Color</CyberLabel>
-                <div className="flex items-center gap-2">
-                  <div className="color-swatch-wrapper">
-                    <div className="color-swatch" style={{ background: backgroundColor }} />
-                    <input
-                      type="color"
-                      value={backgroundColor}
-                      onChange={(event) => setBackgroundColor(event.currentTarget.value)}
-                      className="color-picker-native"
-                      aria-label="Background color picker"
-                    />
-                  </div>
-                  <Input
-                    className="flex-1 h-8 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-xs"
-                    style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
-                    value={backgroundColor}
-                    onChange={(event) => setBackgroundColor(event.currentTarget.value)}
-                  />
-                  <button type="button" className="cs-copy-btn" onClick={() => copyHex(backgroundColor)} title="Copy hex"><Copy className="h-3 w-3" /></button>
-                  <button
-                    type="button"
-                    className="w-7 h-7 flex items-center justify-center text-[var(--mg-muted)] hover:text-[var(--mg-fg)] transition-colors"
-                    onClick={() => setBackgroundColor(DEFAULT_BG)}
-                    title="Revert to default"
-                  >
-                    <RotateCcw className="h-3 w-3" />
-                  </button>
-                </div>
-                <div className="cs-swatches">
-                  {COLOR_SWATCHES.map(c => (
-                    <button key={c} className="cs-swatch-dot" style={{ background: c }} onClick={() => setBackgroundColor(c)} title={c} />
-                  ))}
-                </div>
-              </CyberCard>
+              <ColorRow
+                label="Background"
+                value={backgroundColor}
+                onChange={setBackgroundColor}
+                onReset={() => setBackgroundColor(DEFAULT_BG)}
+                onCopy={copyHex}
+                swatches={COLOR_SWATCHES}
+                pickerLabel="Background color picker"
+                resetTitle="Revert to default"
+              />
 
               <CyberCard>
                 <CyberLabel>Background Image</CyberLabel>
                 <div className="flex flex-col gap-0">
-                  <div className="flex gap-2">
+                  <div className="cs-btn-row">
                     <CyberButton
                       onClick={selectBackgroundImage}
                       variant="secondary"
@@ -2713,8 +2641,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           <CyberSection
             title="Materials"
             caption={`${materialType.charAt(0).toUpperCase() + materialType.slice(1)} & Surface`}
-            open={materialsOpen}
-            onToggle={() => setMaterialsOpen((prev) => !prev)}
+            open={panelOpen.materials}
+            onToggle={() => togglePanel("materials")}
             contentId="panel-materials"
             icon={Gem}
             color="blue"
@@ -2779,222 +2707,45 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             </div>
           </CyberSection>
 
+          </CyberTabPanel>
+
+          <CyberTabPanel id="environment" active={activePanelTab === "environment"}>
+
           {/* ── Scene Lighting ── */}
           <CyberSection
             title="Lighting"
             caption="Scene illumination"
-            open={lightingOpen}
-            onToggle={() => setLightingOpen((prev) => !prev)}
+            open={panelOpen.lighting}
+            onToggle={() => togglePanel("lighting")}
             contentId="panel-lighting"
             icon={Sun}
             color="yellow"
           >
-              {(() => {
-                const elRad = lightElevation * (Math.PI / 180);
-                const elRadius = 35;
-                const elX = 50 + elRadius * Math.cos(elRad); 
-                const elY = 40 - elRadius * Math.sin(elRad);
-
-                const azRad = lightAzimuth * (Math.PI / 180);
-                const azRadius = 24;
-                const azX = 50 + azRadius * Math.sin(azRad);
-                const azY = 30 - azRadius * Math.cos(azRad);
-
-                // Drag handler for azimuth — click/drag anywhere in SVG sets the orbital angle
-                const onAzPointerDown = (e) => {
-                  e.preventDefault();
-                  const svg = e.currentTarget;
-                  svg.setPointerCapture(e.pointerId);
-                  const compute = (cx, cy) => {
-                    const rect = svg.getBoundingClientRect();
-                    const sx = ((cx - rect.left) / rect.width) * 100;
-                    const sy = ((cy - rect.top) / rect.height) * 60;
-                    let deg = Math.atan2(sx - 50, -(sy - 30)) * (180 / Math.PI);
-                    if (deg < 0) deg += 360;
-                    return Math.round(deg);
-                  };
-                  const onMove = (ev) => handleLightAzimuthChange(compute(ev.clientX, ev.clientY));
-                  const onUp = () => {
-                    svg.style.cursor = 'crosshair';
-                    svg.removeEventListener('pointermove', onMove);
-                    svg.removeEventListener('pointerup', onUp);
-                    svg.removeEventListener('pointercancel', onUp);
-                  };
-                  svg.style.cursor = 'grabbing';
-                  handleLightAzimuthChange(compute(e.clientX, e.clientY));
-                  svg.addEventListener('pointermove', onMove);
-                  svg.addEventListener('pointerup', onUp);
-                  svg.addEventListener('pointercancel', onUp);
-                };
-
-                // Drag handler for elevation — click/drag anywhere in SVG sets the dome angle
-                const onElPointerDown = (e) => {
-                  e.preventDefault();
-                  const svg = e.currentTarget;
-                  svg.setPointerCapture(e.pointerId);
-                  const compute = (cx, cy) => {
-                    const rect = svg.getBoundingClientRect();
-                    const sx = ((cx - rect.left) / rect.width) * 100;
-                    const sy = ((cy - rect.top) / rect.height) * 60;
-                    const deg = Math.atan2(40 - sy, sx - 50) * (180 / Math.PI);
-                    return Math.max(0, Math.min(90, Math.round(deg)));
-                  };
-                  const onMove = (ev) => handleLightElevationChange(compute(ev.clientX, ev.clientY));
-                  const onUp = () => {
-                    svg.style.cursor = 'crosshair';
-                    svg.removeEventListener('pointermove', onMove);
-                    svg.removeEventListener('pointerup', onUp);
-                    svg.removeEventListener('pointercancel', onUp);
-                  };
-                  svg.style.cursor = 'grabbing';
-                  handleLightElevationChange(compute(e.clientX, e.clientY));
-                  svg.addEventListener('pointermove', onMove);
-                  svg.addEventListener('pointerup', onUp);
-                  svg.addEventListener('pointercancel', onUp);
-                };
-
-                return (
-                  <div className="space-y-3">
-                    {/* === HUD VISUALS === */}
-                    <div className="flex space-x-1.5">
-                      {/* Azimuth HUD (Top-Down View) */}
-                      <div
-                        className="flex-1 rounded-sm p-2 relative"
-                        style={{ background: '#100F0D', border: '1px solid rgba(220,215,206,0.1)' }}
-                      >
-                        <div className="flex justify-between items-center mb-1.5">
-                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '8px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--mg-muted)', opacity: 0.75 }}>Azimuth</span>
-                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '9px', color: '#D97952', fontVariantNumeric: 'tabular-nums' }}>{lightAzimuth}°</span>
-                        </div>
-                        <div className="w-full aspect-video relative flex items-center justify-center">
-                          <svg
-                            viewBox="0 0 100 60"
-                            preserveAspectRatio="none"
-                            className="w-full h-full"
-                            style={{ cursor: 'crosshair', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
-                            onPointerDown={onAzPointerDown}
-                          >
-                            {/* Ghost outer ring */}
-                            <circle cx="50" cy="30" r="26.5" fill="none" stroke="rgba(90,85,79,0.12)" strokeWidth="0.5" style={{ pointerEvents: 'none' }} />
-                            {/* Orbital ring */}
-                            <circle cx="50" cy="30" r="24" fill="none" stroke="rgba(90,85,79,0.4)" strokeWidth="0.7" strokeDasharray="1.5 2.5" style={{ pointerEvents: 'none' }} />
-                            {/* Cardinal ticks at N/E/S/W */}
-                            {[0, 90, 180, 270].map(deg => {
-                              const r = deg * (Math.PI / 180);
-                              return <line key={deg} x1={50 + 22 * Math.sin(r)} y1={30 - 22 * Math.cos(r)} x2={50 + 26 * Math.sin(r)} y2={30 - 26 * Math.cos(r)} stroke="rgba(90,85,79,0.5)" strokeWidth="0.8" style={{ pointerEvents: 'none' }} />;
-                            })}
-                            {/* Spoke from center to sun */}
-                            <line x1="50" y1="30" x2={azX} y2={azY} stroke="rgba(217,121,82,0.38)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
-                            {/* Top-Down Car Silhouette */}
-                            <g style={{ pointerEvents: 'none' }}>
-                              <rect x="39" y="20" width="3" height="7" rx="0.5" fill="#0B0A09" />
-                              <rect x="58" y="20" width="3" height="7" rx="0.5" fill="#0B0A09" />
-                              <rect x="39" y="33" width="3" height="7" rx="0.5" fill="#0B0A09" />
-                              <rect x="58" y="33" width="3" height="7" rx="0.5" fill="#0B0A09" />
-                              <rect x="42" y="15" width="16" height="30" rx="3.5" fill="#1C1A17" />
-                              <path d="M 44 23 Q 50 20.5 56 23 L 55 27 L 45 27 Z" fill="#221F1C" />
-                              <path d="M 45 34 L 55 34 L 54 37 Q 50 39 46 37 Z" fill="#221F1C" />
-                              <path d="M 44 16 L 47 16 L 46 17.5 L 44 17.5 Z" fill="rgba(217,121,82,0.2)" />
-                              <path d="M 53 16 L 56 16 L 56 17.5 L 54 17.5 Z" fill="rgba(217,121,82,0.2)" />
-                            </g>
-                            {/* Sun dot */}
-                            <g style={{ transform: `translate(${azX}px, ${azY}px)`, pointerEvents: 'none' }}>
-                              <circle cx="0" cy="0" r="6" fill="rgba(217,121,82,0.12)" />
-                              <circle cx="0" cy="0" r="3" fill="#D97952" />
-                              <circle cx="0" cy="0" r="1.3" fill="rgba(252,248,240,0.85)" />
-                            </g>
-                          </svg>
-                        </div>
-                      </div>
-
-                      {/* Elevation HUD (Side View) */}
-                      <div
-                        className="flex-1 rounded-sm p-2 relative"
-                        style={{ background: '#100F0D', border: '1px solid rgba(220,215,206,0.1)' }}
-                      >
-                        <div className="flex justify-between items-center mb-1.5">
-                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '8px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--mg-muted)', opacity: 0.75 }}>Elevation</span>
-                          <span style={{ fontFamily: 'var(--font-hud)', fontSize: '9px', color: '#D97952', fontVariantNumeric: 'tabular-nums' }}>{lightElevation}°</span>
-                        </div>
-                        <div className="w-full aspect-video relative flex items-center justify-center">
-                          <svg
-                            viewBox="0 0 100 60"
-                            preserveAspectRatio="none"
-                            className="w-full h-full"
-                            style={{ cursor: 'crosshair', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
-                            onPointerDown={onElPointerDown}
-                          >
-                            {/* Dome arc */}
-                            <path d="M 15 40 A 35 35 0 0 1 85 40" fill="none" stroke="rgba(90,85,79,0.4)" strokeWidth="0.7" strokeDasharray="1.5 2.5" style={{ pointerEvents: 'none' }} />
-                            {/* Elevation angle ticks at 0°, 30°, 60°, 90° */}
-                            {[0, 30, 60, 90].map(deg => {
-                              const r = deg * (Math.PI / 180);
-                              return <line key={deg} x1={50 + 33 * Math.cos(r)} y1={40 - 33 * Math.sin(r)} x2={50 + 37 * Math.cos(r)} y2={40 - 37 * Math.sin(r)} stroke="rgba(90,85,79,0.5)" strokeWidth="0.8" style={{ pointerEvents: 'none' }} />;
-                            })}
-                            {/* Ground line */}
-                            <line x1="5" y1="45" x2="95" y2="45" stroke="rgba(90,85,79,0.25)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
-                            {/* Spoke from horizon center to sun */}
-                            <line x1="50" y1="40" x2={elX} y2={elY} stroke="rgba(217,121,82,0.38)" strokeWidth="0.7" style={{ pointerEvents: 'none' }} />
-                            {/* Side Car Silhouette */}
-                            <g style={{ pointerEvents: 'none' }}>
-                              <circle cx="34" cy="41" r="3.5" fill="#0B0A09" />
-                              <circle cx="66" cy="41" r="3.5" fill="#0B0A09" />
-                              <path d="M 26 38 L 26 30 L 36 22 L 54 22 L 66 30 L 76 30 L 76 38 Z" fill="#1C1A17" />
-                              <path d="M 38 30 L 44 24 L 48 24 L 48 30 Z" fill="#221F1C" />
-                              <path d="M 50 30 L 50 24 L 58 30 Z" fill="#221F1C" />
-                              <path d="M 74 32 L 76 32 L 76 35 L 74 35 Z" fill="rgba(217,121,82,0.18)" />
-                            </g>
-                            {/* Sun dot */}
-                            <g style={{ transform: `translate(${elX}px, ${elY}px)`, pointerEvents: 'none' }}>
-                              <circle cx="0" cy="0" r="6" fill="rgba(217,121,82,0.12)" />
-                              <circle cx="0" cy="0" r="3" fill="#D97952" />
-                              <circle cx="0" cy="0" r="1.3" fill="rgba(252,248,240,0.85)" />
-                            </g>
-                          </svg>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <MaterialSlider
-                        label="Intensity"
-                        value={lightIntensity}
-                        onChange={handleLightIntensityChange}
-                        min={0}
-                        max={3}
-                        step={0.05}
-                      />
-                      <MaterialSlider
-                        label="Azimuth"
-                        value={lightAzimuth}
-                        onChange={handleLightAzimuthChange}
-                        min={0}
-                        max={360}
-                        step={1}
-                        unit="°"
-                      />
-                      <MaterialSlider
-                        label="Elevation"
-                        value={lightElevation}
-                        onChange={handleLightElevationChange}
-                        min={0}
-                        max={90}
-                        step={1}
-                        unit="°"
-/>
-                      <button
-                        type="button"
-                        className="panel-cam-action-btn w-full mt-1"
-                        onClick={resetLighting}
-                        title="Reset lighting to defaults"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        Reset
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
+              <div className="space-y-3">
+                <LightDome
+                  azimuth={lightAzimuth}
+                  elevation={lightElevation}
+                  onAzimuthChange={handleLightAzimuthChange}
+                  onElevationChange={handleLightElevationChange}
+                />
+                <MaterialSlider
+                  label="Intensity"
+                  value={lightIntensity}
+                  onChange={handleLightIntensityChange}
+                  min={0}
+                  max={3}
+                  step={0.05}
+                />
+                <button
+                  type="button"
+                  className="panel-cam-action-btn w-full mt-1"
+                  onClick={resetLighting}
+                  title="Reset lighting to defaults"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Reset
+                </button>
+              </div>
             </CyberSection>
 
           {/* ── Camera Controls in Panel ── */}
@@ -3096,36 +2847,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           </CyberSection>
           )}
 
-          {/* ── Capture Preview ── */}
-          {textureMode !== "multi" && (
-            <div className="panel-capture-section">
-              <button
-                type="button"
-                className={`panel-capture-btn${generatingPreview ? " is-generating" : ""}`}
-                onClick={() => {
-                  if (generatingPreview || !viewerReady) return;
-                  setPreviewZoomDraft(previewZoom || 1);
-                  setPreviewPromptOpen(true);
-                  setPreviewZoomPreview("");
-                }}
-                disabled={generatingPreview || !viewerReady || !hasModel}
-                title={previewCaptureTooltip}
-              >
-                <Camera className="panel-capture-icon" />
-                <span className="panel-capture-label">
-                  {generatingPreview
-                    ? `${previewProgress.current} / ${previewProgress.total}`
-                    : "Capture Preview"}
-                </span>
-                {generatingPreview && previewProgress.total > 0 && (
-                  <div
-                    className="panel-capture-bar-fill"
-                    style={{ width: `${(previewProgress.current / previewProgress.total) * 100}%` }}
-                  />
-                )}
-              </button>
-            </div>
-          )}
+          </CyberTabPanel>
 
       </CyberPanel>
 

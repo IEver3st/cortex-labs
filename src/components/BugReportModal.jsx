@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertCircle, Bug, ExternalLink, Loader2 } from "lucide-react";
+import { AlertCircle, Bug, ExternalLink, Loader2, ScrollText } from "lucide-react";
+import { Toggle } from "./ui/toggle.jsx";
 import {
   buildBugReportPayload,
-  collectBugReportEnvironment,
-  formatEnvironmentSummary,
   getBugReportEndpoint,
   submitBugReport,
   validateBugReportDraft,
@@ -29,20 +28,20 @@ export default function BugReportModal({ open, onClose }) {
   const [formError, setFormError] = useState("");
   const [submitResult, setSubmitResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [environment, setEnvironment] = useState(null);
-  const [environmentLoading, setEnvironmentLoading] = useState(false);
   const [openedAt, setOpenedAt] = useState("");
+  const summaryRef = useRef(null);
+  const successTimerRef = useRef(null);
 
-  const endpoint = getBugReportEndpoint();
-  const environmentSummary = useMemo(() => formatEnvironmentSummary(environment), [environment]);
+  const endpoint = useMemo(() => getBugReportEndpoint(), []);
+  const notConfiguredMsg = "Bug reporting is not configured in this build.";
 
-  const resetDraftState = () => {
+  const resetDraftState = useCallback(() => {
     setDraft(EMPTY_DRAFT);
     setFieldErrors({});
-    setFormError(endpoint ? "" : "Bug reporting is not configured in this build.");
+    setFormError(endpoint ? "" : notConfiguredMsg);
     setSubmitResult(null);
     setOpenedAt(new Date().toISOString());
-  };
+  }, [endpoint, notConfiguredMsg]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -52,29 +51,43 @@ export default function BugReportModal({ open, onClose }) {
   useEffect(() => {
     if (!open) return;
     setFieldErrors({});
-    setFormError(endpoint ? "" : "Bug reporting is not configured in this build.");
+    setFormError(endpoint ? "" : notConfiguredMsg);
     setSubmitResult(null);
-    if (!openedAt) {
-      setOpenedAt(new Date().toISOString());
-    }
-    setEnvironmentLoading(true);
+    setOpenedAt(new Date().toISOString());
+  }, [endpoint, notConfiguredMsg, open]);
 
-    let cancelled = false;
-    collectBugReportEnvironment()
-      .then((nextEnvironment) => {
-        if (!cancelled) setEnvironment(nextEnvironment);
-      })
-      .catch(() => {
-        if (!cancelled) setEnvironment(null);
-      })
-      .finally(() => {
-        if (!cancelled) setEnvironmentLoading(false);
-      });
-
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
-      cancelled = true;
+      document.body.style.overflow = prevOverflow;
     };
-  }, [endpoint, open, openedAt]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || submitting) return;
+    const handler = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose?.();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, submitting, onClose]);
+
+  useEffect(() => {
+    if (open && !submitting && !submitResult) {
+      summaryRef.current?.focus();
+    }
+  }, [open, submitting, submitResult]);
+
+  useEffect(() => {
+    return () => {
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
+    };
+  }, []);
 
   const updateField = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
@@ -101,12 +114,18 @@ export default function BugReportModal({ open, onClose }) {
       const payload = await buildBugReportPayload(draft, {
         endpoint,
         openedAt,
-        environment,
       });
       const result = await submitBugReport(payload, endpoint);
       setSubmitResult(result);
-      resetDraftState();
-      onClose?.();
+      setDraft(EMPTY_DRAFT);
+      setFieldErrors({});
+      setFormError("");
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
+      successTimerRef.current = setTimeout(() => {
+        setSubmitResult(null);
+        setOpenedAt("");
+        onClose?.();
+      }, 2000);
     } catch (error) {
       setFormError(
         error && typeof error === "object" && "message" in error
@@ -132,9 +151,15 @@ export default function BugReportModal({ open, onClose }) {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          onClick={() => {
+            if (!submitting) onClose?.();
+          }}
         >
           <motion.div
             className="bug-report-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bug-report-title"
             initial={{ opacity: 0, y: 12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
@@ -147,7 +172,7 @@ export default function BugReportModal({ open, onClose }) {
                   <Bug className="bug-report-badge-icon" />
                 </div>
                 <div>
-                  <div className="bug-report-title">Report a bug</div>
+                  <div id="bug-report-title" className="bug-report-title">Report a bug</div>
                   <div className="bug-report-subtitle">
                     Submit a formatted GitHub issue without leaving the app.
                   </div>
@@ -155,7 +180,7 @@ export default function BugReportModal({ open, onClose }) {
               </div>
               <button
                 type="button"
-                className="settings-mini"
+                className="settings-secondary"
                 onClick={() => onClose?.()}
                 disabled={submitting}
               >
@@ -170,6 +195,7 @@ export default function BugReportModal({ open, onClose }) {
                     Summary
                   </label>
                   <input
+                    ref={summaryRef}
                     id="bug-report-summary"
                     className={`bug-report-input ${fieldErrors.summary ? "is-invalid" : ""}`}
                     value={draft.summary}
@@ -243,53 +269,50 @@ export default function BugReportModal({ open, onClose }) {
                   <label className="bug-report-label" htmlFor="bug-report-priority">
                     Priority
                   </label>
-                  <select
-                    id="bug-report-priority"
-                    className="bug-report-select"
-                    value={draft.priority}
-                    onChange={(event) => updateField("priority", event.currentTarget.value)}
-                    disabled={submitting}
+                  <div
+                    className="bug-report-seg"
+                    data-priority={draft.priority}
+                    role="radiogroup"
+                    aria-label="Priority"
                   >
-                    <option value="normal">Normal</option>
-                    <option value="high">High</option>
-                  </select>
+                    <div className="bug-report-seg-thumb" />
+                    <button
+                      type="button"
+                      className={`bug-report-seg-option ${draft.priority === "normal" ? "is-active" : ""}`}
+                      role="radio"
+                      aria-checked={draft.priority === "normal"}
+                      onClick={() => updateField("priority", "normal")}
+                      disabled={submitting}
+                    >
+                      Normal
+                    </button>
+                    <button
+                      type="button"
+                      className={`bug-report-seg-option ${draft.priority === "high" ? "is-active" : ""}`}
+                      role="radio"
+                      aria-checked={draft.priority === "high"}
+                      onClick={() => updateField("priority", "high")}
+                      disabled={submitting}
+                    >
+                      High
+                    </button>
+                  </div>
                 </div>
 
                 <div className="bug-report-field">
                   <label className="bug-report-label">Diagnostics</label>
-                  <label className="bug-report-toggle">
-                    <input
-                      type="checkbox"
+                  <div className="bug-report-diag-row">
+                    <ScrollText className="bug-report-diag-icon" />
+                    <span className="bug-report-diag-label">Include recent console logs</span>
+                    <Toggle
                       checked={draft.includeConsoleLogs}
-                      onChange={(event) => updateField("includeConsoleLogs", event.currentTarget.checked)}
+                      onChange={(val) => updateField("includeConsoleLogs", val)}
+                      ariaLabel="Include recent console logs"
                       disabled={submitting}
                     />
-                    <span>Include recent console logs</span>
-                  </label>
-                </div>
-
-                <div className="bug-report-field bug-report-field--full">
-                  <div className="bug-report-label">Environment</div>
-                  <div className="bug-report-environment">
-                    {environmentLoading ? (
-                      <div className="bug-report-environment-loading">
-                        <Loader2 className="bug-report-spinner" />
-                        <span>Collecting runtime details…</span>
-                      </div>
-                    ) : environmentSummary.length > 0 ? (
-                      environmentSummary.map((item) => (
-                        <div key={item.label} className="bug-report-environment-row">
-                          <span>{item.label}</span>
-                          <strong>{item.value}</strong>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="bug-report-environment-loading">
-                        <span>Environment details unavailable.</span>
-                      </div>
-                    )}
                   </div>
                 </div>
+
               </div>
 
               <input
@@ -301,28 +324,30 @@ export default function BugReportModal({ open, onClose }) {
                 aria-hidden="true"
               />
 
-              {formError ? (
-                <div className="bug-report-status bug-report-status--error">
-                  <AlertCircle className="bug-report-status-icon" />
-                  <span>{formError}</span>
-                </div>
-              ) : null}
+              <div aria-live="polite" aria-atomic="true">
+                {formError ? (
+                  <div className="bug-report-status bug-report-status--error">
+                    <AlertCircle className="bug-report-status-icon" />
+                    <span>{formError}</span>
+                  </div>
+                ) : null}
 
-              {submitResult?.ok ? (
-                <div className="bug-report-status bug-report-status--success">
-                  <Bug className="bug-report-status-icon" />
-                  <span>Issue #{submitResult.issueNumber} created successfully.</span>
-                  <a
-                    href={submitResult.issueUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="bug-report-link"
-                  >
-                    View issue
-                    <ExternalLink className="bug-report-link-icon" />
-                  </a>
-                </div>
-              ) : null}
+                {submitResult?.ok ? (
+                  <div className="bug-report-status bug-report-status--success">
+                    <Bug className="bug-report-status-icon" />
+                    <span>Issue #{submitResult.issueNumber} created successfully.</span>
+                    <a
+                      href={submitResult.issueUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="bug-report-link"
+                    >
+                      View issue
+                      <ExternalLink className="bug-report-link-icon" />
+                    </a>
+                  </div>
+                ) : null}
+              </div>
 
               <div className="bug-report-actions">
                 <button
@@ -341,7 +366,12 @@ export default function BugReportModal({ open, onClose }) {
                   className="settings-primary"
                   disabled={submitting || !endpoint}
                 >
-                  {submitting ? "Submitting..." : "Create GitHub Issue"}
+                  {submitting ? (
+                    <>
+                      <Loader2 className="bug-report-spinner" />
+                      Submitting...
+                    </>
+                  ) : "Create GitHub Issue"}
                 </button>
               </div>
             </form>

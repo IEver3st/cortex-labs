@@ -1,16 +1,18 @@
 import React, { useState, useRef, useCallback } from "react";
 import { motion } from "motion/react";
-import { ChevronRight, Upload, X, Plus } from "lucide-react";
+import { ChevronRight, Upload, X, Plus, Copy, RotateCcw } from "lucide-react";
+import { Input } from "./ui/input";
 function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
 const safeCn = (...args) => classNames(...args);
 
-export function CyberPanel({ children, collapsed, isBooting, statusBar }) {
+export function CyberPanel({ children, collapsed, isBooting, statusBar, footer, tabs, activeTab, onTabChange }) {
+  const hasTabs = Boolean(tabs && tabs.length > 0);
   return (
     <motion.aside
-      className="cyber-panel"
+      className={safeCn("cyber-panel", hasTabs && "cyber-panel--tabbed")}
       data-collapsed={collapsed || undefined}
       initial={{ opacity: 0, x: -12 }}
       animate={
@@ -22,11 +24,46 @@ export function CyberPanel({ children, collapsed, isBooting, statusBar }) {
       }
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
     >
+      {hasTabs && (
+        <nav className="cyber-tab-rail" role="tablist">
+          {tabs.map((tab) => {
+            const TabIcon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                aria-controls={`cyber-tab-panel-${tab.id}`}
+                className={safeCn("cyber-tab-btn", activeTab === tab.id && "cyber-tab-btn--active")}
+                onClick={() => onTabChange?.(tab.id)}
+                title={tab.label}
+              >
+                {TabIcon && <TabIcon className="cyber-tab-icon" />}
+              </button>
+            );
+          })}
+        </nav>
+      )}
       <div className="cyber-panel-scroll">
         {children}
       </div>
+      {footer}
       {statusBar}
     </motion.aside>
+  );
+}
+
+export function CyberTabPanel({ id, active, children }) {
+  return (
+    <div
+      id={`cyber-tab-panel-${id}`}
+      role="tabpanel"
+      className={safeCn("cyber-tab-panel", active && "cyber-tab-panel--active")}
+      aria-hidden={!active}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -106,6 +143,50 @@ export function CyberCard({ children, className }) {
   return (
     <div className={safeCn("cs-card", className)}>
       {children}
+    </div>
+  );
+}
+
+export function ColorRow({ label, value, onChange, onReset, onCopy, swatches, pickerLabel, resetTitle }) {
+  return (
+    <div className="cs-color-row">
+      <div className="cs-color-row-header">
+        <span className="cs-color-row-label">{label}</span>
+        <div className="cs-color-row-controls">
+          <div className="color-swatch-wrapper cs-color-row-swatch">
+            <div className="color-swatch" style={{ background: value }} />
+            <input
+              type="color"
+              value={value}
+              onChange={(event) => onChange(event.currentTarget.value)}
+              className="color-picker-native"
+              aria-label={pickerLabel}
+            />
+          </div>
+          <Input
+            className="flex-1 h-7 bg-[var(--mg-input-bg)] border-[var(--mg-border)] text-[var(--mg-fg)] text-[10px]"
+            style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
+            value={value}
+            onChange={(event) => onChange(event.currentTarget.value)}
+          />
+          <button type="button" className="cs-copy-btn" onClick={() => onCopy(value)} title="Copy hex"><Copy className="h-3 w-3" /></button>
+          <button
+            type="button"
+            className="cs-color-row-reset"
+            onClick={onReset}
+            title={resetTitle}
+          >
+            <RotateCcw className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+      {swatches && swatches.length > 0 && (
+        <div className="cs-swatches cs-swatches--compact">
+          {swatches.map((color) => (
+            <button key={color} className="cs-swatch-dot cs-swatch-dot--sm" style={{ background: color }} onClick={() => onChange(color)} title={color} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

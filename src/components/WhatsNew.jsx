@@ -35,10 +35,55 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
   const modalRef = useRef(null);
   const primaryRef = useRef(null);
   const copiedTimerRef = useRef(null);
+  const previouslyFocused = useRef(null);
 
   useEffect(() => () => {
     if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
   }, []);
+
+  // Body scroll lock
+  useEffect(() => {
+    if (!visible) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prevOverflow; };
+  }, [visible]);
+
+  // Focus management: save/restore focus, focus primary on open
+  useEffect(() => {
+    if (!visible) return;
+    previouslyFocused.current = document.activeElement;
+    const t = setTimeout(() => primaryRef.current?.focus(), 100);
+    return () => {
+      clearTimeout(t);
+      previouslyFocused.current?.focus?.();
+    };
+  }, [visible]);
+
+  // Focus trap
+  useEffect(() => {
+    if (!visible || !modalRef.current) return;
+    const handler = (e) => {
+      if (e.key !== "Tab") return;
+      const modal = modalRef.current;
+      if (!modal) return;
+      const focusable = modal.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [visible]);
 
   useEffect(() => {
     if (forceOpen) {
@@ -63,7 +108,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
   useEffect(() => {
     if (!visible) return;
     const handler = (e) => {
-      if (e.key === "Escape") handleDismiss();
+      if (e.key === "Escape") { e.preventDefault(); handleDismiss(); }
       if (e.key === "Enter" && document.activeElement === primaryRef.current) handleDismiss();
     };
     window.addEventListener("keydown", handler);
@@ -177,6 +222,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                   className="cs-wn-close"
                   onClick={handleDismiss}
                   aria-label="Close"
+                  title="Close"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -239,6 +285,15 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.12 + i * 0.04, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                         onClick={() => item.desc && setExpandedIdx(isExpanded ? -1 : globalIdx)}
+                        onKeyDown={(e) => {
+                          if (item.desc && (e.key === "Enter" || e.key === " ")) {
+                            e.preventDefault();
+                            setExpandedIdx(isExpanded ? -1 : globalIdx);
+                          }
+                        }}
+                        role={item.desc ? "button" : undefined}
+                        tabIndex={item.desc ? 0 : undefined}
+                        aria-expanded={item.desc ? isExpanded : undefined}
                         style={{ cursor: item.desc ? "pointer" : "default" }}
                       >
                         <div className="cs-wn-row-main">
@@ -274,6 +329,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                     type="button"
                     className="cs-wn-show-toggle"
                     onClick={() => setShowAll((p) => !p)}
+                    aria-expanded={showAll}
                   >
                     {showAll ? "Show less" : `Show all (${allItems.length})`}
                   </button>
@@ -302,5 +358,6 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
     </AnimatePresence>
   );
 
+  if (typeof document === "undefined") return null;
   return createPortal(modal, document.body);
 }

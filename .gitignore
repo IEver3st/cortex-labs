@@ -55,6 +55,7 @@ AGENTS.md
 .claude/
 .cursor/
 .codex/
+.devin/
 .windsurf/
 .v0/
 .bolt/
@@ -87,3 +88,10 @@ tools/codewalker-bridge/obj/
 /tmp*
 /replace_buttons*.cjs
 /diff.patch
+
+# One-off scratch / reference files not needed for production build
+/colorpalette.md
+/fix-css.ps1
+/*.scratch.*
+/notes*.md
+/scratch*

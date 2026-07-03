@@ -1,3 +1,5 @@
+import { applyWatermarkToDataUrl } from "./watermark";
+
 function delay(ms) {
   const waitMs = Number(ms);
   if (!Number.isFinite(waitMs) || waitMs <= 0) return Promise.resolve();
@@ -8,6 +10,7 @@ export async function captureTemporaryViewerFrame(viewerApi, {
   presetKey = "angle",
   zoomFactor = 1,
   delayMs = 0,
+  watermark = null,
 } = {}) {
   if (!viewerApi?.captureScreenshot) return null;
 
@@ -21,7 +24,11 @@ export async function captureTemporaryViewerFrame(viewerApi, {
       viewerApi.setZoom?.(zoomFactor);
     }
     await delay(delayMs);
-    return viewerApi.captureScreenshot() || null;
+    let dataUrl = viewerApi.captureScreenshot() || null;
+    if (dataUrl && watermark?.enabled) {
+      dataUrl = await applyWatermarkToDataUrl(dataUrl, watermark);
+    }
+    return dataUrl;
   } finally {
     if (viewState && viewerApi.restoreViewState) {
       viewerApi.restoreViewState(viewState);

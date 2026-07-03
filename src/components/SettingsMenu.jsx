@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Sun, Moon } from "lucide-react";
+import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Sun, Moon, Stamp } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { exists as fsExists } from "@tauri-apps/plugin-fs";
 import appMeta from "../../package.json";
@@ -22,6 +22,13 @@ import {
   normalizeTemplateMarkerPickModifier,
   normalizeTemplateMarkerRegenerateBehavior,
 } from "../lib/template-marker-utils";
+import {
+  DEFAULT_WATERMARK,
+  WATERMARK_FONTS,
+  WATERMARK_POSITIONS,
+  normalizeWatermarkConfig,
+  renderWatermarkPreview,
+} from "../lib/watermark";
 
 /* ─── Built-in defaults (canonical source) ─── */
 const BUILT_IN_DEFAULTS = {
@@ -52,6 +59,7 @@ const BUILT_IN_DEFAULTS = {
   legacyLayersLayout: false,
   templateMarkerPickModifier: DEFAULT_TEMPLATE_MARKER_PICK_MODIFIER,
   templateMarkerRegenerateBehavior: DEFAULT_TEMPLATE_MARKER_REGENERATE_BEHAVIOR,
+  watermark: { ...DEFAULT_WATERMARK },
 };
 
 function sanitizeStoredDefaults(stored) {
@@ -145,6 +153,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   const [portalNode, setPortalNode] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [previewFolderExists, setPreviewFolderExists] = useState(true);
+  const [watermarkPreview, setWatermarkPreview] = useState("");
   const updater = useUpdateChecker();
 
   const [draft, setDraft] = useState(() => getStoredDefaults());
@@ -168,6 +177,22 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
     setHotkeysDraft({ ...DEFAULT_HOTKEYS });
     setConfirmReset(false);
   };
+
+  const updateWatermark = useCallback((key, value) => {
+    setDraft((prev) => ({
+      ...prev,
+      watermark: { ...prev.watermark, [key]: value },
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (!open || activeSection !== "watermark") return;
+    let cancelled = false;
+    renderWatermarkPreview(draft.watermark).then((url) => {
+      if (!cancelled) setWatermarkPreview(url);
+    });
+    return () => { cancelled = true; };
+  }, [open, activeSection, draft.watermark]);
 
   useEffect(() => {
     if (!open) return;
@@ -236,6 +261,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
       { id: "viewer", label: "Viewer", description: "Interaction and rendering defaults.", icon: Car },
       { id: "hotkeys", label: "Shortcuts", description: "Global keyboard configurations.", icon: Clock },
       { id: "appearance", label: "Design", description: "Color schemes and interface aesthetics.", icon: Palette },
+      { id: "watermark", label: "Watermark", description: "Automatic preview watermarks.", icon: Stamp },
       { id: "experimental", label: "Experimental", description: "Beta features and diagnostic tools.", icon: FlaskConical },
       { id: "about", label: "About", description: "Version info and release notes.", icon: Info },
     ],
@@ -462,13 +488,11 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                       <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Session Persistence</div>
                                       <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Show recent activity on home screen</div>
                                     </div>
-                                    <button
-                                      type="button"
-                                      className={`settings-toggle ${draft.showRecents !== false ? "is-on" : ""}`}
-                                      onClick={toggleShowRecents}
-                                    >
-                                      <span className="settings-toggle-dot" />
-                                    </button>
+                                    <Toggle
+                                      checked={draft.showRecents !== false}
+                                      onChange={toggleShowRecents}
+                                      ariaLabel="Toggle recent activity"
+                                    />
                                   </div>
                                 </section>
 
@@ -498,7 +522,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                           <button
                                             type="button"
                                             className="settings-mini"
-                                            style={{ color: 'var(--mg-destructive)', borderColor: 'oklch(0.704 0.191 22.216 / 20%)' }}
+                                            style={{ color: 'var(--mg-destructive)', borderColor: 'color-mix(in srgb, var(--mg-destructive) 20%, transparent)' }}
                                             onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
                                           >
                                             Clear
@@ -524,7 +548,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                           <button
                                             type="button"
                                             className="settings-mini"
-                                            style={{ color: 'var(--mg-destructive)', borderColor: 'oklch(0.704 0.191 22.216 / 20%)' }}
+                                            style={{ color: 'var(--mg-destructive)', borderColor: 'color-mix(in srgb, var(--mg-destructive) 20%, transparent)' }}
                                             onClick={() => setDraft((p) => ({ ...p, variantExportFolder: "" }))}
                                           >
                                             Clear
@@ -538,39 +562,24 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                         <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Auto Template Save Format</div>
                                         <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Choose which files are exported when templates auto-save</div>
                                       </div>
-                                      <div className="flex p-0.5" style={{ background: 'var(--mg-input-bg)', border: '1px solid var(--mg-border)', borderRadius: 'var(--mg-radius)' }}>
+                                    <div className="settings-seg">
                                         <button
                                           type="button"
-                                          className={`px-3 py-1 text-[9px] transition-all ${draft.autoTemplateExportFormat === "psd" ? "font-bold" : ""}`}
-                                          style={{
-                                            borderRadius: 'calc(var(--mg-radius) - 2px)',
-                                            background: draft.autoTemplateExportFormat === "psd" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
-                                            color: draft.autoTemplateExportFormat === "psd" ? 'var(--mg-primary)' : 'var(--mg-muted)'
-                                          }}
+                                          className={`settings-seg-btn ${draft.autoTemplateExportFormat === "psd" ? "is-on" : ""}`}
                                           onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "psd" }))}
                                         >
                                           PSD
                                         </button>
                                         <button
                                           type="button"
-                                          className={`px-3 py-1 text-[9px] transition-all ${draft.autoTemplateExportFormat === "png" ? "font-bold" : ""}`}
-                                          style={{
-                                            borderRadius: 'calc(var(--mg-radius) - 2px)',
-                                            background: draft.autoTemplateExportFormat === "png" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
-                                            color: draft.autoTemplateExportFormat === "png" ? 'var(--mg-primary)' : 'var(--mg-muted)'
-                                          }}
+                                          className={`settings-seg-btn ${draft.autoTemplateExportFormat === "png" ? "is-on" : ""}`}
                                           onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "png" }))}
                                         >
                                           PNG
                                         </button>
                                         <button
                                           type="button"
-                                          className={`px-3 py-1 text-[9px] transition-all ${draft.autoTemplateExportFormat === "psd_png" ? "font-bold" : ""}`}
-                                          style={{
-                                            borderRadius: 'calc(var(--mg-radius) - 2px)',
-                                            background: draft.autoTemplateExportFormat === "psd_png" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
-                                            color: draft.autoTemplateExportFormat === "psd_png" ? 'var(--mg-primary)' : 'var(--mg-muted)'
-                                          }}
+                                          className={`settings-seg-btn ${draft.autoTemplateExportFormat === "psd_png" ? "is-on" : ""}`}
                                           onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "psd_png" }))}
                                         >
                                           PSD + PNG
@@ -593,177 +602,89 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     </div>
                                     <div className="settings-row-note">Enabled in every viewer mode</div>
                                   </div>
-
-                                <div className="settings-row">
-                                  <div className="settings-row-label">Hide text labels</div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.hideRotText ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, hideRotText: !p.hideRotText }))}
-                                    aria-pressed={draft.hideRotText}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-
-                                <div className="settings-row">
-                                  <div className="settings-row-label">
-                                    <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Panel Camera Controls</div>
-                                    <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Move camera presets &amp; rotation to the side panel</div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.cameraControlsInPanel ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, cameraControlsInPanel: !p.cameraControlsInPanel }))}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-
-                                <div className="settings-row">
-                                  <div className="settings-row-label">
-                                    <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Legacy Layers Layout</div>
-                                    <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Place the layers panel at the bottom instead of the right side</div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.legacyLayersLayout ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, legacyLayersLayout: !p.legacyLayersLayout }))}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-                              </section>
-
-                              <section className="settings-panel">
-                                <div className="settings-panel-title">Render Effects</div>
-
-                                <div className="settings-row">
-                                  <div className="settings-row-label">
-                                    <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Ground Shadows</div>
-                                    <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Project a floor shadow under the vehicle in Studio viewers</div>
-                                  </div>
-                                  <Toggle
-                                    checked={draft.showShadows}
-                                    onChange={(v) => setDraft((p) => ({ ...p, showShadows: v }))}
-                                    ariaLabel="Toggle ground shadows"
-                                  />
-                                </div>
-
-                              </section>
-
-                              <section className="settings-panel">
-                                <div className="settings-panel-title">Template Marker Interaction</div>
-
-                                <div className="settings-row">
-                                  <div className="settings-row-label">
-                                    <div className="font-medium" style={{ color: "var(--mg-fg)" }}>
-                                      Marker Pick Modifier
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Hide Text Labels</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Suppress rotation gizmo text in the viewport</div>
                                     </div>
-                                    <div className="text-[9px] mt-0.5" style={{ color: "var(--mg-muted)" }}>
-                                      Hold this key while edit mode is active to pick chunks from the model or template preview.
-                                    </div>
-                                  </div>
-                                </div>
-                                <div
-                                  className="flex items-center gap-1 p-1"
-                                  style={{
-                                    border: "1px solid var(--mg-border)",
-                                    borderRadius: "var(--mg-radius)",
-                                    background: "rgba(31, 30, 29, 0.03)",
-                                  }}
-                                >
-                                  {[
-                                    ["alt", "Alt"],
-                                    ["shift", "Shift"],
-                                    ["ctrl", "Ctrl"],
-                                  ].map(([value, label]) => (
-                                    <button
-                                      key={value}
-                                      type="button"
-                                      className={`px-3 py-1 text-[9px] transition-all ${
-                                        draft.templateMarkerPickModifier === value ? "font-bold" : ""
-                                      }`}
-                                      style={{
-                                        borderRadius: "calc(var(--mg-radius) - 2px)",
-                                        background:
-                                          draft.templateMarkerPickModifier === value
-                                            ? "oklch(0.648 0.116 182.503 / 15%)"
-                                            : "transparent",
-                                        color:
-                                          draft.templateMarkerPickModifier === value
-                                            ? "var(--mg-primary)"
-                                            : "var(--mg-muted)",
-                                      }}
-                                      onClick={() =>
-                                        setDraft((prev) => ({
-                                          ...prev,
-                                          templateMarkerPickModifier: value,
-                                        }))
-                                      }
-                                    >
-                                      {label}
-                                    </button>
-                                  ))}
-                                </div>
-                              </section>
-                              </div>
-                            ) : null}
-
-                            {/* ─── Display (UI Scale) ─── */}
-                            {activeSection === "display" ? (
-                              <section className="settings-panel" id="settings-panel-display" aria-label="Display">
-                                <div className="settings-panel-title">Interface scaling</div>
-                                <div className="settings-row">
-                                  <div className="settings-row-label">
-                                    <div className="flex items-center gap-2">
-                                      <Monitor className="h-3 w-3 opacity-60" />
-                                      <span>UI Scale</span>
-                                    </div>
-                                  </div>
-                                  <div className="settings-scale-control">
-                                    <input
-                                      type="range"
-                                      className="settings-slider"
-                                      min={0.8}
-                                      max={1.4}
-                                      step={0.05}
-                                      value={clampUiScale(draft.uiScale)}
-                                      onChange={(e) => setDraft((p) => ({ ...p, uiScale: clampUiScale(parseFloat(e.target.value)) }))}
+                                    <Toggle
+                                      checked={draft.hideRotText}
+                                      onChange={(v) => setDraft((p) => ({ ...p, hideRotText: v }))}
+                                      ariaLabel="Toggle text labels"
                                     />
-                                    <span className="settings-scale-value">{Math.round(clampUiScale(draft.uiScale) * 100)}%</span>
                                   </div>
-                                </div>
-                                <div className="settings-row">
-                                  <div className="settings-row-note">
-                                    Adjusts the overall UI text and element sizes. Default is 100%.
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Panel Camera Controls</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Move camera presets &amp; rotation to the side panel</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.cameraControlsInPanel}
+                                      onChange={(v) => setDraft((p) => ({ ...p, cameraControlsInPanel: v }))}
+                                      ariaLabel="Toggle panel camera controls"
+                                    />
                                   </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="settings-mini"
-                                  style={{ marginTop: 4 }}
-                                  onClick={() => setDraft((p) => ({ ...p, uiScale: 1.0 }))}
-                                >
-                                  Reset to 100%
-                                </button>
-                                <div className="settings-row" style={{ marginTop: 16 }}>
-                                  <div className="settings-row-label">Show recent sessions</div>
-                                  <button
-                                    type="button"
-                                    className={`settings-toggle ${draft.showRecents ? "is-on" : ""}`}
-                                    onClick={() => setDraft((p) => ({ ...p, showRecents: !p.showRecents }))}
-                                    aria-pressed={draft.showRecents}
-                                  >
-                                    <span className="settings-toggle-dot" />
-                                  </button>
-                                </div>
-                                <div className="settings-row">
-                                  <div className="settings-row-note">
-                                    Hide the Recent list on the Home page when you want a cleaner launch screen.
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Legacy Layers Layout</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Place the layers panel at the bottom instead of the right side</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.legacyLayersLayout}
+                                      onChange={(v) => setDraft((p) => ({ ...p, legacyLayersLayout: v }))}
+                                      ariaLabel="Toggle legacy layers layout"
+                                    />
                                   </div>
-                                </div>
-                              </section>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Render Effects</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Ground Shadows</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Project a floor shadow under the vehicle in Studio viewers</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.showShadows}
+                                      onChange={(v) => setDraft((p) => ({ ...p, showShadows: v }))}
+                                      ariaLabel="Toggle ground shadows"
+                                    />
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Template Marker Interaction</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Marker Pick Modifier</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
+                                        Hold this key while edit mode is active to pick chunks from the model or template preview.
+                                      </div>
+                                    </div>
+                                    <div className="settings-seg">
+                                      {[
+                                        ["alt", "Alt"],
+                                        ["shift", "Shift"],
+                                        ["ctrl", "Ctrl"],
+                                      ].map(([value, label]) => (
+                                        <button
+                                          key={value}
+                                          type="button"
+                                          className={`settings-seg-btn ${draft.templateMarkerPickModifier === value ? "is-on" : ""}`}
+                                          onClick={() =>
+                                            setDraft((prev) => ({
+                                              ...prev,
+                                              templateMarkerPickModifier: value,
+                                            }))
+                                          }
+                                        >
+                                          {label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </section>
+                              </div>
                             ) : null}
 
                             {/* ─── Hotkeys ─── */}
@@ -774,9 +695,9 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     <div className="settings-panel-title">{category.label}</div>
                                     <div className="grid grid-cols-1 gap-1">
                                       {category.actions.map((action) => (
-                                <div key={action} className="settings-row hover:bg-white/[0.02] px-2 transition-colors gap-4 border-b last:border-none" style={{ borderColor: 'var(--mg-border)' }}>
+                                <div key={action} className="settings-row px-2 transition-colors gap-4 border-b last:border-none" style={{ borderColor: 'var(--mg-border)' }}>
                                           <div className="flex-1 min-w-0 py-2">
-                                            <div className="text-[10px] font-medium" style={{ color: 'oklch(0.985 0.002 286.375 / 80%)' }}>{HOTKEY_LABELS[action]}</div>
+                                            <div className="text-[10px] font-medium" style={{ color: 'var(--mg-fg)' }}>{HOTKEY_LABELS[action]}</div>
                                           </div>
                                           <HotkeyInput
                                             value={hotkeysDraft[action]}
@@ -807,13 +728,11 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                         <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Show 3D Grid</div>
                                         <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Display ground grid in the viewer</div>
                                       </div>
-                                      <button
-                                        type="button"
-                                        className={`settings-toggle ${draft.showGrid ? "is-on" : ""}`}
-                                        onClick={() => setDraft((p) => ({ ...p, showGrid: !p.showGrid }))}
-                                      >
-                                        <span className="settings-toggle-dot" />
-                                      </button>
+                                      <Toggle
+                                        checked={draft.showGrid}
+                                        onChange={(v) => setDraft((p) => ({ ...p, showGrid: v }))}
+                                        ariaLabel="Toggle 3D grid"
+                                      />
                                     </div>
                                   </section>
 
@@ -826,15 +745,11 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <Sun className="h-3 w-3" style={{ color: draft.darkMode ? 'var(--mg-muted)' : 'var(--mg-primary)', opacity: draft.darkMode ? 0.4 : 1, transition: 'all 0.2s ease' }} />
-                                      <button
-                                        type="button"
-                                        className={`settings-toggle ${draft.darkMode ? 'is-on' : ''}`}
-                                        onClick={() => setDraft((p) => ({ ...p, darkMode: !p.darkMode }))}
-                                        aria-pressed={draft.darkMode}
-                                        aria-label="Toggle dark mode"
-                                      >
-                                        <span className="settings-toggle-dot" />
-                                      </button>
+                                      <Toggle
+                                        checked={draft.darkMode}
+                                        onChange={(v) => setDraft((p) => ({ ...p, darkMode: v }))}
+                                        ariaLabel="Toggle dark mode"
+                                      />
                                       <Moon className="h-3 w-3" style={{ color: draft.darkMode ? 'var(--mg-primary)' : 'var(--mg-muted)', opacity: draft.darkMode ? 1 : 0.4, transition: 'all 0.2s ease' }} />
                                     </div>
                                   </div>
@@ -843,27 +758,17 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                       <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Window Controls Style</div>
                                       <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Select visual theme for window buttons</div>
                                     </div>
-                                    <div className="flex p-0.5" style={{ background: 'var(--mg-input-bg)', border: '1px solid var(--mg-border)', borderRadius: 'var(--mg-radius)' }}>
+                                    <div className="settings-seg">
                                       <button
                                         type="button"
-                                        className={`px-3 py-1 text-[9px] transition-all ${draft.windowControlsStyle !== "mac" ? "font-bold" : ""}`}
-                                        style={{
-                                          borderRadius: 'calc(var(--mg-radius) - 2px)',
-                                          background: draft.windowControlsStyle !== "mac" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
-                                          color: draft.windowControlsStyle !== "mac" ? 'var(--mg-primary)' : 'var(--mg-muted)'
-                                        }}
+                                        className={`settings-seg-btn ${draft.windowControlsStyle !== "mac" ? "is-on" : ""}`}
                                         onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "windows" }))}
                                       >
                                         Standard
                                       </button>
                                       <button
                                         type="button"
-                                        className={`px-3 py-1 text-[9px] transition-all ${draft.windowControlsStyle === "mac" ? "font-bold" : ""}`}
-                                        style={{
-                                          borderRadius: 'calc(var(--mg-radius) - 2px)',
-                                          background: draft.windowControlsStyle === "mac" ? 'oklch(0.648 0.116 182.503 / 15%)' : 'transparent',
-                                          color: draft.windowControlsStyle === "mac" ? 'var(--mg-primary)' : 'var(--mg-muted)'
-                                        }}
+                                        className={`settings-seg-btn ${draft.windowControlsStyle === "mac" ? "is-on" : ""}`}
                                         onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "mac" }))}
                                       >
                                         Elegant
@@ -909,25 +814,183 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                               </div>
                             ) : null}
 
+                            {/* ─── Watermark ─── */}
+                            {activeSection === "watermark" ? (
+                              <div className="space-y-6">
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Watermark Configuration</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Enable Watermark</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Automatically stamp previews with your text</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.watermark?.enabled}
+                                      onChange={(v) => updateWatermark("enabled", v)}
+                                      ariaLabel="Toggle watermark"
+                                    />
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Content</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Watermark Text</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Text to display on previews</div>
+                                    </div>
+                                    <input
+                                      className="settings-input flex-1"
+                                      value={draft.watermark?.text ?? ""}
+                                      onChange={(e) => updateWatermark("text", e.target.value)}
+                                      placeholder="© Your Name"
+                                    />
+                                  </div>
+
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Font Family</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Typeface for watermark text</div>
+                                    </div>
+                                    <select
+                                      className="settings-input"
+                                      value={draft.watermark?.font ?? "Inter"}
+                                      onChange={(e) => updateWatermark("font", e.target.value)}
+                                    >
+                                      {WATERMARK_FONTS.map((f) => (
+                                        <option key={f.value} value={f.value}>{f.label}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Font Size</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Size in pixels</div>
+                                    </div>
+                                    <div className="flex items-center gap-4 min-w-[200px]">
+                                      <input
+                                        type="range"
+                                        className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
+                                        style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
+                                        min={8}
+                                        max={120}
+                                        step={1}
+                                        value={draft.watermark?.fontSize ?? 32}
+                                        onChange={(e) => updateWatermark("fontSize", parseInt(e.target.value, 10))}
+                                      />
+                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{draft.watermark?.fontSize ?? 32}px</span>
+                                    </div>
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Appearance</div>
+                                  <div className="grid grid-cols-2 gap-4 mt-2">
+                                    <ColorField
+                                      label="Text Color"
+                                      value={draft.watermark?.color ?? "#ffffff"}
+                                      onChange={(value) => updateWatermark("color", value)}
+                                      onReset={() => updateWatermark("color", DEFAULT_WATERMARK.color)}
+                                    />
+                                  </div>
+
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Opacity</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Transparency of watermark text</div>
+                                    </div>
+                                    <div className="flex items-center gap-4 min-w-[200px]">
+                                      <input
+                                        type="range"
+                                        className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
+                                        style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
+                                        min={0}
+                                        max={1}
+                                        step={0.05}
+                                        value={draft.watermark?.opacity ?? 0.5}
+                                        onChange={(e) => updateWatermark("opacity", parseFloat(e.target.value))}
+                                      />
+                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{Math.round((draft.watermark?.opacity ?? 0.5) * 100)}%</span>
+                                    </div>
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Position &amp; Direction</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Position</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Where the watermark appears on the image</div>
+                                    </div>
+                                    <div className="settings-seg">
+                                      {WATERMARK_POSITIONS.map((p) => (
+                                        <button
+                                          key={p.value}
+                                          type="button"
+                                          className={`settings-seg-btn ${draft.watermark?.position === p.value ? "is-on" : ""}`}
+                                          onClick={() => updateWatermark("position", p.value)}
+                                          title={p.value}
+                                        >
+                                          {p.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Rotation</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Angle in degrees (-180 to 180)</div>
+                                    </div>
+                                    <div className="flex items-center gap-4 min-w-[200px]">
+                                      <input
+                                        type="range"
+                                        className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
+                                        style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
+                                        min={-180}
+                                        max={180}
+                                        step={1}
+                                        value={draft.watermark?.rotation ?? 0}
+                                        onChange={(e) => updateWatermark("rotation", parseInt(e.target.value, 10))}
+                                      />
+                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{draft.watermark?.rotation ?? 0}°</span>
+                                    </div>
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Live Preview</div>
+                                  <div className="rounded-lg overflow-hidden border" style={{ borderColor: 'var(--mg-border)', background: 'var(--mg-bg-elevated)' }}>
+                                    {watermarkPreview ? (
+                                      <img src={watermarkPreview} alt="Watermark preview" className="w-full h-auto block" />
+                                    ) : (
+                                      <div className="flex items-center justify-center h-48 text-[10px]" style={{ color: 'var(--mg-muted)' }}>
+                                        Loading preview...
+                                      </div>
+                                    )}
+                                  </div>
+                                </section>
+                              </div>
+                            ) : null}
+
                             {/* ─── Experimental ─── */}
                             {activeSection === "experimental" ? (
                               <div className="space-y-6">
-                                <section className="settings-panel" style={{ border: '1px solid oklch(0.704 0.191 22.216 / 15%)', background: 'oklch(0.704 0.191 22.216 / 4%)' }}>
+                                <section className="settings-panel" style={{ border: '1px solid color-mix(in srgb, var(--mg-destructive) 15%, transparent)', background: 'color-mix(in srgb, var(--mg-destructive) 4%, transparent)' }}>
                                   <div className="flex gap-4 items-start">
                                     <FlaskConical className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--mg-destructive)' }} />
                                     <div className="flex-1">
                                       <div className="font-bold uppercase text-[9px] tracking-[0.12em] mb-2" style={{ color: 'var(--mg-destructive)' }}>Beta Access Protocol</div>
                                       <div className="settings-row border-none p-0 mb-4">
                                         <div className="text-[10px] max-w-[28ch]" style={{ color: 'var(--mg-muted)' }}>Unlock unstable features and engineering tools</div>
-                                        <button
-                                          type="button"
-                                          className={`settings-toggle ${draft.experimentalSettings ? "is-on" : ""}`}
-                                          onClick={() => setDraft((p) => ({ ...p, experimentalSettings: !p.experimentalSettings }))}
-                                        >
-                                          <span className="settings-toggle-dot" />
-                                        </button>
+                                        <Toggle
+                                          checked={draft.experimentalSettings}
+                                          onChange={(v) => setDraft((p) => ({ ...p, experimentalSettings: v }))}
+                                          ariaLabel="Toggle experimental features"
+                                        />
                                       </div>
-                                      <div className="text-[9px] leading-relaxed italic" style={{ color: 'oklch(0.704 0.191 22.216 / 50%)' }}>
+                                      <div className="text-[9px] leading-relaxed italic" style={{ color: 'var(--mg-destructive)', opacity: 0.6 }}>
                                         Warning: These features are not production-ready. Enabling them may cause memory leaks or renderer crashes.
                                       </div>
                                     </div>
@@ -1126,7 +1189,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                           {confirmReset ? (
                             <div className="settings-confirm-overlay">
                               <div className="settings-confirm-content">
-                                <AlertTriangle className="h-4 w-4 text-orange-400" />
+                                <AlertTriangle className="h-4 w-4" style={{ color: 'var(--mg-destructive)' }} />
                                 <span>Are you sure? This cannot be undone.</span>
                               </div>
                               <div className="settings-confirm-actions">

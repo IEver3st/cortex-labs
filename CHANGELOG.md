@@ -4,7 +4,35 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
-## [4.0.0] - 2026-07-01
+## [4.0.0] - 2026-07-02 — ROAN
+
+> Named after the Roan Mountains / Roan Highlands on the Tennessee–North Carolina border.
+
+### Added
+- **Vehicle Slot Colors** - Per-slot color controls for primary, secondary, accent, and glass materials; paint each region of the vehicle independently instead of one flat body color. Available in Livery and All Textures modes
+- **CLMESH binary cache** - New `.clmesh` binary mesh format replaces the old JSON pipeline between the CodeWalker bridge and the viewer; smaller payloads, faster loads, and proper multi-UV channel support (UV2/UV3/UV4)
+- **Skeleton parsing** - YFT parser now reads skeleton/bone data, enabling correct skinning setup for models that rely on bone transforms
+- **Interactive Light Dome** - Drag-to-position hemisphere lighting control that adjusts both azimuth (0–360°) and elevation (0–90°) simultaneously from a single interactive SVG widget
+- **Preview watermarks** - Configurable text watermarks automatically stamped on preview captures; customize font family, font size, text color, opacity, position (corner/center/tiled), and rotation from Settings
+- **Context menus** - Right-click context menus throughout the UI with custom Cortex Studio styling and portal position guarding
+- **TIFF texture support** - Native TIFF decoding via UTIF for texture loading
+- **AVIF texture support** - AVIF added to supported texture formats
+- **Console log buffer** - Captures console output for optional inclusion in bug reports
+- **Workspace save-fail toast** - When localStorage runs out of space, a clear toast is shown instead of a silent failure
+
+### Changed
+- **YFT parsing pipeline** - Replaced JSON mesh output with `.clmesh` binary cache plus `manifest.json`; cache key bumped to `parse_yft_v5`
+- **File-open argument handling** - Full percent-decoding of `file://` URIs (not just `%20`) and resilient mutex access for pending open-file state
+- **CodeWalker bridge discovery** - Consolidated candidate search with publish output paths and on-demand source build fallback
+- **PDN decoding pipeline** - Paint.NET files now decode via dedicated Web Worker with Tauri native fallback for improved reliability and performance
+- **Texture loading pipeline** - Custom DDS parser with DXT1/DXT3/DXT5, BC4 (ATI1), BC5 (ATI2), BC7, and uncompressed format support (A8R8G8B8/A8B8G8R8/X8R8G8B8/A1R5G5B5/A8/L8) tried before Three.js DDSLoader fallback; signature-based format detection for DDS, PSD, PDN, and AI files; matches CodeWalker's TextureFormat enum
+- **Multi-angle preview capture** - Preview capture enhanced with selectable camera angles (Front, Back, Side, 3/4, Top), adjustable zoom factor, and progress indicator
+- **Camera framing** - Improved bounds-computation and auto-framing with persistent camera state across model swaps and preset switches
+
+### Fixed
+- **YTD staging** - Surface copy errors instead of silently ignoring failed YTD staging during conversion
+- **Poisoned mutex recovery** - Pending open-file state recovers from poisoned locks instead of panicking
+- **Camera preset bugs** - Fixed camera presets causing world tilt on 3/4 view followed by manual camera movement
 
 ---
 
