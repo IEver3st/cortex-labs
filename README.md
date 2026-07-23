@@ -1,200 +1,329 @@
-## Cortex Studio v4.0 — ROAN   
-![Cortex Studio UI](https://cdn.discordapp.com/attachments/1346902689744949270/1472021146311331871/image.png?ex=699af146&is=69999fc6&hm=6b2bf8b46a7498275f98db8eebed9bf07ec208901a893c1b59ddf2a89c0e56b0&)
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C1C41TSVBX)
+<div align="center">
 
 # Cortex Studio
-### The Ultimate Livery Development Environment for GTA V / FiveM
 
-Cortex Studio is a high-performance, real-time 3D livery previewer and development environment. It bridges the gap between your design software (Photoshop, paint.net, etc.) and the game engine, allowing for an instantaneous, iterative workflow.
+### A real-time 3D livery development environment for GTA V and FiveM
 
-Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/releases/latest)!
+Preview `.yft` vehicles, `.ydd` clothing models and layered textures without repeatedly launching the game. Cortex Studio keeps the design loop local, visual and immediate.
 
----
+[![Latest Release](https://img.shields.io/github/v/release/IEver3st/cortex-labs?display_name=tag&sort=semver)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/IEver3st/cortex-labs/total)](../../releases)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows)](../../releases/latest)
+[![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri)](https://tauri.app/)
+[![Licence](https://img.shields.io/github/license/IEver3st/cortex-labs)](./LICENSE)
 
-## New in v4.0 (ROAN)
+[Download](../../releases/latest) · [Report a bug](../../issues/new) · [View releases](../../releases)
 
-> Named after the Roan Mountains / Roan Highlands on the Tennessee–North Carolina border.
+</div>
 
-### Vehicle Slot Colors (v4.0)
-Per-slot color controls for primary, secondary, accent, and glass materials—paint each region of the vehicle independently instead of one flat body color. Available in Livery and All Textures modes.
+<!--
+Add a current screenshot or short GIF here.
+Recommended path: docs/media/cortex-studio-overview.png
+-->
 
-### CLMESH Binary Cache (v4.0)
-A new `.clmesh` binary mesh format replaces the old JSON pipeline between the CodeWalker bridge and the viewer. Smaller payloads, faster loads, and proper multi-UV channel support (UV2/UV3/UV4).
+## Overview
 
-### Skeleton Parsing (v4.0)
-The YFT parser now reads skeleton/bone data, enabling correct skinning setup for models that rely on bone transforms.
+Cortex Studio is a native desktop workspace for creating and reviewing GTA V and FiveM liveries.
 
-### Interactive Light Dome (v4.0)
-A drag-to-position hemisphere lighting widget that adjusts both azimuth (0–360°) and elevation (0–90°) simultaneously. Position the sun indicator on the dome to dial in the perfect lighting angle.
+It bridges the gap between design software and the game engine by loading vehicle or clothing assets directly, applying textures in real time and watching source files for changes. Save a texture in Photoshop, paint.net or another editor and the preview updates without a manual export-and-reload cycle.
 
-### Preview Watermarks (v4.0)
-Automatically stamp preview captures with configurable text watermarks. Choose font family, size, color, opacity, position (corner/center/tiled), and rotation from Settings.
-
-### Context Menus (v4.0)
-Right-click context menus throughout the UI with custom Cortex Studio styling.
-
-### Additional Texture Formats (v4.0)
-TIFF and AVIF texture support added alongside existing PSD, PNG, JPG, TGA, DDS, BMP, WebP, PDN, and AI formats.
-
-### Workspace Save-Fail Toast (v4.0)
-When localStorage runs out of space, you now get a clear toast instead of a silent failure.
-
-### PSD Variant Builder
-The dedicated environment for managing complex livery projects with multiple variants.
-
-- **PSD Native Workflow:** Load your Photoshop files directly. Cortex Studio parses layers and groups with full hierarchy support.
-- **Variant Management:** Create, duplicate, and rename variants. Each variant stores its own unique set of layer visibilities.
-- **IDE-Style Interface:** A professional layout featuring a variant sidebar, dual 3D/2D preview panes, and a comprehensive layer panel.
-- **Solo & Group Controls:** Quickly isolate layers or toggle entire groups.
-- **Batch Export:** Export all your variants at once to high-quality PNGs (up to 4K resolution) into a dedicated output folder.
-- **Real-time Compositing:** As you toggle layers in the panel, the 3D model updates instantly with the new composited texture.
-
-### Also improved in v4.0
-- **Custom DDS/BC7 Texture Decoder:** Purpose-built DDS parser with DXT1/DXT3/DXT5, BC4, BC5, BC7, and uncompressed format support. Replaces reliance on Three.js DDSLoader and matches CodeWalker's TextureFormat enum exactly.
-- **Multi-Angle Preview Capture:** Preview capture enhanced with selectable camera angles (Front, Back, Side, 3/4, Top), adjustable zoom factor, and progress indicator.
-- **Camera Framing & State Persistence:** Improved auto-framing with better bounds computation and persistent camera state across model swaps and preset switches.
-- **PDN Decoding:** Paint.NET files now decode via dedicated Web Worker with Tauri native fallback for improved reliability.
-
-### Also shipped in recent releases
-- **Model Shadows (v3.8):** Real-time shadow rendering for improved depth perception.
-- **Template Generator (beta) (v3.7):** Auto-create layered PSD templates directly from `.yft` models with live preview, manual marker selection (Alt/Ctrl/Shift + click), flexible `.psd`/`.png` exports, and cage wireframe overlay.
-
----
-
-## Key Features
-
-- **Vehicle Slot Colors:** Independent primary, secondary, accent, and glass color controls for accurate multi-region liveries.
-- **CLMESH Mesh Cache:** Binary `.clmesh` format for fast model loads with multi-UV channel support.
-- **Custom DDS/BC7 Decoder:** In-app DDS parsing with DXT1/3/5, BC4, BC5, BC7, and uncompressed format support.
-- **Interactive Light Dome:** Drag-to-position hemisphere lighting for simultaneous azimuth/elevation control.
-- **Multi-Angle Preview Capture:** Batch screenshot export from selectable camera angles with zoom and watermark support.
-- **Preview Watermarks:** Configurable text watermarks with font, color, opacity, position, and rotation controls.
-- **In-App Bug Reporting:** Submit bug reports with environment detection and optional console logs.
-- **Template Generator (beta):** Auto-generate layered PSD templates directly from `.yft` models with live preview and manual marker selection.
-- **PSD Variant Builder:** Manage complex livery projects with multiple variants, layer groups, and batch export to PNG.
-- **Live Texture Reloading:** Uses a native file watcher to detect saves in your design software and reloads textures in milliseconds.
-- **Five Powerful Viewing Modes:**
-    - **Livery Mode:** Intelligently auto-targets vehicle carpaint and livery materials.
-    - **All Textures:** Applies the loaded texture to every mesh on the model (great for checking templates).
-    - **EUP Mode:** Specialized support for Emergency Uniform Packs and clothing models (`.ydd`).
-    - **Multi-Model Viewer:** Compare two models side-by-side with independent texture controls.
-    - **Template Mode:** Dedicated workspace for template generation with cage wireframe overlay.
-- **Model Shadows:** Real-time shadow rendering for improved depth perception.
-- **Camera Framing:** Auto-framing with persistent camera state across model swaps.
-- **UI Scaling:** Adjustable interface scale for accessibility and high-DPI displays.
-- **Context Menus:** Right-click context menus throughout the UI.
-- **Workspace Persistence:** Recent projects restore their full state (model paths, textures, colors, camera positions) on relaunch.
-- **Native GTA V Support:** Direct parsing of `.yft` (vehicles) and `.ydd` (clothing) files, with skeleton/bone data.
-- **Full Camera Control:** Quick presets (Front, Side, 3/4, Top), center action, and optional WASD flight controls.
-- **Material Controls:** Fine-tune body and slot colors, background color, glossiness, and light intensity to see how your design looks in different conditions.
-- **Light & Dark Theme:** Branded light and dark modes with native system integration.
-- **Fully Local & Private:** No cloud dependencies, no accounts, no data leaves your machine.
-- **Tauri v2 Core:** Built on the latest Tauri framework for maximum performance and a tiny footprint.
-
----
-
-## Supported Files
-
-### Models
-- **.yft** (GTA V/FiveM Vehicles)
-- **.ydd** (GTA V/FiveM Clothing/EUP)
-
-### Textures
-- **.psd** (Photoshop - Recommended for Variants)
-- **.png, .jpg, .tga, .dds, .bmp, .webp, .tiff, .avif, .pdn, .ai**
-
----
+The application is built for livery creators who need rapid iteration, reliable model support and a workspace that remembers where they left off.
 
 ## Why Cortex Studio
 
-Livery work is iterative. In-game testing is slow and breaks your flow. Cortex Studio keeps your preview live so you can focus on design and iteration instead of constant exporting, loading, and reloading.
+Traditional livery testing is slow:
 
----
+1. Export the texture.
+2. Move files into a resource.
+3. Start or restart the game.
+4. Spawn the vehicle.
+5. Find the problem.
+6. Repeat.
 
-## Limitations (By Design)
+Cortex Studio reduces that loop to:
 
-* **Not a material editor.** Cortex Studio doesn’t aim to replace a full material/shader workflow or in-game tuning.
-* **Preview-focused.** It’s built to **view liveries/textures in real time** on a 3D model—fast iteration, quick inspection, and instant feedback.
-* **Asset fidelity depends on the source files.** What you see is constrained by the model/material setup and naming conventions in the asset.
+1. Open the model.
+2. Open the texture.
+3. Edit and save.
+4. Review the result immediately.
 
----
+No account is required, and project data remains on the local machine.
 
-## Project Structure
+## Highlights
 
-- `src/` - React UI, Three.js viewer, and logic.
-- `src/components/VariantsPage.jsx` - The PSD Variant Builder.
-- `src/components/TemplateGenerationPage.jsx` - Template Generator workspace for auto-generating PSD templates.
-- `src/components/BugReportModal.jsx` - In-app bug report modal with environment detection.
-- `src/components/LightDome.jsx` - Interactive hemisphere lighting control.
-- `src/components/ContextMenu.jsx` - Radix-based context menu wrapper with Cortex styling.
-- `src/lib/yft.js` - High-performance YFT/YDD parser (with skeleton/bone support).
-- `src/lib/clmesh.js` - Parser for the `.clmesh` binary mesh cache emitted by the CodeWalker bridge.
-- `src/lib/dds.js` - Custom DDS parser with DXT/BC4/BC5/BC7 and uncompressed format support.
-- `src/lib/bc7.js` - BC7 block decoder.
-- `src/lib/camera-framing.js` - Camera bounds computation and auto-framing system.
-- `src/lib/camera-state.js` - Camera state clone/sync for persistence across model swaps.
-- `src/lib/watermark.js` - Preview watermark configuration and rendering.
-- `src/lib/bug-report.js` - Bug report payload builder with environment detection.
-- `src/lib/pdn.js` - Paint.NET file decoder with Web Worker and Tauri fallback.
-- `src-tauri/` - Rust-based Tauri v2 backend for file system access, file watching, and mesh cache management.
-- `tools/codewalker-bridge/` - C# sidecar that parses `.yft` files via CodeWalker.Core and emits `.clmesh` caches.
+### Native GTA V asset support
 
----
+- Load `.yft` vehicle fragments directly
+- Load `.ydd` clothing and EUP assets
+- Parse skeleton and bone data for models that depend on transforms
+- Cache parsed geometry in the compact `.clmesh` format
+- Preserve multiple UV channels for complex models
 
-## Getting Started
+### Real-time texture workflow
+
+- Watch texture files for changes and refresh the preview automatically
+- Apply textures to livery materials, all meshes or specialised EUP targets
+- Restore model paths, texture paths, camera position and project state
+- Pin frequently used projects for quicker access
+- Compare two models side by side in the multi-model viewer
+
+### Broad texture support
+
+| Category | Formats |
+|---|---|
+| Layered source files | PSD, PDN, AI |
+| Standard images | PNG, JPG, BMP, WebP, TIFF, AVIF |
+| Game and technical textures | DDS, TGA |
+
+Cortex Studio includes a purpose-built DDS decoder with support for DXT1, DXT3, DXT5, BC4, BC5, BC7 and uncompressed texture formats.
+
+### PSD Variant Builder
+
+Create multiple livery variants from a single layered Photoshop file.
+
+- Preserve layer and group hierarchy
+- Toggle individual layers or entire groups
+- Create, duplicate and rename variants
+- Store a different visibility state for each variant
+- Preview compositing changes directly on the 3D model
+- Batch export variants as high-resolution PNG files
+
+### Template Generator
+
+Generate a starting livery template directly from a model.
+
+- Inspect model geometry and UV data
+- Select or refine template regions manually
+- Display a cage wireframe overlay
+- Export layered PSD or PNG output
+- Preview the generated template before export
+
+> [!NOTE]
+> The Template Generator is a beta workflow. Complex or unusually authored assets may still require manual correction.
+
+### Preview and presentation tools
+
+- Independent primary, secondary, accent and glass material colours
+- Interactive hemisphere lighting control
+- Adjustable glossiness, lighting and background
+- Front, rear, side, three-quarter and top camera presets
+- Multi-angle batch captures
+- Configurable text watermarks
+- Model shadows
+- Optional WASD camera movement
+- Light and dark interface themes
+- Adjustable UI scaling
+
+## Supported files
+
+### Models
+
+```text
+.yft    GTA V and FiveM vehicle fragments
+.ydd    GTA V drawable dictionaries and EUP clothing assets
+```
+
+### Textures
+
+```text
+.psd  .png  .jpg  .tga  .dds  .bmp
+.webp .tiff .avif .pdn  .ai
+```
+
+## Installation
+
+1. Open the [latest release](../../releases/latest).
+2. Download the Windows installer.
+3. Run the installer.
+4. Launch Cortex Studio.
+5. Create a project and select a supported model.
+6. Select the texture or layered source file you want to preview.
+
+The packaged application includes the model-processing bridge required for normal use.
+
+## Typical workflow
+
+1. Create a new livery project.
+2. Select a `.yft` vehicle or `.ydd` clothing model.
+3. Select the texture you are editing.
+4. Choose the most appropriate viewing mode.
+5. Set representative vehicle colours and lighting.
+6. Edit the source file in your preferred design application.
+7. Save the file and inspect the refreshed preview.
+8. Capture presentation images or export PSD variants when finished.
+
+## Viewing modes
+
+| Mode | Purpose |
+|---|---|
+| Livery | Targets vehicle paint and livery materials |
+| All Textures | Applies the selected texture across the model for inspection |
+| EUP | Handles clothing and Emergency Uniform Pack workflows |
+| Multi-Model | Compares two models with independent texture controls |
+| Template | Provides template-generation tools and wireframe inspection |
+
+## Architecture
+
+Cortex Studio combines several runtimes where each is most useful:
+
+```text
+React interface
+      │
+      ├── Three.js real-time renderer
+      ├── PSD, PDN and image processing
+      ├── Custom DDS and BC7 decoding
+      │
+      ▼
+Tauri command layer
+      │
+      ├── Native file access
+      ├── File watching
+      ├── Project persistence
+      └── Application updates
+      │
+      ▼
+Rust desktop backend
+      │
+      ▼
+C# CodeWalker bridge
+      │
+      ▼
+.clmesh binary cache
+```
+
+The C# bridge parses GTA V assets through CodeWalker.Core and emits `.clmesh` data for the application. The JavaScript renderer then handles interactive material, texture and camera work.
+
+## Technology
+
+| Layer | Technology |
+|---|---|
+| Desktop runtime | Tauri 2 |
+| Native backend | Rust |
+| Asset bridge | C# and CodeWalker.Core |
+| Frontend | React 19 |
+| 3D rendering | Three.js |
+| Styling | Tailwind CSS 4 |
+| Build tooling | Vite 7 and Bun |
+| PSD processing | ag-psd |
+| Compression | pako |
+| Native integrations | Tauri file system, dialog, process and updater plugins |
+
+## Development
 
 ### Prerequisites
-- **Bun** (Fastest JS runtime & package manager)
-- **Rust toolchain** (Required for building the Tauri app)
-- **.NET 10 SDK** (Optional — only needed to build the CodeWalker bridge from source; bundled builds ship the executable)
 
-### Installation
-```bash
+- Bun
+- Rust stable toolchain
+- Tauri system prerequisites
+- .NET 10 SDK, only when rebuilding the CodeWalker bridge
+
+### Install dependencies
+
+```powershell
+git clone https://github.com/IEver3st/cortex-labs.git
+cd cortex-labs
 bun install
 ```
 
-### Development
-To run the full application with native features (recommended):
-```bash
+### Run the full desktop application
+
+```powershell
 bun run tauri dev
 ```
 
-To run just the UI (limited features, no file system access):
-```bash
+### Run the frontend only
+
+```powershell
 bun run dev
 ```
 
-### Building
-```bash
+Native file access, file watching and asset processing are limited when running only the frontend.
+
+### Build
+
+```powershell
 bun run tauri build
 ```
 
----
+### Tests
 
-## Workflow Tips
+```powershell
+bun run test:clmesh
+bun run test:pdn
+```
 
-- **Vehicle Slot Colors:** In Livery or All Textures mode, use the per-slot color cards to set primary, secondary, accent, and glass colors independently. Copy hex values between slots with the copy button.
-- **Light Dome:** Drag the sun indicator on the hemisphere widget to adjust both lighting direction and elevation simultaneously.
-- **Multi-Angle Previews:** Click the capture button, select which angles to export, set a zoom level, and generate batch screenshots in one pass.
-- **Preview Watermarks:** Configure automatic text watermarks in Settings → Watermark to stamp all preview captures.
-- **Bug Reports:** Click the bug icon in the toolbar to submit a report with environment details and optional console logs.
-- **UI Scaling:** Adjust the interface scale in Settings if you need larger or smaller UI elements.
-- **Template Generator:** Start a new project from the home screen to auto-generate a PSD template from your `.yft` model—no more manual UV mapping.
-- **Manual Marker Selection:** In Template Generator, use Alt/Ctrl/Shift + click to pick individual markers. Selections stay staged until you confirm.
-- **The Variant Sidebar:** Use it to create "Night", "High-Vis", or "Stealth" versions of your liveries in one project file.
-- **Double-Click Layers:** In the Variant Builder, double-click a layer in the panel to "Solo" it.
-- **Alt + 1-4:** Use these hotkeys to quickly switch between viewing modes.
-- **Custom Hotkeys:** Check the Settings menu to customize every action to your liking.
-- **Pinned Projects:** Pin frequently used projects to your home screen for quick access.
-- **Workspace Restoration:** Your project state (models, textures, camera position) auto-saves and restores when you reopen the app.
-- **Bridge Auto-Build:** If you're running from source and the CodeWalker bridge is missing, just open a `.yft`—Cortex will build it automatically if `dotnet` is on your PATH.
+## Project structure
 
----
+```text
+cortex-labs/
+├── src/
+│   ├── components/                 # Application workspaces and interface
+│   └── lib/
+│       ├── yft.js                  # Model parsing and asset logic
+│       ├── clmesh.js               # Binary mesh cache parser
+│       ├── dds.js                  # DDS format parser
+│       ├── bc7.js                  # BC7 decoder
+│       ├── pdn.js                  # Paint.NET decoding
+│       ├── camera-framing.js       # Automatic model framing
+│       ├── camera-state.js         # Camera persistence
+│       └── watermark.js            # Capture watermark rendering
+├── src-tauri/                      # Rust desktop backend
+├── tools/codewalker-bridge/        # C# model-processing sidecar
+├── docs/                           # Technical and user documentation
+└── third_party/                    # Third-party components and notices
+```
 
-## License
-MIT. Free forever. Developed with ❤️ for the GTA V modding community.
+## Limitations
 
----
+Cortex Studio is deliberately focused on preview and iteration.
+
+- It is not a full material or shader editor
+- Final appearance can differ from the game because the renderer is not GTA V
+- Preview fidelity depends on the source model, material names and UV layout
+- Template generation may require correction for unusual assets
+- Official builds are currently focused on Windows
+
+Use the application to shorten the design loop, then perform a final in-game check before release.
+
+## Privacy
+
+Cortex Studio is local-first.
+
+- No Cortex account is required
+- Models and textures are processed on the machine
+- Projects are stored locally
+- No cloud service is required for normal operation
+
+Bug reports are submitted only when the user explicitly chooses to send one.
 
 ## Contributing
-Contributions are welcome! Whether it is a bug fix, a new feature, or improved documentation, feel free to open an issue or a PR.
+
+Issues and pull requests are welcome.
+
+Useful contributions include:
+
+- Support for unusual model or texture cases
+- Parser and decoder tests
+- Performance improvements
+- Documentation corrections
+- Reproducible bug reports with non-copyrighted sample assets
+
+Before submitting a large change, open an issue so the implementation can be discussed first.
+
+## Licence
+
+Cortex Studio is released under the [MIT Licence](./LICENSE).
+
+Third-party components and their notices are documented in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
+## Disclaimer
+
+Cortex Studio is an independent community project. It is not affiliated with or endorsed by Rockstar Games, Take-Two Interactive, Cfx.re or Adobe.
+
+---
+
+<div align="center">
+
+Built to spend less time reloading and more time designing.
+
+</div>
