@@ -92,6 +92,7 @@ jobs:
           tagName: ${{ steps.release.outputs.tag }}
           releaseName: ${{ steps.release.outputs.name }}
           releaseBody: ${{ steps.release.outputs.notes }}
+          releaseCommitish: ${{ github.sha }}
           releaseDraft: ${{ steps.release.outputs.release_draft }}
           prerelease: false
           includeUpdaterJson: true
