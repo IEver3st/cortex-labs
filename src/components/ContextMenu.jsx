@@ -92,12 +92,14 @@ export function Content({
 
     window.addEventListener("resize", syncPosition);
     window.addEventListener("cortex:ui-scale-changed", syncPosition);
+    contentNode.addEventListener("animationend", syncPosition);
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
       if (settleTimer) window.clearTimeout(settleTimer);
       window.removeEventListener("resize", syncPosition);
       window.removeEventListener("cortex:ui-scale-changed", syncPosition);
+      contentNode.removeEventListener("animationend", syncPosition);
     };
   }, [contentNode, pointerRef, sideOffset]);
 

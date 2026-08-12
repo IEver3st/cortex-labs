@@ -4577,17 +4577,17 @@ html.dark .gen-preview-btn--close:hover {
    ═══════════════════════════════════════════════════════════════════════ */
 
 .ctx-menu-content {
-  min-width: 188px;
-  max-width: min(280px, calc(100vw - 16px));
-  padding: 4px;
+  min-width: calc(188px * var(--es-ui-scale));
+  max-width: min(calc(280px * var(--es-ui-scale)), calc(100vw - 16px));
+  padding: calc(4px * var(--es-ui-scale));
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--mg-fg) 14%, var(--mg-border));
-  border-radius: 4px;
+  border-radius: calc(4px * var(--es-ui-scale));
   background: color-mix(in srgb, var(--mg-input-bg) 94%, var(--mg-surface));
   box-shadow: 0 8px 22px color-mix(in srgb, var(--mg-fg) 13%, transparent);
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 10px;
+  font-size: calc(10px * var(--es-ui-scale));
   line-height: 1.2;
   transform-origin: var(--radix-context-menu-content-transform-origin);
   z-index: 10020;
@@ -4595,7 +4595,7 @@ html.dark .gen-preview-btn--close:hover {
 }
 
 .ctx-menu-content--global {
-  min-width: 214px;
+  min-width: calc(214px * var(--es-ui-scale));
 }
 
 @keyframes ctx-menu-in {
@@ -4611,11 +4611,11 @@ html.dark .gen-preview-btn--close:hover {
 
 .ctx-menu-item {
   display: flex;
-  min-height: 28px;
+  min-height: calc(28px * var(--es-ui-scale));
   align-items: center;
-  gap: 8px;
-  padding: 0 7px;
-  border-radius: 3px;
+  gap: calc(8px * var(--es-ui-scale));
+  padding: 0 calc(7px * var(--es-ui-scale));
+  border-radius: calc(3px * var(--es-ui-scale));
   color: var(--mg-fg);
   cursor: default;
   outline: none;
@@ -4626,8 +4626,8 @@ html.dark .gen-preview-btn--close:hover {
 }
 
 .ctx-menu-item > svg {
-  width: 13px;
-  height: 13px;
+  width: calc(13px * var(--es-ui-scale));
+  height: calc(13px * var(--es-ui-scale));
   flex: 0 0 auto;
   color: var(--mg-muted);
   stroke-width: 1.8;
@@ -4665,15 +4665,15 @@ html.dark .gen-preview-btn--close:hover {
 
 .ctx-menu-separator {
   height: 1px;
-  margin: 4px 5px;
+  margin: calc(4px * var(--es-ui-scale)) calc(5px * var(--es-ui-scale));
   background: color-mix(in srgb, var(--mg-border) 78%, transparent);
 }
 
 .ctx-menu-label {
-  padding: 5px 7px 3px;
+  padding: calc(5px * var(--es-ui-scale)) calc(7px * var(--es-ui-scale)) calc(3px * var(--es-ui-scale));
   color: var(--mg-muted);
   font-family: var(--font-hud);
-  font-size: 7.5px;
+  font-size: calc(7.5px * var(--es-ui-scale));
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -4683,10 +4683,10 @@ html.dark .gen-preview-btn--close:hover {
 .ctx-menu-shortcut {
   flex: 0 0 auto;
   margin-left: auto;
-  padding-left: 16px;
+  padding-left: calc(16px * var(--es-ui-scale));
   color: var(--mg-muted);
   font-family: var(--font-hud);
-  font-size: 8px;
+  font-size: calc(8px * var(--es-ui-scale));
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
   opacity: 0.72;
