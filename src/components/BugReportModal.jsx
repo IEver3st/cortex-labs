@@ -180,7 +180,12 @@ export default function BugReportModal({ open, onClose, initialType = "bug" }) {
     setFieldErrors(validation.fieldErrors);
     setFormError(validation.formError);
     setSubmitResult(null);
-    if (validation.formError || Object.keys(validation.fieldErrors).length > 0) return;
+    if (validation.formError || Object.keys(validation.fieldErrors).length > 0) {
+      requestAnimationFrame(() => {
+        dialogRef.current?.querySelector("[aria-invalid='true']")?.focus();
+      });
+      return;
+    }
 
     setSubmitting(true);
     try {

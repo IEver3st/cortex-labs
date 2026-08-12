@@ -6,6 +6,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "./yft";
 import { parseDDS } from "./dds";
+import {
+  updateFlyLookQuaternion,
+  updateFlyMovementVector,
+} from "./camera-flight.js";
 
 export {
   CAMERA_PRESETS,
@@ -1096,17 +1100,36 @@ export function setupWasdControls({
   controlsRef,
   fitRef,
   requestRenderRef,
+  domElement,
 }) {
   const state = wasdStateRef.current;
   const controls = controlsRef.current;
   const camera = cameraRef.current;
-  const up = new THREE.Vector3(0, 1, 0);
+  if (!state || !controls || !camera || !domElement) return undefined;
+
+  const worldUp = new THREE.Vector3(0, 1, 0);
   const forward = new THREE.Vector3();
   const right = new THREE.Vector3();
+  const move = new THREE.Vector3();
+  const lookForward = new THREE.Vector3();
+  const lookEuler = new THREE.Euler(0, 0, 0, "YXZ");
+  let lookDistance = 1;
+  let orbitEnabledBeforeLook = true;
+
+  state.precision = false;
+  state.looking = false;
+  state.lookButtonDown = false;
+  state.pointerLocked = false;
+
+  domElement.tabIndex = 0;
+  domElement.setAttribute(
+    "aria-label",
+    "3D model preview. Focus this view and use W A S D to fly, Q and E to move vertically, right mouse to look, Alt for precision, and Shift to boost.",
+  );
 
   const shouldIgnoreEvent = (event) => {
     if (event.defaultPrevented) return true;
-    if (event.metaKey || event.ctrlKey || event.altKey) return true;
+    if (event.metaKey || event.ctrlKey) return true;
     const target = event.target;
     if (!target || !(target instanceof Element)) return false;
     const tag = target.tagName;
@@ -1117,6 +1140,11 @@ export function setupWasdControls({
 
   const isActive = () =>
     state.forward || state.back || state.left || state.right || state.up || state.down;
+
+  const isEngaged = () =>
+    state.looking ||
+    document.pointerLockElement === domElement ||
+    document.activeElement === domElement;
 
   const stopLoop = () => {
     if (wasdFrameRef.current) {
@@ -1135,26 +1163,17 @@ export function setupWasdControls({
       return;
     }
 
-    const distance = fitRef.current?.distance || 4;
-    const baseSpeed = Math.max(distance * 0.6, 0.6);
-    const speed = baseSpeed * (state.boost ? 2.0 : 1.0);
-
-    camera.getWorldDirection(forward);
-    forward.y = 0;
-    if (forward.lengthSq() === 0) forward.set(0, 0, -1);
-    forward.normalize();
-    right.crossVectors(forward, up).normalize();
-
-    const move = new THREE.Vector3();
-    if (state.forward) move.add(forward);
-    if (state.back) move.addScaledVector(forward, -1);
-    if (state.right) move.add(right);
-    if (state.left) move.addScaledVector(right, -1);
-    if (state.up) move.add(up);
-    if (state.down) move.addScaledVector(up, -1);
+    updateFlyMovementVector({
+      target: move,
+      forward,
+      right,
+      quaternion: camera.quaternion,
+      state,
+      framingDistance: fitRef.current?.baseDistance || fitRef.current?.distance || 4,
+      deltaSeconds: delta,
+    });
 
     if (move.lengthSq() > 0) {
-      move.normalize().multiplyScalar(speed * delta);
       camera.position.add(move);
       controls.target.add(move);
       controls.update();
@@ -1179,11 +1198,13 @@ export function setupWasdControls({
       case "KeyQ": state.down = pressed; return true;
       case "KeyE": state.up = pressed; return true;
       case "ShiftLeft": case "ShiftRight": state.boost = pressed; return true;
+      case "AltLeft": case "AltRight": state.precision = pressed; return true;
       default: return false;
     }
   };
 
   const handleKeyDown = (event) => {
+    if (!isEngaged()) return;
     if (shouldIgnoreEvent(event)) return;
     if (!event.code) return;
     const wasActive = isActive();
@@ -1200,13 +1221,7 @@ export function setupWasdControls({
     if (!isActive()) stopLoop();
   };
 
-  window.addEventListener("keydown", handleKeyDown);
-  window.addEventListener("keyup", handleKeyUp);
-
-  return () => {
-    window.removeEventListener("keydown", handleKeyDown);
-    window.removeEventListener("keyup", handleKeyUp);
-    stopLoop();
+  const resetKeys = () => {
     state.forward = false;
     state.back = false;
     state.left = false;
@@ -1214,6 +1229,116 @@ export function setupWasdControls({
     state.up = false;
     state.down = false;
     state.boost = false;
+    state.precision = false;
+    stopLoop();
+  };
+
+  const syncLookTarget = () => {
+    camera.getWorldDirection(lookForward);
+    controls.target.copy(camera.position).addScaledVector(lookForward, lookDistance);
+  };
+
+  const finishLooking = ({ releasePointerLock = false } = {}) => {
+    if (!state.looking && !state.pointerLocked) return;
+    state.looking = false;
+    state.lookButtonDown = false;
+    state.pointerLocked = false;
+    domElement.classList.remove("is-fly-looking");
+    controls.enabled = orbitEnabledBeforeLook;
+    if (releasePointerLock && document.pointerLockElement === domElement) {
+      document.exitPointerLock?.();
+    }
+    requestRenderRef.current?.();
+  };
+
+  const handlePointerDown = (event) => {
+    domElement.focus({ preventScroll: true });
+    if (event.button !== 2) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    state.lookButtonDown = true;
+    state.looking = true;
+    orbitEnabledBeforeLook = controls.enabled;
+    controls.enabled = false;
+    lookDistance = THREE.MathUtils.clamp(
+      camera.position.distanceTo(controls.target),
+      Math.max((fitRef.current?.baseDistance || 1) * 0.05, 0.05),
+      Math.max((fitRef.current?.baseDistance || 1) * 10, 10),
+    );
+    camera.up.copy(worldUp);
+    domElement.classList.add("is-fly-looking");
+
+    try {
+      const lockRequest = domElement.requestPointerLock?.();
+      lockRequest?.catch?.(() => {});
+    } catch {
+      // Document-level movement still provides bounded drag-look when pointer lock is unavailable.
+    }
+  };
+
+  const handlePointerMove = (event) => {
+    if (!state.looking) return;
+    const movementX = Number.isFinite(event.movementX) ? event.movementX : 0;
+    const movementY = Number.isFinite(event.movementY) ? event.movementY : 0;
+    if (movementX === 0 && movementY === 0) return;
+
+    updateFlyLookQuaternion({
+      quaternion: camera.quaternion,
+      euler: lookEuler,
+      movementX,
+      movementY,
+    });
+    syncLookTarget();
+    controls.update();
+    requestRenderRef.current?.();
+  };
+
+  const handlePointerUp = (event) => {
+    if (event.button !== 2 || !state.lookButtonDown) return;
+    event.preventDefault();
+    finishLooking({ releasePointerLock: true });
+  };
+
+  const handlePointerLockChange = () => {
+    const ownsPointerLock = document.pointerLockElement === domElement;
+    if (ownsPointerLock) {
+      state.pointerLocked = true;
+      if (!state.lookButtonDown) finishLooking({ releasePointerLock: true });
+      return;
+    }
+    if (state.pointerLocked) finishLooking();
+  };
+
+  const handleWindowBlur = () => {
+    resetKeys();
+    finishLooking({ releasePointerLock: true });
+  };
+
+  const handleVisibilityChange = () => {
+    if (document.hidden) handleWindowBlur();
+  };
+
+  window.addEventListener("keydown", handleKeyDown, true);
+  window.addEventListener("keyup", handleKeyUp);
+  window.addEventListener("pointerup", handlePointerUp, true);
+  window.addEventListener("blur", handleWindowBlur);
+  document.addEventListener("pointermove", handlePointerMove);
+  document.addEventListener("pointerlockchange", handlePointerLockChange);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  domElement.addEventListener("pointerdown", handlePointerDown, true);
+
+  return () => {
+    window.removeEventListener("keydown", handleKeyDown, true);
+    window.removeEventListener("keyup", handleKeyUp);
+    window.removeEventListener("pointerup", handlePointerUp, true);
+    window.removeEventListener("blur", handleWindowBlur);
+    document.removeEventListener("pointermove", handlePointerMove);
+    document.removeEventListener("pointerlockchange", handlePointerLockChange);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    domElement.removeEventListener("pointerdown", handlePointerDown, true);
+    resetKeys();
+    finishLooking({ releasePointerLock: true });
   };
 }
 

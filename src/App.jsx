@@ -1255,6 +1255,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     if (!isActive) return undefined;
 
     const handleKeyDown = (event) => {
+      if (event.defaultPrevented) return;
       const target = event.target;
       if (target instanceof Element) {
         const tag = target.tagName;
@@ -2946,23 +2947,25 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   onAzimuthChange={handleLightAzimuthChange}
                   onElevationChange={handleLightElevationChange}
                 />
-                <MaterialSlider
-                  label="Intensity"
-                  value={lightIntensity}
-                  onChange={handleLightIntensityChange}
-                  min={0}
-                  max={3}
-                  step={0.05}
-                />
-                <button
-                  type="button"
-                  className="panel-cam-action-btn studio-lighting-reset"
-                  onClick={resetLighting}
-                  title="Reset lighting to defaults"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  Reset
-                </button>
+                <div className="studio-lighting-output">
+                  <MaterialSlider
+                    label="Intensity"
+                    value={lightIntensity}
+                    onChange={handleLightIntensityChange}
+                    min={0}
+                    max={3}
+                    step={0.05}
+                  />
+                  <button
+                    type="button"
+                    className="panel-cam-action-btn studio-lighting-reset"
+                    onClick={resetLighting}
+                    title="Reset lighting to defaults"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Reset
+                  </button>
+                </div>
               </div>
             </CyberSection>
 
@@ -3190,9 +3193,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
         {showHints ? (
           <div className="viewer-hints">
-            <span>Left drag: Rotate</span>
-            <span>Right drag: Pan</span>
-            <span>Scroll: Zoom</span>
+            <span><kbd>RMB</kbd> + mouse: Free look</span>
+            <span><kbd>WASD</kbd>: Fly · <kbd>Q/E</kbd>: Elevate</span>
+            <span><kbd>Alt</kbd>: Precision · <kbd>Shift</kbd>: Boost</span>
+            <span><kbd>LMB</kbd>: Orbit · Scroll: Zoom</span>
           </div>
         ) : null}
 

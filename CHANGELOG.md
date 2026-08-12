@@ -6,12 +6,28 @@ All notable changes to Cortex Studio are documented here.
 
 ## Unreleased
 
+### Changed
+- **Toolbar cleanup** - Removed the permanent Getting Started shortcut after initial setup while preserving the first-run onboarding flow
+- **Template Generator workbench** - Rebuilt the empty and loaded experiences around a compact inspector, dominant model canvas, optional Model/Template/Split views, contextual marker actions, and theme-aware Studio controls
+- **Model preview free camera** - WASD now follows the camera through full 3D space, right-mouse mouse-look rotates in place, Q/E adjusts elevation, and Alt/Shift provide precision and boosted movement without hijacking keys outside the focused preview
+- **Release notes workspace** - Rebuilt What's New as a compact release ledger with category filters, always-readable change details, responsive desktop layouts, and clearer keyboard and clipboard feedback
+
+### Fixed
+- **Interface scale adjustment** - Getting Started now previews slider values locally and applies the app-wide scale only after the interaction ends, keeping the control stable while dragging or using the keyboard
+
+---
+
+## [4.1.0] - 2026-08-12 — PRISM
+
+> Named for the way this release refracts one focused Studio workflow across personal appearances, vehicle liveries, EUP clothing, and format-aware template output.
+
 ### Added
 - **In-app feature requests** - The feedback modal now submits structured feature requests alongside bug reports, with request-specific prompts and GitHub labels
 - **Studio appearance presets** - Appearance settings now include 12 full-workbench palettes, instant unsaved preview, and independent System, Light, and Dark color schemes
 - **Automatic EUP template generation** - Template Generator now accepts `.ydd` clothing models, uses EUP UV/material behavior, omits vehicle-only PSD layers, and exports separate templates for multi-drawable dictionaries
 
 ### Changed
+- **Lighting controls** - Condensed the Environment lighting workspace into a compact direction instrument with inline angle refinement, segmented presets, and a single output row
 - **Feedback modal flow** - Bug reports now start with a clearer report-type choice, use a compact fixed action footer, and blur the workspace heavily without a dialog shadow
 - **First-run setup** - Replaced the multi-step Getting Started wizard with one focused destination choice, Home-first launch, and optional inline preference customization
 - **Settings workspace** - Reorganized Settings into compact task groups, moved experimental access into About, and reduced repeated navigation and version details

@@ -117,9 +117,9 @@ function buildTemplateExportOutputsForArtifacts(format, artifacts) {
 
 function getTemplateSaveButtonLabel(format) {
   const normalizedFormat = normalizeAutoTemplateExportFormat(format);
-  if (normalizedFormat === "png") return "Save PNG";
-  if (normalizedFormat === "psd_png") return "Save PSD + PNG";
-  return "Save PSD";
+  if (normalizedFormat === "png") return "Export PNG";
+  if (normalizedFormat === "psd_png") return "Export PSD + PNG";
+  return "Export PSD";
 }
 
 function normalizeWorkerBytes(rawBytes) {
@@ -1263,313 +1263,328 @@ export default function TemplateGenerationPage({
       return (bRect?.area || 0) - (aRect?.area || 0);
     });
 
-  const markerPromptEl = hasDetectedIslands && !isWindowTemplate ? (
-    <div
-      className={`tg-marker-prompt${compactHeight ? " tg-marker-prompt--compact" : ""}`}
-      aria-live="polite"
-    >
-      <div className="tg-marker-prompt-row">
-        <div id="tg-marker-placement-copy" className="tg-marker-prompt-copy">
-          <span className="tg-marker-prompt-eyebrow">
-            {isMarkerEditMode
-              ? markerSelectionConfirmed
-                ? "Edit marker placement"
-                : "Marker placement required"
-              : "Marker placement"}
-          </span>
-          <strong className="tg-marker-prompt-count">{markerSelectionCountLabel}</strong>
-          <span className="tg-marker-prompt-text">{markerSelectionHint}</span>
-          {isMarkerEditMode ? (
-            <span className="tg-marker-prompt-example">
-              <strong>Example:</strong> choose the door-handle or badge island, not every small island.
-            </span>
-          ) : null}
-        </div>
-        <div className="tg-marker-prompt-actions">
-          {isMarkerEditMode ? (
-            <>
-              <button
-                type="button"
-                className="tg-marker-prompt-btn is-primary"
-                onClick={handleConfirmMarkerSelection}
-                disabled={!pendingSelectedCount && !markerSelectionConfirmed}
-              >
-                Apply markers
-              </button>
-              <button
-                type="button"
-                className="tg-marker-prompt-btn"
-                onClick={handleClearPendingMarkerSelection}
-                disabled={!pendingSelectedCount}
-              >
-                Clear
-              </button>
-              {!pendingSelectedCount && !markerSelectionConfirmed ? (
-                <button
-                  type="button"
-                  className="tg-marker-prompt-btn"
-                  onClick={handleConfirmNoMarkers}
-                >
-                  Use no markers
-                </button>
-              ) : null}
-              {markerSelectionConfirmed ? (
-                <button
-                  type="button"
-                  className="tg-marker-prompt-btn"
-                  onClick={handleCancelMarkerEdit}
-                >
-                  Cancel
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="tg-marker-prompt-btn is-primary"
-                onClick={handleBeginMarkerEdit}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                className="tg-marker-prompt-btn"
-                onClick={handleResetMarkerSelection}
-                disabled={!confirmedSelectedCount && !markerSelectionConfirmed}
-              >
-                Reset
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-      <div
-        className={`tg-marker-tip${
-          isMarkerEditMode ? " is-active" : ""
-        }`}
-      >
-        <span className="tg-marker-tip-line">
-          {markerPickHint}
-        </span>
-      </div>
-    </div>
-  ) : null;
+  const outputFormatLabel =
+    autoTemplateExportFormat === "png"
+      ? "PNG"
+      : autoTemplateExportFormat === "psd_png"
+        ? "PSD + PNG"
+        : "PSD";
+  const exportDisabled = Boolean(
+    !psdBytes || generating || isSaving || markerPlacementRequired,
+  );
+  const exportDisabledReason = markerPlacementRequired
+    ? "Choose marker locations or continue with no markers before exporting."
+    : isWindowTemplate && selectedTemplatePartNames.length === 0
+      ? "Select at least one window part to generate a template."
+      : generationError
+        ? generationError
+        : generating
+          ? "The template is being rebuilt."
+          : !psdBytes
+            ? "A generated template is required before export."
+            : "";
+  const buildStatusLabel = modelLoadError || generationError
+    ? "Needs attention"
+    : generating || modelLoading
+      ? "Building"
+      : previewUrl
+        ? "Ready"
+        : "Preparing";
+  const statusSummary = previewUrl
+    ? `${layerCount} layer${layerCount === 1 ? "" : "s"} · ${targetCount} target${targetCount === 1 ? "" : "s"}`
+    : isWindowTemplate && selectedTemplatePartNames.length === 0
+      ? "Select model geometry to continue"
+      : "Waiting for generated output";
+  const markerProgressLabel = isMarkerEditMode
+    ? `${pendingSelectedCount} of ${detectedIslands.length} selected`
+    : `${confirmedSelectedCount} of ${detectedIslands.length} placed`;
+  const saveLocationLabel = outputFolder
+    ? getFileLabel(outputFolder, outputFolder)
+    : isTauriRuntime
+      ? "Choose folder"
+      : "Browser downloads";
 
   return (
-    <div className="tg-root">
-        <AnimatePresence mode="wait">
-          {!modelPath ? (
-          /* ━━━ Empty state: immersive CTA ━━━ */
-          <motion.div
-            key="tg-empty"
-            className="tg-empty"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35 }}
-          >
-            <div className="tg-empty-grid" aria-hidden />
-            <motion.div
-              className="tg-empty-cta"
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.12, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+    <main className={`tg-root tg-view-${viewMode}`} aria-label="Template Generator">
+      {!modelPath ? (
+        <section className="tg-empty" aria-labelledby="tg-empty-title">
+          <div className="tg-empty-content">
+            <span className="tg-empty-kicker">// TEMPLATE GENERATOR</span>
+            <h1 id="tg-empty-title">Build a template from a model.</h1>
+            <p>
+              Import a supported vehicle or clothing model, choose the geometry to paint,
+              and export the generated template.
+            </p>
+            <Button
+              type="button"
+              className="tg-empty-btn"
+              onClick={handleSelectModel}
+              disabled={!isTauriRuntime}
+              title={!isTauriRuntime ? "Model import is available in the desktop app." : undefined}
             >
-              <div className="tg-empty-icon">
-                <Sparkles className="w-7 h-7" />
-              </div>
-              <span className="tg-empty-kicker">UV workspace</span>
-              <h2 className="tg-empty-title">Build the template your model needs</h2>
-              <p className="tg-empty-desc">
-                Import a model, choose body or window graphics, and select geometry visually.<br />
-                No material naming convention required.
-              </p>
-              <div className="tg-empty-flow" aria-label="Template workflow">
-                <span><b>01</b> Import model</span>
-                <span><b>02</b> Pick focus</span>
-                <span><b>03</b> Export PSD</span>
-              </div>
-              <motion.button
-                type="button"
-                className="tg-empty-btn"
-                onClick={handleSelectModel}
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.96 }}
-              >
-                <Box className="w-4 h-4" />
-                Import .yft or .ydd model
-              </motion.button>
-            </motion.div>
-          </motion.div>
-        ) : (
-          /* ━━━ Active workspace: sidebar + viewer + preview ━━━ */
-          <motion.div
-            key="tg-active"
-            className="tg-workspace"
-            ref={workspaceRef}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.25 }}
-          >
-            {/* ── Guided template setup ── */}
-            <motion.aside
-              className={`tg-sidebar${generationError ? " has-error" : ""}${generating ? " is-generating" : ""}`}
-              aria-label="Template setup"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.08 }}
-            >
-              <div className="tg-sidebar-heading">
-                <div>
-                  <span className="tg-sidebar-kicker">Template builder</span>
-                  <h2>{isWindowTemplate ? "Window graphics" : templatePolicy.isEup ? "EUP texture" : "Body livery"}</h2>
-                </div>
-                <span className={`tg-build-status${generating ? " is-busy" : ""}`} role="status">
-                  {generating ? "Building" : previewUrl ? "Ready" : "Setup"}
-                </span>
-              </div>
+              <Box aria-hidden />
+              Import model
+            </Button>
+            <span className="tg-empty-formats">
+              .yft · .ydd{!isTauriRuntime ? " · Desktop app required" : ""}
+            </span>
+          </div>
+        </section>
+      ) : (
+        <div className="tg-workbench">
+          <header className="tg-workbench-toolbar">
+            <div className="tg-workbench-title">
+              <span>// TEMPLATE GENERATOR</span>
+              <strong title={modelPath}>{modelFileName}</strong>
+            </div>
+            <div className="tg-view-switch" role="group" aria-label="Viewport layout">
+              {["model", "template", "split"].map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={viewMode === mode ? "is-active" : ""}
+                  onClick={() => setViewMode(mode)}
+                  aria-pressed={viewMode === mode}
+                >
+                  {mode[0].toUpperCase() + mode.slice(1)}
+                </button>
+              ))}
+            </div>
+          </header>
 
-              <div className="tg-sidebar-scroll">
-                <section className="tg-step" aria-labelledby="tg-source-title">
-                  <div className="tg-step-heading">
-                    <span className="tg-step-number">01</span>
-                    <div>
-                      <h3 id="tg-source-title">Source model</h3>
-                      <p>Loaded and ready to inspect</p>
-                    </div>
+          <div className="tg-workbench-body">
+            <aside
+              className={`tg-inspector${generationError || modelLoadError ? " has-error" : ""}`}
+              aria-label="Template controls"
+            >
+              <div className="tg-inspector-scroll">
+                <section className="tg-inspector-section" aria-labelledby="tg-source-title">
+                  <div className="tg-section-heading">
+                    <h2 id="tg-source-title">Source</h2>
                   </div>
                   <div className="tg-source-row" title={modelPath}>
-                    <span className="tg-source-icon" aria-hidden>
+                    <span className="tg-icon-slot" aria-hidden>
                       {templatePolicy.isEup ? <Shirt /> : <Car />}
                     </span>
                     <span className="tg-source-copy">
                       <strong>{modelFileName}</strong>
-                      <small>{templatePolicy.label} model</small>
+                      <small>{templatePolicy.label} · .{templatePolicy.format}</small>
                     </span>
-                    <button type="button" onClick={handleSelectModel}>Replace</button>
-                    <button type="button" className="tg-icon-action" onClick={handleUnloadModel} aria-label="Unload model">
-                      <X />
-                    </button>
-                  </div>
-                  {templateSetWarning ? <p className="tg-inline-warning">{templateSetWarning}</p> : null}
-                </section>
-
-                <section className="tg-step" aria-labelledby="tg-purpose-title">
-                  <div className="tg-step-heading">
-                    <span className="tg-step-number">02</span>
-                    <div>
-                      <h3 id="tg-purpose-title">Template focus</h3>
-                      <p>Choose what artists will paint</p>
-                    </div>
-                  </div>
-                  <div className="tg-purpose-options" role="group" aria-label="Template focus">
                     <button
                       type="button"
-                      className={`tg-purpose-option${!isWindowTemplate ? " is-active" : ""}`}
+                      className="tg-text-action"
+                      onClick={handleSelectModel}
+                      disabled={!isTauriRuntime}
+                      title={!isTauriRuntime ? "Model replacement is available in the desktop app." : undefined}
+                    >
+                      Replace
+                    </button>
+                    <button
+                      type="button"
+                      className="tg-icon-action"
+                      onClick={handleUnloadModel}
+                      aria-label="Unload model"
+                      title="Unload model"
+                    >
+                      <X aria-hidden />
+                    </button>
+                  </div>
+                  {templateSetWarning ? (
+                    <p className="tg-inline-message is-warning" role="status">
+                      <AlertTriangle aria-hidden />
+                      {templateSetWarning}
+                    </p>
+                  ) : null}
+                </section>
+
+                <section className="tg-inspector-section" aria-labelledby="tg-focus-title">
+                  <div className="tg-section-heading">
+                    <h2 id="tg-focus-title">Focus</h2>
+                  </div>
+                  <div className="tg-choice-list" role="group" aria-label="Template focus">
+                    <button
+                      type="button"
+                      className={`tg-choice-row${!isWindowTemplate ? " is-active" : ""}`}
                       onClick={() => handleTemplatePurposeChange("body")}
                       aria-pressed={!isWindowTemplate}
                     >
-                      <Image aria-hidden />
-                      <span><strong>{templatePolicy.isEup ? "Garment" : "Body livery"}</strong><small>Automatic UV target</small></span>
+                      <span className="tg-choice-indicator" aria-hidden />
+                      <span>
+                        <strong>{templatePolicy.isEup ? "Garment texture" : "Body livery"}</strong>
+                        <small>Automatic UV target</small>
+                      </span>
                     </button>
                     <button
                       type="button"
-                      className={`tg-purpose-option${isWindowTemplate ? " is-active" : ""}`}
+                      className={`tg-choice-row${isWindowTemplate ? " is-active" : ""}`}
                       onClick={() => handleTemplatePurposeChange("windows")}
                       aria-pressed={isWindowTemplate}
                       disabled={templatePolicy.isEup}
-                      title={templatePolicy.isEup ? "Window templates are available for vehicle models." : "Select window geometry directly on the model."}
+                      title={
+                        templatePolicy.isEup
+                          ? "Window templates are available for vehicle models."
+                          : "Select window geometry directly on the model."
+                      }
                     >
-                      <PanelTop aria-hidden />
-                      <span><strong>Window graphics</strong><small>Pick geometry yourself</small></span>
+                      <span className="tg-choice-indicator" aria-hidden />
+                      <span>
+                        <strong>Window graphics</strong>
+                        <small>Pick geometry manually</small>
+                      </span>
                     </button>
                   </div>
                 </section>
 
-                {isWindowTemplate ? (
-                  <section className="tg-step is-active" aria-labelledby="tg-parts-title">
-                    <div className="tg-step-heading">
-                      <span className="tg-step-number">03</span>
-                      <div>
-                        <h3 id="tg-parts-title">Select window parts</h3>
-                        <p>{selectedPartCountLabel}</p>
-                      </div>
-                    </div>
-                    <div className="tg-pick-instruction">
-                      <MousePointer2 aria-hidden />
-                      <span><strong>Click a window in the model.</strong><small>Drag to rotate. Click again to remove a part.</small></span>
-                    </div>
-                    {suggestedWindowPartNames.length > 0 && selectedTemplatePartNames.length === 0 ? (
-                      <button
-                        type="button"
-                        className="tg-suggestion-btn"
-                        onClick={() => setSelectedTemplatePartNames(suggestedWindowPartNames)}
-                      >
-                        <Sparkles aria-hidden />
-                        Try likely window match
-                      </button>
-                    ) : null}
-                    <label className="tg-part-select-label">
-                      <span>Keyboard fallback</span>
-                      <select
-                        value=""
-                        onChange={(event) => {
-                          const meshName = event.target.value;
-                          if (!meshName) return;
-                          setSelectedTemplatePartNames((current) =>
-                            current.includes(meshName) ? current : [...current, meshName],
-                          );
-                        }}
-                      >
-                        <option value="">Add a model part…</option>
-                        {availableWindowPartNames.map((meshName) => (
-                          <option key={meshName} value={meshName}>{meshName}</option>
-                        ))}
-                      </select>
-                    </label>
-                    {selectedTemplatePartNames.length > 0 ? (
-                      <div className="tg-selected-parts" aria-label="Selected window parts">
-                        {selectedTemplatePartNames.map((meshName, index) => (
-                          <div className="tg-selected-part" key={meshName}>
-                            <span><small>Part {index + 1}</small><strong title={meshName}>{meshName}</strong></span>
-                            <button type="button" onClick={() => handleRemoveTemplatePart(meshName)} aria-label={`Remove ${meshName}`}>
-                              <X />
-                            </button>
-                          </div>
-                        ))}
-                        <button type="button" className="tg-clear-parts" onClick={() => setSelectedTemplatePartNames([])}>
-                          <Trash2 aria-hidden /> Clear selection
-                        </button>
-                      </div>
-                    ) : null}
-                  </section>
-                ) : (
-                  <section className="tg-step is-complete" aria-labelledby="tg-target-title">
-                    <div className="tg-step-heading">
-                      <span className="tg-step-number">03</span>
-                      <div>
-                        <h3 id="tg-target-title">UV target</h3>
-                        <p>Detected automatically</p>
-                      </div>
-                    </div>
-                    <div className="tg-auto-target">
-                      <Check aria-hidden />
-                      <span><strong>{templatePolicy.isEup ? "All garment geometry" : "Primary paint geometry"}</strong><small>No material-name setup required</small></span>
-                    </div>
-                  </section>
-                )}
-
-                <section className="tg-step" aria-labelledby="tg-output-title">
-                  <div className="tg-step-heading">
-                    <span className="tg-step-number">04</span>
-                    <div>
-                      <h3 id="tg-output-title">Output</h3>
-                      <p>PSD construction settings</p>
-                    </div>
-                    <SlidersHorizontal aria-hidden className="tg-step-heading-icon" />
+                <section className="tg-inspector-section" aria-labelledby="tg-target-title">
+                  <div className="tg-section-heading">
+                    <h2 id="tg-target-title">Target</h2>
+                    <span>{isWindowTemplate ? selectedPartCountLabel : "Automatic"}</span>
                   </div>
+                  {isWindowTemplate ? (
+                    <>
+                      <div className="tg-info-row">
+                        <MousePointer2 aria-hidden />
+                        <span>
+                          <strong>Select window geometry</strong>
+                          <small>Click the model to add or remove regions.</small>
+                        </span>
+                      </div>
+                      {suggestedWindowPartNames.length > 0 &&
+                      selectedTemplatePartNames.length === 0 ? (
+                        <button
+                          type="button"
+                          className="tg-secondary-action"
+                          onClick={() => setSelectedTemplatePartNames(suggestedWindowPartNames)}
+                        >
+                          <Check aria-hidden />
+                          Use likely window match
+                        </button>
+                      ) : null}
+                      <label className="tg-part-select-label">
+                        <span>Keyboard selection</span>
+                        <select
+                          value=""
+                          onChange={(event) => {
+                            const meshName = event.target.value;
+                            if (!meshName) return;
+                            setSelectedTemplatePartNames((current) =>
+                              current.includes(meshName)
+                                ? current
+                                : [...current, meshName],
+                            );
+                          }}
+                        >
+                          <option value="">Add a model part…</option>
+                          {availableWindowPartNames.map((meshName) => (
+                            <option key={meshName} value={meshName}>
+                              {meshName}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {selectedTemplatePartNames.length > 0 ? (
+                        <div className="tg-selected-parts" aria-label="Selected window parts">
+                          {selectedTemplatePartNames.map((meshName) => (
+                            <div className="tg-selected-part" key={meshName}>
+                              <span title={meshName}>{meshName}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveTemplatePart(meshName)}
+                                aria-label={`Remove ${meshName}`}
+                              >
+                                <X aria-hidden />
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            className="tg-clear-parts"
+                            onClick={() => setSelectedTemplatePartNames([])}
+                          >
+                            <Trash2 aria-hidden />
+                            Clear selection
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="tg-info-row is-confirmed">
+                      <Check aria-hidden />
+                      <span>
+                        <strong>
+                          {templatePolicy.isEup
+                            ? "All garment geometry"
+                            : "Primary paint geometry"}
+                        </strong>
+                        <small>Detected automatically from the loaded model.</small>
+                      </span>
+                    </div>
+                  )}
+                </section>
+
+                {!isWindowTemplate ? (
+                  <section className="tg-inspector-section" aria-labelledby="tg-markers-title">
+                    <div className="tg-section-heading">
+                      <h2 id="tg-markers-title">Markers</h2>
+                      <span>{hasDetectedIslands ? markerProgressLabel : "Detecting"}</span>
+                    </div>
+                    <div className="tg-marker-summary">
+                      <span className="tg-icon-slot" aria-hidden>
+                        <MousePointer2 />
+                      </span>
+                      <span>
+                        <strong>
+                          {hasDetectedIslands
+                            ? markerSelectionConfirmed
+                              ? markerProgressLabel
+                              : "Placement decision required"
+                            : "Analyzing UV regions"}
+                        </strong>
+                        <small>
+                          {hasDetectedIslands
+                            ? isMarkerEditMode
+                              ? "Choose only locations that need a paint marker."
+                              : "Confirmed markers are included in the template."
+                            : "Marker candidates appear after the first preview."}
+                        </small>
+                      </span>
+                      {hasDetectedIslands && !isMarkerEditMode ? (
+                        <button
+                          type="button"
+                          className="tg-text-action"
+                          onClick={handleBeginMarkerEdit}
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                    </div>
+                    {hasDetectedIslands ? (
+                      <label className="tg-color-row">
+                        <span>
+                          <strong>Marker colour</strong>
+                          <small>Functional template overlay</small>
+                        </span>
+                        <input
+                          type="color"
+                          value={globalMarkerColor}
+                          onChange={(event) => handleIslandColorChange(event.target.value)}
+                          aria-label="Marker colour"
+                        />
+                      </label>
+                    ) : null}
+                  </section>
+                ) : null}
+
+                <section className="tg-inspector-section" aria-labelledby="tg-output-title">
+                  <div className="tg-section-heading">
+                    <h2 id="tg-output-title">Output</h2>
+                    <span>{outputFormatLabel}</span>
+                  </div>
+                  <div className="tg-output-meta">
+                    <span>Format</span>
+                    <strong>{outputFormatLabel}</strong>
+                  </div>
+                  <div className="tg-field-label">Resolution</div>
                   <div className="tg-size-grid" role="group" aria-label="Template resolution">
                     {SIZE_OPTIONS.map((size) => (
                       <button
@@ -1578,316 +1593,448 @@ export default function TemplateGenerationPage({
                         className={exportSize === size ? "is-active" : ""}
                         onClick={() => setExportSize(size)}
                         aria-pressed={exportSize === size}
+                        aria-label={`${size} by ${size} pixels`}
                       >
                         {size >= 1024 ? `${size / 1024}K` : size}
                       </button>
                     ))}
                   </div>
+
                   <div className="tg-setting-list">
-                    {!isWindowTemplate && templatePolicy.supportsExteriorOnly ? (
-                      <button type="button" className="tg-setting-row" onClick={() => setExteriorOnly((value) => !value)} aria-pressed={exteriorOnly}>
-                        <Layers aria-hidden /><span><strong>Exterior only</strong><small>Hide interior geometry</small></span><i className={exteriorOnly ? "is-on" : ""} />
-                      </button>
-                    ) : null}
-                    <button type="button" className="tg-setting-row" onClick={() => setIncludeTemplateWireframe((value) => !value)} aria-pressed={includeTemplateWireframe}>
-                      <Box aria-hidden /><span><strong>Wireframe layer</strong><small>Trace UV boundaries</small></span><i className={includeTemplateWireframe ? "is-on" : ""} />
-                    </button>
-                    <button type="button" className="tg-setting-row" onClick={() => setUseWorldSpaceNormalsAsBase((value) => !value)} aria-pressed={worldSpaceNormalsBaseEnabled}>
-                      <Sparkles aria-hidden /><span><strong>Normal-map base</strong><small>Use world-space shading</small></span><i className={worldSpaceNormalsBaseEnabled ? "is-on" : ""} />
-                    </button>
+                    <div className="tg-setting-row">
+                      <Box aria-hidden />
+                      <span>
+                        <strong>Wireframe layer</strong>
+                        <small>Trace UV boundaries</small>
+                      </span>
+                      <Toggle
+                        checked={includeTemplateWireframe}
+                        onChange={setIncludeTemplateWireframe}
+                        ariaLabel="Include wireframe layer"
+                      />
+                    </div>
                   </div>
-                  {hasDetectedIslands && !isWindowTemplate ? (
-                    <label className="tg-marker-color-row">
-                      <span><strong>Marker color</strong><small>Detected detail islands</small></span>
-                      <input type="color" value={globalMarkerColor} onChange={(event) => handleIslandColorChange(event.target.value)} />
-                    </label>
-                  ) : null}
+
+                  <details className="tg-advanced">
+                    <summary>
+                      <span>Advanced</span>
+                      <ChevronDown aria-hidden />
+                    </summary>
+                    <div className="tg-setting-list">
+                      {templatePolicy.supportsExteriorOnly ? (
+                        <div className="tg-setting-row">
+                          <Layers aria-hidden />
+                          <span>
+                            <strong>Exterior only</strong>
+                            <small>Exclude interior geometry</small>
+                          </span>
+                          <Toggle
+                            checked={exteriorOnly}
+                            onChange={setExteriorOnly}
+                            ariaLabel="Generate exterior geometry only"
+                          />
+                        </div>
+                      ) : null}
+                      <div className="tg-setting-row">
+                        <Image aria-hidden />
+                        <span>
+                          <strong>Normal-map base</strong>
+                          <small>Use world-space shading</small>
+                        </span>
+                        <Toggle
+                          checked={worldSpaceNormalsBaseEnabled}
+                          onChange={setUseWorldSpaceNormalsAsBase}
+                          ariaLabel="Use world-space normals as the base"
+                        />
+                      </div>
+                    </div>
+                  </details>
                 </section>
               </div>
 
-              <div className="tg-sidebar-footer">
-                <button type="button" className="tg-output-folder" onClick={handleSelectOutputFolder} title={outputFolder || "Choose output folder"}>
-                  <FolderOpen aria-hidden />
-                  <span><small>Save location</small><strong>{outputFolder ? getFileLabel(outputFolder, outputFolder) : "Choose folder"}</strong></span>
-                </button>
-                {outputFolder ? (
-                  <button type="button" className="tg-icon-action" onClick={handleOpenOutputFolder} aria-label="Open output folder">
-                    <FolderOpen />
-                  </button>
-                ) : null}
-                <button type="button" className="tg-regenerate-btn" onClick={handleRegenerateTemplate} disabled={!canRegenerate} aria-label="Regenerate template">
-                  <RefreshCw className={generating ? "is-spinning" : ""} />
-                </button>
-                <button
-                  type="button"
-                  className="tg-save-primary"
-                  onClick={handleSaveTemplate}
-                  disabled={
-                    !psdBytes ||
-                    generating ||
-                    isSaving ||
-                    markerPlacementRequired
-                  }
-                  title={
-                    markerPlacementRequired
-                      ? "Choose marker locations or continue with no markers before saving."
-                      : undefined
-                  }
-                  aria-describedby={
-                    markerPlacementRequired ? "tg-marker-placement-copy" : undefined
-                  }
-                >
-                  <Download aria-hidden />
-                  {isSaving ? "Saving…" : saveButtonLabel}
-                </button>
-              </div>
-            </motion.aside>
-
-            {/* ── Model Viewer ── */}
-            <motion.div
-              className="tg-pane tg-pane--model"
-              initial={{ opacity: 0, scale: 0.985 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <div className="tg-pane-header">
-                <div>
-                  <span className="tg-pane-index">A</span>
-                  <span><strong>Model</strong><small>{isWindowTemplate ? "Select geometry" : "Inspect result"}</small></span>
-                </div>
-                <span className="tg-pane-meta">{isWindowTemplate ? selectedPartCountLabel : templatePolicy.label}</span>
-              </div>
-              <Viewer
-                modelPath={modelPath}
-                texturePath={previewUrl || ""}
-                textureReloadToken={lastGeneratedAt?.getTime() || 0}
-                textureTarget={isWindowTemplate ? selectedTextureTargets : templatePolicy.textureTarget}
-                textureMode={isWindowTemplate ? "everything" : templatePolicy.textureMode}
-                windowTexturePath=""
-                windowTextureTarget="none"
-                windowTextureReloadToken={0}
-                bodyColor={autoTemplateColor}
-                backgroundColor="#111214"
-                lightIntensity={1}
-                lightAzimuth={54}
-                lightElevation={46}
-                glossiness={0.5}
-                showGrid={false}
-                showWireframe={false}
-                liveryExteriorOnly={templatePolicy.supportsExteriorOnly && exteriorOnly}
-                wasdEnabled={false}
-                isActive={isActive}
-                includeTemplateGeometry
-                templateMarkerPickModifier={templateMarkerPickModifier}
-                onTemplateMarkerUvHover={!isWindowTemplate && isMarkerEditMode ? handleModelMarkerHover : undefined}
-                onTemplateMarkerUvLeave={!isWindowTemplate && isMarkerEditMode ? clearHoveredMarker : undefined}
-                onTemplateMarkerUvPick={!isWindowTemplate && isMarkerEditMode ? handleModelMarkerPick : undefined}
-                templatePartPickEnabled={isWindowTemplate}
-                selectedTemplatePartNames={selectedTemplatePartNames}
-                hoveredTemplatePartName={hoveredTemplatePartName}
-                onTemplatePartHover={isWindowTemplate ? handleTemplatePartHover : undefined}
-                onTemplatePartLeave={isWindowTemplate ? () => setHoveredTemplatePartName("") : undefined}
-                onTemplatePartPick={isWindowTemplate ? handleTemplatePartPick : undefined}
-                onModelInfo={handleModelInfo}
-                onReady={NOOP}
-                onTextureReload={NOOP}
-                onTextureError={NOOP}
-                onWindowTextureError={NOOP}
-                onModelError={NOOP}
-                onModelLoading={NOOP}
-                onFormatWarning={NOOP}
-              />
-              {isWindowTemplate ? (
-                <div className={`tg-part-coach${selectedTemplatePartNames.length ? " has-selection" : ""}`} role="status">
-                  <MousePointer2 aria-hidden />
-                  <span>
-                    <strong>{selectedTemplatePartNames.length ? "Selection updates live" : "Click the window geometry"}</strong>
-                    <small>{selectedTemplatePartNames.length ? "Add any other panes that share the artwork." : "Drag anywhere to rotate the model."}</small>
-                  </span>
-                </div>
-              ) : null}
-              {compactHeight && markerPromptEl}
-            </motion.div>
-
-            {/* ── Template Preview ── */}
-            <motion.div
-              className="tg-pane tg-pane--template"
-              initial={{ opacity: 0, scale: 0.985 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.06 }}
-            >
-              <div className="tg-pane-header">
-                <div>
-                  <span className="tg-pane-index">B</span>
-                  <span><strong>Template</strong><small>Live flattened preview</small></span>
-                </div>
-                <span className="tg-pane-meta">{previewUrl ? `${exportSize} × ${exportSize}` : "Waiting"}</span>
-              </div>
-              <div
-                ref={previewShellRef}
-                className={`tg-preview-shell${isMarkerEditMode ? " is-edit-mode" : ""}${
-                  markerSelectionPickingActive ? " is-pick-mode" : ""
-                }`}
-              >
-                <AnimatePresence mode="wait" initial={false}>
-                  {generationError ? (
-                    <motion.div
-                      key={`error-${generationError}`}
-                      className="tg-preview-state tg-preview-state--error"
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -4 }}
-                      transition={{ duration: 0.22, ease: "easeOut" }}
+              <footer className="tg-inspector-footer">
+                <div className="tg-save-destination">
+                  <span className="tg-field-label">Save to</span>
+                  <div>
+                    <button
+                      type="button"
+                      className="tg-location-action"
+                      onClick={handleSelectOutputFolder}
+                      title={outputFolder || saveLocationLabel}
+                      disabled={!isTauriRuntime}
                     >
-                      <AlertTriangle className="w-5 h-5" />
-                      <span>{generationError}</span>
-                    </motion.div>
-                  ) : isWindowTemplate && selectedTemplatePartNames.length === 0 ? (
-                    <motion.div
-                      key="window-selection-required"
-                      className="tg-preview-state tg-preview-state--selection"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                    >
-                      <PanelTop aria-hidden />
-                      <strong>Select a window part</strong>
-                      <span>Your UV template will appear here as soon as you click the model.</span>
-                    </motion.div>
-                  ) : previewUrl ? (
-                    <motion.img
-                      key={`preview-${lastGeneratedAt?.getTime() || previewUrl.length}`}
-                      src={previewUrl}
-                      alt="PSD preview"
-                      className="tg-preview-image"
-                      initial={{ opacity: 0, scale: 1.012, filter: "blur(6px)" }}
-                      animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-                      exit={{ opacity: 0, scale: 0.992, filter: "blur(5px)" }}
-                      transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-                    />
-                  ) : generating ? (
-                    <motion.div
-                      key="generating"
-                      className="tg-preview-state"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.22 }}
+                      <FolderOpen aria-hidden />
+                      <span>{saveLocationLabel}</span>
+                      <small>{outputFolder ? "Change" : isTauriRuntime ? "Choose" : ""}</small>
+                    </button>
+                    {outputFolder && isTauriRuntime ? (
+                      <button
+                        type="button"
+                        className="tg-icon-action"
+                        onClick={handleOpenOutputFolder}
+                        aria-label="Open output folder"
+                        title="Open output folder"
                       >
-                        <motion.div
-                          className="tg-gen-ring"
-                          animate={{ rotate: 360 }}
-                          transition={{ duration: 1.2, ease: "linear", repeat: Infinity }}
-                        />
-                      </motion.div>
-                  ) : (
-                    <motion.div
-                      key="idle"
-                      className="tg-preview-state"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      <Sparkles className="w-5 h-5" />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {showMarkerSelectionOverlay ? (
-                  <div
-                    className={`tg-preview-marker-overlay${
-                      markerSelectionPickingActive ? " is-pick-mode" : ""
-                    }`}
-                    style={markerOverlayStyle}
-                  >
-                    {markerOverlayMarkers.map((marker, index) => {
-                      const markerKey = marker?.key || `overlay-${index}`;
-                      const markerRect = getMarkerTextureRect(marker);
-                      if (!markerRect) return null;
-                      const markerSelected = pendingMarkerSelection[markerKey] === true;
-                      const markerLabel = marker?.label || `Marker ${index + 1}`;
-                      return (
-                        <button
-                          key={markerKey}
-                          type="button"
-                          className={`tg-preview-marker-hitbox${
-                            markerSelected ? " is-selected" : ""
-                          }${hoveredMarkerKey === markerKey ? " is-hovered" : ""}`}
-                          style={{
-                            left: `${(markerRect.x / exportSize) * previewViewport.size}px`,
-                            top: `${(markerRect.y / exportSize) * previewViewport.size}px`,
-                            width: `${(markerRect.width / exportSize) * previewViewport.size}px`,
-                            height: `${(markerRect.height / exportSize) * previewViewport.size}px`,
-                          }}
-                          onMouseEnter={() => setHoveredMarker(markerKey)}
-                          onMouseLeave={clearHoveredMarker}
-                          onClick={(event) => {
-                            if (!markerSelectionPickingActive) return;
-                            event.preventDefault();
-                            event.stopPropagation();
-                            handleTogglePendingMarkerSelection(markerKey);
-                          }}
-                          aria-label={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
-                          title={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
-                          tabIndex={markerSelectionPickingActive ? 0 : -1}
-                        />
-                      );
-                    })}
+                        <FolderOpen aria-hidden />
+                      </button>
+                    ) : null}
                   </div>
-                ) : null}
+                </div>
+                <div className="tg-export-actions">
+                  <button
+                    type="button"
+                    className="tg-icon-action tg-regenerate-btn"
+                    onClick={handleRegenerateTemplate}
+                    disabled={!canRegenerate}
+                    aria-label="Regenerate template"
+                    title="Regenerate template"
+                  >
+                    <RefreshCw className={generating ? "is-spinning" : ""} aria-hidden />
+                  </button>
+                  <Button
+                    type="button"
+                    className="tg-export-primary"
+                    onClick={handleSaveTemplate}
+                    disabled={exportDisabled}
+                    aria-describedby={exportDisabledReason ? "tg-export-reason" : undefined}
+                  >
+                    <Download aria-hidden />
+                    {isSaving ? "Exporting…" : saveButtonLabel}
+                  </Button>
+                </div>
+                {exportDisabledReason ? (
+                  <p id="tg-export-reason" className="tg-export-reason" aria-live="polite">
+                    {exportDisabledReason}
+                  </p>
+                ) : autoSavedPath ? (
+                  <p className="tg-export-reason is-success" title={autoSavedPath}>
+                    Latest template saved.
+                  </p>
+                ) : (
+                  <p className="tg-export-reason">Ready to export {outputFormatLabel}.</p>
+                )}
+              </footer>
+            </aside>
 
-                {!compactHeight && markerPromptEl}
+            <section className="tg-stage" aria-label="Template work area">
+              <div className="tg-canvases">
+                <section className="tg-pane tg-pane--model" aria-label="Model viewport">
+                  <header className="tg-pane-header">
+                    <div>
+                      <Box aria-hidden />
+                      <span>
+                        <strong>Model</strong>
+                        <small>{isWindowTemplate ? "Select geometry" : modelFileName}</small>
+                      </span>
+                    </div>
+                    <span className="tg-pane-meta">
+                      {isWindowTemplate ? selectedPartCountLabel : templatePolicy.label}
+                    </span>
+                  </header>
+                  <div className="tg-pane-content tg-model-shell">
+                    <Viewer
+                      modelPath={modelPath}
+                      texturePath={previewUrl || ""}
+                      textureReloadToken={lastGeneratedAt?.getTime() || 0}
+                      textureTarget={
+                        isWindowTemplate
+                          ? selectedTextureTargets
+                          : templatePolicy.textureTarget
+                      }
+                      textureMode={isWindowTemplate ? "everything" : templatePolicy.textureMode}
+                      windowTexturePath=""
+                      windowTextureTarget="none"
+                      windowTextureReloadToken={0}
+                      bodyColor={autoTemplateColor}
+                      backgroundColor="#111214"
+                      lightIntensity={1}
+                      lightAzimuth={54}
+                      lightElevation={46}
+                      glossiness={0.5}
+                      showGrid={false}
+                      showWireframe={false}
+                      liveryExteriorOnly={
+                        templatePolicy.supportsExteriorOnly && exteriorOnly
+                      }
+                      wasdEnabled={false}
+                      isActive={isActive && viewMode !== "template"}
+                      includeTemplateGeometry
+                      templateMarkerPickModifier={templateMarkerPickModifier}
+                      onTemplateMarkerUvHover={
+                        !isWindowTemplate && isMarkerEditMode
+                          ? handleModelMarkerHover
+                          : undefined
+                      }
+                      onTemplateMarkerUvLeave={
+                        !isWindowTemplate && isMarkerEditMode
+                          ? clearHoveredMarker
+                          : undefined
+                      }
+                      onTemplateMarkerUvPick={
+                        !isWindowTemplate && isMarkerEditMode
+                          ? handleModelMarkerPick
+                          : undefined
+                      }
+                      templatePartPickEnabled={isWindowTemplate}
+                      selectedTemplatePartNames={selectedTemplatePartNames}
+                      hoveredTemplatePartName={hoveredTemplatePartName}
+                      onTemplatePartHover={
+                        isWindowTemplate ? handleTemplatePartHover : undefined
+                      }
+                      onTemplatePartLeave={
+                        isWindowTemplate
+                          ? () => setHoveredTemplatePartName("")
+                          : undefined
+                      }
+                      onTemplatePartPick={
+                        isWindowTemplate ? handleTemplatePartPick : undefined
+                      }
+                      onModelInfo={handleModelInfo}
+                      onReady={NOOP}
+                      onTextureReload={NOOP}
+                      onTextureError={NOOP}
+                      onWindowTextureError={NOOP}
+                      onModelError={(message) => {
+                        setModelLoadError(message || "Unable to load the model.");
+                        setModelLoading(false);
+                      }}
+                      onModelLoading={(loading) => {
+                        setModelLoading(Boolean(loading));
+                        if (loading) setModelLoadError("");
+                      }}
+                      onFormatWarning={NOOP}
+                    />
+                    {modelLoading ? (
+                      <div className="tg-canvas-state is-compact" role="status">
+                        <span className="tg-spinner" aria-hidden />
+                        Loading model…
+                      </div>
+                    ) : modelLoadError ? (
+                      <div className="tg-canvas-state is-error" role="alert">
+                        <AlertTriangle aria-hidden />
+                        <span>
+                          <strong>Model could not be loaded</strong>
+                          <small>{modelLoadError}</small>
+                        </span>
+                      </div>
+                    ) : null}
+                    {isWindowTemplate ? (
+                      <div
+                        className={`tg-canvas-coach${selectedTemplatePartNames.length ? " has-selection" : ""}`}
+                        role="status"
+                      >
+                        <MousePointer2 aria-hidden />
+                        <span>
+                          <strong>
+                            {selectedTemplatePartNames.length
+                              ? "Selection updates live"
+                              : "Click the window geometry"}
+                          </strong>
+                          <small>
+                            {selectedTemplatePartNames.length
+                              ? "Add any other panes that share the artwork."
+                              : "Drag anywhere else to rotate the model."}
+                          </small>
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
 
-                <AnimatePresence>
-                  {generating && previewUrl && (
-                    <motion.div
-                      className="tg-preview-refresh-overlay"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-                    >
-                      <motion.div
-                        className="tg-preview-refresh-ring"
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 1.05, ease: "linear", repeat: Infinity }}
+                <section className="tg-pane tg-pane--template" aria-label="Template preview">
+                  <header className="tg-pane-header">
+                    <div>
+                      <Image aria-hidden />
+                      <span>
+                        <strong>Template</strong>
+                        <small>
+                          {isWindowTemplate ? "Selected geometry" : "Flattened UV preview"}
+                        </small>
+                      </span>
+                    </div>
+                    <span className="tg-pane-meta">
+                      {previewUrl ? `${exportSize} × ${exportSize}` : "Waiting"}
+                    </span>
+                  </header>
+                  <div
+                    ref={previewShellRef}
+                    className={`tg-preview-shell${isMarkerEditMode ? " is-edit-mode" : ""}`}
+                  >
+                    {generationError ? (
+                      <div className="tg-preview-state is-error" role="alert">
+                        <AlertTriangle aria-hidden />
+                        <span>
+                          <strong>Template generation failed</strong>
+                          <small>{generationError}</small>
+                        </span>
+                      </div>
+                    ) : isWindowTemplate && selectedTemplatePartNames.length === 0 ? (
+                      <div className="tg-preview-state">
+                        <PanelTop aria-hidden />
+                        <span>
+                          <strong>Select window geometry</strong>
+                          <small>
+                            The UV preview appears after you select a model region.
+                          </small>
+                        </span>
+                      </div>
+                    ) : previewUrl ? (
+                      <img
+                        src={previewUrl}
+                        alt="Generated template preview"
+                        className="tg-preview-image"
+                      />
+                    ) : (
+                      <div className="tg-preview-state" role="status">
+                        {generating ? (
+                          <span className="tg-spinner" aria-hidden />
+                        ) : (
+                          <Box aria-hidden />
+                        )}
+                        <span>
+                          <strong>{generating ? "Generating template" : "Preparing preview"}</strong>
+                          <small>
+                            {generating
+                              ? "Flattening UV geometry and building layers."
+                              : "The preview will appear when the model is ready."}
+                          </small>
+                        </span>
+                      </div>
+                    )}
+
+                    {showMarkerSelectionOverlay ? (
+                      <div
+                        className="tg-preview-marker-overlay is-pick-mode"
+                        style={markerOverlayStyle}
                       >
-                        <span />
-                        <span />
-                        <span />
-                      </motion.div>
-                      <motion.span
-                        className="tg-preview-refresh-text"
-                        initial={{ opacity: 0.65, y: 2 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3 }}
-                      >
-                        Refreshing template...
-                      </motion.span>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                        {markerOverlayMarkers.map((marker, index) => {
+                          const markerKey = marker?.key || `overlay-${index}`;
+                          const markerRect = getMarkerTextureRect(marker);
+                          if (!markerRect) return null;
+                          const markerSelected =
+                            pendingMarkerSelection[markerKey] === true;
+                          const markerLabel = marker?.label || `Marker ${index + 1}`;
+                          return (
+                            <button
+                              key={markerKey}
+                              type="button"
+                              className={`tg-preview-marker-hitbox${markerSelected ? " is-selected" : ""}${
+                                hoveredMarkerKey === markerKey ? " is-hovered" : ""
+                              }`}
+                              style={{
+                                left: `${(markerRect.x / exportSize) * previewViewport.size}px`,
+                                top: `${(markerRect.y / exportSize) * previewViewport.size}px`,
+                                width: `${(markerRect.width / exportSize) * previewViewport.size}px`,
+                                height: `${(markerRect.height / exportSize) * previewViewport.size}px`,
+                              }}
+                              onMouseEnter={() => setHoveredMarker(markerKey)}
+                              onMouseLeave={clearHoveredMarker}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                handleTogglePendingMarkerSelection(markerKey);
+                              }}
+                              aria-pressed={markerSelected}
+                              aria-label={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
+                              title={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
+                            />
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    {generating && previewUrl ? (
+                      <div className="tg-preview-busy" role="status">
+                        <span className="tg-spinner" aria-hidden />
+                        Refreshing template…
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
               </div>
-            </motion.div>
-          </motion.div>
+
+              <footer
+                className={`tg-stage-status${isMarkerEditMode && hasDetectedIslands ? " is-contextual" : ""}`}
+                aria-live="polite"
+              >
+                {isMarkerEditMode && hasDetectedIslands ? (
+                  <>
+                    <div className="tg-status-copy">
+                      <span>Markers</span>
+                      <strong>{pendingSelectedCount} / {detectedIslands.length}</strong>
+                      <small>{markerPickHint}</small>
+                    </div>
+                    <div className="tg-status-actions">
+                      <button
+                        type="button"
+                        className="tg-status-action"
+                        onClick={handleClearPendingMarkerSelection}
+                        disabled={!pendingSelectedCount}
+                      >
+                        Clear
+                      </button>
+                      {!pendingSelectedCount && !markerSelectionConfirmed ? (
+                        <button
+                          type="button"
+                          className="tg-status-action"
+                          onClick={handleConfirmNoMarkers}
+                        >
+                          Use no markers
+                        </button>
+                      ) : null}
+                      {markerSelectionConfirmed ? (
+                        <button
+                          type="button"
+                          className="tg-status-action"
+                          onClick={handleCancelMarkerEdit}
+                        >
+                          Cancel
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="tg-status-action is-primary"
+                        onClick={handleConfirmMarkerSelection}
+                        disabled={!pendingSelectedCount && !markerSelectionConfirmed}
+                      >
+                        Apply markers
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="tg-status-copy">
+                      <span className={generationError || modelLoadError ? "is-error" : ""}>
+                        {buildStatusLabel}
+                      </span>
+                      <small>{statusSummary}</small>
+                    </div>
+                    <div className="tg-status-meta">
+                      {lastGeneratedAt
+                        ? `Updated ${lastGeneratedAt.toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}`
+                        : templatePolicy.label}
+                    </div>
+                  </>
+                )}
+              </footer>
+            </section>
+          </div>
+        </div>
+      )}
+
+      {saveNotice.message ? (
+        <div className={`tg-save-notice is-${saveNotice.tone}`} role="status">
+          {saveNotice.tone === "success" ? (
+            <Check aria-hidden />
+          ) : (
+            <AlertTriangle aria-hidden />
           )}
-        </AnimatePresence>
-        <AnimatePresence>
-          {saveNotice.message && (
-            <motion.div
-              className={`tg-save-notice is-${saveNotice.tone}`}
-              role="status"
-              initial={{ opacity: 0, y: -10, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -8, scale: 0.98 }}
-              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            >
-              {saveNotice.tone === "success" ? <Check className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
-              <span>{saveNotice.message}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+          <span>{saveNotice.message}</span>
+        </div>
+      ) : null}
+    </main>
   );
 }

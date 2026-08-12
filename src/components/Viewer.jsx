@@ -1261,9 +1261,18 @@ function ViewerComponent({
 
   useEffect(() => {
     if (!sceneReady) return;
+    if (!wasdEnabled) return;
     if (!cameraRef.current || !controlsRef.current) return;
-    return setupWasdControls({ wasdStateRef, wasdFrameRef, cameraRef, controlsRef, fitRef, requestRenderRef });
-  }, [sceneReady]);
+    return setupWasdControls({
+      wasdStateRef,
+      wasdFrameRef,
+      cameraRef,
+      controlsRef,
+      fitRef,
+      requestRenderRef,
+      domElement: rendererRef.current?.domElement,
+    });
+  }, [sceneReady, wasdEnabled]);
 
   useEffect(() => {
     if (!rendererRef.current) return;

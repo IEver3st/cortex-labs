@@ -87,111 +87,114 @@ export default function LightDome({
 
   return (
     <div className="cs-light-control">
-      <div
-        ref={fieldRef}
-        className="cs-light-field"
-        role="group"
-        tabIndex={0}
-        aria-label={`Light direction: ${compassLabel}, ${azimuth} degrees azimuth, ${elevation} degrees elevation`}
-        aria-describedby={instructionId}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={stopDragging}
-        onPointerCancel={stopDragging}
-        onKeyDown={handleKeyDown}
-      >
-        <span id={instructionId} className="sr-only">
-          Drag across the lighting field to move the key light. Use arrow keys to adjust it by five degrees, or hold Shift for one-degree adjustments.
-        </span>
-        <svg viewBox="0 0 100 100" className="cs-light-dome-svg" aria-hidden="true" focusable="false">
-          <circle className="cs-light-dome-surface" cx={LIGHT_DOME_CENTER} cy={LIGHT_DOME_CENTER} r={LIGHT_DOME_RADIUS} />
+      <div className="cs-light-instrument">
+        <div
+          ref={fieldRef}
+          className="cs-light-field"
+          role="group"
+          tabIndex={0}
+          aria-label={`Light direction: ${compassLabel}, ${azimuth} degrees azimuth, ${elevation} degrees elevation`}
+          aria-describedby={instructionId}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={stopDragging}
+          onPointerCancel={stopDragging}
+          onKeyDown={handleKeyDown}
+        >
+          <span id={instructionId} className="sr-only">
+            Drag across the lighting field to move the key light. Use arrow keys to adjust it by five degrees, or hold Shift for one-degree adjustments.
+          </span>
+          <svg viewBox="0 0 100 100" className="cs-light-dome-svg" aria-hidden="true" focusable="false">
+            <circle className="cs-light-dome-surface" cx={LIGHT_DOME_CENTER} cy={LIGHT_DOME_CENTER} r={LIGHT_DOME_RADIUS} />
 
-          {ELEVATION_RINGS.map((degrees) => (
-            <circle
-              key={degrees}
-              className="cs-light-dome-contour"
-              cx={LIGHT_DOME_CENTER}
-              cy={LIGHT_DOME_CENTER}
-              r={((90 - degrees) / 90) * LIGHT_DOME_RADIUS}
+            {ELEVATION_RINGS.map((degrees) => (
+              <circle
+                key={degrees}
+                className="cs-light-dome-contour"
+                cx={LIGHT_DOME_CENTER}
+                cy={LIGHT_DOME_CENTER}
+                r={((90 - degrees) / 90) * LIGHT_DOME_RADIUS}
+              />
+            ))}
+
+            <line className="cs-light-dome-axis" x1="50" y1="10" x2="50" y2="90" />
+            <line className="cs-light-dome-axis" x1="10" y1="50" x2="90" y2="50" />
+
+            {CARDINALS.map(({ label, degrees }) => {
+              const radians = degrees * (Math.PI / 180);
+              const labelX = LIGHT_DOME_CENTER + (LIGHT_DOME_RADIUS + 6) * Math.sin(radians);
+              const labelY = LIGHT_DOME_CENTER - (LIGHT_DOME_RADIUS + 6) * Math.cos(radians);
+              return (
+                <text
+                  key={label}
+                  className="cs-light-dome-cardinal"
+                  x={labelX}
+                  y={labelY}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                >
+                  {label}
+                </text>
+              );
+            })}
+
+            <circle className="cs-light-dome-zenith" cx={LIGHT_DOME_CENTER} cy={LIGHT_DOME_CENTER} r="1.2" />
+            <line
+              className="cs-light-dome-vector"
+              x1={LIGHT_DOME_CENTER}
+              y1={LIGHT_DOME_CENTER}
+              x2={sunX}
+              y2={sunY}
             />
-          ))}
-
-          <line className="cs-light-dome-axis" x1="50" y1="10" x2="50" y2="90" />
-          <line className="cs-light-dome-axis" x1="10" y1="50" x2="90" y2="50" />
-
-          {CARDINALS.map(({ label, degrees }) => {
-            const radians = degrees * (Math.PI / 180);
-            const labelX = LIGHT_DOME_CENTER + (LIGHT_DOME_RADIUS + 6) * Math.sin(radians);
-            const labelY = LIGHT_DOME_CENTER - (LIGHT_DOME_RADIUS + 6) * Math.cos(radians);
-            return (
-              <text
-                key={label}
-                className="cs-light-dome-cardinal"
-                x={labelX}
-                y={labelY}
-                textAnchor="middle"
-                dominantBaseline="central"
-              >
-                {label}
-              </text>
-            );
-          })}
-
-          <circle className="cs-light-dome-zenith" cx={LIGHT_DOME_CENTER} cy={LIGHT_DOME_CENTER} r="1.2" />
-          <line
-            className="cs-light-dome-vector"
-            x1={LIGHT_DOME_CENTER}
-            y1={LIGHT_DOME_CENTER}
-            x2={sunX}
-            y2={sunY}
-          />
-          <g className="cs-light-dome-source" transform={`translate(${sunX} ${sunY})`}>
-            <circle className="cs-light-dome-source-hit" r="7" />
-            <circle className="cs-light-dome-source-ring" r="4" />
-            <circle className="cs-light-dome-source-core" r="2.4" />
-          </g>
-        </svg>
-        <div className="cs-light-field-hint" aria-hidden="true">Drag light</div>
-      </div>
-
-      <div className="cs-light-dome-readouts">
-        <div className="cs-light-dome-readout">
-          <span className="cs-light-dome-readout-label">Direction</span>
-          <span className="cs-light-dome-readout-value">{compassLabel}</span>
+            <g className="cs-light-dome-source" transform={`translate(${sunX} ${sunY})`}>
+              <circle className="cs-light-dome-source-hit" r="7" />
+              <circle className="cs-light-dome-source-ring" r="4" />
+              <circle className="cs-light-dome-source-core" r="2.4" />
+            </g>
+          </svg>
+          <div className="cs-light-field-hint" aria-hidden="true">Drag light</div>
         </div>
-        <div className="cs-light-dome-readout">
-          <span className="cs-light-dome-readout-label">Azimuth</span>
-          <span className="cs-light-dome-readout-value">{azimuth}°</span>
-        </div>
-        <div className="cs-light-dome-readout">
-          <span className="cs-light-dome-readout-label">Elevation</span>
-          <span className="cs-light-dome-readout-value">{elevation}°</span>
-        </div>
-      </div>
 
-      <div className="cs-light-axes">
-        <label className="cs-light-axis-control">
-          <span>Azimuth</span>
-          <input
-            type="range"
-            min="0"
-            max="359"
-            step="1"
-            value={azimuth}
-            onChange={(event) => updateDirection(Number(event.currentTarget.value), elevation)}
-          />
-        </label>
-        <label className="cs-light-axis-control">
-          <span>Elevation</span>
-          <input
-            type="range"
-            min="0"
-            max="90"
-            step="1"
-            value={elevation}
-            onChange={(event) => updateDirection(azimuth, Number(event.currentTarget.value))}
-          />
-        </label>
+        <div className="cs-light-tuning">
+          <div className="cs-light-direction-summary">
+            <span className="cs-light-direction-label">Direction</span>
+            <strong>{compassLabel}</strong>
+            <span className="cs-light-direction-angles">{azimuth}° az · {elevation}° el</span>
+          </div>
+
+          <div className="cs-light-axes">
+            <label className="cs-light-axis-control">
+              <span className="cs-light-axis-header">
+                <span>Azimuth</span>
+                <output>{azimuth}°</output>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="359"
+                step="1"
+                value={azimuth}
+                aria-valuetext={`${azimuth} degrees`}
+                onChange={(event) => updateDirection(Number(event.currentTarget.value), elevation)}
+              />
+            </label>
+            <label className="cs-light-axis-control">
+              <span className="cs-light-axis-header">
+                <span>Elevation</span>
+                <output>{elevation}°</output>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="90"
+                step="1"
+                value={elevation}
+                aria-valuetext={`${elevation} degrees`}
+                onChange={(event) => updateDirection(azimuth, Number(event.currentTarget.value))}
+              />
+            </label>
+          </div>
+        </div>
       </div>
 
       <div className="cs-light-presets" role="group" aria-label="Lighting presets">

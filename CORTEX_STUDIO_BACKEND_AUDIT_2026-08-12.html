@@ -53,9 +53,13 @@
       code { overflow-wrap: anywhere; }
       .shell {
         width: min(1420px, calc(100% - 48px));
+        min-width: 0;
         margin: 0 auto;
         padding: 36px 0 64px;
       }
+      .topline > *, .verdict > *, .section-head > *, .scope-grid > *,
+      .boundary-grid > *, .action-grid > *, .flow > * { min-width: 0; }
+      h1, .dek, .stamp, .panel, .node, .verdict-main, .decision { overflow-wrap: anywhere; }
       .eyebrow, .section-kicker, th, .label {
         color: var(--muted);
         font-size: 0.72rem;

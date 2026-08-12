@@ -30,6 +30,17 @@ const RECOMMENDED_PREFS = {
   uiScale: 1,
 };
 
+const UI_SCALE_KEYS = new Set([
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+]);
+
 const START_OPTIONS = [
   {
     id: "livery",
@@ -134,6 +145,7 @@ export default function Onboarding({ onComplete }) {
   const [selectedStart, setSelectedStart] = useState(null);
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [prefs, setPrefs] = useState(getInitialPrefs);
+  const committedUiScaleRef = useRef(prefs.uiScale);
   const rootRef = useRef(null);
   const headingRef = useRef(null);
   const workspaceRefs = useRef([]);
@@ -161,8 +173,23 @@ export default function Onboarding({ onComplete }) {
     saveOnboardingPrefs({ [key]: value });
   }, []);
 
+  const updateUiScaleDraft = useCallback((value) => {
+    setPrefs((current) => ({ ...current, uiScale: value }));
+  }, []);
+
+  const commitUiScale = useCallback((value) => {
+    const nextValue = Number.parseFloat(value);
+    if (!Number.isFinite(nextValue) || Object.is(nextValue, committedUiScaleRef.current)) {
+      return;
+    }
+
+    committedUiScaleRef.current = nextValue;
+    saveOnboardingPrefs({ uiScale: nextValue });
+  }, []);
+
   const resetRecommended = useCallback(() => {
     const next = { ...RECOMMENDED_PREFS };
+    committedUiScaleRef.current = next.uiScale;
     setPrefs(next);
     saveOnboardingPrefs(next);
   }, []);
@@ -420,8 +447,16 @@ export default function Onboarding({ onComplete }) {
                             value={prefs.uiScale}
                             aria-valuetext={`${Math.round(prefs.uiScale * 100)} percent`}
                             onChange={(event) =>
-                              togglePref("uiScale", Number.parseFloat(event.currentTarget.value))
+                              updateUiScaleDraft(Number.parseFloat(event.currentTarget.value))
                             }
+                            onPointerUp={(event) => commitUiScale(event.currentTarget.value)}
+                            onPointerCancel={(event) => commitUiScale(event.currentTarget.value)}
+                            onKeyUp={(event) => {
+                              if (UI_SCALE_KEYS.has(event.key)) {
+                                commitUiScale(event.currentTarget.value);
+                              }
+                            }}
+                            onBlur={(event) => commitUiScale(event.currentTarget.value)}
                             className="onb-slider"
                           />
                         </div>

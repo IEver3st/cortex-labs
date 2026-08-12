@@ -1,4 +1,4 @@
-## Cortex Studio v4.0 — ROAN   
+## Cortex Studio v4.1 — PRISM
 ![Cortex Studio UI](https://cdn.discordapp.com/attachments/1346902689744949270/1472021146311331871/image.png?ex=699af146&is=69999fc6&hm=6b2bf8b46a7498275f98db8eebed9bf07ec208901a893c1b59ddf2a89c0e56b0&)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C1C41TSVBX)
 
@@ -8,6 +8,27 @@
 Cortex Studio is a high-performance, real-time 3D livery previewer and development environment. It bridges the gap between your design software (Photoshop, paint.net, etc.) and the game engine, allowing for an instantaneous, iterative workflow.
 
 Download the Latest Version [Here](https://github.com/IEver3st/cortex-labs/releases/latest)!
+
+---
+
+## New in v4.1 (PRISM)
+
+> Named for the way this release refracts one focused Studio workflow across personal appearances, vehicle liveries, EUP clothing, and format-aware template output.
+
+### Studio Appearance Presets
+Choose from 12 full-workbench palettes with instant preview and independent System, Light, and Dark color schemes.
+
+### Automatic EUP Template Generation
+Generate clothing templates directly from `.ydd` models with EUP-aware UV and material behavior, vehicle-only layer filtering, and separate exports for multi-drawable dictionaries.
+
+### Rebuilt Template Generator Workbench
+Work from a compact inspector and dominant model canvas with Model, Template, and Split views, contextual marker tools, and theme-aware controls.
+
+### In-App Feature Requests
+Send structured feature requests from the feedback modal with focused prompts and request-specific GitHub labels.
+
+### Clearer Studio Workflows
+First-run setup, Settings, viewer controls, lighting, and mode-specific sidebars have been tightened around the edit-preview-export loop.
 
 ---
 
@@ -88,7 +109,7 @@ The dedicated environment for managing complex livery projects with multiple var
 - **Context Menus:** Right-click context menus throughout the UI.
 - **Workspace Persistence:** Recent projects restore their full state (model paths, textures, colors, camera positions) on relaunch.
 - **Native GTA V Support:** Direct parsing of `.yft` (vehicles) and `.ydd` (clothing) files, with skeleton/bone data.
-- **Full Camera Control:** Quick presets (Front, Side, 3/4, Top), center action, and optional WASD flight controls.
+- **Full Camera Control:** Quick presets, center action, scoped six-axis WASD flight, right-mouse free-look, precision movement, and speed boost.
 - **Material Controls:** Fine-tune body and slot colors, background color, glossiness, and light intensity to see how your design looks in different conditions.
 - **Light & Dark Theme:** Branded light and dark modes with native system integration.
 - **Fully Local & Private:** No cloud dependencies, no accounts, no data leaves your machine.

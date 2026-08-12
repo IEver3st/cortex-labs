@@ -1,0 +1,647 @@
+.cs-changelog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgb(0 0 0 / 58%);
+}
+
+.cs-changelog-center {
+  position: fixed;
+  inset: 0;
+  z-index: 9001;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.cs-changelog-modal {
+  --cs-changelog-hover: color-mix(in srgb, var(--mg-surface) 64%, transparent);
+  --cs-changelog-selected: color-mix(in srgb, var(--mg-surface) 80%, var(--mg-bg));
+  display: grid;
+  width: min(calc(100vw - 48px), calc(860px * var(--es-ui-scale, 1)));
+  height: min(calc(100vh - 48px), calc(680px * var(--es-ui-scale, 1)));
+  min-width: 0;
+  min-height: 440px;
+  grid-template-rows: calc(40px * var(--es-ui-scale, 1)) minmax(0, 1fr) calc(44px * var(--es-ui-scale, 1));
+  overflow: hidden;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius);
+  background: var(--mg-bg);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 30%);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  pointer-events: auto;
+}
+
+.cs-changelog-toolbar,
+.cs-changelog-footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: color-mix(in srgb, var(--mg-surface) 62%, var(--mg-bg));
+}
+
+.cs-changelog-toolbar {
+  padding: 0 calc(8px * var(--es-ui-scale, 1)) 0 calc(14px * var(--es-ui-scale, 1));
+  border-bottom: 1px solid var(--mg-border);
+}
+
+.cs-changelog-toolbar-title,
+.cs-changelog-toolbar-actions,
+.cs-changelog-footer-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.cs-changelog-toolbar-title {
+  gap: calc(8px * var(--es-ui-scale, 1));
+  overflow: hidden;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: calc(9px * var(--es-ui-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+.cs-changelog-toolbar-title > svg {
+  width: calc(13px * var(--es-ui-scale, 1));
+  height: calc(13px * var(--es-ui-scale, 1));
+  flex: 0 0 auto;
+}
+
+.cs-changelog-toolbar-title > strong {
+  color: var(--mg-fg);
+  font-size: calc(9px * var(--es-ui-scale, 1));
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.cs-changelog-toolbar-actions {
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.cs-changelog-copy,
+.cs-changelog-close {
+  display: inline-flex;
+  height: calc(28px * var(--es-ui-scale, 1));
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.cs-changelog-copy {
+  padding: 0 calc(8px * var(--es-ui-scale, 1));
+}
+
+.cs-changelog-close {
+  width: calc(28px * var(--es-ui-scale, 1));
+  padding: 0;
+}
+
+.cs-changelog-copy > svg,
+.cs-changelog-close > svg {
+  width: calc(13px * var(--es-ui-scale, 1));
+  height: calc(13px * var(--es-ui-scale, 1));
+}
+
+.cs-changelog-copy.is-error {
+  color: var(--mg-destructive);
+}
+
+.cs-changelog-workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: calc(258px * var(--es-ui-scale, 1)) minmax(0, 1fr);
+}
+
+.cs-changelog-index {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  padding: calc(18px * var(--es-ui-scale, 1)) calc(14px * var(--es-ui-scale, 1));
+  overflow: auto;
+  border-right: 1px solid var(--mg-border);
+  background: color-mix(in srgb, var(--mg-surface) 44%, var(--mg-bg));
+}
+
+.cs-changelog-release-meta,
+.cs-changelog-nav-heading,
+.cs-changelog-ledger-header > div > span,
+.cs-changelog-section-heading,
+.cs-changelog-status,
+.cs-changelog-footer-actions > span {
+  font-family: var(--font-hud);
+}
+
+.cs-changelog-release-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--mg-muted);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cs-changelog-updated {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cs-changelog-updated::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mg-primary);
+  content: "";
+}
+
+.cs-changelog-release h2 {
+  margin: calc(12px * var(--es-ui-scale, 1)) 0 calc(8px * var(--es-ui-scale, 1));
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: calc(18px * var(--es-ui-scale, 1));
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.cs-changelog-release p {
+  margin: 0;
+  color: var(--mg-muted);
+  font-size: calc(10px * var(--es-ui-scale, 1));
+  line-height: 1.55;
+}
+
+.cs-changelog-nav {
+  margin-top: calc(22px * var(--es-ui-scale, 1));
+  padding-top: calc(12px * var(--es-ui-scale, 1));
+  border-top: 1px solid var(--mg-border);
+}
+
+.cs-changelog-nav-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 calc(8px * var(--es-ui-scale, 1)) calc(6px * var(--es-ui-scale, 1));
+  color: var(--mg-muted);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.09em;
+}
+
+.cs-changelog-nav-heading > span:last-child {
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  text-transform: none;
+}
+
+.cs-changelog-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cs-changelog-filters button {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: calc(34px * var(--es-ui-scale, 1));
+  grid-template-columns: calc(18px * var(--es-ui-scale, 1)) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(7px * var(--es-ui-scale, 1));
+  padding: 0 calc(8px * var(--es-ui-scale, 1));
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-muted);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease-out,
+    color 140ms ease-out,
+    box-shadow 140ms ease-out;
+}
+
+.cs-changelog-filters button > svg {
+  width: calc(14px * var(--es-ui-scale, 1));
+  height: calc(14px * var(--es-ui-scale, 1));
+}
+
+.cs-changelog-filters button > span {
+  overflow: hidden;
+  font-family: var(--font-main);
+  font-size: calc(10px * var(--es-ui-scale, 1));
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-changelog-filters button > strong {
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+.cs-changelog-filters button.is-active {
+  background: var(--cs-changelog-selected);
+  box-shadow: inset 2px 0 0 var(--mg-primary);
+  color: var(--mg-fg);
+}
+
+.cs-changelog-ledger {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: calc(52px * var(--es-ui-scale, 1)) minmax(0, 1fr);
+  background: var(--mg-bg);
+}
+
+.cs-changelog-ledger-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 calc(18px * var(--es-ui-scale, 1));
+  border-bottom: 1px solid var(--mg-border);
+  background: color-mix(in srgb, var(--mg-surface) 22%, var(--mg-bg));
+}
+
+.cs-changelog-ledger-header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cs-changelog-ledger-header > div > span {
+  color: var(--mg-muted);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.cs-changelog-ledger-header h3 {
+  margin: 0;
+  color: var(--mg-fg);
+  font-size: calc(12px * var(--es-ui-scale, 1));
+  font-weight: 600;
+}
+
+.cs-changelog-ledger-header > span {
+  flex: 0 0 auto;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-changelog-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: var(--mg-scroll-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+.cs-changelog-section + .cs-changelog-section {
+  border-top: 1px solid var(--mg-border);
+}
+
+.cs-changelog-section-heading {
+  display: grid;
+  min-height: calc(34px * var(--es-ui-scale, 1));
+  grid-template-columns: calc(18px * var(--es-ui-scale, 1)) auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: calc(6px * var(--es-ui-scale, 1));
+  padding: 0 calc(18px * var(--es-ui-scale, 1));
+  color: var(--mg-muted);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.cs-changelog-section-heading::after {
+  width: 100%;
+  height: 1px;
+  background: var(--mg-border);
+  content: "";
+}
+
+.cs-changelog-section-heading > svg {
+  width: calc(13px * var(--es-ui-scale, 1));
+  height: calc(13px * var(--es-ui-scale, 1));
+}
+
+.cs-changelog-section-heading h4 {
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+}
+
+.cs-changelog-section-heading > span {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.cs-changelog-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cs-changelog-row {
+  display: grid;
+  min-width: 0;
+  min-height: calc(56px * var(--es-ui-scale, 1));
+  grid-template-columns: calc(28px * var(--es-ui-scale, 1)) minmax(0, 1fr);
+  gap: calc(8px * var(--es-ui-scale, 1));
+  padding: calc(10px * var(--es-ui-scale, 1)) calc(18px * var(--es-ui-scale, 1));
+  border-bottom: 1px solid color-mix(in srgb, var(--mg-border) 72%, transparent);
+  transition: background-color 120ms ease-out;
+}
+
+.cs-changelog-ordinal {
+  padding-top: 2px;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-changelog-row h5 {
+  margin: 0;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: calc(11px * var(--es-ui-scale, 1));
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.cs-changelog-row p {
+  margin: calc(3px * var(--es-ui-scale, 1)) 0 0;
+  color: var(--mg-muted);
+  font-size: calc(9.5px * var(--es-ui-scale, 1));
+  line-height: 1.5;
+}
+
+.cs-changelog-empty {
+  display: flex;
+  max-width: 320px;
+  align-items: flex-start;
+  gap: 9px;
+  margin: calc(26px * var(--es-ui-scale, 1)) auto;
+  padding: 0 18px;
+  color: var(--mg-muted);
+}
+
+.cs-changelog-empty > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.cs-changelog-empty > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cs-changelog-empty strong {
+  color: var(--mg-fg);
+  font-size: calc(10px * var(--es-ui-scale, 1));
+  font-weight: 500;
+}
+
+.cs-changelog-empty span {
+  font-size: calc(9px * var(--es-ui-scale, 1));
+  line-height: 1.45;
+}
+
+.cs-changelog-footer {
+  padding: 0 calc(8px * var(--es-ui-scale, 1)) 0 calc(14px * var(--es-ui-scale, 1));
+  border-top: 1px solid var(--mg-border);
+}
+
+.cs-changelog-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mg-muted);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-changelog-footer-actions {
+  flex: 0 0 auto;
+  gap: calc(10px * var(--es-ui-scale, 1));
+}
+
+.cs-changelog-footer-actions > span {
+  color: var(--mg-muted);
+  font-size: calc(8px * var(--es-ui-scale, 1));
+}
+
+.cs-changelog-primary {
+  display: inline-flex;
+  min-width: calc(86px * var(--es-ui-scale, 1));
+  height: calc(30px * var(--es-ui-scale, 1));
+  align-items: center;
+  justify-content: center;
+  gap: calc(7px * var(--es-ui-scale, 1));
+  padding: 0 calc(12px * var(--es-ui-scale, 1));
+  border: 1px solid var(--mg-primary);
+  border-radius: 4px;
+  background: var(--mg-primary);
+  color: #fffaf6;
+  font-family: var(--font-main);
+  font-size: calc(9px * var(--es-ui-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease-out,
+    border-color 140ms ease-out;
+}
+
+.cs-changelog-primary > svg {
+  width: calc(13px * var(--es-ui-scale, 1));
+  height: calc(13px * var(--es-ui-scale, 1));
+}
+
+.cs-changelog-modal button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mg-primary) 72%, var(--mg-fg));
+  outline-offset: 1px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cs-changelog-copy:hover,
+  .cs-changelog-close:hover,
+  .cs-changelog-filters button:hover:not(.is-active) {
+    border-color: color-mix(in srgb, var(--mg-border) 82%, transparent);
+    background: var(--cs-changelog-hover);
+    color: var(--mg-fg);
+  }
+
+  .cs-changelog-row:hover {
+    background: color-mix(in srgb, var(--mg-surface) 30%, transparent);
+  }
+
+  .cs-changelog-primary:hover {
+    border-color: color-mix(in srgb, var(--mg-primary) 88%, black);
+    background: color-mix(in srgb, var(--mg-primary) 88%, black);
+  }
+}
+
+@media (max-width: 720px) {
+  .cs-changelog-center {
+    padding: 8px;
+  }
+
+  .cs-changelog-modal {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    min-height: 0;
+  }
+
+  .cs-changelog-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .cs-changelog-index {
+    display: grid;
+    grid-template-columns: minmax(190px, 0.9fr) minmax(300px, 1.4fr);
+    gap: 14px;
+    padding: 12px 14px;
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--mg-border);
+  }
+
+  .cs-changelog-release h2 {
+    margin-block: 7px 4px;
+    font-size: calc(15px * var(--es-ui-scale, 1));
+  }
+
+  .cs-changelog-release p {
+    font-size: calc(9px * var(--es-ui-scale, 1));
+  }
+
+  .cs-changelog-nav {
+    margin-top: 0;
+    padding: 0 0 0 14px;
+    border-top: 0;
+    border-left: 1px solid var(--mg-border);
+  }
+
+  .cs-changelog-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cs-changelog-filters button {
+    min-height: calc(30px * var(--es-ui-scale, 1));
+  }
+}
+
+@media (max-width: 540px) {
+  .cs-changelog-toolbar-title > span,
+  .cs-changelog-copy > span,
+  .cs-changelog-footer-actions > span {
+    display: none;
+  }
+
+  .cs-changelog-index {
+    display: block;
+    max-height: 220px;
+    overflow: auto;
+  }
+
+  .cs-changelog-nav {
+    margin-top: 10px;
+    padding: 9px 0 0;
+    border-top: 1px solid var(--mg-border);
+    border-left: 0;
+  }
+
+  .cs-changelog-section-heading,
+  .cs-changelog-row,
+  .cs-changelog-ledger-header {
+    padding-inline: 12px;
+  }
+
+  .cs-changelog-row {
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+
+@media (max-height: 560px) and (min-width: 721px) {
+  .cs-changelog-center {
+    padding: 8px;
+  }
+
+  .cs-changelog-modal {
+    width: min(calc(100vw - 16px), calc(860px * var(--es-ui-scale, 1)));
+    height: calc(100vh - 16px);
+    min-height: 0;
+  }
+
+  .cs-changelog-index {
+    padding-block: 12px;
+  }
+
+  .cs-changelog-nav {
+    margin-top: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-changelog-modal *,
+  .cs-changelog-modal *::before,
+  .cs-changelog-modal *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .cs-changelog-filters button.is-active {
+    border-left: 2px solid Highlight;
+    box-shadow: none;
+  }
+
+  .cs-changelog-updated::before,
+  .cs-changelog-primary {
+    background: Highlight;
+  }
+}

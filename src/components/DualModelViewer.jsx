@@ -661,7 +661,15 @@ export default function DualModelViewer({
   useEffect(() => {
     if (!sceneReady || !cameraRef.current || !controlsRef.current) return;
     if (!wasdEnabled) return;
-    return setupWasdControls({ wasdStateRef, wasdFrameRef, cameraRef, controlsRef, fitRef, requestRenderRef });
+    return setupWasdControls({
+      wasdStateRef,
+      wasdFrameRef,
+      cameraRef,
+      controlsRef,
+      fitRef,
+      requestRenderRef,
+      domElement: rendererRef.current?.domElement,
+    });
   }, [sceneReady, wasdEnabled]);
 
   useEffect(() => {

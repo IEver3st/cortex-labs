@@ -1,6 +1,6 @@
 [package]
 name = "cortex-studio"
-version = "4.0.0"
+version = "4.1.0"
 description = "Cortex Studio — Livery Development Environment"
 authors = ["you"]
 edition = "2021"

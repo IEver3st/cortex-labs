@@ -1,100 +1,108 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
-  X, ArrowRight, Copy, Check, ChevronDown
+  ArrowRight,
+  ArrowUpRight,
+  Check,
+  Copy,
+  FileText,
+  List,
+  Plus,
+  Wrench,
+  X,
 } from "lucide-react";
-import { RiSparklingLine, RiArrowUpCircleLine, RiBugLine } from "react-icons/ri";
 import {
-  getLatestChangelog, hasSeenWhatsNew, markWhatsNewSeen, toMarkdown, getAppVersion
+  getLatestChangelog,
+  hasSeenWhatsNew,
+  markWhatsNewSeen,
+  toMarkdown,
 } from "../lib/changelog";
+import "./WhatsNew.css";
 
 const TAG_META = {
-  new:      { label: "New",      icon: RiSparklingLine,    tag: "new"      },
-  improved: { label: "Improved", icon: RiArrowUpCircleLine, tag: "improved" },
-  fixed:    { label: "Fix",      icon: RiBugLine,           tag: "fixed"    },
+  new: { label: "New", icon: Plus },
+  improved: { label: "Improved", icon: ArrowUpRight },
+  fixed: { label: "Fixed", icon: Wrench },
 };
 
-const DEFAULT_VISIBLE = 6;
+const FILTERS = [
+  { id: "all", label: "All changes", icon: List },
+  ...Object.entries(TAG_META).map(([id, meta]) => ({ id, ...meta })),
+];
 
 /**
- * WhatsNew — structured floating changelog modal.
- * Appears once per version on first launch; also openable from Settings.
- *
- * Props:
- *   forceOpen   – if true, show the modal regardless of seen state (Settings entry)
- *   onClose     – callback when modal is dismissed
- *   isManual    – if true, opened from Settings (hide "Updated" badge, don't auto-mark as seen)
+ * Structured release notes shown once per version and available from Settings.
  */
 export default function WhatsNew({ forceOpen = false, onClose, isManual = false }) {
   const [visible, setVisible] = useState(false);
   const [entry, setEntry] = useState(null);
-  const [copied, setCopied] = useState(false);
-  const [showAll, setShowAll] = useState(true);
-  const [expandedIdx, setExpandedIdx] = useState(-1);
+  const [activeTag, setActiveTag] = useState("all");
+  const [copyState, setCopyState] = useState("idle");
   const modalRef = useRef(null);
   const primaryRef = useRef(null);
   const copiedTimerRef = useRef(null);
   const previouslyFocused = useRef(null);
+  const reduceMotion = useReducedMotion();
 
-  useEffect(() => () => {
-    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+  const clearCopyTimer = useCallback(() => {
+    if (copiedTimerRef.current) {
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
+    }
   }, []);
 
-  // Body scroll lock
+  useEffect(() => () => clearCopyTimer(), [clearCopyTimer]);
+
   useEffect(() => {
-    if (!visible) return;
-    const prevOverflow = document.body.style.overflow;
+    if (!visible) return undefined;
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prevOverflow; };
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [visible]);
 
-  // Focus management: save/restore focus, focus primary on open
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) return undefined;
     previouslyFocused.current = document.activeElement;
-    const t = setTimeout(() => primaryRef.current?.focus(), 100);
+    const focusTimer = window.setTimeout(() => primaryRef.current?.focus(), 60);
     return () => {
-      clearTimeout(t);
+      window.clearTimeout(focusTimer);
       previouslyFocused.current?.focus?.();
     };
   }, [visible]);
 
-  // Focus trap
   useEffect(() => {
-    if (!visible || !modalRef.current) return;
-    const handler = (e) => {
-      if (e.key !== "Tab") return;
-      const modal = modalRef.current;
-      if (!modal) return;
-      const focusable = modal.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    if (!visible || !modalRef.current) return undefined;
+    const handleFocusTrap = (event) => {
+      if (event.key !== "Tab") return;
+      const focusable = modalRef.current?.querySelectorAll(
+        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
       );
-      if (!focusable.length) return;
+      if (!focusable?.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
         first.focus();
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handleFocusTrap);
+    return () => window.removeEventListener("keydown", handleFocusTrap);
   }, [visible]);
 
   useEffect(() => {
-    if (forceOpen) {
-      const data = getLatestChangelog();
-      if (data) { setEntry(data); setVisible(true); }
-      return;
-    }
-    if (hasSeenWhatsNew()) return;
+    const shouldOpen = forceOpen || !hasSeenWhatsNew();
+    if (!shouldOpen) return;
     const data = getLatestChangelog();
     if (!data || (!data.heroTitle && !data.items.length)) return;
     setEntry(data);
+    setActiveTag("all");
+    setCopyState("idle");
     setVisible(true);
   }, [forceOpen]);
 
@@ -104,260 +112,226 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
     onClose?.();
   }, [isManual, onClose]);
 
-  // Keyboard: Esc to close, Enter for primary CTA
   useEffect(() => {
-    if (!visible) return;
-    const handler = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); handleDismiss(); }
-      if (e.key === "Enter" && document.activeElement === primaryRef.current) handleDismiss();
+    if (!visible) return undefined;
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      handleDismiss();
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
   }, [visible, handleDismiss]);
 
-  // Groups
   const groups = useMemo(() => {
-    if (!entry) return { new: [], improved: [], fixed: [] };
-    const g = { new: [], improved: [], fixed: [] };
-    for (const item of entry.items) {
-      (g[item.tag] || g.new).push(item);
-    }
-    return g;
+    const grouped = { new: [], improved: [], fixed: [] };
+    entry?.items.forEach((item, index) => {
+      const tag = grouped[item.tag] ? item.tag : "new";
+      grouped[tag].push({ ...item, ordinal: index + 1 });
+    });
+    return grouped;
   }, [entry]);
 
-  const allItems = useMemo(() => {
-    if (!entry) return [];
-    return [...(groups.new), ...(groups.improved), ...(groups.fixed)];
-  }, [entry, groups]);
+  const visibleTags = activeTag === "all" ? Object.keys(TAG_META) : [activeTag];
+  const visibleCount = visibleTags.reduce((total, tag) => total + groups[tag].length, 0);
+  const totalCount = entry?.items.length || 0;
 
-  const visibleItems = showAll ? allItems : allItems.slice(0, DEFAULT_VISIBLE);
-  const hasMore = allItems.length > DEFAULT_VISIBLE;
-
-  // Copy markdown
   const handleCopy = useCallback(async () => {
+    clearCopyTimer();
     try {
       await navigator.clipboard.writeText(toMarkdown(entry));
-      setCopied(true);
-      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
-      copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error("[WhatsNew] Copy failed:", err);
+      setCopyState("copied");
+    } catch (error) {
+      console.error("[WhatsNew] Copy failed:", error);
+      setCopyState("error");
     }
-  }, [entry]);
+    copiedTimerRef.current = window.setTimeout(() => setCopyState("idle"), 2400);
+  }, [clearCopyTimer, entry]);
 
-  // Section header injection: render a section label before the first item of each tag type
-  const sectionHeaders = useMemo(() => {
-    const headers = {};
-    let lastTag = null;
-    for (let i = 0; i < visibleItems.length; i++) {
-      if (visibleItems[i].tag !== lastTag) {
-        headers[i] = visibleItems[i].tag;
-        lastTag = visibleItems[i].tag;
-      }
-    }
-    return headers;
-  }, [visibleItems]);
+  if (!entry || typeof document === "undefined") return null;
 
-  if (!entry) return null;
+  const motionTransition = reduceMotion
+    ? { duration: 0.01 }
+    : { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
 
-  const modal = (
+  const copyLabel = copyState === "copied"
+    ? "Copied"
+    : copyState === "error"
+      ? "Retry copy"
+      : "Copy Markdown";
+
+  return createPortal(
     <AnimatePresence>
       {visible && (
         <>
-          {/* Backdrop */}
           <motion.div
-            className="cs-wn-backdrop"
+            className="cs-changelog-backdrop"
+            aria-hidden="true"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            onClick={handleDismiss}
+            transition={motionTransition}
+            onMouseDown={handleDismiss}
           />
 
-          {/* Modal */}
-          <div className="cs-wn-center">
+          <div className="cs-changelog-center">
             <motion.div
               ref={modalRef}
-              className="cs-wn-modal"
+              className="cs-changelog-modal"
               role="dialog"
               aria-modal="true"
-              aria-label="What's New"
-              initial={{ opacity: 0, y: 16, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.99 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              aria-labelledby="cs-changelog-title"
+              aria-describedby={entry.heroDesc ? "cs-changelog-summary" : undefined}
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+              transition={motionTransition}
             >
-            {/* ─── Scanline accent ─── */}
-            <div className="cs-wn-scanline" />
-
-            {/* ─── REGION A: Header ─── */}
-            <div className="cs-wn-header">
-              <div className="cs-wn-header-left">
-                <h2 className="cs-wn-heading">What's New</h2>
-                <span className="cs-wn-version-pill">v{entry.version}</span>
-                {!isManual && (
-                  <motion.span
-                    className="cs-wn-updated-dot"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.2, duration: 0.3 }}
-                  >
-                    <span className="cs-wn-dot" />
-                    Updated
-                  </motion.span>
-                )}
-              </div>
-              <div className="cs-wn-header-right">
-                <button
-                  type="button"
-                  className="cs-wn-copy-btn"
-                  onClick={handleCopy}
-                  title="Copy changelog as Markdown"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? "Copied" : "Copy MD"}</span>
-                </button>
-                <button
-                  type="button"
-                  className="cs-wn-close"
-                  onClick={handleDismiss}
-                  aria-label="Close"
-                  title="Close"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* ─── Scrollable body ─── */}
-            <div className="cs-wn-body custom-scrollbar">
-              {/* ─── REGION B: Hero Highlight Card ─── */}
-              {entry.heroTitle && (
-                <motion.div
-                  className="cs-wn-hero"
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                >
-                  <span className="cs-wn-hero-label">// release highlights</span>
-                  <h3 className="cs-wn-hero-title">{entry.heroTitle}</h3>
-                  {entry.heroDesc && (
-                    <p className="cs-wn-hero-desc">{entry.heroDesc}</p>
-                  )}
-                </motion.div>
-              )}
-
-              {/* ─── REGION C: Change List ─── */}
-              <div className="cs-wn-list">
-                {visibleItems.map((item, i) => {
-                  const meta = TAG_META[item.tag] || TAG_META.new;
-                  const Icon = meta.icon;
-                  const globalIdx = allItems.indexOf(item);
-                  const isExpanded = expandedIdx === globalIdx;
-                  const showHeader = sectionHeaders[i] !== undefined;
-
-                  return (
-                    <div key={globalIdx}>
-                      {showHeader && (() => {
-                        const tag = sectionHeaders[i];
-                        const SectionIcon = TAG_META[tag]?.icon;
-                        return (
-                          <motion.div
-                            className="cs-wn-section-header"
-                            data-tag={tag}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            transition={{ delay: 0.08 + i * 0.03, duration: 0.3 }}
-                          >
-                            {SectionIcon && (
-                              <span className="cs-wn-section-header-icon">
-                                <SectionIcon size={11} />
-                              </span>
-                            )}
-                            {TAG_META[tag]?.label || "New"}
-                          </motion.div>
-                        );
-                      })()}
-
-                      <motion.div
-                        className={`cs-wn-row ${isExpanded ? "is-expanded" : ""}`}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.12 + i * 0.04, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                        onClick={() => item.desc && setExpandedIdx(isExpanded ? -1 : globalIdx)}
-                        onKeyDown={(e) => {
-                          if (item.desc && (e.key === "Enter" || e.key === " ")) {
-                            e.preventDefault();
-                            setExpandedIdx(isExpanded ? -1 : globalIdx);
-                          }
-                        }}
-                        role={item.desc ? "button" : undefined}
-                        tabIndex={item.desc ? 0 : undefined}
-                        aria-expanded={item.desc ? isExpanded : undefined}
-                        style={{ cursor: item.desc ? "pointer" : "default" }}
-                      >
-                        <div className="cs-wn-row-main">
-                          <span className="cs-wn-tag" data-tag={meta.tag} title={meta.label}>
-                            <Icon size={13} />
-                          </span>
-                          <span className="cs-wn-row-title">{item.title}</span>
-                          {item.desc && (
-                            <ChevronDown className={`cs-wn-row-chevron ${isExpanded ? "is-open" : ""}`} />
-                          )}
-                        </div>
-                        <AnimatePresence>
-                          {isExpanded && item.desc && (
-                            <motion.div
-                              className="cs-wn-row-desc"
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: "auto", opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                            >
-                              <p>{item.desc}</p>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </motion.div>
-                    </div>
-                  );
-                })}
-
-                {/* Show all / collapse toggle */}
-                {hasMore && (
+              <header className="cs-changelog-toolbar">
+                <div className="cs-changelog-toolbar-title">
+                  <FileText aria-hidden="true" />
+                  <span>// RELEASE NOTES</span>
+                  <strong>v{entry.version}</strong>
+                </div>
+                <div className="cs-changelog-toolbar-actions">
                   <button
                     type="button"
-                    className="cs-wn-show-toggle"
-                    onClick={() => setShowAll((p) => !p)}
-                    aria-expanded={showAll}
+                    className={`cs-changelog-copy ${copyState === "error" ? "is-error" : ""}`}
+                    onClick={handleCopy}
+                    aria-label="Copy changelog as Markdown"
                   >
-                    {showAll ? "Show less" : `Show all (${allItems.length})`}
+                    {copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                    <span>{copyLabel}</span>
                   </button>
-                )}
-              </div>
-            </div>
+                  <button
+                    type="button"
+                    className="cs-changelog-close"
+                    onClick={handleDismiss}
+                    aria-label="Close release notes"
+                    title="Close"
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                </div>
+              </header>
 
-              {/* ─── Footer ─── */}
-              <div className="cs-wn-footer">
-                <motion.button
-                  ref={primaryRef}
-                  type="button"
-                  className="cs-wn-primary"
-                  onClick={handleDismiss}
-                  whileHover={{ scale: 1.015 }}
-                  whileTap={{ scale: 0.985 }}
-                >
-                  <span>GOT IT</span>
-                  <ArrowRight className="w-4 h-4" />
-                </motion.button>
+              <div className="cs-changelog-workspace">
+                <aside className="cs-changelog-index">
+                  <div className="cs-changelog-release">
+                    <div className="cs-changelog-release-meta">
+                      <span>Latest release</span>
+                      {!isManual && <span className="cs-changelog-updated">Updated</span>}
+                    </div>
+                    <h2 id="cs-changelog-title">{entry.heroTitle || "What's New"}</h2>
+                    {entry.heroDesc && (
+                      <p id="cs-changelog-summary">{entry.heroDesc}</p>
+                    )}
+                  </div>
+
+                  <nav className="cs-changelog-nav" aria-label="Release note categories">
+                    <div className="cs-changelog-nav-heading">
+                      <span>// RELEASE INDEX</span>
+                      <span>{totalCount} total</span>
+                    </div>
+                    <div className="cs-changelog-filters">
+                      {FILTERS.map((filter) => {
+                        const Icon = filter.icon;
+                        const count = filter.id === "all" ? totalCount : groups[filter.id].length;
+                        const isActive = activeTag === filter.id;
+                        return (
+                          <button
+                            key={filter.id}
+                            type="button"
+                            className={isActive ? "is-active" : ""}
+                            onClick={() => setActiveTag(filter.id)}
+                            aria-pressed={isActive}
+                          >
+                            <Icon aria-hidden="true" />
+                            <span>{filter.label}</span>
+                            <strong>{count}</strong>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </nav>
+                </aside>
+
+                <section className="cs-changelog-ledger" aria-label="Release changes">
+                  <header className="cs-changelog-ledger-header">
+                    <div>
+                      <span>// CHANGE LOG</span>
+                      <h3>{activeTag === "all" ? "All changes" : TAG_META[activeTag].label}</h3>
+                    </div>
+                    <span>{visibleCount} {visibleCount === 1 ? "entry" : "entries"}</span>
+                  </header>
+
+                  <div className="cs-changelog-scroll custom-scrollbar">
+                    {visibleCount > 0 ? visibleTags.map((tag) => {
+                      const meta = TAG_META[tag];
+                      const SectionIcon = meta.icon;
+                      return (
+                        <section
+                          className="cs-changelog-section"
+                          key={tag}
+                          aria-labelledby={`cs-changelog-${tag}`}
+                        >
+                          <div className="cs-changelog-section-heading">
+                            <SectionIcon aria-hidden="true" />
+                            <h4 id={`cs-changelog-${tag}`}>{meta.label}</h4>
+                            <span>{groups[tag].length}</span>
+                          </div>
+                          <ol className="cs-changelog-list">
+                            {groups[tag].map((item) => (
+                              <li key={`${tag}-${item.ordinal}`} className="cs-changelog-row">
+                                <span className="cs-changelog-ordinal" aria-hidden="true">
+                                  {String(item.ordinal).padStart(2, "0")}
+                                </span>
+                                <div>
+                                  <h5>{item.title}</h5>
+                                  {item.desc && <p>{item.desc}</p>}
+                                </div>
+                              </li>
+                            ))}
+                          </ol>
+                        </section>
+                      );
+                    }) : (
+                      <div className="cs-changelog-empty">
+                        <List aria-hidden="true" />
+                        <div>
+                          <strong>No entries in this category</strong>
+                          <span>Select another section from the release index.</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </section>
               </div>
+
+              <footer className="cs-changelog-footer">
+                <div className="cs-changelog-status" role="status" aria-live="polite">
+                  {copyState === "copied" && "Markdown copied to clipboard"}
+                  {copyState === "error" && "Clipboard unavailable — try again"}
+                  {copyState === "idle" && `${visibleCount} of ${totalCount} changes shown`}
+                </div>
+                <div className="cs-changelog-footer-actions">
+                  <span>Esc closes</span>
+                  <button
+                    ref={primaryRef}
+                    type="button"
+                    className="cs-changelog-primary"
+                    onClick={handleDismiss}
+                  >
+                    <span>Done</span>
+                    <ArrowRight aria-hidden="true" />
+                  </button>
+                </div>
+              </footer>
             </motion.div>
           </div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
-
-  if (typeof document === "undefined") return null;
-  return createPortal(modal, document.body);
 }

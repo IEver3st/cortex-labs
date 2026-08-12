@@ -807,9 +807,9 @@ export default function SettingsMenu({
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Free-Cam</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Always available: W/A/S/D move, Q/E rise, Shift to boost</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Focus the preview: WASD flies, RMB looks, Q/E elevates, Alt refines, Shift boosts</div>
                                     </div>
-                                    <div className="settings-row-note">Enabled in every viewer mode</div>
+                                    <div className="settings-row-note">Enabled in Studio previews</div>
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">

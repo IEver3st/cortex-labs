@@ -5,11 +5,11 @@ description: Camera navigation, grid, lighting, glossiness, and inspection tips.
 
 ## Camera navigation
 
-The viewer uses an orbit-style camera.
+The viewer combines an orbit camera with a focused free camera.
 
 - **Left mouse**: orbit
 - **Middle mouse / wheel**: zoom
-- **Right mouse**: pan
+- **Right mouse + drag**: look freely from the camera's current position
 
 If your setup differs (touchpad, tablet, etc.), behavior may vary.
 
@@ -19,10 +19,16 @@ Cortex Studio provides quick camera presets (front/side/angle/top) and a reset/f
 
 ## WASD flight controls
 
-An optional WASD mode exists for more "freecam" movement.
+Click or right-click inside the model preview to focus it. Keyboard flight only responds while that preview owns focus, so typing elsewhere in Studio is unaffected.
 
-- Enable it in **Settings -> Viewer**.
-- Use it when you need to inspect interiors or awkward geometry.
+- **W / S**: fly forward or backward along the camera's full viewing direction
+- **A / D**: strafe left or right
+- **Q / E**: descend or rise vertically
+- **Right mouse + mouse movement**: free-look without orbiting around the model
+- Hold **Alt** for precision movement or **Shift** to boost speed
+- Release the right mouse button or press **Escape** to leave captured mouse-look
+
+The movement speed scales with the framed model, making the same controls useful for small details and large vehicles. Use the center action or a camera preset whenever you want to return to a known view.
 
 ## Grid
 

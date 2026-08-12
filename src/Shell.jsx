@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Info, Sparkles, MessageSquarePlus } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Sparkles, MessageSquarePlus } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
@@ -672,7 +672,6 @@ export default function Shell() {
   const [whatsNewManual, setWhatsNewManual] = useState(false);
   const handleOpenReleaseNotes = useCallback(() => setWhatsNewManual(true), []);
   const handleCloseWhatsNew = useCallback(() => setWhatsNewManual(false), []);
-  const handleOpenOnboarding = useCallback(() => setShowOnboarding(true), []);
   const openFeedback = useCallback((reportType = "bug") => {
     setFeedbackInitialType(reportType === "feature" ? "feature" : "bug");
     setIsBugReportOpen(true);
@@ -930,7 +929,6 @@ export default function Shell() {
               </Ctx.Content>
             </Ctx.Root>
 
-            {/* Getting started / tutorial */}
             <div className="settings-anchor">
               <motion.button
                 type="button"
@@ -941,20 +939,6 @@ export default function Shell() {
               >
                 <span className="settings-cog-icon">
                   <MessageSquarePlus className="settings-cog-svg" />
-                </span>
-              </motion.button>
-            </div>
-
-            <div className="settings-anchor">
-              <motion.button
-                type="button"
-                className="settings-cog"
-                aria-label="Getting Started"
-                title="Getting Started"
-                onClick={handleOpenOnboarding}
-              >
-                <span className="settings-cog-icon">
-                  <Info className="settings-cog-svg" />
                 </span>
               </motion.button>
             </div>
