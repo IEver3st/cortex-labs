@@ -1,31 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
   AlertTriangle,
-  Bug,
   Box,
   Car,
+  ChevronDown,
   Check,
-  Copy,
   Download,
   FolderOpen,
+  Image,
   Layers,
+  MousePointer2,
+  PanelTop,
   RefreshCw,
-  Send,
-  Sparkles,
+  Shirt,
+  Trash2,
   X,
 } from "lucide-react";
 import Viewer from "./Viewer";
+import { Button } from "./ui/button";
+import { Toggle } from "./ui/toggle";
 import { buildAutoTemplatePsd } from "../lib/template-psd";
-import { loadPrefs, savePrefs } from "../lib/prefs";
+import {
+  getTemplateModelPolicy,
+  normalizeTemplateViewMode,
+} from "../lib/template-model";
+import { loadPrefs } from "../lib/prefs";
 import { openFolderPath } from "../lib/open-folder";
 import {
   buildMarkerSelectionDraft,
   countSelectedMarkers,
   getContainedTemplateViewport,
   getMarkerTextureRect,
+  isMarkerPlacementDecisionRequired,
   isTemplateMarkerModifierPressed,
   normalizeTemplateMarkerPickModifier,
   pickMarkerAtTexturePoint,
@@ -37,8 +45,6 @@ const SIZE_OPTIONS = [4096, 2048, 1024, 512];
 const NOOP = () => {};
 const DEFAULT_AUTO_TEMPLATE_COLOR = "#c9d8ee";
 const DEFAULT_AUTO_TEMPLATE_EXPORT_FORMAT = "psd";
-const DEFAULT_TEMPLATE_TELEMETRY_ENDPOINT = (import.meta.env?.VITE_TEMPLATE_TELEMETRY_ENDPOINT || "").trim();
-const TELEMETRY_EVENT_TYPE = "template_generation_issue";
 
 function normalizeAutoTemplateExportFormat(value) {
   if (value === "png" || value === "psd_png") return value;
@@ -96,6 +102,17 @@ function buildTemplateExportOutputs({ format, psdBytes, psdFileName, previewData
   }
 
   return outputs;
+}
+
+function buildTemplateExportOutputsForArtifacts(format, artifacts) {
+  return (Array.isArray(artifacts) ? artifacts : []).flatMap((artifact) =>
+    buildTemplateExportOutputs({
+      format,
+      psdBytes: artifact?.bytes,
+      psdFileName: artifact?.fileName,
+      previewDataUrl: artifact?.previewDataUrl,
+    }),
+  );
 }
 
 function getTemplateSaveButtonLabel(format) {
@@ -247,29 +264,9 @@ function getDefaultAutoTemplateExportFormat() {
   return normalizeAutoTemplateExportFormat(prefs?.defaults?.autoTemplateExportFormat);
 }
 
-function getDefaultTemplateTelemetryEndpoint() {
-  const prefs = loadPrefs() || {};
-  const fromPrefs = prefs?.defaults?.templateTelemetryEndpoint;
-  if (typeof fromPrefs === "string" && fromPrefs.trim()) return fromPrefs.trim();
-  return DEFAULT_TEMPLATE_TELEMETRY_ENDPOINT;
-}
-
 function getDefaultTemplateMarkerPickModifier() {
   const prefs = loadPrefs() || {};
   return normalizeTemplateMarkerPickModifier(prefs?.defaults?.templateMarkerPickModifier);
-}
-
-function persistTemplateTelemetryEndpoint(nextEndpoint) {
-  const prefs = loadPrefs() || {};
-  const defaults = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
-  const endpoint = typeof nextEndpoint === "string" ? nextEndpoint.trim() : "";
-  const nextDefaults = { ...defaults };
-  if (endpoint) {
-    nextDefaults.templateTelemetryEndpoint = endpoint;
-  } else {
-    delete nextDefaults.templateTelemetryEndpoint;
-  }
-  savePrefs({ ...prefs, defaults: nextDefaults });
 }
 
 function getFileLabel(path, fallback = "") {
@@ -278,9 +275,25 @@ function getFileLabel(path, fallback = "") {
   return parts[parts.length - 1] || fallback;
 }
 
-function createTelemetryReportId() {
-  const nonce = Math.random().toString(36).slice(2, 10);
-  return `tg-${Date.now()}-${nonce}`;
+function normalizeMeshNameList(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean))];
+}
+
+function buildPurposeFileName(modelPath, purpose) {
+  const fileName = getFileLabel(modelPath, "template.yft");
+  if (purpose !== "windows") return fileName;
+  const extension = fileName.match(/\.[^.]+$/)?.[0] || ".yft";
+  const stem = fileName.replace(/\.[^.]+$/, "") || "template";
+  return `${stem}_windows${extension}`;
+}
+
+function joinPath(folder, fileName) {
+  const base = String(folder || "").replace(/[\\/]+$/, "");
+  const name = String(fileName || "").replace(/^[\\/]+/, "");
+  if (!base) return name;
+  const sep = base.includes("\\") && !base.includes("/") ? "\\" : "/";
+  return `${base}${sep}${name}`;
 }
 
 function toErrorMessage(error, fallback) {
@@ -291,8 +304,29 @@ function toErrorMessage(error, fallback) {
   return fallback;
 }
 
-function triggerTextDownload(fileName, textContent, mimeType = "application/json") {
-  const blob = new Blob([textContent], { type: mimeType });
+function ensureWritableBytes(bytes) {
+  if (bytes instanceof Uint8Array) {
+    // Copy so transferred/detached worker buffers cannot fail on write.
+    return new Uint8Array(bytes);
+  }
+  if (bytes instanceof ArrayBuffer) return new Uint8Array(bytes);
+  if (ArrayBuffer.isView(bytes)) {
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  return new Uint8Array(0);
+}
+
+function getSaveDialogFilters(fileName) {
+  const lower = String(fileName || "").toLowerCase();
+  if (lower.endsWith(".png")) {
+    return [{ name: "PNG Image", extensions: ["png"] }];
+  }
+  return [{ name: "Photoshop Document", extensions: ["psd"] }];
+}
+
+function triggerBrowserDownload(fileName, bytes, mimeType) {
+  const payload = ensureWritableBytes(bytes);
+  const blob = new Blob([payload], { type: mimeType || "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -301,16 +335,6 @@ function triggerTextDownload(fileName, textContent, mimeType = "application/json
   anchor.click();
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
-}
-
-async function writeTextToClipboard(text) {
-  if (!navigator?.clipboard?.writeText) return false;
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export default function TemplateGenerationPage({
@@ -335,6 +359,13 @@ export default function TemplateGenerationPage({
   const [templateMarkerPickModifier, setTemplateMarkerPickModifier] = useState(
     () => getDefaultTemplateMarkerPickModifier(),
   );
+  const [templatePurpose, setTemplatePurpose] = useState(() =>
+    workspaceState?.templatePurpose === "windows" ? "windows" : "body",
+  );
+  const [selectedTemplatePartNames, setSelectedTemplatePartNames] = useState(() =>
+    normalizeMeshNameList(workspaceState?.selectedTemplatePartNames),
+  );
+  const [hoveredTemplatePartName, setHoveredTemplatePartName] = useState("");
   const [markerSelectionConfirmed, setMarkerSelectionConfirmed] = useState(() => {
     const explicitValue = workspaceState?.markerSelectionConfirmed;
     if (typeof explicitValue === "boolean") return explicitValue;
@@ -368,6 +399,10 @@ export default function TemplateGenerationPage({
   const [templateMapError, setTemplateMapError] = useState("");
   const [templatePsdSource, setTemplatePsdSource] = useState(null);
   const [templatePsdSourceError, setTemplatePsdSourceError] = useState("");
+  const [templateSets, setTemplateSets] = useState([]);
+  const [windowTemplateSets, setWindowTemplateSets] = useState([]);
+  const [windowTemplateError, setWindowTemplateError] = useState("");
+  const [templateSetWarning, setTemplateSetWarning] = useState("");
   const [detectedIslands, setDetectedIslands] = useState(() =>
     Array.isArray(workspaceState?.detectedIslands) ? workspaceState.detectedIslands : [],
   );
@@ -382,9 +417,12 @@ export default function TemplateGenerationPage({
   const [previewUrl, setPreviewUrl] = useState("");
   const [psdBytes, setPsdBytes] = useState(null);
   const [psdFileName, setPsdFileName] = useState("auto_template.psd");
+  const [generatedTemplates, setGeneratedTemplates] = useState([]);
   const [layerCount, setLayerCount] = useState(0);
   const [targetCount, setTargetCount] = useState(0);
   const [generating, setGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveNotice, setSaveNotice] = useState({ tone: "", message: "" });
   const [generationError, setGenerationError] = useState("");
   const [autoSavedPath, setAutoSavedPath] = useState("");
   const [lastGeneratedAt, setLastGeneratedAt] = useState(null);
@@ -396,24 +434,17 @@ export default function TemplateGenerationPage({
     offsetX: 0,
     offsetY: 0,
   }));
-  const [isTelemetryDialogOpen, setIsTelemetryDialogOpen] = useState(false);
-  const [telemetrySending, setTelemetrySending] = useState(false);
-  const [telemetryStatus, setTelemetryStatus] = useState({ tone: "", message: "" });
-  const [telemetryDraft, setTelemetryDraft] = useState(() => ({
-    summary: "",
-    details: "",
-    expectedBehavior: "",
-    severity: "high",
-    endpoint: getDefaultTemplateTelemetryEndpoint(),
-    includeDiagnostics: true,
-    includeModelPath: false,
-  }));
-  const [compactHeight, setCompactHeight] = useState(false);
+  const [viewMode, setViewMode] = useState(() =>
+    normalizeTemplateViewMode(workspaceState?.viewMode),
+  );
+  const [modelLoading, setModelLoading] = useState(false);
+  const [modelLoadError, setModelLoadError] = useState("");
   const persistTimerRef = useRef(null);
   const regenerateTimerRef = useRef(null);
-  const telemetryStatusTimerRef = useRef(null);
+  const saveNoticeTimerRef = useRef(null);
   const previewShellRef = useRef(null);
-  const workspaceRef = useRef(null);
+  const templatePolicy = getTemplateModelPolicy(modelPath);
+  const isWindowTemplate = templatePurpose === "windows" && !templatePolicy.isEup;
 
   useEffect(() => {
     if (!settingsVersion) return;
@@ -430,6 +461,8 @@ export default function TemplateGenerationPage({
       onStateChange({
         modelPath,
         outputFolder,
+        templatePurpose,
+        selectedTemplatePartNames,
         exportSize,
         exteriorOnly,
         includeTemplateWireframe,
@@ -438,6 +471,7 @@ export default function TemplateGenerationPage({
         detectedIslandColors,
         detectedIslandVisibility,
         markerSelectionConfirmed,
+        viewMode,
       });
     }, 140);
 
@@ -447,6 +481,8 @@ export default function TemplateGenerationPage({
   }, [
     modelPath,
     outputFolder,
+    templatePurpose,
+    selectedTemplatePartNames,
     exportSize,
     exteriorOnly,
     includeTemplateWireframe,
@@ -455,14 +491,31 @@ export default function TemplateGenerationPage({
     detectedIslandColors,
     detectedIslandVisibility,
     markerSelectionConfirmed,
+    viewMode,
     onStateChange,
   ]);
 
   useEffect(() => {
+    if (!templatePolicy.isEup || templatePurpose !== "windows") return;
+    setTemplatePurpose("body");
+    setSelectedTemplatePartNames([]);
+    setHoveredTemplatePartName("");
+  }, [templatePolicy.isEup, templatePurpose]);
+
+  useEffect(() => {
     return () => {
       if (regenerateTimerRef.current) clearTimeout(regenerateTimerRef.current);
-      if (telemetryStatusTimerRef.current) clearTimeout(telemetryStatusTimerRef.current);
+      if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current);
     };
+  }, []);
+
+  const showSaveNotice = useCallback((tone, message) => {
+    if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current);
+    setSaveNotice({ tone, message });
+    saveNoticeTimerRef.current = setTimeout(() => {
+      setSaveNotice({ tone: "", message: "" });
+      saveNoticeTimerRef.current = null;
+    }, 4000);
   }, []);
 
   useEffect(() => {
@@ -511,21 +564,17 @@ export default function TemplateGenerationPage({
     return () => observer.disconnect();
   }, [previewUrl]);
 
-  useEffect(() => {
-    if (typeof ResizeObserver === "undefined") return;
-    const obs = new ResizeObserver(([entry]) => {
-      setCompactHeight(entry.contentRect.height < 480);
-    });
-    const node = workspaceRef.current;
-    if (node) obs.observe(node);
-    return () => obs.disconnect();
-  }, []);
-
   const clearGeneratedState = useCallback(() => {
     setTemplateMap(null);
     setTemplateMapError("");
     setTemplatePsdSource(null);
     setTemplatePsdSourceError("");
+    setTemplateSets([]);
+    setWindowTemplateSets([]);
+    setWindowTemplateError("");
+    setTemplateSetWarning("");
+    setSelectedTemplatePartNames([]);
+    setHoveredTemplatePartName("");
     setDetectedIslands([]);
     setDetectedIslandColors({});
     setDetectedIslandVisibility({});
@@ -536,12 +585,15 @@ export default function TemplateGenerationPage({
     setPreviewUrl("");
     setPsdBytes(null);
     setPsdFileName("auto_template.psd");
+    setGeneratedTemplates([]);
     setLayerCount(0);
     setTargetCount(0);
     setGenerating(false);
     setGenerationError("");
     setAutoSavedPath("");
     setLastGeneratedAt(null);
+    setModelLoading(false);
+    setModelLoadError("");
     if (regenerateTimerRef.current) {
       clearTimeout(regenerateTimerRef.current);
       regenerateTimerRef.current = null;
@@ -552,7 +604,7 @@ export default function TemplateGenerationPage({
     if (!isTauriRuntime) return;
     try {
       const selected = await open({
-        filters: [{ name: "Vehicle Model", extensions: ["yft"] }],
+        filters: [{ name: "GTA V Model", extensions: ["yft", "ydd"] }],
       });
       if (typeof selected !== "string") return;
       setModelPath(selected);
@@ -580,9 +632,18 @@ export default function TemplateGenerationPage({
   }, [clearGeneratedState]);
 
   const handleModelInfo = useCallback((info) => {
-    setTemplateMap(info?.templateMap || null);
+    const nextSets = Array.isArray(info?.templateSets) ? info.templateSets : [];
+    const nextWindowSets = Array.isArray(info?.windowTemplateSets)
+      ? info.windowTemplateSets
+      : [];
+    const firstSet = nextSets[0] || null;
+    setTemplateSets(nextSets);
+    setWindowTemplateSets(nextWindowSets);
+    setWindowTemplateError(info?.windowTemplateError || "");
+    setTemplateSetWarning(info?.templateSetWarning || "");
+    setTemplateMap(firstSet?.templateMap || info?.templateMap || null);
     setTemplateMapError(info?.templateMapError || "");
-    setTemplatePsdSource(info?.templatePsdSource || null);
+    setTemplatePsdSource(firstSet?.templatePsdSource || info?.templatePsdSource || null);
     setTemplatePsdSourceError(info?.templatePsdSourceError || "");
   }, []);
 
@@ -617,6 +678,10 @@ export default function TemplateGenerationPage({
   }, [detectedIslandVisibility, detectedIslands, isMarkerEditMode]);
 
   useEffect(() => {
+    if (isWindowTemplate) {
+      setIsMarkerEditMode(false);
+      return;
+    }
     if (!detectedIslands.length || markerSelectionConfirmed || isMarkerEditMode) return;
     setPendingMarkerSelection((prev) => {
       const next = buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility);
@@ -627,6 +692,7 @@ export default function TemplateGenerationPage({
     detectedIslandVisibility,
     detectedIslands,
     isMarkerEditMode,
+    isWindowTemplate,
     markerSelectionConfirmed,
   ]);
 
@@ -683,6 +749,19 @@ export default function TemplateGenerationPage({
     setHoveredMarker,
   ]);
 
+  const handleConfirmNoMarkers = useCallback(() => {
+    const nextSelection = buildMarkerSelectionDraft(detectedIslands, {});
+    if (!shallowEqualObject(detectedIslandVisibility, nextSelection)) {
+      setDetectedIslandVisibility(nextSelection);
+      setAutoSavedPath("");
+      setGenerationError("");
+    }
+    setPendingMarkerSelection(nextSelection);
+    setMarkerSelectionConfirmed(true);
+    setHoveredMarker("");
+    setIsMarkerEditMode(false);
+  }, [detectedIslandVisibility, detectedIslands, setHoveredMarker]);
+
   const handleResetMarkerSelection = useCallback(() => {
     if (!shallowEqualObject(detectedIslandVisibility, {})) {
       setDetectedIslandVisibility({});
@@ -727,50 +806,47 @@ export default function TemplateGenerationPage({
     [handleTogglePendingMarkerSelection, isMarkerEditMode, resolveMarkerFromUv],
   );
 
-  const setTelemetryNotice = useCallback((tone, message, timeoutMs = 0) => {
-    if (telemetryStatusTimerRef.current) {
-      clearTimeout(telemetryStatusTimerRef.current);
-      telemetryStatusTimerRef.current = null;
-    }
-    setTelemetryStatus({ tone, message });
-    if (timeoutMs > 0) {
-      telemetryStatusTimerRef.current = setTimeout(() => {
-        setTelemetryStatus({ tone: "", message: "" });
-        telemetryStatusTimerRef.current = null;
-      }, timeoutMs);
-    }
+  const handleTemplatePurposeChange = useCallback((nextPurpose) => {
+    const normalized = nextPurpose === "windows" ? "windows" : "body";
+    setTemplatePurpose(normalized);
+    setHoveredTemplatePartName("");
+    setIsMarkerEditMode(false);
+    setGenerationError("");
+    setAutoSavedPath("");
   }, []);
 
-  const openTelemetryDialog = useCallback((prefillMessage = "") => {
-    const prefill = typeof prefillMessage === "string" ? prefillMessage.trim() : "";
-    setTelemetryStatus({ tone: "", message: "" });
-    setIsTelemetryDialogOpen(true);
-    setTelemetryDraft((prev) => ({
-      ...prev,
-      endpoint: prev.endpoint || getDefaultTemplateTelemetryEndpoint(),
-      summary: prev.summary || (prefill ? `Template issue: ${prefill.slice(0, 140)}` : ""),
-      details: prev.details || (prefill ? `Observed error:\n${prefill}` : ""),
-    }));
+  const handleTemplatePartHover = useCallback((hit) => {
+    setHoveredTemplatePartName(hit?.meshName || "");
   }, []);
 
-  const closeTelemetryDialog = useCallback(() => {
-    if (telemetrySending) return;
-    setIsTelemetryDialogOpen(false);
-  }, [telemetrySending]);
+  const handleTemplatePartPick = useCallback((hit) => {
+    const meshName = typeof hit?.meshName === "string" ? hit.meshName.trim() : "";
+    if (!meshName) return;
+    setSelectedTemplatePartNames((current) =>
+      current.includes(meshName)
+        ? current.filter((entry) => entry !== meshName)
+        : [...current, meshName],
+    );
+    setHoveredTemplatePartName(meshName);
+    setGenerationError("");
+    setAutoSavedPath("");
+  }, []);
 
-  useEffect(() => {
-    if (!isTelemetryDialogOpen) return;
-    const handleKeyDown = (event) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      closeTelemetryDialog();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeTelemetryDialog, isTelemetryDialogOpen]);
+  const handleRemoveTemplatePart = useCallback((meshName) => {
+    setSelectedTemplatePartNames((current) => current.filter((entry) => entry !== meshName));
+    setHoveredTemplatePartName((current) => (current === meshName ? "" : current));
+    setGenerationError("");
+    setAutoSavedPath("");
+  }, []);
 
   const handleRegenerateTemplate = useCallback(() => {
-    if (!modelPath || !templateMap || !templatePsdSource || generating) return;
+    if (
+      !modelPath ||
+      !templateMap ||
+      !templatePsdSource ||
+      generating ||
+      (isWindowTemplate && selectedTemplatePartNames.length === 0)
+    ) return;
     setGenerating(true);
     setGenerationError("");
     setAutoSavedPath("");
@@ -779,14 +855,43 @@ export default function TemplateGenerationPage({
       setRegenerationToken((token) => token + 1);
       regenerateTimerRef.current = null;
     }, 180);
-  }, [generating, modelPath, templateMap, templatePsdSource]);
+  }, [
+    generating,
+    isWindowTemplate,
+    modelPath,
+    selectedTemplatePartNames.length,
+    templateMap,
+    templatePsdSource,
+  ]);
 
   useEffect(() => {
-    const upstreamError = templateMapError || templatePsdSourceError || "";
+    const upstreamError = isWindowTemplate
+      ? windowTemplateError
+      : templateMapError || templatePsdSourceError || "";
+    const sourceTemplateSets = isWindowTemplate ? windowTemplateSets : templateSets;
+    const generationSets =
+      sourceTemplateSets.length > 0
+        ? sourceTemplateSets
+        : !isWindowTemplate && templateMap && templatePsdSource
+          ? [
+              {
+                id: `${templatePolicy.format}:model`,
+                fileType: templatePolicy.format,
+                modelFileName: getFileLabel(modelPath, "template"),
+                templateMap,
+                templatePsdSource,
+              },
+            ]
+          : [];
 
-    if (!modelPath || !templateMap || !templatePsdSource) {
+    if (
+      !modelPath ||
+      generationSets.length === 0 ||
+      (isWindowTemplate && selectedTemplatePartNames.length === 0)
+    ) {
       setPreviewUrl("");
       setPsdBytes(null);
+      setGeneratedTemplates([]);
       setGenerationError(upstreamError);
       setLayerCount(0);
       setTargetCount(0);
@@ -797,43 +902,66 @@ export default function TemplateGenerationPage({
     }
 
     let cancelled = false;
-    let cancelBuildJob = NOOP;
+    const cancelBuildJobs = new Set();
     const generate = async () => {
       setGenerating(true);
       setGenerationError(upstreamError);
 
       try {
-        const buildOptions = {
-          size: exportSize,
-          modelPath,
-          modelFileName: getFileLabel(modelPath, "template"),
-          templatePsdSource,
-          fillColor: autoTemplateColor,
-          preferredTarget: "material:vehicle_paint3",
-          includeWireframe: includeTemplateWireframe,
-          includeWorldSpaceNormals: useWorldSpaceNormalsAsBase,
-          useWorldSpaceNormalsAsBase,
-          detectedIslandColors,
-          detectedIslandVisibility,
-        };
-
-        const buildJob = createTemplateBuildJob(templateMap, buildOptions);
-        cancelBuildJob = buildJob.cancel;
-        let result;
-        try {
-          result = await buildJob.promise;
-        } catch {
+        const artifacts = [];
+        for (let index = 0; index < generationSets.length; index += 1) {
           if (cancelled) return;
-          result = await buildAutoTemplatePsd(templateMap, buildOptions);
+          const templateSet = generationSets[index];
+          const setPolicy = getTemplateModelPolicy(templateSet.fileType || modelPath);
+          const isPrimaryTemplate = index === 0;
+          const modelFileName = isWindowTemplate
+            ? buildPurposeFileName(templateSet.modelFileName || modelPath, "windows")
+            : templateSet.modelFileName || getFileLabel(modelPath, "template");
+          const buildOptions = {
+            size: exportSize,
+            modelPath,
+            modelFileName,
+            templatePsdSource: templateSet.templatePsdSource,
+            sourceFormat: setPolicy.format,
+            meshSelectionMode: isWindowTemplate ? "selected" : setPolicy.meshSelectionMode,
+            selectedMeshNames: isWindowTemplate ? selectedTemplatePartNames : undefined,
+            fillColor: autoTemplateColor,
+            preferredTarget: isWindowTemplate ? "" : setPolicy.preferredTarget,
+            includeVehicleLayers: !isWindowTemplate && setPolicy.includeVehicleLayers,
+            includeWireframe: includeTemplateWireframe,
+            includeWorldSpaceNormals: useWorldSpaceNormalsAsBase,
+            useWorldSpaceNormalsAsBase,
+            detectedIslandColors:
+              isPrimaryTemplate && !isWindowTemplate ? detectedIslandColors : {},
+            detectedIslandVisibility:
+              isPrimaryTemplate && !isWindowTemplate ? detectedIslandVisibility : {},
+          };
+
+          const buildJob = createTemplateBuildJob(templateSet.templateMap, buildOptions);
+          cancelBuildJobs.add(buildJob.cancel);
+          let result;
+          try {
+            result = await buildJob.promise;
+          } catch {
+            if (cancelled) return;
+            result = await buildAutoTemplatePsd(templateSet.templateMap, buildOptions);
+          } finally {
+            cancelBuildJobs.delete(buildJob.cancel);
+          }
+          artifacts.push({ ...result, templateSetId: templateSet.id });
         }
 
         if (cancelled) return;
-        setPreviewUrl(result.previewDataUrl);
-        setPsdBytes(result.bytes);
-        setPsdFileName(result.fileName);
-        setLayerCount(result.layerCount);
-        setTargetCount(result.targetCount);
-        const nextMarkers = Array.isArray(result.detectedIslands) ? result.detectedIslands : [];
+        const primaryResult = artifacts[0];
+        setGeneratedTemplates(artifacts);
+        setPreviewUrl(primaryResult.previewDataUrl);
+        setPsdBytes(ensureWritableBytes(primaryResult.bytes));
+        setPsdFileName(primaryResult.fileName);
+        setLayerCount(artifacts.reduce((sum, artifact) => sum + (artifact.layerCount || 0), 0));
+        setTargetCount(artifacts.reduce((sum, artifact) => sum + (artifact.targetCount || 0), 0));
+        const nextMarkers = Array.isArray(primaryResult.detectedIslands)
+          ? primaryResult.detectedIslands
+          : [];
         setDetectedIslands(nextMarkers);
         setDetectedIslandColors((prev) => {
           const next = {};
@@ -846,22 +974,38 @@ export default function TemplateGenerationPage({
         setLastGeneratedAt(new Date());
         setGenerationError("");
 
-        const exportOutputs = buildTemplateExportOutputs({
-          format: autoTemplateExportFormat,
-          psdBytes: result.bytes,
-          psdFileName: result.fileName,
-          previewDataUrl: result.previewDataUrl,
-        });
+        const exportOutputs = buildTemplateExportOutputsForArtifacts(
+          autoTemplateExportFormat,
+          artifacts,
+        );
 
-        if (isTauriRuntime && outputFolder && exportOutputs.length > 0) {
-          const savedPaths = [];
-          for (const output of exportOutputs) {
-            const autoPath = `${outputFolder}/${output.fileName}`;
-            await writeFile(autoPath, output.bytes);
-            savedPaths.push(autoPath);
+        const markerPlacementRequired =
+          !isWindowTemplate &&
+          isMarkerPlacementDecisionRequired(nextMarkers, markerSelectionConfirmed);
+
+        if (
+          isTauriRuntime &&
+          outputFolder &&
+          exportOutputs.length > 0 &&
+          !markerPlacementRequired
+        ) {
+          try {
+            const savedPaths = [];
+            for (const output of exportOutputs) {
+              const autoPath = joinPath(outputFolder, output.fileName);
+              await writeFile(autoPath, ensureWritableBytes(output.bytes));
+              savedPaths.push(autoPath);
+            }
+            if (cancelled) return;
+            setAutoSavedPath(savedPaths.join(" | "));
+            const count = savedPaths.length;
+            showSaveNotice("success", `${count} template file${count === 1 ? "" : "s"} auto-saved successfully.`);
+          } catch (error) {
+            if (!cancelled) {
+              setAutoSavedPath("");
+              showSaveNotice("error", `Auto-save failed: ${toErrorMessage(error, "Unable to write the template files.")}`);
+            }
           }
-          if (cancelled) return;
-          setAutoSavedPath(savedPaths.join(" | "));
         } else {
           setAutoSavedPath("");
         }
@@ -874,6 +1018,7 @@ export default function TemplateGenerationPage({
         setGenerationError(message);
         setPreviewUrl("");
         setPsdBytes(null);
+        setGeneratedTemplates([]);
         setLayerCount(0);
         setTargetCount(0);
         setDetectedIslands([]);
@@ -888,13 +1033,19 @@ export default function TemplateGenerationPage({
     generate();
     return () => {
       cancelled = true;
-      cancelBuildJob();
+      for (const cancelBuildJob of cancelBuildJobs) cancelBuildJob();
+      cancelBuildJobs.clear();
     };
   }, [
     templateMap,
     templateMapError,
     templatePsdSource,
     templatePsdSourceError,
+    templateSets,
+    windowTemplateSets,
+    windowTemplateError,
+    isWindowTemplate,
+    selectedTemplatePartNames,
     exportSize,
     modelPath,
     outputFolder,
@@ -904,306 +1055,190 @@ export default function TemplateGenerationPage({
     useWorldSpaceNormalsAsBase,
     detectedIslandColors,
     detectedIslandVisibility,
+    markerSelectionConfirmed,
     regenerationToken,
     isTauriRuntime,
+    showSaveNotice,
+    templatePolicy.format,
   ]);
 
   const handleSaveTemplate = useCallback(async () => {
-    let exportOutputs;
-    try {
-      exportOutputs = buildTemplateExportOutputs({
-        format: autoTemplateExportFormat,
-        psdBytes,
-        psdFileName,
-        previewDataUrl: previewUrl,
-      });
-    } catch (error) {
-      const message =
-        error && typeof error === "object" && "message" in error
-          ? error.message
-          : "Template export failed.";
+    if (isSaving) return;
+    if (
+      !isWindowTemplate &&
+      isMarkerPlacementDecisionRequired(detectedIslands, markerSelectionConfirmed)
+    ) {
+      const message = "Choose marker locations or continue with no markers before saving.";
       setGenerationError(message);
+      showSaveNotice("error", message);
       return;
     }
-    if (exportOutputs.length === 0) return;
 
-    if (isTauriRuntime && outputFolder) {
-      try {
-        const savedPaths = [];
-        for (const output of exportOutputs) {
-          const filePath = `${outputFolder}/${output.fileName}`;
-          await writeFile(filePath, output.bytes);
-          savedPaths.push(filePath);
-        }
-        setAutoSavedPath(savedPaths.join(" | "));
-        return;
-      } catch {
-        // fall back to browser download
+    let exportOutputs;
+    try {
+      exportOutputs =
+        generatedTemplates.length > 0
+          ? buildTemplateExportOutputsForArtifacts(autoTemplateExportFormat, generatedTemplates)
+          : buildTemplateExportOutputs({
+              format: autoTemplateExportFormat,
+              psdBytes,
+              psdFileName,
+              previewDataUrl: previewUrl,
+            });
+    } catch (error) {
+      const message = toErrorMessage(error, "Template export failed.");
+      setGenerationError(message);
+      showSaveNotice("error", `Save failed: ${message}`);
+      return;
+    }
+    if (exportOutputs.length === 0) {
+      const message = "Nothing to save yet. Generate a template first.";
+      setGenerationError(message);
+      showSaveNotice("error", message);
+      return;
+    }
+
+    const confirmSave = (savedPaths) => {
+      setAutoSavedPath(savedPaths.join(" | "));
+      const count = savedPaths.length;
+      showSaveNotice("success", `${count} template file${count === 1 ? "" : "s"} saved successfully.`);
+    };
+
+    const writeOutputsToFolder = async (folder) => {
+      const savedPaths = [];
+      for (const output of exportOutputs) {
+        const filePath = joinPath(folder, output.fileName);
+        await writeFile(filePath, ensureWritableBytes(output.bytes));
+        savedPaths.push(filePath);
       }
-    }
+      return savedPaths;
+    };
 
-    for (const output of exportOutputs) {
-      const blob = new Blob([output.bytes], { type: output.mimeType });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = output.fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
+    setIsSaving(true);
+    setAutoSavedPath("");
+    setGenerationError("");
+    try {
+      if (isTauriRuntime) {
+        if (outputFolder) {
+          try {
+            const savedPaths = await writeOutputsToFolder(outputFolder);
+            confirmSave(savedPaths);
+            return;
+          } catch {
+            // Folder may be out of FS scope after restart — fall through to dialogs.
+          }
+        }
+
+        if (exportOutputs.length === 1) {
+          const output = exportOutputs[0];
+          const filePath = await save({
+            defaultPath: outputFolder
+              ? joinPath(outputFolder, output.fileName)
+              : output.fileName,
+            filters: getSaveDialogFilters(output.fileName),
+          });
+          if (!filePath) return;
+          await writeFile(filePath, ensureWritableBytes(output.bytes));
+          confirmSave([filePath]);
+          return;
+        }
+
+        // Multi-file export: pick a folder (dialog grants temporary write access).
+        const selectedFolder = await open({
+          directory: true,
+          title: "Choose folder for template export",
+          defaultPath: outputFolder || undefined,
+        });
+        if (typeof selectedFolder !== "string" || !selectedFolder) return;
+        const savedPaths = await writeOutputsToFolder(selectedFolder);
+        setOutputFolder(selectedFolder);
+        confirmSave(savedPaths);
+        return;
+      }
+
+      // Browser runtime fallback.
+      for (const output of exportOutputs) {
+        triggerBrowserDownload(output.fileName, output.bytes, output.mimeType);
+      }
+      confirmSave(exportOutputs.map((output) => output.fileName));
+    } catch (error) {
+      const message = toErrorMessage(error, "Failed to save template.");
+      setGenerationError(message);
+      showSaveNotice("error", `Save failed: ${message}`);
+    } finally {
+      setIsSaving(false);
     }
-  }, [autoTemplateExportFormat, isTauriRuntime, outputFolder, previewUrl, psdBytes, psdFileName]);
+  }, [
+    autoTemplateExportFormat,
+    detectedIslands.length,
+    generatedTemplates,
+    isSaving,
+    isTauriRuntime,
+    isWindowTemplate,
+    markerSelectionConfirmed,
+    outputFolder,
+    previewUrl,
+    psdBytes,
+    psdFileName,
+    showSaveNotice,
+  ]);
 
   const handleOpenOutputFolder = useCallback(async () => {
     if (!isTauriRuntime || !outputFolder) return;
     await openFolderPath(outputFolder);
   }, [isTauriRuntime, outputFolder]);
 
-  const collectTemplateDiagnostics = useCallback(
-    (includeModelPath = false) => {
-      const mapTargets =
-        templateMap?.targets && typeof templateMap.targets === "object" ? templateMap.targets : {};
-      const targetKeys = Object.keys(mapTargets);
-      const selectedIslandCount = countSelectedMarkers(
-        buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility),
-      );
-      const markerSamples = detectedIslands.slice(0, 40).map((marker, index) => {
-        const markerKey = marker?.key || `marker-${index}`;
-        const explicitVisible = detectedIslandVisibility[markerKey];
-        const explicitColor = detectedIslandColors[markerKey];
-        return {
-          key: markerKey,
-          label: marker?.label || "",
-          defaultVisible: marker?.defaultVisible !== false,
-          forcedVisibility: explicitVisible === true ? true : null,
-          color: typeof explicitColor === "string" ? normalizeColorInputValue(explicitColor) : null,
-        };
-      });
-      const meshSamples = Array.isArray(templatePsdSource?.meshes)
-        ? templatePsdSource.meshes.slice(0, 30).map((mesh, index) => ({
-            index,
-            meshName: mesh?.meshName || "",
-            materialName: mesh?.materialName || "",
-            shellIndex: Number.isFinite(mesh?.shellIndex) ? mesh.shellIndex : null,
-            triangleCount: Number.isFinite(mesh?.triangleCount) ? mesh.triangleCount : null,
-            uvArea: Number.isFinite(mesh?.uvArea) ? Number(mesh.uvArea.toFixed(8)) : null,
-            isMainLiveryCandidate: Boolean(mesh?.isMainLiveryCandidate),
-          }))
-        : [];
-
-      return {
-        runtime: {
-          shell: isTauriRuntime ? "tauri" : "browser",
-          userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
-          language: typeof navigator !== "undefined" ? navigator.language : "",
-        },
-        model: {
-          fileName: getFileLabel(modelPath, ""),
-          fullPath: includeModelPath ? modelPath || "" : "",
-        },
-        template: {
-          exportSize,
-          autoTemplateColor,
-          autoTemplateExportFormat,
-          includeTemplateWireframe,
-          useWorldSpaceNormalsAsBase,
-          exteriorOnly,
-          layerCount,
-          targetCount,
-          detectedIslandCount: detectedIslands.length,
-          selectedIslandCount,
-          hiddenIslandCount: Math.max(0, detectedIslands.length - selectedIslandCount),
-          markerSelectionConfirmed,
-          markerSamples,
-          hasTemplateMap: Boolean(templateMap),
-          templateMapStats: templateMap?.stats || null,
-          templateMapInference: templateMap?.inference || null,
-          templateMapTargetsSample: targetKeys.slice(0, 30),
-          templateMapTargetCount: targetKeys.length,
-          hasTemplatePsdSource: Boolean(templatePsdSource),
-          psdSourceSummary: templatePsdSource
-            ? {
-                bounds: templatePsdSource.bounds || null,
-                meshCount: templatePsdSource.meshCount || 0,
-                triangleCount: templatePsdSource.triangleCount || 0,
-                proxyMeshCount: templatePsdSource.proxyMeshCount || 0,
-                meshSamples,
-              }
-            : null,
-          previewReady: Boolean(previewUrl),
-          generatedAt: lastGeneratedAt ? lastGeneratedAt.toISOString() : null,
-          generationError: generationError || null,
-          templateMapError: templateMapError || null,
-          templatePsdSourceError: templatePsdSourceError || null,
-        },
-      };
-    },
-    [
-      autoTemplateColor,
-      autoTemplateExportFormat,
-      detectedIslandColors,
-      detectedIslandVisibility,
-      detectedIslands,
-      exportSize,
-      exteriorOnly,
-      generationError,
-      includeTemplateWireframe,
-      isTauriRuntime,
-      lastGeneratedAt,
-      layerCount,
-      markerSelectionConfirmed,
-      modelPath,
-      previewUrl,
-      targetCount,
-      templateMap,
-      templateMapError,
-      templatePsdSource,
-      templatePsdSourceError,
-      useWorldSpaceNormalsAsBase,
-    ],
-  );
-
-  const buildTelemetryPayload = useCallback(() => {
-    const summary = telemetryDraft.summary.trim();
-    const details = telemetryDraft.details.trim();
-    const expectedBehavior = telemetryDraft.expectedBehavior.trim();
-    return {
-      schemaVersion: 1,
-      eventType: TELEMETRY_EVENT_TYPE,
-      reportId: createTelemetryReportId(),
-      createdAt: new Date().toISOString(),
-      issue: {
-        summary,
-        details,
-        expectedBehavior: expectedBehavior || null,
-        severity: telemetryDraft.severity,
-      },
-      diagnostics: telemetryDraft.includeDiagnostics
-        ? collectTemplateDiagnostics(telemetryDraft.includeModelPath)
-        : null,
-    };
-  }, [collectTemplateDiagnostics, telemetryDraft]);
-
-  const updateTelemetryField = useCallback((field, value) => {
-    setTelemetryDraft((prev) => ({ ...prev, [field]: value }));
-  }, []);
-
-  const handleCopyTelemetryPayload = useCallback(async () => {
-    const summary = telemetryDraft.summary.trim();
-    const details = telemetryDraft.details.trim();
-    if (!summary || !details) {
-      setTelemetryNotice("error", "Add a summary and details before exporting telemetry.", 4800);
-      return;
-    }
-    const payload = buildTelemetryPayload();
-    const payloadJson = JSON.stringify(payload, null, 2);
-    const copied = await writeTextToClipboard(payloadJson);
-    if (copied) {
-      setTelemetryNotice("success", "Telemetry payload copied to clipboard.", 4200);
-      return;
-    }
-    const fallbackName = `template-telemetry-${payload.reportId}.json`;
-    triggerTextDownload(fallbackName, payloadJson);
-    setTelemetryNotice("success", `Clipboard unavailable. Downloaded ${fallbackName}.`, 5000);
-  }, [buildTelemetryPayload, setTelemetryNotice, telemetryDraft.details, telemetryDraft.summary]);
-
-  const handleSubmitTelemetry = useCallback(async () => {
-    const summary = telemetryDraft.summary.trim();
-    const details = telemetryDraft.details.trim();
-    if (!summary || !details) {
-      setTelemetryNotice("error", "Summary and details are required to send telemetry.", 5000);
-      return;
-    }
-
-    const payload = buildTelemetryPayload();
-    const payloadJson = JSON.stringify(payload, null, 2);
-    const endpoint = telemetryDraft.endpoint.trim();
-
-    setTelemetrySending(true);
-    setTelemetryStatus({ tone: "", message: "" });
-    try {
-      if (endpoint) {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Cortex-Telemetry": "template-v1",
-          },
-          body: payloadJson,
-        });
-        if (!response.ok) {
-          let body = "";
-          try {
-            body = (await response.text()).trim();
-          } catch {
-            body = "";
-          }
-          const suffix = body ? ` ${body.slice(0, 160)}` : "";
-          throw new Error(`Endpoint returned HTTP ${response.status}.${suffix}`);
-        }
-        persistTemplateTelemetryEndpoint(endpoint);
-        setTelemetryDraft((prev) => ({
-          ...prev,
-          summary: "",
-          details: "",
-          expectedBehavior: "",
-          endpoint,
-        }));
-        setTelemetryNotice("success", "Telemetry sent successfully. Thanks for reporting this.", 6400);
-      } else {
-        const copied = await writeTextToClipboard(payloadJson);
-        if (copied) {
-          setTelemetryNotice(
-            "success",
-            "No endpoint configured. Telemetry JSON copied so you can share it manually.",
-            6400,
-          );
-        } else {
-          const fallbackName = `template-telemetry-${payload.reportId}.json`;
-          triggerTextDownload(fallbackName, payloadJson);
-          setTelemetryNotice(
-            "success",
-            `No endpoint configured. Downloaded ${fallbackName} for manual sharing.`,
-            6400,
-          );
-        }
-      }
-    } catch (error) {
-      setTelemetryStatus({
-        tone: "error",
-        message: toErrorMessage(error, "Failed to send telemetry."),
-      });
-    } finally {
-      setTelemetrySending(false);
-    }
-  }, [buildTelemetryPayload, setTelemetryNotice, telemetryDraft.details, telemetryDraft.endpoint, telemetryDraft.summary]);
-
-  const telemetryCanSubmit = Boolean(
-    telemetryDraft.summary.trim() && telemetryDraft.details.trim() && !telemetrySending,
-  );
   const modelFileName = getFileLabel(modelPath, "");
-  const canRegenerate = Boolean(modelPath && templateMap && templatePsdSource && !generating);
-  const saveButtonLabel = getTemplateSaveButtonLabel(autoTemplateExportFormat);
+  const activeTemplateSets = isWindowTemplate ? windowTemplateSets : templateSets;
+  const templateBatchCount = Math.max(activeTemplateSets.length, generatedTemplates.length, 1);
+  const canRegenerate = Boolean(
+    modelPath &&
+      templateMap &&
+      templatePsdSource &&
+      !generating &&
+      !isSaving &&
+      (!isWindowTemplate || selectedTemplatePartNames.length > 0),
+  );
+  const baseSaveButtonLabel = getTemplateSaveButtonLabel(autoTemplateExportFormat);
+  const saveButtonLabel =
+    templateBatchCount > 1 ? `${baseSaveButtonLabel} (${templateBatchCount})` : baseSaveButtonLabel;
   const worldSpaceNormalsBaseEnabled = useWorldSpaceNormalsAsBase;
+  const activeWindowTemplateSet = windowTemplateSets[0] || null;
+  const windowTemplateMap = activeWindowTemplateSet?.templateMap || null;
+  const inferredWindowTarget = windowTemplateMap?.inference?.windowTarget || "";
+  const suggestedWindowPartNames = normalizeMeshNameList(
+    (windowTemplateMap?.targets?.[inferredWindowTarget] || []).map((entry) => entry?.meshName),
+  );
+  const availableWindowPartNames = normalizeMeshNameList(
+    (activeWindowTemplateSet?.templatePsdSource?.meshes || []).map((mesh) => mesh?.meshName),
+  ).sort((a, b) => a.localeCompare(b));
+  const selectedTextureTargets = selectedTemplatePartNames.map((name) => `mesh:${name}`);
+  const selectedPartCountLabel = `${selectedTemplatePartNames.length} part${
+    selectedTemplatePartNames.length === 1 ? "" : "s"
+  } selected`;
   const hasDetectedIslands = detectedIslands.length > 0;
+  const markerPlacementRequired =
+    !isWindowTemplate &&
+    isMarkerPlacementDecisionRequired(detectedIslands, markerSelectionConfirmed);
   const confirmedSelectedCount = countSelectedMarkers(
     buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility),
   );
   const pendingSelectedCount = countSelectedMarkers(pendingMarkerSelection);
   const markerSelectionCountLabel = isMarkerEditMode
-    ? `${pendingSelectedCount} / ${detectedIslands.length || 0} queued`
-    : `${confirmedSelectedCount} / ${detectedIslands.length || 0} selected`;
+    ? `${pendingSelectedCount} of ${detectedIslands.length || 0} chosen`
+    : `${confirmedSelectedCount} of ${detectedIslands.length || 0} placed`;
   const markerPickModifierLabel =
     templateMarkerPickModifier === "ctrl"
       ? "Ctrl"
       : templateMarkerPickModifier === "shift"
         ? "Shift"
         : "Alt";
-  const markerPickHint = `Hold ${markerPickModifierLabel} + click to select chunks`;
+  const markerPickHint = isMarkerPickModifierPressed
+    ? `${markerPickModifierLabel} held — click the matching part on the model.`
+    : `Click a UV chunk here, or hold ${markerPickModifierLabel} and click the matching model part.`;
   const markerSelectionHint = isMarkerEditMode
-    ? "Selections stay staged until you confirm."
-    : "Re-enter edit mode to change which chunks regenerate into the template.";
+    ? "Markers start off. Choose only the locations where a marker belongs before saving."
+    : "Only these confirmed locations will be included in the saved template.";
   const markerOverlayStyle = {
     left: `${previewViewport.offsetX}px`,
     top: `${previewViewport.offsetY}px`,
@@ -1228,15 +1263,27 @@ export default function TemplateGenerationPage({
       return (bRect?.area || 0) - (aRect?.area || 0);
     });
 
-  const markerPromptEl = hasDetectedIslands ? (
-    <div className={`tg-marker-prompt${compactHeight ? " tg-marker-prompt--compact" : ""}`} aria-live="polite">
+  const markerPromptEl = hasDetectedIslands && !isWindowTemplate ? (
+    <div
+      className={`tg-marker-prompt${compactHeight ? " tg-marker-prompt--compact" : ""}`}
+      aria-live="polite"
+    >
       <div className="tg-marker-prompt-row">
-        <div className="tg-marker-prompt-copy">
+        <div id="tg-marker-placement-copy" className="tg-marker-prompt-copy">
           <span className="tg-marker-prompt-eyebrow">
-            {isMarkerEditMode ? "Marker Edit Mode" : "Marker Selection"}
+            {isMarkerEditMode
+              ? markerSelectionConfirmed
+                ? "Edit marker placement"
+                : "Marker placement required"
+              : "Marker placement"}
           </span>
           <strong className="tg-marker-prompt-count">{markerSelectionCountLabel}</strong>
           <span className="tg-marker-prompt-text">{markerSelectionHint}</span>
+          {isMarkerEditMode ? (
+            <span className="tg-marker-prompt-example">
+              <strong>Example:</strong> choose the door-handle or badge island, not every small island.
+            </span>
+          ) : null}
         </div>
         <div className="tg-marker-prompt-actions">
           {isMarkerEditMode ? (
@@ -1245,8 +1292,9 @@ export default function TemplateGenerationPage({
                 type="button"
                 className="tg-marker-prompt-btn is-primary"
                 onClick={handleConfirmMarkerSelection}
+                disabled={!pendingSelectedCount && !markerSelectionConfirmed}
               >
-                Confirm
+                Apply markers
               </button>
               <button
                 type="button"
@@ -1256,6 +1304,15 @@ export default function TemplateGenerationPage({
               >
                 Clear
               </button>
+              {!pendingSelectedCount && !markerSelectionConfirmed ? (
+                <button
+                  type="button"
+                  className="tg-marker-prompt-btn"
+                  onClick={handleConfirmNoMarkers}
+                >
+                  Use no markers
+                </button>
+              ) : null}
               {markerSelectionConfirmed ? (
                 <button
                   type="button"
@@ -1293,7 +1350,7 @@ export default function TemplateGenerationPage({
         }`}
       >
         <span className="tg-marker-tip-line">
-          Click chunks to toggle them. Confirm to apply.
+          {markerPickHint}
         </span>
       </div>
     </div>
@@ -1322,11 +1379,17 @@ export default function TemplateGenerationPage({
               <div className="tg-empty-icon">
                 <Sparkles className="w-7 h-7" />
               </div>
-              <h2 className="tg-empty-title">Template Generator</h2>
+              <span className="tg-empty-kicker">UV workspace</span>
+              <h2 className="tg-empty-title">Build the template your model needs</h2>
               <p className="tg-empty-desc">
-                Load a vehicle model to automatically generate a layered<br />
-                PSD template from its UV shell geometry.
+                Import a model, choose body or window graphics, and select geometry visually.<br />
+                No material naming convention required.
               </p>
+              <div className="tg-empty-flow" aria-label="Template workflow">
+                <span><b>01</b> Import model</span>
+                <span><b>02</b> Pick focus</span>
+                <span><b>03</b> Export PSD</span>
+              </div>
               <motion.button
                 type="button"
                 className="tg-empty-btn"
@@ -1334,8 +1397,8 @@ export default function TemplateGenerationPage({
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.96 }}
               >
-                <Car className="w-4 h-4" />
-                Load .yft Model
+                <Box className="w-4 h-4" />
+                Import .yft or .ydd model
               </motion.button>
             </motion.div>
           </motion.div>
@@ -1350,212 +1413,235 @@ export default function TemplateGenerationPage({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.25 }}
           >
-            {/* ── Vertical Control Sidebar ── */}
-            <motion.div
+            {/* ── Guided template setup ── */}
+            <motion.aside
               className={`tg-sidebar${generationError ? " has-error" : ""}${generating ? " is-generating" : ""}`}
+              aria-label="Template setup"
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.08 }}
             >
-              {/* Model */}
-              <div className="tg-sb-section">
-                <button
-                  type="button"
-                  className="tg-sb-btn tg-sb-icon-btn"
-                  onClick={handleSelectModel}
-                  title={modelPath}
-                >
-                  <Car className="tg-sb-icon" />
-                </button>
-                <span className="tg-sb-label tg-sb-model-label" title={modelPath}>
-                  {modelFileName}
-                </span>
-                <button
-                  type="button"
-                  className="tg-sb-btn tg-sb-icon-btn tg-sb-unload"
-                  onClick={handleUnloadModel}
-                  title="Unload model"
-                >
-                  <X className="tg-sb-icon" />
-                </button>
-              </div>
-
-              <div className="tg-sb-rule" />
-
-              {/* PSD Size */}
-              <div className="tg-sb-section tg-sb-sizes">
-                {SIZE_OPTIONS.map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    className={`tg-sb-btn tg-sb-size${exportSize === size ? " is-active" : ""}`}
-                    onClick={() => setExportSize(size)}
-                    title={`Export at ${size}×${size}px`}
-                  >
-                    {size >= 1024 ? `${size / 1024}K` : size}
-                  </button>
-                ))}
-              </div>
-
-              <div className="tg-sb-rule" />
-
-              {/* Exterior toggle */}
-              <div className="tg-sb-section tg-sb-marker">
-                <button
-                  type="button"
-                  className={`tg-sb-btn tg-sb-icon-btn tg-sb-ext-btn${exteriorOnly ? " is-active" : ""}`}
-                  onClick={() => setExteriorOnly((v) => !v)}
-                  aria-pressed={exteriorOnly}
-                  title="Show only exterior bodyshell geometry"
-                >
-                  <Layers className="tg-sb-icon" />
-                </button>
-                <span className={`tg-sb-label tg-sb-ext-label${exteriorOnly ? " is-active" : ""}`}>
-                  Exterior
+              <div className="tg-sidebar-heading">
+                <div>
+                  <span className="tg-sidebar-kicker">Template builder</span>
+                  <h2>{isWindowTemplate ? "Window graphics" : templatePolicy.isEup ? "EUP texture" : "Body livery"}</h2>
+                </div>
+                <span className={`tg-build-status${generating ? " is-busy" : ""}`} role="status">
+                  {generating ? "Building" : previewUrl ? "Ready" : "Setup"}
                 </span>
               </div>
 
-              {/* Wireframe toggle */}
-              <div className="tg-sb-section tg-sb-marker">
-                <button
-                  type="button"
-                  className={`tg-sb-btn tg-sb-icon-btn tg-sb-ext-btn${includeTemplateWireframe ? " is-active" : ""}`}
-                  onClick={() => setIncludeTemplateWireframe((prev) => !prev)}
-                  aria-pressed={includeTemplateWireframe}
-                  title="Toggle generated template wireframe layer"
-                >
-                  <Box className="tg-sb-icon" />
-                </button>
-                <span className={`tg-sb-label tg-sb-ext-label${includeTemplateWireframe ? " is-active" : ""}`}>
-                  Wireframe
-                </span>
-              </div>
-
-              {/* World-space normal base toggle */}
-              <div className="tg-sb-section tg-sb-marker">
-                <button
-                  type="button"
-                  className={`tg-sb-btn tg-sb-icon-btn tg-sb-ext-btn${worldSpaceNormalsBaseEnabled ? " is-active" : ""}`}
-                  onClick={() => setUseWorldSpaceNormalsAsBase((prev) => !prev)}
-                  aria-pressed={worldSpaceNormalsBaseEnabled}
-                  title="Use generated world-space normal map as base color with wireframe on top"
-                >
-                  <Sparkles className="tg-sb-icon" />
-                </button>
-                <span className={`tg-sb-label tg-sb-ext-label${worldSpaceNormalsBaseEnabled ? " is-active" : ""}`}>
-                  WS Base
-                </span>
-              </div>
-
-              {hasDetectedIslands && (
-                <>
-                  <div className="tg-sb-rule" />
-                  <div className="tg-sb-section tg-sb-marker">
-                    <label className="tg-sb-btn tg-sb-icon-btn tg-sb-color-all" title="Change marker color for all chunks">
-                      <span
-                        className="tg-sb-color-all-swatch"
-                        style={{ background: globalMarkerColor }}
-                      />
-                      <input
-                        type="color"
-                        className="tg-sb-marker-color-input"
-                        value={globalMarkerColor}
-                        onChange={(e) => handleIslandColorChange(e.target.value)}
-                      />
-                    </label>
-                    <span className="tg-sb-label tg-sb-ext-label">Color</span>
+              <div className="tg-sidebar-scroll">
+                <section className="tg-step" aria-labelledby="tg-source-title">
+                  <div className="tg-step-heading">
+                    <span className="tg-step-number">01</span>
+                    <div>
+                      <h3 id="tg-source-title">Source model</h3>
+                      <p>Loaded and ready to inspect</p>
+                    </div>
                   </div>
-                </>
-              )}
+                  <div className="tg-source-row" title={modelPath}>
+                    <span className="tg-source-icon" aria-hidden>
+                      {templatePolicy.isEup ? <Shirt /> : <Car />}
+                    </span>
+                    <span className="tg-source-copy">
+                      <strong>{modelFileName}</strong>
+                      <small>{templatePolicy.label} model</small>
+                    </span>
+                    <button type="button" onClick={handleSelectModel}>Replace</button>
+                    <button type="button" className="tg-icon-action" onClick={handleUnloadModel} aria-label="Unload model">
+                      <X />
+                    </button>
+                  </div>
+                  {templateSetWarning ? <p className="tg-inline-warning">{templateSetWarning}</p> : null}
+                </section>
 
-              <div className="tg-sb-rule" />
+                <section className="tg-step" aria-labelledby="tg-purpose-title">
+                  <div className="tg-step-heading">
+                    <span className="tg-step-number">02</span>
+                    <div>
+                      <h3 id="tg-purpose-title">Template focus</h3>
+                      <p>Choose what artists will paint</p>
+                    </div>
+                  </div>
+                  <div className="tg-purpose-options" role="group" aria-label="Template focus">
+                    <button
+                      type="button"
+                      className={`tg-purpose-option${!isWindowTemplate ? " is-active" : ""}`}
+                      onClick={() => handleTemplatePurposeChange("body")}
+                      aria-pressed={!isWindowTemplate}
+                    >
+                      <Image aria-hidden />
+                      <span><strong>{templatePolicy.isEup ? "Garment" : "Body livery"}</strong><small>Automatic UV target</small></span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`tg-purpose-option${isWindowTemplate ? " is-active" : ""}`}
+                      onClick={() => handleTemplatePurposeChange("windows")}
+                      aria-pressed={isWindowTemplate}
+                      disabled={templatePolicy.isEup}
+                      title={templatePolicy.isEup ? "Window templates are available for vehicle models." : "Select window geometry directly on the model."}
+                    >
+                      <PanelTop aria-hidden />
+                      <span><strong>Window graphics</strong><small>Pick geometry yourself</small></span>
+                    </button>
+                  </div>
+                </section>
 
-              {/* Regenerate */}
-              <div className="tg-sb-section">
-                <motion.button
-                  type="button"
-                  className="tg-sb-btn tg-sb-icon-btn"
-                  onClick={handleRegenerateTemplate}
-                  disabled={!canRegenerate}
-                  title="Regenerate template"
-                  whileTap={{ scale: 0.88 }}
-                >
-                  <RefreshCw className="tg-sb-icon" />
-                </motion.button>
-                <span className={`tg-sb-label${canRegenerate ? "" : " is-disabled"}`}>
-                  Regenerate
-                </span>
+                {isWindowTemplate ? (
+                  <section className="tg-step is-active" aria-labelledby="tg-parts-title">
+                    <div className="tg-step-heading">
+                      <span className="tg-step-number">03</span>
+                      <div>
+                        <h3 id="tg-parts-title">Select window parts</h3>
+                        <p>{selectedPartCountLabel}</p>
+                      </div>
+                    </div>
+                    <div className="tg-pick-instruction">
+                      <MousePointer2 aria-hidden />
+                      <span><strong>Click a window in the model.</strong><small>Drag to rotate. Click again to remove a part.</small></span>
+                    </div>
+                    {suggestedWindowPartNames.length > 0 && selectedTemplatePartNames.length === 0 ? (
+                      <button
+                        type="button"
+                        className="tg-suggestion-btn"
+                        onClick={() => setSelectedTemplatePartNames(suggestedWindowPartNames)}
+                      >
+                        <Sparkles aria-hidden />
+                        Try likely window match
+                      </button>
+                    ) : null}
+                    <label className="tg-part-select-label">
+                      <span>Keyboard fallback</span>
+                      <select
+                        value=""
+                        onChange={(event) => {
+                          const meshName = event.target.value;
+                          if (!meshName) return;
+                          setSelectedTemplatePartNames((current) =>
+                            current.includes(meshName) ? current : [...current, meshName],
+                          );
+                        }}
+                      >
+                        <option value="">Add a model part…</option>
+                        {availableWindowPartNames.map((meshName) => (
+                          <option key={meshName} value={meshName}>{meshName}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {selectedTemplatePartNames.length > 0 ? (
+                      <div className="tg-selected-parts" aria-label="Selected window parts">
+                        {selectedTemplatePartNames.map((meshName, index) => (
+                          <div className="tg-selected-part" key={meshName}>
+                            <span><small>Part {index + 1}</small><strong title={meshName}>{meshName}</strong></span>
+                            <button type="button" onClick={() => handleRemoveTemplatePart(meshName)} aria-label={`Remove ${meshName}`}>
+                              <X />
+                            </button>
+                          </div>
+                        ))}
+                        <button type="button" className="tg-clear-parts" onClick={() => setSelectedTemplatePartNames([])}>
+                          <Trash2 aria-hidden /> Clear selection
+                        </button>
+                      </div>
+                    ) : null}
+                  </section>
+                ) : (
+                  <section className="tg-step is-complete" aria-labelledby="tg-target-title">
+                    <div className="tg-step-heading">
+                      <span className="tg-step-number">03</span>
+                      <div>
+                        <h3 id="tg-target-title">UV target</h3>
+                        <p>Detected automatically</p>
+                      </div>
+                    </div>
+                    <div className="tg-auto-target">
+                      <Check aria-hidden />
+                      <span><strong>{templatePolicy.isEup ? "All garment geometry" : "Primary paint geometry"}</strong><small>No material-name setup required</small></span>
+                    </div>
+                  </section>
+                )}
+
+                <section className="tg-step" aria-labelledby="tg-output-title">
+                  <div className="tg-step-heading">
+                    <span className="tg-step-number">04</span>
+                    <div>
+                      <h3 id="tg-output-title">Output</h3>
+                      <p>PSD construction settings</p>
+                    </div>
+                    <SlidersHorizontal aria-hidden className="tg-step-heading-icon" />
+                  </div>
+                  <div className="tg-size-grid" role="group" aria-label="Template resolution">
+                    {SIZE_OPTIONS.map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        className={exportSize === size ? "is-active" : ""}
+                        onClick={() => setExportSize(size)}
+                        aria-pressed={exportSize === size}
+                      >
+                        {size >= 1024 ? `${size / 1024}K` : size}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="tg-setting-list">
+                    {!isWindowTemplate && templatePolicy.supportsExteriorOnly ? (
+                      <button type="button" className="tg-setting-row" onClick={() => setExteriorOnly((value) => !value)} aria-pressed={exteriorOnly}>
+                        <Layers aria-hidden /><span><strong>Exterior only</strong><small>Hide interior geometry</small></span><i className={exteriorOnly ? "is-on" : ""} />
+                      </button>
+                    ) : null}
+                    <button type="button" className="tg-setting-row" onClick={() => setIncludeTemplateWireframe((value) => !value)} aria-pressed={includeTemplateWireframe}>
+                      <Box aria-hidden /><span><strong>Wireframe layer</strong><small>Trace UV boundaries</small></span><i className={includeTemplateWireframe ? "is-on" : ""} />
+                    </button>
+                    <button type="button" className="tg-setting-row" onClick={() => setUseWorldSpaceNormalsAsBase((value) => !value)} aria-pressed={worldSpaceNormalsBaseEnabled}>
+                      <Sparkles aria-hidden /><span><strong>Normal-map base</strong><small>Use world-space shading</small></span><i className={worldSpaceNormalsBaseEnabled ? "is-on" : ""} />
+                    </button>
+                  </div>
+                  {hasDetectedIslands && !isWindowTemplate ? (
+                    <label className="tg-marker-color-row">
+                      <span><strong>Marker color</strong><small>Detected detail islands</small></span>
+                      <input type="color" value={globalMarkerColor} onChange={(event) => handleIslandColorChange(event.target.value)} />
+                    </label>
+                  ) : null}
+                </section>
               </div>
 
-              {/* Spacer */}
-              <div className="tg-sb-spacer" />
-
-              {/* Output folder */}
-              <div className="tg-sb-rule" />
-              <div className="tg-sb-section">
+              <div className="tg-sidebar-footer">
+                <button type="button" className="tg-output-folder" onClick={handleSelectOutputFolder} title={outputFolder || "Choose output folder"}>
+                  <FolderOpen aria-hidden />
+                  <span><small>Save location</small><strong>{outputFolder ? getFileLabel(outputFolder, outputFolder) : "Choose folder"}</strong></span>
+                </button>
+                {outputFolder ? (
+                  <button type="button" className="tg-icon-action" onClick={handleOpenOutputFolder} aria-label="Open output folder">
+                    <FolderOpen />
+                  </button>
+                ) : null}
+                <button type="button" className="tg-regenerate-btn" onClick={handleRegenerateTemplate} disabled={!canRegenerate} aria-label="Regenerate template">
+                  <RefreshCw className={generating ? "is-spinning" : ""} />
+                </button>
                 <button
                   type="button"
-                  className="tg-sb-btn tg-sb-icon-btn"
-                  onClick={handleSelectOutputFolder}
-                  title={outputFolder || "Set output folder"}
-                >
-                  <FolderOpen className="tg-sb-icon" />
-                </button>
-                {outputFolder && (
-                  <button
-                    type="button"
-                    className="tg-sb-btn tg-sb-icon-btn tg-sb-open-dir"
-                    onClick={handleOpenOutputFolder}
-                    title={`Open ${outputFolder}`}
-                  >
-                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                      <path d="M3 7L7 3M7 3H4M7 3V6" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-
-              <div className="tg-sb-rule" />
-
-              {/* Save */}
-              <div className="tg-sb-section">
-                <motion.button
-                  type="button"
-                  className={`tg-sb-btn tg-sb-icon-btn tg-sb-save${autoSavedPath ? " is-saved" : ""}`}
+                  className="tg-save-primary"
                   onClick={handleSaveTemplate}
-                  disabled={!psdBytes || generating}
-                  title={saveButtonLabel}
-                  whileTap={{ scale: 0.88 }}
+                  disabled={
+                    !psdBytes ||
+                    generating ||
+                    isSaving ||
+                    markerPlacementRequired
+                  }
+                  title={
+                    markerPlacementRequired
+                      ? "Choose marker locations or continue with no markers before saving."
+                      : undefined
+                  }
+                  aria-describedby={
+                    markerPlacementRequired ? "tg-marker-placement-copy" : undefined
+                  }
                 >
-                  {autoSavedPath ? (
-                    <Check className="tg-sb-icon" />
-                  ) : (
-                    <Download className="tg-sb-icon" />
-                  )}
-                </motion.button>
-                <span className={`tg-sb-label tg-sb-save-label${!psdBytes || generating ? " is-disabled" : ""}${autoSavedPath ? " is-saved" : ""}`}>
-                  {autoSavedPath ? "Saved" : saveButtonLabel}
-                </span>
+                  <Download aria-hidden />
+                  {isSaving ? "Saving…" : saveButtonLabel}
+                </button>
               </div>
-
-              <div className="tg-sb-rule" />
-
-              {/* Telemetry report */}
-              <div className="tg-sb-section">
-                <motion.button
-                  type="button"
-                  className="tg-sb-btn tg-sb-icon-btn tg-sb-report"
-                  onClick={() => openTelemetryDialog(generationError)}
-                  title="Report template issue telemetry"
-                  whileTap={{ scale: 0.88 }}
-                >
-                  <Bug className="tg-sb-icon" />
-                </motion.button>
-                <span className="tg-sb-label tg-sb-report-label">
-                  Report
-                </span>
-              </div>
-            </motion.div>
+            </motion.aside>
 
             {/* ── Model Viewer ── */}
             <motion.div
@@ -1564,12 +1650,19 @@ export default function TemplateGenerationPage({
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
             >
+              <div className="tg-pane-header">
+                <div>
+                  <span className="tg-pane-index">A</span>
+                  <span><strong>Model</strong><small>{isWindowTemplate ? "Select geometry" : "Inspect result"}</small></span>
+                </div>
+                <span className="tg-pane-meta">{isWindowTemplate ? selectedPartCountLabel : templatePolicy.label}</span>
+              </div>
               <Viewer
                 modelPath={modelPath}
                 texturePath={previewUrl || ""}
                 textureReloadToken={lastGeneratedAt?.getTime() || 0}
-                textureTarget="material:vehicle_paint3"
-                textureMode="livery"
+                textureTarget={isWindowTemplate ? selectedTextureTargets : templatePolicy.textureTarget}
+                textureMode={isWindowTemplate ? "everything" : templatePolicy.textureMode}
                 windowTexturePath=""
                 windowTextureTarget="none"
                 windowTextureReloadToken={0}
@@ -1581,14 +1674,20 @@ export default function TemplateGenerationPage({
                 glossiness={0.5}
                 showGrid={false}
                 showWireframe={false}
-                liveryExteriorOnly={exteriorOnly}
+                liveryExteriorOnly={templatePolicy.supportsExteriorOnly && exteriorOnly}
                 wasdEnabled={false}
                 isActive={isActive}
                 includeTemplateGeometry
                 templateMarkerPickModifier={templateMarkerPickModifier}
-                onTemplateMarkerUvHover={isMarkerEditMode ? handleModelMarkerHover : undefined}
-                onTemplateMarkerUvLeave={isMarkerEditMode ? clearHoveredMarker : undefined}
-                onTemplateMarkerUvPick={isMarkerEditMode ? handleModelMarkerPick : undefined}
+                onTemplateMarkerUvHover={!isWindowTemplate && isMarkerEditMode ? handleModelMarkerHover : undefined}
+                onTemplateMarkerUvLeave={!isWindowTemplate && isMarkerEditMode ? clearHoveredMarker : undefined}
+                onTemplateMarkerUvPick={!isWindowTemplate && isMarkerEditMode ? handleModelMarkerPick : undefined}
+                templatePartPickEnabled={isWindowTemplate}
+                selectedTemplatePartNames={selectedTemplatePartNames}
+                hoveredTemplatePartName={hoveredTemplatePartName}
+                onTemplatePartHover={isWindowTemplate ? handleTemplatePartHover : undefined}
+                onTemplatePartLeave={isWindowTemplate ? () => setHoveredTemplatePartName("") : undefined}
+                onTemplatePartPick={isWindowTemplate ? handleTemplatePartPick : undefined}
                 onModelInfo={handleModelInfo}
                 onReady={NOOP}
                 onTextureReload={NOOP}
@@ -1598,6 +1697,15 @@ export default function TemplateGenerationPage({
                 onModelLoading={NOOP}
                 onFormatWarning={NOOP}
               />
+              {isWindowTemplate ? (
+                <div className={`tg-part-coach${selectedTemplatePartNames.length ? " has-selection" : ""}`} role="status">
+                  <MousePointer2 aria-hidden />
+                  <span>
+                    <strong>{selectedTemplatePartNames.length ? "Selection updates live" : "Click the window geometry"}</strong>
+                    <small>{selectedTemplatePartNames.length ? "Add any other panes that share the artwork." : "Drag anywhere to rotate the model."}</small>
+                  </span>
+                </div>
+              ) : null}
               {compactHeight && markerPromptEl}
             </motion.div>
 
@@ -1608,6 +1716,13 @@ export default function TemplateGenerationPage({
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.06 }}
             >
+              <div className="tg-pane-header">
+                <div>
+                  <span className="tg-pane-index">B</span>
+                  <span><strong>Template</strong><small>Live flattened preview</small></span>
+                </div>
+                <span className="tg-pane-meta">{previewUrl ? `${exportSize} × ${exportSize}` : "Waiting"}</span>
+              </div>
               <div
                 ref={previewShellRef}
                 className={`tg-preview-shell${isMarkerEditMode ? " is-edit-mode" : ""}${
@@ -1626,13 +1741,18 @@ export default function TemplateGenerationPage({
                     >
                       <AlertTriangle className="w-5 h-5" />
                       <span>{generationError}</span>
-                      <button
-                        type="button"
-                        className="tg-preview-report-btn"
-                        onClick={() => openTelemetryDialog(generationError)}
-                      >
-                        Report with telemetry
-                      </button>
+                    </motion.div>
+                  ) : isWindowTemplate && selectedTemplatePartNames.length === 0 ? (
+                    <motion.div
+                      key="window-selection-required"
+                      className="tg-preview-state tg-preview-state--selection"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                    >
+                      <PanelTop aria-hidden />
+                      <strong>Select a window part</strong>
+                      <span>Your UV template will appear here as soon as you click the model.</span>
                     </motion.div>
                   ) : previewUrl ? (
                     <motion.img
@@ -1732,7 +1852,11 @@ export default function TemplateGenerationPage({
                         className="tg-preview-refresh-ring"
                         animate={{ rotate: 360 }}
                         transition={{ duration: 1.05, ease: "linear", repeat: Infinity }}
-                      />
+                      >
+                        <span />
+                        <span />
+                        <span />
+                      </motion.div>
                       <motion.span
                         className="tg-preview-refresh-text"
                         initial={{ opacity: 0.65, y: 2 }}
@@ -1749,174 +1873,18 @@ export default function TemplateGenerationPage({
           </motion.div>
           )}
         </AnimatePresence>
-
         <AnimatePresence>
-          {isTelemetryDialogOpen && (
+          {saveNotice.message && (
             <motion.div
-              className="tg-telemetry-backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.16 }}
-              onClick={closeTelemetryDialog}
+              className={`tg-save-notice is-${saveNotice.tone}`}
+              role="status"
+              initial={{ opacity: 0, y: -10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.98 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             >
-              <motion.div
-                className="tg-telemetry-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="tg-telemetry-title"
-                initial={{ opacity: 0, y: 16, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 8, scale: 0.985 }}
-                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="tg-telemetry-head">
-                  <div>
-                    <h3 id="tg-telemetry-title" className="tg-telemetry-title">
-                      Template Telemetry Report
-                    </h3>
-                    <p className="tg-telemetry-subtitle">
-                      Share what broke so template diagnostics can be reproduced.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="tg-telemetry-close"
-                    onClick={closeTelemetryDialog}
-                    disabled={telemetrySending}
-                    aria-label="Close telemetry dialog"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="tg-telemetry-fields">
-                  <label className="tg-telemetry-field">
-                    <span className="tg-telemetry-label">Issue summary</span>
-                    <input
-                      className="tg-telemetry-input"
-                      value={telemetryDraft.summary}
-                      onChange={(event) => updateTelemetryField("summary", event.currentTarget.value)}
-                      placeholder="Example: template islands overlap and marker colors mismatch"
-                      maxLength={240}
-                    />
-                  </label>
-
-                  <label className="tg-telemetry-field">
-                    <span className="tg-telemetry-label">What happened</span>
-                    <textarea
-                      className="tg-telemetry-textarea"
-                      value={telemetryDraft.details}
-                      onChange={(event) => updateTelemetryField("details", event.currentTarget.value)}
-                      placeholder="Steps, output, what looked broken, and any related model details"
-                      rows={4}
-                    />
-                  </label>
-
-                  <label className="tg-telemetry-field">
-                    <span className="tg-telemetry-label">What you expected (optional)</span>
-                    <textarea
-                      className="tg-telemetry-textarea"
-                      value={telemetryDraft.expectedBehavior}
-                      onChange={(event) =>
-                        updateTelemetryField("expectedBehavior", event.currentTarget.value)
-                      }
-                      placeholder="Describe expected result"
-                      rows={2}
-                    />
-                  </label>
-
-                  <div className="tg-telemetry-row">
-                    <label className="tg-telemetry-field tg-telemetry-field--half">
-                      <span className="tg-telemetry-label">Severity</span>
-                      <select
-                        className="tg-telemetry-input"
-                        value={telemetryDraft.severity}
-                        onChange={(event) => updateTelemetryField("severity", event.currentTarget.value)}
-                      >
-                        <option value="critical">Critical</option>
-                        <option value="high">High</option>
-                        <option value="medium">Medium</option>
-                        <option value="low">Low</option>
-                      </select>
-                    </label>
-
-                    <label className="tg-telemetry-field tg-telemetry-field--grow">
-                      <span className="tg-telemetry-label">Endpoint (optional)</span>
-                      <input
-                        className="tg-telemetry-input"
-                        value={telemetryDraft.endpoint}
-                        onChange={(event) => updateTelemetryField("endpoint", event.currentTarget.value)}
-                        placeholder="https://api.example.com/template-telemetry"
-                        autoComplete="off"
-                      />
-                    </label>
-                  </div>
-
-                  <label className="tg-telemetry-check">
-                    <input
-                      type="checkbox"
-                      checked={telemetryDraft.includeDiagnostics}
-                      onChange={(event) =>
-                        updateTelemetryField("includeDiagnostics", event.currentTarget.checked)
-                      }
-                    />
-                    <span>Include template diagnostics (settings, map stats, mesh samples, errors)</span>
-                  </label>
-
-                  <label
-                    className={`tg-telemetry-check${telemetryDraft.includeDiagnostics ? "" : " is-disabled"}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={telemetryDraft.includeModelPath}
-                      disabled={!telemetryDraft.includeDiagnostics}
-                      onChange={(event) =>
-                        updateTelemetryField("includeModelPath", event.currentTarget.checked)
-                      }
-                    />
-                    <span>Include full model path (off by default for privacy)</span>
-                  </label>
-
-                  {telemetryStatus.message && (
-                    <div
-                      className={`tg-telemetry-status${telemetryStatus.tone === "error" ? " is-error" : " is-success"}`}
-                    >
-                      {telemetryStatus.message}
-                    </div>
-                  )}
-                </div>
-
-                <div className="tg-telemetry-actions">
-                  <button
-                    type="button"
-                    className="tg-telemetry-btn"
-                    onClick={handleCopyTelemetryPayload}
-                    disabled={telemetrySending}
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    Copy JSON
-                  </button>
-                  <button
-                    type="button"
-                    className="tg-telemetry-btn"
-                    onClick={closeTelemetryDialog}
-                    disabled={telemetrySending}
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    className="tg-telemetry-btn is-primary"
-                    onClick={handleSubmitTelemetry}
-                    disabled={!telemetryCanSubmit}
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    {telemetrySending ? "Sending..." : "Send Telemetry"}
-                  </button>
-                </div>
-              </motion.div>
+              {saveNotice.tone === "success" ? <Check className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+              <span>{saveNotice.message}</span>
             </motion.div>
           )}
         </AnimatePresence>

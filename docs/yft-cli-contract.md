@@ -46,14 +46,14 @@ The bridge writes `manifest.json` next to `model.clmesh` with per-geometry metad
 
 Current manifest fields:
 
-- `version`: manifest schema version.
+- `version`: manifest schema version. The current schema is `4`.
 - `inputPath`: original YFT input path.
 - `generatedAtUtc`: manifest generation timestamp.
 - `meshCount`: number of emitted geometry records.
 - `textureCount`: number of exported texture DDS files in the cache.
 - `textures[]`:
   - `name`: texture name from CodeWalker metadata.
-  - `source`: `ytd` for sibling dictionary textures or `embedded` for drawable-embedded textures.
+  - `source`: `ytd` for sibling dictionary textures, `shared` for resource/game texture dictionaries, or `embedded` for drawable-embedded textures.
   - `relativePath`: path relative to the cache root, suitable for joining against `manifest.json`.
   - `nameHash`: original texture name hash when available.
 - `meshes[]`:
@@ -63,13 +63,15 @@ Current manifest fields:
   - `shaderHash`: raw shader hash.
   - `shaderFileName`: shader preset file name when available.
   - `renderBucket`: render bucket from the drawable shader.
-  - `drawableIndex`, `modelIndex`, `geometryIndex`: original drawable/model/geometry coordinates.
+  - `drawableIndex`, `modelIndex`, `geometryIndex`: original drawable/flattened-model/geometry coordinates.
+  - `lodLevel`: explicit drawable LOD bucket (`high`, `med`, `low`, `vlow`, `extra`, or `unknown`). Added in manifest v4.
+  - `lodModelIndex`: model index within the explicit LOD bucket. Added in manifest v4.
   - `uvSets`: availability flags for `uv0` through `uv3`.
   - `textureBindings[]`:
     - `paramName`: raw shader sampler parameter name.
     - `textureName`: texture name resolved from CodeWalker metadata.
     - `relativePath`: exported DDS path relative to the cache root when resolution succeeded.
-    - `source`: `ytd` or `embedded` when the bridge resolved the texture.
+    - `source`: `ytd`, `shared`, or `embedded` when the bridge resolved the texture.
     - `nameHash`: original texture name hash when available.
     - `usage`: bridge-classified usage such as `baseColor`, `normal`, `emissive`, `specular`, `detail`, `mask`, or `ambientOcclusion`.
     - `uvSet`: optional UV-set index when known.
@@ -94,7 +96,9 @@ Current manifest fields:
 
 ## Notes
 
-- The app caches parsed meshes based on input path + modified time + file size.
+- The app caches parsed meshes based on input path + modified time + file size plus an internal parser revision. The native-material/LOD contract uses the `parse_yft_v6` revision.
 - The `.clmesh` cache is parsed in the frontend into Three.js geometry.
-- `manifest.json` drives shader-aware texture resolution in the frontend, while manual texture overrides still remain optional.
+- When Experimental Settings is enabled, **All Textures → Native Materials** uses `manifest.json` for shader-aware texture resolution and displays only the highest available LOD per drawable.
+- Manual texture selections take priority over native maps on their targeted meshes.
+- Advanced dirt/detail/mask bindings that require GTA-specific shader controls are reported as deferred instead of being applied with guessed semantics.
 - Current frontend binding is best-effort Three.js material assignment rather than full GTA shader parity.

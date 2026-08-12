@@ -8,8 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "bun tools/tauri-wrapper.mjs",
+    "test:feedback": "node --test src/lib/bug-report.test.mjs",
     "test:clmesh": "node --test src/lib/clmesh.test.mjs",
-    "test:pdn": "node --test src/lib/pdn.test.mjs"
+    "test:native-materials": "node --test src/lib/native-dds.test.mjs src/lib/native-material-plan.test.mjs",
+    "test:pdn": "node --test src/lib/pdn.test.mjs",
+    "test:template": "node --test src/lib/template-generation.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.2.16",

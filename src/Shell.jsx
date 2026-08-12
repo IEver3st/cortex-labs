@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Info, Sparkles, Bug } from "lucide-react";
+import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Info, Sparkles, MessageSquarePlus } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import App from "./App";
@@ -26,6 +26,7 @@ import {
   addRecent,
 } from "./lib/workspace";
 import { loadOnboarded, setOnboarded, loadPrefs, PREFS_UPDATED_EVENT } from "./lib/prefs";
+import { applyAppearance, setSystemTheme } from "./lib/theme";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_ACTIONS,
@@ -34,7 +35,6 @@ import {
 } from "./lib/hotkeys";
 
 const MIN_BOOT_MS = 500;
-
 function generateTabId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
@@ -75,6 +75,8 @@ function clampUiScale(value) {
 export default function Shell() {
   const [booted, setBooted] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
+  const [isBugReportOpen, setIsBugReportOpen] = useState(false);
+  const [feedbackInitialType, setFeedbackInitialType] = useState("bug");
 
   // Tab system
   const [tabs, setTabs] = useState([
@@ -94,8 +96,9 @@ export default function Shell() {
   const [templateGenStates, setTemplateGenStates] = useState({});
 
   // Settings change counter — bumped when settings are saved so children re-read prefs
-
   const [settingsVersion, setSettingsVersion] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPageTarget, setSettingsPageTarget] = useState(null);
 
   // Map of tabId -> pane element for focus management
   const paneRefs = useRef(new Map());
@@ -124,12 +127,60 @@ export default function Shell() {
     const style = prefs?.defaults?.windowControlsStyle ?? "windows";
     document.documentElement.setAttribute("data-window-style", style);
 
-    const isDarkMode = prefs?.defaults?.darkMode ?? true;
-    document.documentElement.classList.toggle("dark", isDarkMode);
+    applyAppearance({
+      colorScheme: prefs?.defaults?.colorScheme,
+      themePreset: prefs?.defaults?.themePreset,
+      legacyDarkMode: prefs?.defaults?.darkMode ?? true,
+    });
 
     const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
     setHotkeys(mergeHotkeys(stored, DEFAULT_HOTKEYS));
   }, [settingsVersion]);
+
+  // Track the native system theme so the System appearance option follows the OS.
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenTheme = null;
+    const mediaQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
+
+    const syncBrowserTheme = (event) => {
+      setSystemTheme(event.matches ? "dark" : "light");
+    };
+
+    if (isTauriRuntime) {
+      const appWindow = getCurrentWindow();
+      appWindow.theme().then((theme) => {
+        if (cancelled) return;
+        if (theme === "light" || theme === "dark") setSystemTheme(theme);
+        else if (mediaQuery) syncBrowserTheme(mediaQuery);
+      }).catch(() => {
+        if (!cancelled && mediaQuery) syncBrowserTheme(mediaQuery);
+      });
+      appWindow.onThemeChanged(({ payload }) => setSystemTheme(payload)).then((unlisten) => {
+        if (cancelled) unlisten();
+        else unlistenTheme = unlisten;
+      }).catch(() => {});
+    } else if (mediaQuery) {
+      syncBrowserTheme(mediaQuery);
+      if (typeof mediaQuery.addEventListener === "function") {
+        mediaQuery.addEventListener("change", syncBrowserTheme);
+      } else {
+        mediaQuery.addListener?.(syncBrowserTheme);
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      unlistenTheme?.();
+      if (!isTauriRuntime) {
+        if (typeof mediaQuery?.removeEventListener === "function") {
+          mediaQuery.removeEventListener("change", syncBrowserTheme);
+        } else {
+          mediaQuery?.removeListener?.(syncBrowserTheme);
+        }
+      }
+    };
+  }, [isTauriRuntime]);
 
   // Boot
   useEffect(() => {
@@ -330,6 +381,7 @@ export default function Shell() {
 
   // Navigate from HomePage
   const handleNavigate = useCallback((type, workspaceId, defaultMode) => {
+    setSettingsOpen(false);
     const ws = workspaceId ? loadWorkspaces()[workspaceId] : null;
     const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
     const fallbackLabel =
@@ -349,6 +401,7 @@ export default function Shell() {
 
   const handleOpenWorkspace = useCallback((ws) => {
     if (!ws?.id) return;
+    setSettingsOpen(false);
     const latestWs = loadWorkspaces()[ws.id] || ws;
     const defaultMode = latestWs?.state?.textureMode || "livery";
     const page =
@@ -617,10 +670,13 @@ export default function Shell() {
 
   // WhatsNew modal: auto-open on new version, manual open from settings
   const [whatsNewManual, setWhatsNewManual] = useState(false);
-  const [isBugReportOpen, setIsBugReportOpen] = useState(false);
   const handleOpenReleaseNotes = useCallback(() => setWhatsNewManual(true), []);
   const handleCloseWhatsNew = useCallback(() => setWhatsNewManual(false), []);
   const handleOpenOnboarding = useCallback(() => setShowOnboarding(true), []);
+  const openFeedback = useCallback((reportType = "bug") => {
+    setFeedbackInitialType(reportType === "feature" ? "feature" : "bug");
+    setIsBugReportOpen(true);
+  }, []);
 
   // New-tab dropdown option data for DRY rendering
   const newTabOptions = useMemo(() => [
@@ -638,10 +694,16 @@ export default function Shell() {
 
       {booted && <WhatsNew />}
       {whatsNewManual && <WhatsNew forceOpen isManual onClose={handleCloseWhatsNew} />}
-      <BugReportModal open={isBugReportOpen} onClose={() => setIsBugReportOpen(false)} />
+      <BugReportModal
+        open={isBugReportOpen}
+        initialType={feedbackInitialType}
+        onClose={() => setIsBugReportOpen(false)}
+      />
       <AnimatePresence>
         {booted && showOnboarding ? (
-          <Onboarding onComplete={handleOnboardingComplete} />
+          <Onboarding
+            onComplete={handleOnboardingComplete}
+          />
         ) : null}
       </AnimatePresence>
 
@@ -670,14 +732,17 @@ export default function Shell() {
               <AnimatePresence initial={false}>
                 {tabs.map((tab, index) => {
                   const Icon = TAB_ICONS[tab.type] || Eye;
-                  const isTabActive = tab.id === activeTabId;
+                  const isTabActive = tab.id === activeTabId && !settingsOpen;
                   const isEditing = editingTabId === tab.id;
 
                   const tabElement = (
                     <motion.div
                       key={tab.id}
                       className={`shell-tab ${isTabActive ? "is-active" : ""}`}
-                      onClick={() => setActiveTabId(tab.id)}
+                      onClick={() => {
+                        setSettingsOpen(false);
+                        setActiveTabId(tab.id);
+                      }}
                       onDoubleClick={() => tab.closable && startRenameTab(tab.id)}
                       layout
                       initial={{ opacity: 0, scale: 0.9, width: 0 }}
@@ -689,7 +754,6 @@ export default function Shell() {
                         scale: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
                         width: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
                       }}
-                      whileHover={!isTabActive ? { backgroundColor: "rgba(255,255,255,0.04)" } : {}}
                     >
                       <motion.span
                         className="shell-tab-icon-wrap"
@@ -733,10 +797,6 @@ export default function Shell() {
                         </motion.button>
                       )}
 
-                      {/* Seamless tab: paint over the bottom border with content bg */}
-                      {isTabActive && (
-                        <div className="shell-tab-seamless" />
-                      )}
                     </motion.div>
                   );
 
@@ -832,7 +892,7 @@ export default function Shell() {
 
             {/* Context bar — page-specific controls portaled here */}
             <div
-              className="shell-context"
+              className={`shell-context ${settingsOpen ? "is-hidden" : ""}`}
               ref={(node) => {
                 contextBarRef.current = node;
                 if (node && !contextBarReady) setContextBarReady(true);
@@ -875,12 +935,12 @@ export default function Shell() {
               <motion.button
                 type="button"
                 className="settings-cog"
-                aria-label="Report a bug"
-                title="Report a bug"
-                onClick={() => setIsBugReportOpen(true)}
+                aria-label="Send feedback"
+                title="Send feedback"
+                onClick={() => openFeedback("bug")}
               >
                 <span className="settings-cog-icon">
-                  <Bug className="settings-cog-svg" />
+                  <MessageSquarePlus className="settings-cog-svg" />
                 </span>
               </motion.button>
             </div>
@@ -900,7 +960,13 @@ export default function Shell() {
             </div>
 
             {/* Settings */}
-            <SettingsMenu onSettingsSaved={handleSettingsSaved} onOpenReleaseNotes={handleOpenReleaseNotes} />
+            <SettingsMenu
+              pageTarget={settingsPageTarget}
+              pageOpen={settingsOpen}
+              onOpenChange={setSettingsOpen}
+              onSettingsSaved={handleSettingsSaved}
+              onOpenReleaseNotes={handleOpenReleaseNotes}
+            />
 
             {/* Window controls */}
             <motion.div
@@ -950,7 +1016,7 @@ export default function Shell() {
           {/* ━━━ Tab Panes: ALL stay mounted, only active one is visible ━━━ */}
           <div className="shell-content">
             {tabs.map((tab) => {
-              const isActive = tab.id === activeTabId;
+              const isActive = tab.id === activeTabId && !settingsOpen;
 
               return (
                 <div
@@ -1005,6 +1071,11 @@ export default function Shell() {
                 </div>
               );
             })}
+            <div
+              className={`settings-page-host ${settingsOpen ? "is-active" : ""}`}
+              aria-hidden={!settingsOpen}
+              ref={setSettingsPageTarget}
+            />
           </div>
         </>
       )}

@@ -49,6 +49,10 @@ BUG_REPORT_ALLOWED_ORIGINS=https://your-app-origin.example.com
 BUG_REPORT_LABEL_CREATE=true
 ```
 
+`BUG_REPORT_ALLOWED_ORIGINS` is required and may contain a comma-separated list.
+Requests with a missing or unlisted `Origin` are rejected. The endpoint accepts
+legacy schema v1 bug reports and schema v2 bug or feature reports.
+
 The app itself must point at this endpoint with:
 
 ```bash

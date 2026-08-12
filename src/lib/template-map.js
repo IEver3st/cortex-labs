@@ -1,6 +1,7 @@
+import { getTemplateModelFormat } from "./template-model.js";
+
 const TEMPLATE_SCHEMA = "cortex.template-map.v1";
 const TEMPLATE_UV_SCHEMA = "cortex.template-uv.v1";
-const FILE_TYPE = "yft";
 const MATERIAL_TARGET_PREFIX = "material:";
 const MESH_TARGET_PREFIX = "mesh:";
 const UV_AREA_EPSILON = 1e-10;
@@ -32,6 +33,62 @@ function getFileName(path) {
 function getModelName(fileName) {
   if (!fileName) return "model";
   return fileName.replace(/\.[^.]+$/, "") || "model";
+}
+
+function normalizeDrawableMetadata(value) {
+  if (!value || typeof value !== "object") return null;
+  const index = Number.isInteger(value.index) ? value.index : null;
+  const hash = Number.isInteger(value.hash) ? value.hash >>> 0 : null;
+  const hashHex =
+    typeof value.hashHex === "string" && /^[0-9a-f]{8}$/i.test(value.hashHex)
+      ? value.hashHex.toLowerCase()
+      : hash === null
+        ? ""
+        : hash.toString(16).padStart(8, "0");
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const identity = index ?? (hashHex || "unknown");
+  const key =
+    typeof value.key === "string" && value.key.trim()
+      ? value.key.trim()
+      : `drawable:${identity}`;
+  return { key, index, hash, hashHex, name };
+}
+
+function getMeshDrawableMetadata(mesh) {
+  const candidate = {
+    key: mesh?.userData?.drawableKey,
+    index: mesh?.userData?.drawableIndex,
+    hash: mesh?.userData?.drawableHash,
+    hashHex: mesh?.userData?.drawableHashHex,
+    name: mesh?.userData?.drawableName,
+  };
+  if (
+    !candidate.key &&
+    !Number.isInteger(candidate.index) &&
+    !Number.isInteger(candidate.hash) &&
+    !candidate.hashHex &&
+    !candidate.name
+  ) {
+    return null;
+  }
+  return normalizeDrawableMetadata(candidate);
+}
+
+function sanitizeDrawableStem(value) {
+  const normalized = String(value || "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "drawable";
+}
+
+function buildDrawableModelFileName(modelPath, drawable, multiple) {
+  const fileName = getFileName(modelPath) || "model.ydd";
+  if (!multiple || !drawable) return fileName;
+  const extensionMatch = fileName.match(/(\.[^.]+)$/);
+  const extension = extensionMatch?.[1] || ".ydd";
+  const stem = fileName.replace(/\.[^.]+$/, "") || "model";
+  const suffix = sanitizeDrawableStem(drawable.name || drawable.hashHex || `drawable_${drawable.index ?? 0}`);
+  return `${stem}_${suffix}${extension}`;
 }
 
 function getMaterialNames(material) {
@@ -886,8 +943,19 @@ function extractMeshProxyGeometry(mesh, fallbackIndex, options = {}) {
 
 /* ── Public API: Template Map ────────────────────────────────────── */
 
-export function buildYftTemplateMap({ object, modelPath = "", liveryTarget = "", windowTarget = "" }) {
+export function buildModelTemplateMap({
+  object,
+  modelPath = "",
+  fileType = "",
+  liveryTarget = "",
+  windowTarget = "",
+  meshFilter = null,
+  drawable = null,
+}) {
   if (!object) return null;
+
+  const normalizedFileType = getTemplateModelFormat(fileType || modelPath);
+  const normalizedDrawable = normalizeDrawableMetadata(drawable);
 
   const targetMap = new Map();
   const dedupe = new Set();
@@ -896,6 +964,7 @@ export function buildYftTemplateMap({ object, modelPath = "", liveryTarget = "",
 
   object.traverse((child) => {
     if (!child?.isMesh) return;
+    if (typeof meshFilter === "function" && !meshFilter(child)) return;
 
     const meshName = resolveMeshName(child, meshCounter);
     meshCounter += 1;
@@ -923,11 +992,12 @@ export function buildYftTemplateMap({ object, modelPath = "", liveryTarget = "",
 
   return {
     schema: TEMPLATE_SCHEMA,
-    fileType: FILE_TYPE,
+    fileType: normalizedFileType,
     source: {
       fileName,
       modelName,
       generatedAt: new Date().toISOString(),
+      ...(normalizedDrawable ? { drawable: normalizedDrawable } : {}),
     },
     targets: orderedTargets,
     inference: {
@@ -941,10 +1011,24 @@ export function buildYftTemplateMap({ object, modelPath = "", liveryTarget = "",
   };
 }
 
+export function buildYftTemplateMap(options) {
+  return buildModelTemplateMap({ ...options, fileType: options?.fileType || "yft" });
+}
+
 /* ── Public API: Template PSD Source ──────────────────────────────── */
 
-export function buildYftTemplatePsdSource({ object, modelPath = "", preferUv2 = true }) {
+export function buildModelTemplatePsdSource({
+  object,
+  modelPath = "",
+  fileType = "",
+  preferUv2 = true,
+  meshFilter = null,
+  drawable = null,
+}) {
   if (!object) return null;
+
+  const normalizedFileType = getTemplateModelFormat(fileType || modelPath);
+  const normalizedDrawable = normalizeDrawableMetadata(drawable);
 
   const rawShells = [];
   const proxyMeshes = [];
@@ -952,6 +1036,7 @@ export function buildYftTemplatePsdSource({ object, modelPath = "", preferUv2 = 
 
   object.traverse((child) => {
     if (!child?.isMesh) return;
+    if (typeof meshFilter === "function" && !meshFilter(child)) return;
 
     const meshShells = extractMeshUvShells(child, meshCounter, { preferUv2 });
     if (meshShells.length > 0) rawShells.push(...meshShells);
@@ -1002,11 +1087,12 @@ export function buildYftTemplatePsdSource({ object, modelPath = "", preferUv2 = 
 
   return {
     schema: TEMPLATE_UV_SCHEMA,
-    fileType: FILE_TYPE,
+    fileType: normalizedFileType,
     source: {
       fileName,
       modelName,
       generatedAt: new Date().toISOString(),
+      ...(normalizedDrawable ? { drawable: normalizedDrawable } : {}),
     },
     bounds: {
       minU,
@@ -1020,4 +1106,102 @@ export function buildYftTemplatePsdSource({ object, modelPath = "", preferUv2 = 
     proxyMeshCount: proxyMeshes.length,
     proxyMeshes,
   };
+}
+
+export function buildYftTemplatePsdSource(options) {
+  return buildModelTemplatePsdSource({ ...options, fileType: options?.fileType || "yft" });
+}
+
+function collectDrawableTemplateGroups(object) {
+  const groups = new Map();
+  object?.traverse?.((child) => {
+    if (!child?.isMesh) return;
+    const drawable = getMeshDrawableMetadata(child);
+    if (!drawable) return;
+    if (!groups.has(drawable.key)) groups.set(drawable.key, drawable);
+  });
+  return [...groups.values()].sort((a, b) => {
+    const aIndex = a.index ?? Number.MAX_SAFE_INTEGER;
+    const bIndex = b.index ?? Number.MAX_SAFE_INTEGER;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return a.key.localeCompare(b.key);
+  });
+}
+
+export function buildModelTemplateSets({
+  object,
+  modelPath = "",
+  fileType = "",
+  preferUv2 = true,
+  liveryTarget = "",
+  windowTarget = "",
+  preferredDrawableKey = "",
+}) {
+  const normalizedFileType = getTemplateModelFormat(fileType || modelPath);
+  const drawableGroups = normalizedFileType === "ydd" ? collectDrawableTemplateGroups(object) : [];
+  const shouldSplitDrawables = drawableGroups.length > 1;
+  const descriptors = shouldSplitDrawables ? [...drawableGroups] : [drawableGroups[0] || null];
+  if (shouldSplitDrawables && preferredDrawableKey) {
+    descriptors.sort((a, b) => {
+      if (a.key === preferredDrawableKey) return -1;
+      if (b.key === preferredDrawableKey) return 1;
+      return (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER);
+    });
+  }
+  const sets = [];
+  const skipped = [];
+  const usedModelFileNames = new Set();
+
+  for (let index = 0; index < descriptors.length; index += 1) {
+    const drawable = descriptors[index];
+    const meshFilter =
+      shouldSplitDrawables && drawable
+        ? (mesh) => mesh?.userData?.drawableKey === drawable.key
+        : null;
+    const templateMap = buildModelTemplateMap({
+      object,
+      modelPath,
+      fileType: normalizedFileType,
+      liveryTarget,
+      windowTarget,
+      meshFilter,
+      drawable,
+    });
+    const templatePsdSource = buildModelTemplatePsdSource({
+      object,
+      modelPath,
+      fileType: normalizedFileType,
+      preferUv2,
+      meshFilter,
+      drawable,
+    });
+    const id = drawable?.key || `${normalizedFileType}:model`;
+    const label = drawable?.name || drawable?.hashHex || `Drawable ${index + 1}`;
+
+    if (!templateMap || !templatePsdSource) {
+      skipped.push({ id, label, reason: "No renderable UV geometry" });
+      continue;
+    }
+
+    let modelFileName = buildDrawableModelFileName(modelPath, drawable, shouldSplitDrawables);
+    if (usedModelFileNames.has(modelFileName.toLowerCase())) {
+      const extensionMatch = modelFileName.match(/(\.[^.]+)$/);
+      const extension = extensionMatch?.[1] || ".ydd";
+      const stem = modelFileName.replace(/\.[^.]+$/, "");
+      modelFileName = `${stem}_${drawable?.index ?? index}${extension}`;
+    }
+    usedModelFileNames.add(modelFileName.toLowerCase());
+
+    sets.push({
+      id,
+      label,
+      fileType: normalizedFileType,
+      drawable,
+      modelFileName,
+      templateMap,
+      templatePsdSource,
+    });
+  }
+
+  return { sets, skipped };
 }

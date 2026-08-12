@@ -523,9 +523,20 @@ function scoreTargetKey(key) {
   return score;
 }
 
-function selectTemplateMeshes(templateMap, templatePsdSource, options = {}) {
+export function selectTemplateMeshes(templateMap, templatePsdSource, options = {}) {
   const meshes = Array.isArray(templatePsdSource?.meshes) ? templatePsdSource.meshes : [];
   if (meshes.length === 0) return [];
+  const selectedMeshNames = new Set(
+    (Array.isArray(options.selectedMeshNames) ? options.selectedMeshNames : [])
+      .filter((entry) => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+  if (selectedMeshNames.size > 0) {
+    return meshes.filter((mesh) => selectedMeshNames.has(mesh?.meshName));
+  }
+  if (options.meshSelectionMode === "selected") return [];
+  if (options.meshSelectionMode === "all") return meshes;
 
   const targets = templateMap?.targets && typeof templateMap.targets === "object" ? templateMap.targets : {};
   const targetKeys = Object.keys(targets);
@@ -1997,11 +2008,6 @@ function compareDetectionMarkers(a, b) {
   return a.x - b.x;
 }
 
-function markerLabelContainsIslands(marker) {
-  const label = typeof marker?.label === "string" ? marker.label : "";
-  return /\bislands?\b/i.test(label);
-}
-
 function rankDetectionMarkers(markers) {
   if (!Array.isArray(markers) || markers.length === 0) return [];
 
@@ -2031,8 +2037,8 @@ function rankDetectionMarkers(markers) {
 
   return scored.map((marker) => ({
     ...marker,
-    // Testing mode: only markers named with "island(s)" are enabled by default.
-    defaultVisible: markerLabelContainsIslands(marker),
+    // Detection only proposes locations. Placement is an explicit user choice.
+    defaultVisible: false,
   }));
 }
 
@@ -2458,6 +2464,12 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
   const includeWireframe = options.includeWireframe !== false;
   const includeWorldSpaceNormals = options.includeWorldSpaceNormals === true;
   const useWorldSpaceNormalsAsBase = options.useWorldSpaceNormalsAsBase === true;
+  const sourceFormat =
+    options.sourceFormat || templateMap?.fileType || templatePsdSource?.fileType || "yft";
+  const includeVehicleLayers =
+    options.includeVehicleLayers === undefined
+      ? sourceFormat !== "ydd"
+      : options.includeVehicleLayers === true;
   const modelFileName =
     options.modelFileName ||
     templateMap?.source?.fileName ||
@@ -2468,8 +2480,13 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
   const targetCount = Object.keys(templateMap?.targets || {}).length;
   const selectedMeshes = selectTemplateMeshes(templateMap, templatePsdSource, {
     preferredTarget: options.preferredTarget,
+    meshSelectionMode: options.meshSelectionMode,
+    selectedMeshNames: options.selectedMeshNames,
   });
   if (selectedMeshes.length === 0) {
+    if (options.meshSelectionMode === "selected") {
+      throw new Error("The selected model part has no usable UV geometry. Try another window piece.");
+    }
     throw new Error("Template UV source has no eligible shell geometry.");
   }
 
@@ -2490,7 +2507,7 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
   const wireCanvas = wireLayer.canvas;
   const detectedIslands = Array.isArray(wireLayer.detectionMarkers) ? wireLayer.detectionMarkers : [];
   const annotationCanvas = paintAnnotationLayer(createCanvas(size), modelName, targetCount, renderMeshes.length);
-  const plateCanvas = paintLicencePlateLayer(createCanvas(size));
+  const plateCanvas = includeVehicleLayers ? paintLicencePlateLayer(createCanvas(size)) : null;
   const worldSpaceNormals = includeWorldSpaceNormals
     ? paintWorldSpaceNormalLayer(createCanvas(size), templatePsdSource, renderMeshes, mapper)
     : null;
@@ -2509,7 +2526,7 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
       : []),
 
     { name: "_ANNOTATIONS", canvas: annotationCanvas, hidden: true },
-    { name: "_LICENCE_PLATES", canvas: plateCanvas, hidden: true },
+    ...(plateCanvas ? [{ name: "_LICENCE_PLATES", canvas: plateCanvas, hidden: true }] : []),
   ];
 
   const psd = {

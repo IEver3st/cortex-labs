@@ -9,13 +9,11 @@ import {
   FolderOpen,
   Plus,
   Palette,
-  ArrowRight,
   Search,
   ArrowUpDown,
   Pin,
   PinOff,
   ChevronDown,
-  Rocket,
   FolderInput,
   Eye,
   Zap,
@@ -44,54 +42,42 @@ const MODES = [
     label: "Livery",
     desc: "Vehicle textures & livery painting",
     icon: Car,
-    accent: "#14b8a6",
     shortcut: "Alt+1",
-    keyLabel: ["Alt", "1"],
   },
   {
     id: "everything",
     label: "All",
     desc: "View all meshes & textures",
     icon: Layers,
-    accent: "#3b82f6",
     shortcut: "Alt+2",
-    keyLabel: ["Alt", "2"],
   },
   {
     id: "eup",
     label: "EUP",
     desc: "Uniform & clothing textures",
     icon: Shirt,
-    accent: "#f59e0b",
     shortcut: "Alt+3",
-    keyLabel: ["Alt", "3"],
   },
   {
     id: "multi",
     label: "Multi",
     desc: "Side-by-side model compare",
     icon: Link2,
-    accent: "#ec4899",
     shortcut: "Alt+4",
-    keyLabel: ["Alt", "4"],
   },
   {
     id: "variants",
     label: "Variant Builder",
     desc: "PSD workflow & grouped exports",
     icon: Palette,
-    accent: "#a855f7",
     shortcut: "Alt+5",
-    keyLabel: ["Alt", "5"],
   },
   {
     id: "templategen",
     label: "Template Generation",
     desc: "Auto-generate layered PSD templates from .yft",
     icon: Zap,
-    accent: "#14b8a6",
     shortcut: "Alt+6",
-    keyLabel: ["Alt", "6"],
   },
 ];
 
@@ -217,6 +203,14 @@ export default function HomePage({
   const searchRef = useRef(null);
   const createBtnRef = useRef(null);
   const sortWrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+    const stillExists = recent.some(
+      (entry) => entry.workspaceId === selectedProject.workspaceId,
+    );
+    if (!stillExists) setSelectedProject(null);
+  }, [recent, selectedProject]);
 
   const refreshWorkspaceState = useCallback(() => {
     setWorkspaces(loadWorkspaces());
@@ -405,75 +399,81 @@ export default function HomePage({
     return Car;
   };
 
-  const modeColorForEntry = (entry) => {
-    const ws = workspaces[entry.workspaceId];
-    const mode = ws?.state?.textureMode || "livery";
-    if (entry.page === "variants") return "#a855f7";
-    if (entry.page === "templategen") return "#14b8a6";
-    if (mode === "livery") return "#14b8a6";
-    if (mode === "everything") return "#3b82f6";
-    if (mode === "eup") return "#f59e0b";
-    if (mode === "multi") return "#ec4899";
-    return "var(--mg-primary)";
-  };
-
   /* ─── Project row renderer ─── */
-  const renderProjectRow = (entry, i, opts = {}) => {
+  const renderProjectRow = (entry, opts = {}) => {
     const ws = workspaces[entry.workspaceId];
     if (!ws) return null;
     const Icon = modeIconForEntry(entry);
-    const color = modeColorForEntry(entry);
     const isPinned = pinnedIds.includes(entry.workspaceId);
     const tag = getModeTag(entry, ws);
     const model = getModelName(ws);
     const folder = getProjectFolder(ws);
+    const updatedAt = ws.updatedAt || entry.openedAt;
+    const isSelected = selectedProject?.workspaceId === entry.workspaceId;
 
     return (
       <Ctx.Root key={entry.workspaceId}>
         <Ctx.Trigger>
-          <motion.div
-            className={`hp-project-row ${opts.pinned ? "is-pinned" : ""} ${selectedProject?.workspaceId === entry.workspaceId ? "is-selected" : ""}`}
-            style={{ "--project-accent": color }}
-            onClick={() => setSelectedProject(entry)}
-            onDoubleClick={() => handleOpenRecent(entry)}
-            initial={{ opacity: 0, x: -6 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.2, delay: opts.delay || 0 }}
+          <div
+            className={`hp-workbench-row hp-project-row ${opts.pinned ? "is-pinned" : ""} ${isSelected ? "is-selected" : ""}`}
+            role="group"
+            aria-label={`${ws.name} project`}
           >
             <div className="hp-project-indicator" />
-            <div className="hp-project-icon">
-              <Icon className="w-3.5 h-3.5" />
-            </div>
-            <div className="hp-project-details">
-              <div className="hp-project-name-row">
+            <button
+              type="button"
+              className="hp-project-open"
+              onClick={() => setSelectedProject(entry)}
+              onDoubleClick={() => handleOpenRecent(entry)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  handleOpenRecent(entry);
+                }
+              }}
+              aria-pressed={isSelected}
+              aria-label={`${ws.name}. ${tag} project. ${relativeTime(updatedAt)}. Press Enter to open.`}
+            >
+              <div className="hp-project-icon" aria-hidden="true">
+                <Icon className="w-4 h-4" />
+              </div>
+              <div className="hp-project-details">
                 <span className="hp-project-name">{ws.name}</span>
-                <span className="hp-project-tag" data-tag={tag.toLowerCase()}>
-                  {tag}
-                </span>
+                <div className="hp-project-meta">
+                  {model && (
+                    <span className="hp-project-model" title={model}>
+                      {model}
+                    </span>
+                  )}
+                  {folder && (
+                    <span className="hp-project-folder" title={`/${folder}`}>
+                      /{folder}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="hp-project-meta">
-                {model && (
-                  <span className="hp-project-model" title={model}>
-                    {model}
-                  </span>
-                )}
-                {folder && (
-                  <>
-                    <span className="hp-meta-sep">/</span>
-                    <span className="hp-project-folder">{folder}</span>
-                  </>
-                )}
-                <span className="hp-meta-sep">·</span>
-                <span className="hp-project-time">
-                  {relativeTime(ws.updatedAt)}
-                </span>
-              </div>
-            </div>
+              <span className="hp-project-tag" data-tag={tag.toLowerCase()}>
+                {tag}
+              </span>
+              <time
+                className="hp-project-time"
+                dateTime={updatedAt ? new Date(updatedAt).toISOString() : undefined}
+                title={updatedAt ? new Date(updatedAt).toLocaleString() : undefined}
+              >
+                {relativeTime(updatedAt)}
+              </time>
+            </button>
             <div className="hp-project-actions">
               <button
+                type="button"
                 className={`hp-pin-btn ${isPinned ? "is-pinned" : ""}`}
-                onClick={(e) => togglePin(entry.workspaceId, e)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  togglePin(entry.workspaceId, e);
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
                 title={isPinned ? "Unpin" : "Pin"}
+                aria-label={isPinned ? `Unpin ${ws.name}` : `Pin ${ws.name}`}
               >
                 {isPinned ? (
                   <PinOff className="w-3 h-3" />
@@ -482,14 +482,20 @@ export default function HomePage({
                 )}
               </button>
               <button
+                type="button"
                 className="hp-delete-btn"
-                onClick={(e) => handleDeleteWorkspace(e, entry.workspaceId)}
-                title="Delete"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteWorkspace(e, entry.workspaceId);
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                title="Delete project"
+                aria-label={`Delete ${ws.name}`}
               >
                 <Trash2 className="w-3 h-3" />
               </button>
             </div>
-          </motion.div>
+          </div>
         </Ctx.Trigger>
         <Ctx.Content>
           <Ctx.Item onSelect={() => handleOpenRecent(entry)}>
@@ -518,12 +524,9 @@ export default function HomePage({
   /* ─── Grouped list renderer ─── */
   const renderGroupedList = () => {
     if (!groupedRecent) {
-      return filteredRecent.map((entry, i) =>
-        renderProjectRow(entry, i, { delay: 0.03 + i * 0.015 }),
-      );
+      return filteredRecent.map((entry) => renderProjectRow(entry));
     }
     const elements = [];
-    let idx = 0;
     for (const key of ["today", "week", "older"]) {
       const items = groupedRecent[key];
       if (items.length === 0) continue;
@@ -536,10 +539,7 @@ export default function HomePage({
       );
       const visible = key === "older" ? items.slice(0, olderLimit) : items;
       visible.forEach((entry) => {
-        elements.push(
-          renderProjectRow(entry, idx, { delay: 0.03 + idx * 0.015 }),
-        );
-        idx++;
+        elements.push(renderProjectRow(entry));
       });
       if (key === "older" && items.length > olderLimit) {
         const remaining = items.length - olderLimit;
@@ -567,85 +567,60 @@ export default function HomePage({
 
       <div className="hp-container">
         {/* ─── Header Bar ─── */}
-        <motion.header
-          className="hp-header"
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: "easeOut" }}
-        >
-          <div className="hp-brand-spacer" />
+        <header className="hp-header">
           <div className="hp-brand">
             <span className="hp-brand-mark">CORTEX STUDIO</span>
             <span className="hp-brand-ver">v{appMeta.version}</span>
           </div>
-        </motion.header>
+        </header>
 
         {/* ─── Main Content Grid ─── */}
         <div className="hp-grid">
           {/* ──── Left: Quick Launch Panel ──── */}
-          <motion.section
-            className="hp-left"
-            initial={{ opacity: 0, x: -12 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.35, delay: 0.06 }}
-          >
+          <section className="hp-left">
             <div className="hp-section-label">
               <Terminal className="w-3 h-3" />
-              <span>// QUICK_START</span>
+              <span>// QUICK START</span>
             </div>
 
             <div className="hp-mode-cards">
-              {MODES.map((mode, i) => {
+              {MODES.map((mode) => {
                 const Icon = mode.icon;
                 return (
-                  <motion.button
+                  <button
+                    type="button"
                     key={mode.id}
-                    className="hp-mode-card"
-                    style={{ "--mode-color": mode.accent }}
+                    className="hp-workbench-row hp-mode-card"
                     onClick={() => {
                       if (mode.id === "variants") handleLaunchVariants();
                       else if (mode.id === "templategen") handleLaunchTemplateGen();
                       else handleLaunchMode(mode.id);
                     }}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.25, delay: 0.1 + i * 0.04 }}
+                    aria-keyshortcuts={mode.shortcut}
                   >
-                    <div className="hp-mode-indicator" />
-                    <div className="hp-mode-icon-wrap">
+                    <div className="hp-mode-icon-wrap" aria-hidden="true">
                       <Icon className="w-4 h-4" />
                     </div>
                     <div className="hp-mode-text">
                       {renderModeLabel(mode, "hp-mode-label")}
                       <span className="hp-mode-desc">{mode.desc}</span>
                     </div>
-                    <div className="hp-mode-shortcut">
-                      {mode.keyLabel.map((k, ki) => (
-                        <span key={ki} className="hp-keycap">
-                          {k}
-                        </span>
-                      ))}
-                    </div>
+                    <kbd className="hp-mode-shortcut">{mode.shortcut}</kbd>
                     <ChevronRight className="w-3.5 h-3.5 hp-mode-arrow" />
-                  </motion.button>
+                  </button>
                 );
               })}
             </div>
-          </motion.section>
+          </section>
 
           {/* ──── Middle: Projects Panel ──── */}
-          <motion.section
-            className="hp-right"
-            initial={{ opacity: 0, x: 12 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.35, delay: 0.12 }}
-          >
+          <section className="hp-right">
             {/* Section header with search + sort */}
             <div className="hp-projects-head">
               <div className="hp-projects-title-row">
                 <h2 className="hp-projects-title">// RECENT</h2>
                 <span className="hp-projects-count">
-                  [{showRecents ? filteredRecent.length : 0}]
+                  {showRecents ? filteredRecent.length : 0}
                 </span>
               </div>
               {showRecents && (
@@ -664,6 +639,7 @@ export default function HomePage({
                       <button
                         className="hp-search-clear"
                         onClick={() => setSearchQuery("")}
+                        aria-label="Clear project filter"
                       >
                         <X className="w-3 h-3" />
                       </button>
@@ -673,6 +649,8 @@ export default function HomePage({
                     <button
                       className="hp-sort-btn"
                       onClick={() => setShowSortMenu(!showSortMenu)}
+                      aria-haspopup="menu"
+                      aria-expanded={showSortMenu}
                     >
                       <ArrowUpDown className="w-3 h-3" />
                       <span>
@@ -683,6 +661,7 @@ export default function HomePage({
                       {showSortMenu && (
                         <motion.div
                           className="hp-sort-menu"
+                          role="menu"
                           initial={{ opacity: 0, y: -4 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -4 }}
@@ -692,6 +671,8 @@ export default function HomePage({
                             <button
                               key={opt.id}
                               className={`hp-sort-option ${sortBy === opt.id ? "is-active" : ""}`}
+                              role="menuitemradio"
+                              aria-checked={sortBy === opt.id}
                               onClick={() => {
                                 setSortBy(opt.id);
                                 setShowSortMenu(false);
@@ -732,6 +713,7 @@ export default function HomePage({
                         key={filter.id}
                         className={`hp-filter ${activeSection === filter.id ? "is-active" : ""}`}
                         onClick={() => setActiveSection(filter.id)}
+                        aria-pressed={activeSection === filter.id}
                       >
                         {filter.label}
                         {count > 0 && (
@@ -752,11 +734,8 @@ export default function HomePage({
                         <span>PINNED</span>
                       </div>
                       <div className="hp-pinned-list">
-                        {pinnedEntries.map((entry, i) =>
-                          renderProjectRow(entry, i, {
-                            delay: 0,
-                            pinned: true,
-                          }),
+                        {pinnedEntries.map((entry) =>
+                          renderProjectRow(entry, { pinned: true }),
                         )}
                       </div>
                     </div>
@@ -834,62 +813,75 @@ export default function HomePage({
                 </motion.div>
               </div>
             )}
-          </motion.section>
+          </section>
 
           {/* ──── Right: Context Panel ──── */}
-          <motion.section
-            className="hp-context-panel"
-            initial={{ opacity: 0, x: 12 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.35, delay: 0.18 }}
-          >
+          <section className="hp-context-panel">
             <div className="hp-context-title-row">
               <h2 className="hp-projects-title">// CONTEXT</h2>
             </div>
             {selectedProject && workspaces[selectedProject.workspaceId] ? (
-              <div className="hp-context-details" style={{ "--project-accent": modeColorForEntry(selectedProject) }}>
-                <div className="hp-context-icon">
-                  {React.createElement(modeIconForEntry(selectedProject), {
-                    className: "w-8 h-8",
-                  })}
-                </div>
-                <div className="hp-context-name">
-                  {workspaces[selectedProject.workspaceId].name}
-                </div>
-                {getModelName(workspaces[selectedProject.workspaceId]) && (
-                  <div className="hp-context-field">
-                    <span className="hp-context-label">Model file</span>
-                    <span className="hp-context-val">
-                      {getModelName(workspaces[selectedProject.workspaceId])}
-                    </span>
+              <div className="hp-context-details">
+                <div className="hp-context-summary">
+                  <div className="hp-context-icon" aria-hidden="true">
+                    {React.createElement(modeIconForEntry(selectedProject), {
+                      className: "w-4 h-4",
+                    })}
                   </div>
-                )}
-                {getProjectFolder(workspaces[selectedProject.workspaceId]) && (
-                  <div className="hp-context-field">
-                    <span className="hp-context-label">Directory</span>
-                    <span className="hp-context-val">
-                      {getProjectFolder(
+                  <div className="hp-context-summary-copy">
+                    <div className="hp-context-name">
+                      {workspaces[selectedProject.workspaceId].name}
+                    </div>
+                    <span
+                      className="hp-project-tag"
+                      data-tag={getModeTag(
+                        selectedProject,
+                        workspaces[selectedProject.workspaceId],
+                      ).toLowerCase()}
+                    >
+                      {getModeTag(
+                        selectedProject,
                         workspaces[selectedProject.workspaceId],
                       )}
                     </span>
                   </div>
-                )}
-                <div className="hp-context-field">
-                  <span className="hp-context-label">Last modified</span>
-                  <span className="hp-context-val">
-                    {relativeTime(
-                      workspaces[selectedProject.workspaceId].updatedAt,
-                    )}
-                  </span>
                 </div>
-                <div className="hp-context-field">
-                  <span className="hp-context-label">Mode</span>
-                  <span className="hp-context-val">
-                    {getModeTag(
-                      selectedProject,
-                      workspaces[selectedProject.workspaceId],
-                    )}
-                  </span>
+                <div className="hp-context-fields">
+                  {getModelName(workspaces[selectedProject.workspaceId]) && (
+                    <div className="hp-context-field">
+                      <span className="hp-context-label">Model file</span>
+                      <span className="hp-context-val">
+                        {getModelName(workspaces[selectedProject.workspaceId])}
+                      </span>
+                    </div>
+                  )}
+                  {getProjectFolder(workspaces[selectedProject.workspaceId]) && (
+                    <div className="hp-context-field">
+                      <span className="hp-context-label">Directory</span>
+                      <span className="hp-context-val">
+                        {getProjectFolder(
+                          workspaces[selectedProject.workspaceId],
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  <div className="hp-context-field">
+                    <span className="hp-context-label">Last modified</span>
+                    <span className="hp-context-val">
+                      {relativeTime(
+                        workspaces[selectedProject.workspaceId].updatedAt,
+                      )}
+                    </span>
+                  </div>
+                  <div className="hp-context-field">
+                    <span className="hp-context-label">Mode</span>
+                    <span className="hp-context-val">
+                      {getModeTag(
+                        selectedProject,
+                        workspaces[selectedProject.workspaceId],
+                      )}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="hp-context-actions">
@@ -925,23 +917,16 @@ export default function HomePage({
               </div>
             ) : (
               <div className="hp-context-empty">
-                <div className="hp-context-empty-icon">
-                  <Command className="w-7 h-7" />
-                </div>
-                <p>no project selected</p>
-                <span>click a project to inspect details</span>
+                <Info className="w-4 h-4" aria-hidden="true" />
+                <p>No project selected</p>
+                <span>Select a recent project to inspect its details.</span>
               </div>
             )}
-          </motion.section>
+          </section>
         </div>
 
         {/* ─── Footer Status Bar ─── */}
-        <motion.footer
-          className="hp-footer"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-        >
+        <footer className="hp-footer">
           <div className="hp-footer-left">
             <span className="hp-footer-status">READY</span>
             <span className="hp-footer-sep" />
@@ -953,7 +938,7 @@ export default function HomePage({
             <Command className="w-3 h-3" />
             <span>keyboard shortcuts available</span>
           </div>
-        </motion.footer>
+        </footer>
       </div>
 
       {/* ─── New Project Modal ─── */}

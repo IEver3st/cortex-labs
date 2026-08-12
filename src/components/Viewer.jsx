@@ -9,7 +9,8 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import { parseYft } from "../lib/yft";
 import { parseClmesh } from "../lib/clmesh.js";
 import { parseDDS } from "../lib/dds";
-import { buildYftTemplateMap, buildYftTemplatePsdSource } from "../lib/template-map";
+import { buildModelTemplateMap, buildModelTemplateSets } from "../lib/template-map";
+import { getTemplateModelPolicy } from "../lib/template-model";
 import {
   getFileExtension,
   getFileNameWithoutExtension,
@@ -56,11 +57,17 @@ import {
   updateDirectionalShadowFrustum,
 } from "../lib/viewer-render-effects.js";
 import { stabilizeObjectForWorld } from "../lib/model-normalization.js";
+import {
+  applyNativeManifestToMeshes,
+  summarizeNativeMaterialMeshes,
+} from "../lib/native-material-plan.js";
+import { loadNativeMaterialView } from "../lib/native-materials.js";
 
 const defaultBody = "#dfe4ea";
 const ALL_TARGET = "all";
 const MATERIAL_TARGET_PREFIX = "material:";
 const MESH_TARGET_PREFIX = "mesh:";
+const EMPTY_TEMPLATE_PART_NAMES = Object.freeze([]);
 const LIVERY_TOKEN_SPLIT = /[^a-z0-9]+/g;
 const EXTERIOR_INCLUDE_TOKENS = [
   "carpaint",
@@ -384,40 +391,6 @@ function isAbsolutePath(path) {
   return /^[a-z]:[\\/]/i.test(path) || path.startsWith("\\\\") || path.startsWith("/");
 }
 
-function normalizeStringMap(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const normalized = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry !== "string") continue;
-    const nextValue = entry.trim();
-    if (!nextValue) continue;
-    normalized[key] = nextValue;
-  }
-  return normalized;
-}
-
-function applyBridgeManifestToMeshes(meshes, manifest) {
-  if (!Array.isArray(meshes) || meshes.length === 0 || !manifest) return meshes;
-
-  const meshEntries = Array.isArray(manifest?.meshes) ? manifest.meshes : [];
-  const meshEntriesByName = new Map();
-
-  for (const entry of meshEntries) {
-    const name = typeof entry?.name === "string" ? entry.name.trim() : "";
-    if (!name) continue;
-    meshEntriesByName.set(name, entry);
-  }
-
-  return meshes.map((mesh) => {
-    const entry = meshEntriesByName.get(mesh?.name);
-    if (!entry) return mesh;
-    return {
-      ...mesh,
-      textureRefs: normalizeStringMap(entry.textureRefs),
-    };
-  });
-}
-
 function ViewerComponent({
   modelPath,
   texturePath,
@@ -450,6 +423,8 @@ function ViewerComponent({
   materialRoughness = 0.28,
   materialClearcoat = 0.72,
   materialTexturePath = "",
+  nativeMaterialsEnabled = false,
+  nativeMaterialsReloadToken = 0,
   onReady,
   onModelInfo,
   onModelError,
@@ -458,12 +433,19 @@ function ViewerComponent({
   onTextureError,
   onWindowTextureError,
   onFormatWarning,
+  onNativeMaterialsStatus,
   isActive = true,
   includeTemplateGeometry = false,
   templateMarkerPickModifier = "alt",
   onTemplateMarkerUvHover,
   onTemplateMarkerUvLeave,
   onTemplateMarkerUvPick,
+  templatePartPickEnabled = false,
+  selectedTemplatePartNames = EMPTY_TEMPLATE_PART_NAMES,
+  hoveredTemplatePartName = "",
+  onTemplatePartHover,
+  onTemplatePartLeave,
+  onTemplatePartPick,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -475,6 +457,7 @@ function ViewerComponent({
   const windowTextureRef = useRef(null);
   const materialTextureRef = useRef(null);
   const backgroundTextureRef = useRef(null);
+  const templatePartOverlayRef = useRef(null);
   const lightsRef = useRef({ ambient: null, key: null, rim: null });
   const shadowReceiverRef = useRef(null);
   const gridRef = useRef(null);
@@ -505,10 +488,15 @@ function ViewerComponent({
   const onTextureErrorRef = useRef(onTextureError);
   const onWindowTextureErrorRef = useRef(onWindowTextureError);
   const onFormatWarningRef = useRef(onFormatWarning);
+  const onNativeMaterialsStatusRef = useRef(onNativeMaterialsStatus);
   const onTemplateMarkerUvHoverRef = useRef(onTemplateMarkerUvHover);
   const onTemplateMarkerUvLeaveRef = useRef(onTemplateMarkerUvLeave);
   const onTemplateMarkerUvPickRef = useRef(onTemplateMarkerUvPick);
   const templateMarkerPickModifierRef = useRef(templateMarkerPickModifier);
+  const templatePartPickEnabledRef = useRef(templatePartPickEnabled);
+  const onTemplatePartHoverRef = useRef(onTemplatePartHover);
+  const onTemplatePartLeaveRef = useRef(onTemplatePartLeave);
+  const onTemplatePartPickRef = useRef(onTemplatePartPick);
   const isActiveRef = useRef(isActive);
   const shadowsEnabledRef = useRef(shadowsEnabled);
   const materialStateRef = useRef({});
@@ -523,6 +511,7 @@ function ViewerComponent({
     presetKey: DEFAULT_CAMERA_PRESET,
     zoomFactor: 1,
   });
+  const [modelVersion, setModelVersion] = useState(0);
 
   const resolvedBodyColor = bodyColor || defaultBody;
   const resolvedSlotColors = useMemo(
@@ -556,6 +545,10 @@ function ViewerComponent({
   }, [onTextureError, onWindowTextureError, onFormatWarning]);
 
   useEffect(() => {
+    onNativeMaterialsStatusRef.current = onNativeMaterialsStatus;
+  }, [onNativeMaterialsStatus]);
+
+  useEffect(() => {
     onTemplateMarkerUvHoverRef.current = onTemplateMarkerUvHover;
     onTemplateMarkerUvLeaveRef.current = onTemplateMarkerUvLeave;
     onTemplateMarkerUvPickRef.current = onTemplateMarkerUvPick;
@@ -566,11 +559,88 @@ function ViewerComponent({
   }, [templateMarkerPickModifier]);
 
   useEffect(() => {
+    templatePartPickEnabledRef.current = Boolean(templatePartPickEnabled);
+    onTemplatePartHoverRef.current = onTemplatePartHover;
+    onTemplatePartLeaveRef.current = onTemplatePartLeave;
+    onTemplatePartPickRef.current = onTemplatePartPick;
+  }, [
+    onTemplatePartHover,
+    onTemplatePartLeave,
+    onTemplatePartPick,
+    templatePartPickEnabled,
+  ]);
+
+  useEffect(() => {
     isActiveRef.current = isActive;
     if (isActive) {
       requestRenderRef.current?.();
     }
   }, [isActive]);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const model = modelRef.current;
+    const removeOverlay = () => {
+      const overlayGroup = templatePartOverlayRef.current;
+      if (!overlayGroup) return;
+      overlayGroup.parent?.remove(overlayGroup);
+      overlayGroup.traverse((child) => {
+        if (child?.material?.dispose) child.material.dispose();
+      });
+      templatePartOverlayRef.current = null;
+    };
+
+    removeOverlay();
+    if (!scene || !model || !templatePartPickEnabled) return removeOverlay;
+
+    const selectedNames = new Set(normalizeTemplatePartNames(selectedTemplatePartNames));
+    const hoveredName = typeof hoveredTemplatePartName === "string"
+      ? hoveredTemplatePartName.trim()
+      : "";
+    if (selectedNames.size === 0 && !hoveredName) return removeOverlay;
+
+    model.updateMatrixWorld(true);
+    const overlayGroup = new THREE.Group();
+    overlayGroup.name = "template-part-selection";
+    overlayGroup.userData.templateSelectionOverlay = true;
+
+    for (const mesh of getMeshList(model)) {
+      const meshName = ensureMeshLabel(mesh);
+      const isSelected = selectedNames.has(meshName);
+      const isHovered = Boolean(hoveredName && hoveredName === meshName);
+      if (!isSelected && !isHovered) continue;
+
+      const material = new THREE.MeshBasicMaterial({
+        color: isHovered ? 0x68dad5 : 0xd97952,
+        transparent: true,
+        opacity: isHovered ? 0.58 : 0.38,
+        wireframe: true,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      });
+      const overlay = new THREE.Mesh(mesh.geometry, material);
+      overlay.name = `template-part-overlay:${meshName}`;
+      overlay.userData.templateSelectionOverlay = true;
+      overlay.matrixAutoUpdate = false;
+      overlay.matrix.copy(mesh.matrixWorld);
+      overlay.renderOrder = 1000;
+      overlayGroup.add(overlay);
+    }
+
+    if (overlayGroup.children.length === 0) return removeOverlay;
+    scene.add(overlayGroup);
+    templatePartOverlayRef.current = overlayGroup;
+    requestRenderRef.current?.();
+
+    return removeOverlay;
+  }, [
+    hoveredTemplatePartName,
+    modelVersion,
+    selectedTemplatePartNames,
+    templatePartPickEnabled,
+  ]);
 
   useEffect(() => {
     shadowsEnabledRef.current = shadowsEnabled;
@@ -594,6 +664,7 @@ function ViewerComponent({
       glossiness,
       showWireframe,
       showCageWireframe,
+      nativeMaterialsEnabled,
       materialConfig,
     };
     if (modelRef.current) {
@@ -601,6 +672,7 @@ function ViewerComponent({
       modelRef.current.userData.materialConfig = materialConfig;
       modelRef.current.userData.materialDetailTexture = materialTextureRef.current || null;
       modelRef.current.userData.slotColors = resolvedSlotColors;
+      modelRef.current.userData.nativeMaterialsEnabled = Boolean(nativeMaterialsEnabled);
     }
   }, [
     resolvedBodyColor,
@@ -612,6 +684,7 @@ function ViewerComponent({
     glossiness,
     showWireframe,
     showCageWireframe,
+    nativeMaterialsEnabled,
     materialType,
     materialLightIntensity,
     materialGlossiness,
@@ -783,12 +856,24 @@ function ViewerComponent({
           onTemplateMarkerUvPickRef.current,
       );
 
+    const isPartPickingEnabled = () =>
+      Boolean(
+        templatePartPickEnabledRef.current &&
+          (onTemplatePartHoverRef.current ||
+            onTemplatePartLeaveRef.current ||
+            onTemplatePartPickRef.current),
+      );
+
+    const isTemplatePickingEnabled = () =>
+      isMarkerPickingEnabled() || isPartPickingEnabled();
+
     const clearMarkerHover = () => {
       renderer.domElement.style.cursor = "";
       onTemplateMarkerUvLeaveRef.current?.();
+      onTemplatePartLeaveRef.current?.();
     };
 
-    const getTemplateMarkerHit = (event) => {
+    const getTemplatePickHit = (event, markerOnly = false) => {
       if (!modelRef.current) return null;
       const rect = renderer.domElement.getBoundingClientRect();
       if (!rect.width || !rect.height) return null;
@@ -805,12 +890,16 @@ function ViewerComponent({
       for (const intersection of intersections) {
         const object = intersection?.object;
         if (!object?.isMesh || !object.visible) continue;
-        if (!object.userData?.templateMarkerInteractive) continue;
+        if (object.userData?.templateSelectionOverlay) continue;
+        if (markerOnly && !object.userData?.templateMarkerInteractive) continue;
         const uv = intersection?.uv;
-        if (!uv || !Number.isFinite(uv.x) || !Number.isFinite(uv.y)) continue;
+        if (markerOnly && (!uv || !Number.isFinite(uv.x) || !Number.isFinite(uv.y))) continue;
         return {
-          uv: { x: uv.x, y: uv.y },
-          meshName: object.name || object.userData?.meshLabel || "",
+          uv:
+            uv && Number.isFinite(uv.x) && Number.isFinite(uv.y)
+              ? { x: uv.x, y: uv.y }
+              : null,
+          meshName: object.userData?.meshLabel || object.name || "",
           materialName: object.material?.name || object.userData?.baseMaterial?.name || "",
         };
       }
@@ -818,21 +907,26 @@ function ViewerComponent({
     };
 
     const handleMarkerPointerMove = (event) => {
-      if (!isMarkerPickingEnabled()) return;
+      if (!isTemplatePickingEnabled()) return;
+      const partPicking = isPartPickingEnabled();
       const modifierActive = isTemplateMarkerModifierPressed(
         event,
         templateMarkerPickModifierRef.current,
       );
-      if (!modifierActive) {
+      if (!partPicking && !modifierActive) {
         clearMarkerHover();
         restoreMarkerPickControls();
         return;
       }
 
-      const hit = getTemplateMarkerHit(event);
+      const hit = getTemplatePickHit(event, !partPicking);
       renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
-      if (hit) {
+      if (hit && partPicking) {
+        onTemplatePartHoverRef.current?.(hit);
+      } else if (hit) {
         onTemplateMarkerUvHoverRef.current?.(hit);
+      } else if (partPicking) {
+        onTemplatePartLeaveRef.current?.();
       } else {
         onTemplateMarkerUvLeaveRef.current?.();
       }
@@ -847,14 +941,18 @@ function ViewerComponent({
         }
       }
 
-      event.preventDefault();
-      event.stopPropagation();
+      if (!partPicking) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
 
     const handleMarkerPointerDown = (event) => {
-      if (!isMarkerPickingEnabled()) return;
+      if (!isTemplatePickingEnabled()) return;
       if (event.button !== 0) return;
+      const partPicking = isPartPickingEnabled();
       if (
+        !partPicking &&
         !isTemplateMarkerModifierPressed(event, templateMarkerPickModifierRef.current)
       ) {
         return;
@@ -864,27 +962,35 @@ function ViewerComponent({
       markerPickStateRef.current.startX = Number(event.clientX) || 0;
       markerPickStateRef.current.startY = Number(event.clientY) || 0;
       markerPickStateRef.current.moved = false;
-      markerPickStateRef.current.controlsDisabled = true;
-      controls.enabled = false;
+      markerPickStateRef.current.controlsDisabled = !partPicking;
+      if (!partPicking) controls.enabled = false;
 
-      const hit = getTemplateMarkerHit(event);
+      const hit = getTemplatePickHit(event, !partPicking);
       renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
-      if (hit) {
+      if (hit && partPicking) {
+        onTemplatePartHoverRef.current?.(hit);
+      } else if (hit) {
         onTemplateMarkerUvHoverRef.current?.(hit);
+      } else if (partPicking) {
+        onTemplatePartLeaveRef.current?.();
       } else {
         onTemplateMarkerUvLeaveRef.current?.();
       }
 
-      event.preventDefault();
-      event.stopPropagation();
+      if (!partPicking) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
 
     const handleMarkerPointerUp = (event) => {
-      if (!isMarkerPickingEnabled()) return;
+      if (!isTemplatePickingEnabled()) return;
       const state = markerPickStateRef.current;
       if (state.pointerId !== null && event.pointerId !== state.pointerId) return;
+      const partPicking = isPartPickingEnabled();
 
       if (
+        !partPicking &&
         !isTemplateMarkerModifierPressed(event, templateMarkerPickModifierRef.current)
       ) {
         state.pointerId = null;
@@ -894,11 +1000,15 @@ function ViewerComponent({
         return;
       }
 
-      const hit = getTemplateMarkerHit(event);
+      const hit = getTemplatePickHit(event, !partPicking);
       renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
 
-      if (!state.moved && hit) {
+      if (!state.moved && hit && partPicking) {
+        onTemplatePartPickRef.current?.(hit);
+      } else if (!state.moved && hit) {
         onTemplateMarkerUvPickRef.current?.(hit);
+      } else if (!hit && partPicking) {
+        onTemplatePartLeaveRef.current?.();
       } else if (!hit) {
         onTemplateMarkerUvLeaveRef.current?.();
       }
@@ -906,12 +1016,14 @@ function ViewerComponent({
       state.pointerId = null;
       state.moved = false;
       restoreMarkerPickControls();
-      event.preventDefault();
-      event.stopPropagation();
+      if (!partPicking) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
 
     const handleMarkerPointerCancel = () => {
-      if (!isMarkerPickingEnabled()) return;
+      if (!isTemplatePickingEnabled()) return;
       markerPickStateRef.current.pointerId = null;
       markerPickStateRef.current.moved = false;
       restoreMarkerPickControls();
@@ -1274,12 +1386,16 @@ function ViewerComponent({
         templateMapError: "",
         templatePsdSource: null,
         templatePsdSourceError: "",
+        templateSets: [],
+        templateSetWarning: "",
       });
       onModelLoadingRef.current?.(false);
       fitRef.current = {
         ...fitRef.current,
         bounds: null,
       };
+      setModelVersion((version) => version + 1);
+      onNativeMaterialsStatusRef.current?.({ state: "idle", available: false });
       requestRender();
       return;
     }
@@ -1290,10 +1406,14 @@ function ViewerComponent({
       onModelLoadingRef.current?.(true);
       let object = null;
       let templateSourceObject = null;
+      let nativeMaterialSummary = { available: false };
       try {
         const extension = getFileExtension(modelPath);
         const shouldPreferBridgeYft = extension === "yft" && isTauriRuntime && !includeTemplateGeometry;
-        const cachedTemplate = shouldPreferBridgeYft ? null : getCachedModelTemplate(modelPath);
+        const shouldBypassTemplateCache =
+          includeTemplateGeometry && (extension === "yft" || extension === "ydd");
+        const cachedTemplate =
+          shouldPreferBridgeYft || shouldBypassTemplateCache ? null : getCachedModelTemplate(modelPath);
         let shouldCacheModelTemplate = !shouldPreferBridgeYft;
         if (cachedTemplate) {
           object = cloneCachedModelTemplate(cachedTemplate);
@@ -1328,7 +1448,8 @@ function ViewerComponent({
                     if (manifestPath) {
                       try {
                         const manifest = await readJsonFile(manifestPath);
-                        bridgeMeshes = applyBridgeManifestToMeshes(bridgeMeshes, manifest);
+                        bridgeMeshes = applyNativeManifestToMeshes(bridgeMeshes, manifest, manifestPath);
+                        nativeMaterialSummary = summarizeNativeMaterialMeshes(bridgeMeshes);
                       } catch (error) {
                         console.warn("[YFT] Failed to read bridge manifest:", error);
                       }
@@ -1425,6 +1546,21 @@ function ViewerComponent({
               return;
             }
             object.userData.sourceFormat = "ydd";
+
+            if (includeTemplateGeometry) {
+              try {
+                const templateDrawable = parseYft(bytes, name, {
+                  ...YDD_SCAN_SETTINGS,
+                  includeAllDrawables: true,
+                });
+                if (templateDrawable?.models?.length) {
+                  templateSourceObject = buildDrawableObject(templateDrawable, { useVertexColors: false });
+                  templateSourceObject.userData.sourceFormat = "ydd";
+                }
+              } catch (error) {
+                console.warn("[YDD] Full dictionary template source failed:", error);
+              }
+            }
           } else if (extension === "clmesh") {
             let bytes = null;
             try {
@@ -1495,32 +1631,69 @@ function ViewerComponent({
         let templateMapError = "";
         let templatePsdSource = null;
         let templatePsdSourceError = "";
+        let templateSets = [];
+        let windowTemplateSets = [];
+        let windowTemplateError = "";
+        let templateSetWarning = "";
         const templateObject = templateSourceObject || object;
+        const sourceFormat = templateObject?.userData?.sourceFormat || "";
 
-        if (templateObject?.userData?.sourceFormat === "yft") {
+        if (sourceFormat === "yft" || sourceFormat === "ydd") {
+          const templatePolicy = getTemplateModelPolicy(sourceFormat);
           try {
-            templateMap = buildYftTemplateMap({
-              object: templateObject,
-              modelPath,
-              liveryTarget: liveryTarget?.value || "",
-              windowTarget: windowTarget?.value || "",
-            });
+            if (includeTemplateGeometry) {
+              const generation = buildModelTemplateSets({
+                object: templateObject,
+                modelPath,
+                fileType: sourceFormat,
+                preferUv2: templatePolicy.preferUv2,
+                liveryTarget: liveryTarget?.value || "",
+                windowTarget: windowTarget?.value || "",
+                preferredDrawableKey: object?.userData?.selectedDrawableKey || "",
+              });
+              templateSets = generation.sets;
+              templateMap = templateSets[0]?.templateMap || null;
+              templatePsdSource = templateSets[0]?.templatePsdSource || null;
+              if (generation.skipped.length > 0) {
+                templateSetWarning = `${generation.skipped.length} drawable${generation.skipped.length === 1 ? " was" : "s were"} skipped because no renderable UV geometry was found.`;
+              }
+            } else {
+              templateMap = buildModelTemplateMap({
+                object: templateObject,
+                modelPath,
+                fileType: sourceFormat,
+                liveryTarget: liveryTarget?.value || "",
+                windowTarget: windowTarget?.value || "",
+              });
+            }
           } catch (error) {
             templateMapError = "Failed to generate template map.";
             console.error("[TemplateMap] Generation failed:", error);
           }
 
-          if (includeTemplateGeometry) {
+          if (includeTemplateGeometry && sourceFormat === "yft") {
             try {
-              templatePsdSource = buildYftTemplatePsdSource({
+              const windowGeneration = buildModelTemplateSets({
                 object: templateObject,
                 modelPath,
-                preferUv2: true,
+                fileType: sourceFormat,
+                preferUv2: false,
+                liveryTarget: liveryTarget?.value || "",
+                windowTarget: windowTarget?.value || "",
+                preferredDrawableKey: object?.userData?.selectedDrawableKey || "",
               });
+              windowTemplateSets = windowGeneration.sets;
+              if (windowGeneration.skipped.length > 0 && !windowTemplateSets.length) {
+                windowTemplateError = "No window-ready UV geometry was found in this model.";
+              }
             } catch (error) {
-              templatePsdSourceError = "Failed to generate UV template source.";
-              console.error("[TemplatePSD] Source generation failed:", error);
+              windowTemplateError = "Failed to prepare window template geometry.";
+              console.error("[TemplateMap] Window geometry generation failed:", error);
             }
+          }
+
+          if (includeTemplateGeometry && !templatePsdSource && !templateMapError) {
+            templatePsdSourceError = "Failed to generate UV template source.";
           }
         }
 
@@ -1534,7 +1707,17 @@ function ViewerComponent({
           templateMapError,
           templatePsdSource,
           templatePsdSourceError,
+          templateSets,
+          windowTemplateSets,
+          windowTemplateError,
+          templateSetWarning,
+          nativeMaterials: nativeMaterialSummary,
         });
+
+        if (templateSourceObject && templateSourceObject !== object) {
+          disposeObject(templateSourceObject);
+          templateSourceObject = null;
+        }
 
         const box = new THREE.Box3().setFromObject(object);
         const size = new THREE.Vector3();
@@ -1559,6 +1742,7 @@ function ViewerComponent({
         sceneObject.userData.materialConfig = materialState.materialConfig || DEFAULT_MATERIAL_CONFIG;
         sceneObject.userData.materialDetailTexture = materialTextureRef.current || null;
         sceneObject.userData.slotColors = materialState.slotColors || buildVehicleSlotColors(materialState.bodyColor);
+        sceneObject.userData.nativeMaterialsEnabled = Boolean(materialState.nativeMaterialsEnabled);
         applyShadowFlags(sceneObject, shadowsEnabled);
 
         if (modelRef.current) {
@@ -1569,6 +1753,7 @@ function ViewerComponent({
 
         modelRef.current = sceneObject;
         sceneRef.current.add(sceneObject);
+        setModelVersion((version) => version + 1);
 
         const fitBox = computeFramingBounds(sceneObject, new THREE.Box3().setFromObject(sceneObject)) || box.clone();
         fitBox.getSize(size);
@@ -1679,6 +1864,120 @@ function ViewerComponent({
       onModelLoadingRef.current?.(false);
     };
   }, [modelPath, sceneReady, includeTemplateGeometry, isTauriRuntime, textureLoader]);
+
+  useEffect(() => {
+    const object = modelRef.current;
+    if (!sceneReady || !object) return undefined;
+
+    const enabled = Boolean(nativeMaterialsEnabled);
+    object.userData = object.userData || {};
+    object.userData.nativeMaterialsEnabled = enabled;
+    object.userData.nativeMaterialsReady = false;
+
+    const reapplyMaterials = () => {
+      const state = materialStateRef.current;
+      applyMaterials(
+        object,
+        state.bodyColor,
+        textureRef.current,
+        state.textureTarget,
+        windowTextureRef.current,
+        state.windowTextureTarget,
+        state.liveryExteriorOnly,
+        state.textureMode,
+        state.glossiness,
+        state.showWireframe,
+      );
+      requestRenderRef.current?.();
+    };
+
+    const nativeMeshes = getMeshList(object).filter((mesh) => mesh.userData?.nativeMaterial);
+    if (!enabled) {
+      onNativeMaterialsStatusRef.current?.({
+        state: "disabled",
+        available: nativeMeshes.length > 0,
+        meshCount: nativeMeshes.length,
+      });
+      reapplyMaterials();
+      return undefined;
+    }
+
+    if (object.userData?.sourceFormat !== "yft" || nativeMeshes.length === 0) {
+      onNativeMaterialsStatusRef.current?.({
+        state: "unavailable",
+        available: false,
+        message: "Native materials require a CodeWalker-backed .yft model.",
+      });
+      reapplyMaterials();
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    let resources = null;
+    let cancelled = false;
+    let lastReported = -1;
+
+    const load = async () => {
+      try {
+        resources = await loadNativeMaterialView({
+          object,
+          renderer: rendererRef.current,
+          signal: controller.signal,
+          onSetup: (status) => {
+            if (cancelled) return;
+            onNativeMaterialsStatusRef.current?.({ ...status, state: "loading", available: true });
+            reapplyMaterials();
+          },
+          onProgress: (status) => {
+            if (cancelled) return;
+            const complete = status.loadedTextureCount + status.failedTextureCount;
+            const reportEvery = Math.max(1, Math.ceil(status.plannedTextureCount / 20));
+            if (complete !== status.plannedTextureCount && complete - lastReported < reportEvery) return;
+            lastReported = complete;
+            onNativeMaterialsStatusRef.current?.({ ...status, state: "loading", available: true });
+          },
+          onRender: () => requestRenderRef.current?.(),
+        });
+        if (cancelled) {
+          resources.dispose();
+          resources = null;
+          return;
+        }
+
+        object.userData.nativeMaterialsReady = true;
+        const status = resources.summary;
+        onNativeMaterialsStatusRef.current?.({
+          ...status,
+          state:
+            status.failedTextureCount > 0 ||
+            status.missingBindingCount > 0 ||
+            status.unsupportedBindingCount > 0
+              ? "partial"
+              : "ready",
+          available: true,
+        });
+        reapplyMaterials();
+      } catch (error) {
+        if (cancelled || error?.name === "AbortError") return;
+        object.userData.nativeMaterialsReady = false;
+        onNativeMaterialsStatusRef.current?.({
+          state: "error",
+          available: true,
+          message: error?.message || "Native material loading failed.",
+        });
+        reapplyMaterials();
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      resources?.dispose?.();
+      object.userData.nativeMaterialsReady = false;
+    };
+  }, [modelVersion, nativeMaterialsEnabled, nativeMaterialsReloadToken, sceneReady]);
 
   useEffect(() => {
     if (!modelRef.current) return;
@@ -2439,18 +2738,17 @@ function buildClmeshObject(meshes) {
     if (mesh.normals) {
       geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
     }
-    if (mesh.uvs) {
-      geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
-    }
-    if (mesh.uvs2) {
-      geometry.setAttribute("uv2", new THREE.BufferAttribute(mesh.uvs2, 2));
-    }
-    if (mesh.uvs3) {
-      geometry.setAttribute("uv3", new THREE.BufferAttribute(mesh.uvs3, 2));
-    }
-    if (mesh.uvs4) {
-      geometry.setAttribute("uv4", new THREE.BufferAttribute(mesh.uvs4, 2));
-    }
+    const gtaUvSets = [
+      mesh.uvs ? new THREE.BufferAttribute(mesh.uvs, 2) : null,
+      mesh.uvs2 ? new THREE.BufferAttribute(mesh.uvs2, 2) : null,
+      mesh.uvs3 ? new THREE.BufferAttribute(mesh.uvs3, 2) : null,
+      mesh.uvs4 ? new THREE.BufferAttribute(mesh.uvs4, 2) : null,
+    ];
+    if (gtaUvSets[0]) geometry.setAttribute("uv", gtaUvSets[0]);
+    if (gtaUvSets[1]) geometry.setAttribute("uv2", gtaUvSets[1]);
+    if (gtaUvSets[2]) geometry.setAttribute("uv3", gtaUvSets[2]);
+    if (gtaUvSets[3]) geometry.setAttribute("uv4", gtaUvSets[3]);
+    geometry.userData.gtaUvSets = gtaUvSets;
     if (mesh.indices) {
       geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
     }
@@ -2467,6 +2765,10 @@ function buildClmeshObject(meshes) {
     threeMesh.name = mesh.name || material.name || "mesh";
     if (mesh.textureRefs && Object.keys(mesh.textureRefs).length > 0) {
       threeMesh.userData.textureRefs = mesh.textureRefs;
+    }
+    if (mesh.nativeMaterial) {
+      threeMesh.userData.nativeMaterial = mesh.nativeMaterial;
+      threeMesh.userData.nativeLodActive = mesh.nativeMaterial.lodActive !== false;
     }
     root.add(threeMesh);
   });
@@ -2671,6 +2973,7 @@ function applyMaterials(
       ? texture
       : (materialDetailTexture || texture);
   const baseGlossFactor = 2 - 2 * clamp(glossiness, 0, 1);
+  const nativeMaterialsEnabled = object.userData?.nativeMaterialsEnabled === true;
 
   for (const child of meshes) {
     if (!child.userData.baseMaterial) {
@@ -2697,6 +3000,7 @@ function applyMaterials(
         ? buildActiveTextureSet(vehicleTexture)
         : null;
     const activeTexture = activeTextureSet?.map || null;
+    const hasManualTextureOverride = Boolean(activeTexture);
     const preferredUvSelection = matchesWindow
       ? false
       : (matchesVehicle && Boolean(vehicleTexture) ? preferUv2 : false);
@@ -2710,16 +3014,31 @@ function applyMaterials(
       restoreBaseUVs(child.geometry);
     }
 
+    const nativeLodVisible = !nativeMaterialsEnabled || child.userData?.nativeLodActive !== false;
     if (exteriorOnly) {
-      child.visible = shouldShowExteriorDual(
+      child.visible = nativeLodVisible && shouldShowExteriorDual(
         child,
         vehicleTarget,
         matchesVehicle || (shouldApplySlotColor && slotRole !== "glass"),
         windowTarget,
         matchesWindow,
       );
-    } else if (!child.visible) {
-      child.visible = true;
+    } else {
+      child.visible = nativeLodVisible;
+    }
+
+    const nativeMaterial = nativeMaterialsEnabled ? child.userData?.nativeMaterialObject : null;
+    if (nativeMaterial && !hasManualTextureOverride) {
+      const profile = nativeMaterial.userData?.nativeProfile;
+      const nativeSlotRole = slotRole || (profile === "paint" ? "primary" : profile === "glass" ? "glass" : null);
+      nativeMaterial.color.copy(nativeSlotRole ? colorBySlot[nativeSlotRole] : AUTO_TEXTURE_NEUTRAL_COLOR);
+      const baseRoughness = nativeMaterial.userData?.baseRoughness;
+      if (typeof baseRoughness === "number") {
+        nativeMaterial.roughness = clamp(baseRoughness * baseGlossFactor, 0, 1);
+      }
+      setMaterialWireframe(nativeMaterial, showWireframe);
+      if (child.material !== nativeMaterial) child.material = nativeMaterial;
+      continue;
     }
 
     if (shouldApply && (activeTexture || matchesVehicle || shouldApplySlotColor)) {
@@ -2737,7 +3056,10 @@ function applyMaterials(
     }
 
     if (child.material !== child.userData.baseMaterial) {
-      if (child.material !== child.userData.appliedMaterial) {
+      if (
+        child.material !== child.userData.appliedMaterial &&
+        child.material !== child.userData.nativeMaterialObject
+      ) {
         disposeMaterial(child.material);
       }
       child.material = child.userData.baseMaterial;
@@ -2970,6 +3292,16 @@ function getMaterialNames(material) {
   return name ? [name] : [];
 }
 
+function normalizeTemplatePartNames(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value
+      .filter((entry) => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  )];
+}
+
 function ensureMeshLabel(child) {
   if (!child.isMesh) return "";
   const existing = child.userData?.meshLabel;
@@ -3042,6 +3374,9 @@ function shouldPreferLiveryUvForTarget(textureTarget) {
 }
 
 function matchesTextureTarget(child, textureTarget) {
+  if (Array.isArray(textureTarget)) {
+    return textureTarget.some((target) => matchesTextureTarget(child, target));
+  }
   if (textureTarget === "none") return false;
   if (!textureTarget || textureTarget === ALL_TARGET) return true;
   if (
@@ -3269,4 +3604,3 @@ function isBetterLiveryCandidate(candidate, best) {
   if (candidate.isMaterial !== best.isMaterial) return candidate.isMaterial;
   return candidate.label.localeCompare(best.label) < 0;
 }
-

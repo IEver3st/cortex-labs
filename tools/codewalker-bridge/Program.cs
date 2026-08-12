@@ -115,10 +115,10 @@ public static class Program
                 drawable.BuildAllModels();
             }
 
-            var models = drawable.AllModels ?? Array.Empty<DrawableModel>();
+            var models = EnumerateDrawableModels(drawable).ToArray();
             for (var modelIndex = 0; modelIndex < models.Length; modelIndex += 1)
             {
-                var model = models[modelIndex];
+                var (lodLevel, lodModelIndex, model) = models[modelIndex];
                 if (model?.Geometries == null) continue;
 
                 for (var geomIndex = 0; geomIndex < model.Geometries.Length; geomIndex += 1)
@@ -126,7 +126,15 @@ public static class Program
                     var geom = model.Geometries[geomIndex];
                     if (geom == null) continue;
 
-                    var mesh = ExtractMesh(geom, baseName, drawableIndex, modelIndex, geomIndex, textureLibrary);
+                    var mesh = ExtractMesh(
+                        geom,
+                        baseName,
+                        drawableIndex,
+                        modelIndex,
+                        lodLevel,
+                        lodModelIndex,
+                        geomIndex,
+                        textureLibrary);
                     if (mesh != null)
                     {
                         meshes.Add(mesh);
@@ -140,11 +148,47 @@ public static class Program
         return meshes;
     }
 
+    private static IEnumerable<(string LodLevel, int LodModelIndex, DrawableModel Model)> EnumerateDrawableModels(DrawableBase drawable)
+    {
+        var emitted = false;
+
+        IEnumerable<(string LodLevel, DrawableModel[]? Models)> levels = new[]
+        {
+            ("high", drawable.DrawableModels?.High),
+            ("med", drawable.DrawableModels?.Med),
+            ("low", drawable.DrawableModels?.Low),
+            ("vlow", drawable.DrawableModels?.VLow),
+            ("extra", drawable.DrawableModels?.Extra),
+        };
+
+        foreach (var (lodLevel, models) in levels)
+        {
+            if (models == null) continue;
+            for (var index = 0; index < models.Length; index += 1)
+            {
+                var model = models[index];
+                if (model == null) continue;
+                emitted = true;
+                yield return (lodLevel, index, model);
+            }
+        }
+
+        if (emitted) yield break;
+        var fallbackModels = drawable.AllModels ?? Array.Empty<DrawableModel>();
+        for (var index = 0; index < fallbackModels.Length; index += 1)
+        {
+            var model = fallbackModels[index];
+            if (model != null) yield return ("unknown", index, model);
+        }
+    }
+
     private static MeshData? ExtractMesh(
         DrawableGeometry geom,
         string baseName,
         int drawableIndex,
         int modelIndex,
+        string lodLevel,
+        int lodModelIndex,
         int geomIndex,
         TextureLibrary textureLibrary)
     {
@@ -263,6 +307,8 @@ public static class Program
             geom.Shader?.RenderBucket ?? 0,
             drawableIndex,
             modelIndex,
+            lodLevel,
+            lodModelIndex,
             geomIndex,
             uvSets,
             textureBindings,
@@ -1048,16 +1094,28 @@ public static class Program
 
     private static string ClassifyTextureUsage(string paramName, string textureName)
     {
-        var raw = $"{paramName} {textureName}".Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(raw)) return "unknown";
+        var param = (paramName ?? string.Empty).Trim().ToLowerInvariant();
+        var texture = (textureName ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(param) && string.IsNullOrWhiteSpace(texture)) return "unknown";
 
-        if (raw.Contains("dirt") || raw.Contains("mud") || raw.Contains("grime")) return "dirt";
-        if (raw.Contains("normal") || raw.Contains("bump") || raw.Contains("nrm")) return "normal";
-        if (raw.Contains("emissive") || raw.Contains("glow") || raw.Contains("light")) return "emissive";
-        if (raw.Contains("spec") || raw.Contains("gloss") || raw.Contains("reflect")) return "specular";
-        if (raw.Contains("detail")) return "detail";
-        if (raw.Contains("mask") || raw.Contains("control") || raw.Contains("palette") || raw.Contains("lookup")) return "mask";
-        if (raw.Contains("ao") || raw.Contains("ambient")) return "ambientOcclusion";
+        // Shader parameter names are authoritative. A diffuse binding can
+        // legitimately point at a file containing "spec" or "emissive".
+        if (param.Contains("diffuse") || param.Contains("albedo") || param.Contains("basecolor") || param.Contains("platebg") || param.Contains("fontsampler")) return "baseColor";
+        if (param.Contains("normal") || param.Contains("bump")) return "normal";
+        if (param.Contains("spec") || param.Contains("gloss") || param.Contains("reflect")) return "specular";
+        if (param.Contains("emissive") || param.Contains("emiss") || param.Contains("glow")) return "emissive";
+        if (param.Contains("dirt") || param.Contains("mud")) return "dirt";
+        if (param.Contains("detail")) return "detail";
+        if (param.Contains("mask") || param.Contains("control") || param.Contains("palette") || param.Contains("lookup")) return "mask";
+        if (param.Contains("ao") || param.Contains("ambient")) return "ambientOcclusion";
+
+        if (texture.Contains("dirt") || texture.Contains("mud") || texture.Contains("grime")) return "dirt";
+        if (texture.Contains("normal") || texture.Contains("bump") || texture.Contains("nrm")) return "normal";
+        if (texture.Contains("emissive") || texture.Contains("glow") || texture.Contains("light")) return "emissive";
+        if (texture.Contains("spec") || texture.Contains("gloss") || texture.Contains("reflect")) return "specular";
+        if (texture.Contains("detail")) return "detail";
+        if (texture.Contains("mask") || texture.Contains("control") || texture.Contains("palette") || texture.Contains("lookup")) return "mask";
+        if (texture.Contains("ao") || texture.Contains("ambient")) return "ambientOcclusion";
         return "baseColor";
     }
 
@@ -1322,7 +1380,7 @@ public static class Program
 
         var manifest = new
         {
-            version = 3,
+            version = 4,
             inputPath,
             generatedAtUtc = DateTime.UtcNow,
             meshCount = meshes.Count,
@@ -1344,6 +1402,8 @@ public static class Program
                 renderBucket = mesh.RenderBucket,
                 drawableIndex = mesh.DrawableIndex,
                 modelIndex = mesh.ModelIndex,
+                lodLevel = mesh.LodLevel,
+                lodModelIndex = mesh.LodModelIndex,
                 geometryIndex = mesh.GeometryIndex,
                 uvSets = mesh.UvSets,
                 textureBindings = mesh.TextureBindings.Select(binding => new
@@ -1415,6 +1475,8 @@ public sealed class MeshData
         byte renderBucket,
         int drawableIndex,
         int modelIndex,
+        string lodLevel,
+        int lodModelIndex,
         int geometryIndex,
         MeshUvSets uvSets,
         List<MeshTextureBinding> textureBindings,
@@ -1436,6 +1498,8 @@ public sealed class MeshData
         RenderBucket = renderBucket;
         DrawableIndex = drawableIndex;
         ModelIndex = modelIndex;
+        LodLevel = lodLevel;
+        LodModelIndex = lodModelIndex;
         GeometryIndex = geometryIndex;
         UvSets = uvSets;
         TextureBindings = textureBindings;
@@ -1458,6 +1522,8 @@ public sealed class MeshData
     public byte RenderBucket { get; }
     public int DrawableIndex { get; }
     public int ModelIndex { get; }
+    public string LodLevel { get; }
+    public int LodModelIndex { get; }
     public int GeometryIndex { get; }
     public MeshUvSets UvSets { get; }
     public List<MeshTextureBinding> TextureBindings { get; }

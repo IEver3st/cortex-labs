@@ -3,6 +3,7 @@ import { inflate, inflateRaw } from "pako";
 const RSC7_MAGIC = 0x37435352;
 const RSC85_MAGIC = 0x38355352;
 const MAX_MODELS = 64;
+const MAX_YDD_DRAWABLES = 512;
 const MAX_GEOMETRIES = 256;
 const MAX_VERTICES = 1000000;
 const MAX_INDICES = 3000000;
@@ -474,6 +475,11 @@ export function parseYft(bytes, name = "model", options = {}) {
     );
     const scanSettings = normalizeScanSettings(options, reader.len);
 
+    if (scanSettings.resourceType === "ydd") {
+      const dictionaryDrawable = parseYddDictionary(reader, name, scanSettings);
+      if (dictionaryDrawable && hasGeometry(dictionaryDrawable)) return dictionaryDrawable;
+    }
+
     let drawable = parseFragType(reader, name);
 
     if (!drawable || !hasGeometry(drawable)) {
@@ -505,6 +511,100 @@ export function parseYft(bytes, name = "model", options = {}) {
     console.error("[YFT] Parse error:", error);
     return null;
   }
+}
+
+function buildDrawableMetadata(index, hash, name) {
+  const normalizedHash = Number.isInteger(hash) ? hash >>> 0 : 0;
+  const hashHex = normalizedHash.toString(16).padStart(8, "0");
+  const drawableName = name || `drawable_${hashHex || index}`;
+  return {
+    key: `ydd:${index}:${hashHex}`,
+    index,
+    hash: normalizedHash,
+    hashHex,
+    name: drawableName,
+  };
+}
+
+function attachDrawableMetadata(drawable, metadata) {
+  if (!drawable || !metadata) return drawable;
+  drawable.drawable = metadata;
+  for (const model of drawable.models || []) {
+    model.drawableKey = metadata.key;
+    model.drawableIndex = metadata.index;
+    model.drawableHash = metadata.hash;
+    model.drawableHashHex = metadata.hashHex;
+    model.drawableName = metadata.name;
+    for (const mesh of model.meshes || []) {
+      mesh.drawableKey = metadata.key;
+      mesh.drawableIndex = metadata.index;
+      mesh.drawableHash = metadata.hash;
+      mesh.drawableHashHex = metadata.hashHex;
+      mesh.drawableName = metadata.name;
+    }
+  }
+  return drawable;
+}
+
+function parseYddDictionary(reader, name, settings) {
+  if (!reader?.valid?.(0) || reader.len < 64) return null;
+
+  const hashesPtr = reader.u64(0x20);
+  const hashesCount = reader.u16(0x28);
+  const drawablesPtr = reader.u64(0x30);
+  const drawablesCount = reader.u16(0x38);
+  if (
+    drawablesCount === 0 ||
+    drawablesCount > MAX_YDD_DRAWABLES ||
+    !reader.validPtr(drawablesPtr)
+  ) {
+    return null;
+  }
+
+  const hashesOffset = reader.validPtr(hashesPtr) ? reader.resolvePtr(hashesPtr) : 0;
+  const drawablesOffset = reader.resolvePtr(drawablesPtr);
+  if (!reader.valid(drawablesOffset) || drawablesOffset + drawablesCount * 8 > reader.len) {
+    return null;
+  }
+
+  const entries = [];
+  for (let index = 0; index < drawablesCount; index += 1) {
+    const drawablePtr = reader.u64(drawablesOffset + index * 8);
+    if (!reader.validPtr(drawablePtr)) continue;
+
+    const hash =
+      hashesOffset && index < hashesCount && hashesOffset + index * 4 + 4 <= reader.len
+        ? reader.u32(hashesOffset + index * 4)
+        : 0;
+    const hashHex = (hash >>> 0).toString(16).padStart(8, "0");
+    const drawableName = `${name}_${hashHex || index}`;
+    const drawable = parseDrawable(reader, reader.resolvePtr(drawablePtr), drawableName);
+    if (!drawable || !hasGeometry(drawable)) continue;
+
+    const metadata = buildDrawableMetadata(index, hash, `drawable_${hashHex}`);
+    attachDrawableMetadata(drawable, metadata);
+    entries.push({ drawable, metadata, vertexCount: countTotalVertices(drawable) });
+  }
+
+  if (entries.length === 0) return null;
+  if (!settings.includeAllDrawables || entries.length === 1) {
+    entries.sort((a, b) => b.vertexCount - a.vertexCount || a.metadata.index - b.metadata.index);
+    const selected = entries[0].drawable;
+    selected.drawableEntries = entries.map((entry) => entry.metadata);
+    return selected;
+  }
+
+  const combined = {
+    name,
+    models: [],
+    shaders: [],
+    drawableEntries: entries.map((entry) => entry.metadata),
+  };
+  for (const entry of entries) {
+    combined.models.push(...(entry.drawable.models || []));
+    combined.shaders.push(...(entry.drawable.shaders || []));
+  }
+  return combined;
 }
 
 function countTotalVertices(drawable) {
@@ -1771,8 +1871,17 @@ function normalizeScanSettings(options, readerLen) {
   scanMaxCandidates = Math.max(1, Math.floor(scanMaxCandidates));
 
   const preferBestDrawable = Boolean(settings.preferBestDrawable);
+  const resourceType = settings.resourceType === "ydd" ? "ydd" : "";
+  const includeAllDrawables = resourceType === "ydd" && settings.includeAllDrawables === true;
 
-  return { scanLimit, scanStride, scanMaxCandidates, preferBestDrawable };
+  return {
+    scanLimit,
+    scanStride,
+    scanMaxCandidates,
+    preferBestDrawable,
+    resourceType,
+    includeAllDrawables,
+  };
 }
 
 function scanForDrawableCandidates(reader, scanLimit, scanStride, maxCandidates) {

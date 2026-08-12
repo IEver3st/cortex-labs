@@ -821,7 +821,7 @@ fn parse_yft(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, S
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     use std::hash::Hasher;
-    hasher.write(b"parse_yft_v5");
+    hasher.write(b"parse_yft_v6");
     hasher.write(path.as_bytes());
     hasher.write_u64(mtime);
     hasher.write_u64(size);

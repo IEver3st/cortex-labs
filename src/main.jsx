@@ -4,11 +4,15 @@ import Shell from "./Shell";
 import "./index.css";
 import { loadPrefs } from "./lib/prefs";
 import { installConsoleLogCapture } from "./lib/console-log-buffer";
+import { applyAppearance } from "./lib/theme";
 
-// Apply dark mode immediately before first render to prevent flash of unstyled content
+// Apply the stored appearance before first render to prevent a theme flash.
 const _initialPrefs = loadPrefs();
-const _isDark = _initialPrefs?.defaults?.darkMode ?? true;
-document.documentElement.classList.toggle("dark", _isDark);
+applyAppearance({
+  colorScheme: _initialPrefs?.defaults?.colorScheme,
+  themePreset: _initialPrefs?.defaults?.themePreset,
+  legacyDarkMode: _initialPrefs?.defaults?.darkMode ?? true,
+});
 
 installConsoleLogCapture();
 

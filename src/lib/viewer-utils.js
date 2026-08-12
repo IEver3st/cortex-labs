@@ -17,6 +17,7 @@ export {
 } from "./camera-framing.js";
 
 export const YDD_SCAN_SETTINGS = {
+  resourceType: "ydd",
   scanLimit: Number.POSITIVE_INFINITY,
   scanMaxCandidates: 32,
   preferBestDrawable: true,
@@ -222,11 +223,31 @@ export function buildDrawableObject(drawable, options = {}) {
   const useVertexColors = options.useVertexColors !== false;
   const root = new THREE.Group();
   root.name = drawable.name || "yft";
+  if (drawable.drawable?.key) {
+    root.userData.selectedDrawableKey = drawable.drawable.key;
+  }
+  if (Array.isArray(drawable.drawableEntries)) {
+    root.userData.drawableEntries = drawable.drawableEntries.map((entry) => ({ ...entry }));
+  }
 
   drawable.models.forEach((model) => {
     const modelName = model.name || root.name;
     const group = new THREE.Group();
     group.name = modelName;
+    const drawableMetadata = {
+      key: model.drawableKey,
+      index: model.drawableIndex,
+      hash: model.drawableHash,
+      hashHex: model.drawableHashHex,
+      name: model.drawableName,
+    };
+    if (drawableMetadata.key) {
+      group.userData.drawableKey = drawableMetadata.key;
+      group.userData.drawableIndex = drawableMetadata.index;
+      group.userData.drawableHash = drawableMetadata.hash;
+      group.userData.drawableHashHex = drawableMetadata.hashHex;
+      group.userData.drawableName = drawableMetadata.name;
+    }
 
     model.meshes.forEach((mesh) => {
       const geometry = new THREE.BufferGeometry();
@@ -307,6 +328,14 @@ export function buildDrawableObject(drawable, options = {}) {
       const threeMesh = new THREE.Mesh(geometry, material);
       threeMesh.name = mesh.name || material.name || "mesh";
       threeMesh.userData.materialType = isPaint ? "paint" : isGlass ? "glass" : isChrome ? "chrome" : "default";
+      const meshDrawableKey = mesh.drawableKey || drawableMetadata.key;
+      if (meshDrawableKey) {
+        threeMesh.userData.drawableKey = meshDrawableKey;
+        threeMesh.userData.drawableIndex = mesh.drawableIndex ?? drawableMetadata.index;
+        threeMesh.userData.drawableHash = mesh.drawableHash ?? drawableMetadata.hash;
+        threeMesh.userData.drawableHashHex = mesh.drawableHashHex || drawableMetadata.hashHex;
+        threeMesh.userData.drawableName = mesh.drawableName || drawableMetadata.name;
+      }
       if (mesh.textureRefs && Object.keys(mesh.textureRefs).length > 0) {
         threeMesh.userData.textureRefs = mesh.textureRefs;
       }

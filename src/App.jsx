@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
-import { AlertTriangle, ArrowUpRight, Box, Boxes, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Box, Boxes, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun, FlaskConical, RefreshCw } from "lucide-react";
 import { useUpdateChecker } from "./lib/updater";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
@@ -262,6 +262,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [matClearcoat, setMatClearcoat] = useState(0.0);
   const [materialTextures, setMaterialTextures] = useState([]);
   const [materialsOpen, setMaterialsOpen] = useState(false);
+  const [nativeMaterialsEnabled, setNativeMaterialsEnabled] = useState(false);
+  const [nativeMaterialsReloadToken, setNativeMaterialsReloadToken] = useState(0);
+  const [nativeMaterialsStatus, setNativeMaterialsStatus] = useState({
+    state: "idle",
+    available: false,
+  });
 
   // windowControlsStyle now handled by Shell
   const [colorsOpen, setColorsOpen] = useState(() => getInitialUi().colorsOpen);
@@ -269,6 +275,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [panelOpen, setPanelOpen] = useState(() => ({
     model: true,
     templates: true,
+    nativeMaterials: true,
     targeting: true,
     overlays: false,
     view: true,
@@ -595,6 +602,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         lightElevation,
         glossiness,
         liveryExteriorOnly,
+        nativeMaterialsEnabled,
         dualBodyColorA,
         dualBodyColorB,
         dualModelAPath: dualModelAPath || "",
@@ -626,7 +634,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [
     isBooting, showOnboarding, textureMode,
     modelPath, modelSourcePath, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
-    liveryWindowOverride, bodyColor, vehicleSlotColors, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, lightIntensity, glossiness, liveryExteriorOnly,
+    liveryWindowOverride, bodyColor, vehicleSlotColors, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, lightIntensity, glossiness, liveryExteriorOnly, nativeMaterialsEnabled,
     dualBodyColorA, dualBodyColorB,
     dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
     dualWindowTextureAPath, dualWindowTextureBPath,
@@ -681,6 +689,21 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       if (prev === "all" || prev === "none" || prev === "auto") return prev;
       return targets.some((target) => target.value === prev) ? prev : "none";
     });
+
+    if (Object.prototype.hasOwnProperty.call(info || {}, "nativeMaterials")) {
+      const nativeSummary = info?.nativeMaterials || {};
+      setNativeMaterialsStatus(
+        nativeSummary.available
+          ? { ...nativeSummary, state: "available", available: true }
+          : {
+              state: "unavailable",
+              available: false,
+              message: "No CodeWalker material bindings were found for this model.",
+            },
+      );
+    } else {
+      setNativeMaterialsStatus({ state: "idle", available: false });
+    }
   }, []);
 
   useEffect(() => {
@@ -753,10 +776,48 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setModelLoading(Boolean(loading));
   }, []);
 
+  const handleNativeMaterialsStatus = useCallback((status) => {
+    const next = status && typeof status === "object"
+      ? status
+      : { state: "idle", available: false };
+    setNativeMaterialsStatus((current) => {
+      if (!next.available && (next.state === "idle" || next.state === "unavailable")) {
+        return next;
+      }
+      if (next.state === "disabled") {
+        return {
+          ...current,
+          ...next,
+          message: "",
+          plannedTextureCount: 0,
+          loadedTextureCount: 0,
+          failedTextureCount: 0,
+          failures: [],
+        };
+      }
+      if (next.state === "loading" && current.state !== "loading") {
+        return {
+          ...current,
+          ...next,
+          message: "",
+          loadedTextureCount: next.loadedTextureCount || 0,
+          failedTextureCount: next.failedTextureCount || 0,
+          failures: [],
+        };
+      }
+      return {
+        ...current,
+        ...next,
+        message: Object.prototype.hasOwnProperty.call(next, "message") ? next.message : "",
+      };
+    });
+  }, []);
+
   const handleModelError = useCallback((message) => {
     setDialogError(message || "Failed to load model.");
     setGeneratedTemplateMap(null);
     setTemplateMapError("");
+    setNativeMaterialsStatus({ state: "idle", available: false });
     setModelPath("");
   }, []);
 
@@ -902,6 +963,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     if (typeof state.lightElevation === "number") setLightElevation(state.lightElevation);
     if (typeof state.glossiness === "number") setGlossiness(state.glossiness);
     if (typeof state.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(state.liveryExteriorOnly);
+    if (typeof state.nativeMaterialsEnabled === "boolean") setNativeMaterialsEnabled(state.nativeMaterialsEnabled);
     if (state.dualSelectedSlot) setDualSelectedSlot(state.dualSelectedSlot);
     if (state.dualTextureMode) setDualTextureMode(state.dualTextureMode);
     if (state.dualWindowTextureATarget) setDualWindowTextureATarget(state.dualWindowTextureATarget);
@@ -1645,12 +1707,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     : "";
   const hasModel = Boolean(modelPath);
   const activeModelPath = modelSourcePath || modelPath;
-  const isYftModel = activeModelPath.toLowerCase().endsWith(".yft");
+  const isTemplateModel = /\.(?:yft|ydd)$/i.test(activeModelPath);
   const hasTemplateMap = Boolean(generatedTemplateMap);
   const templateStatusLabel = !hasModel
-    ? "Load a .yft model to auto-generate a template map."
-    : !isYftModel
-      ? "Template map generation is available for .yft models only."
+    ? "Load a .yft or .ydd model to auto-generate a template map."
+    : !isTemplateModel
+      ? "Template map generation is available for .yft and .ydd models only."
       : templateMapError
         ? templateMapError
         : hasTemplateMap
@@ -1693,6 +1755,51 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const targetingLabel = textureMode === "livery" ? (liveryTarget ? "Auto" : "No target") : manualTargetLabel;
   const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
   const showVehicleSlotColorCards = textureMode === "livery" || textureMode === "everything";
+  const nativeMaterialsAvailable = Boolean(nativeMaterialsStatus.available);
+  const nativeMaterialsActive = Boolean(
+    experimentalSettings && nativeMaterialsEnabled && textureMode === "everything",
+  );
+  const nativeMaterialsCompleteCount =
+    (nativeMaterialsStatus.loadedTextureCount || 0) +
+    (nativeMaterialsStatus.failedTextureCount || 0);
+  const nativeMaterialsPlannedCount = nativeMaterialsStatus.plannedTextureCount || 0;
+  const nativeMaterialsProgress = nativeMaterialsPlannedCount > 0
+    ? Math.min(100, Math.round((nativeMaterialsCompleteCount / nativeMaterialsPlannedCount) * 100))
+    : 0;
+  const nativeMaterialsCaption = (() => {
+    switch (nativeMaterialsStatus.state) {
+      case "available": return "Available";
+      case "disabled": return nativeMaterialsAvailable ? "Off" : "Unavailable";
+      case "loading": return nativeMaterialsPlannedCount > 0
+        ? `Loading ${nativeMaterialsCompleteCount}/${nativeMaterialsPlannedCount}`
+        : "Preparing";
+      case "ready": return "Ready";
+      case "partial": return "Partial";
+      case "error": return "Load failed";
+      case "unavailable": return "Unavailable";
+      default: return "No model";
+    }
+  })();
+  const nativeMaterialsStatusMessage = (() => {
+    if (nativeMaterialsStatus.message) return nativeMaterialsStatus.message;
+    switch (nativeMaterialsStatus.state) {
+      case "available":
+      case "disabled":
+        return nativeMaterialsAvailable
+          ? "Turn on native materials to resolve the model's GTA texture bindings."
+          : "Load a CodeWalker-backed .yft model to use native materials.";
+      case "loading": return "Resolving shader textures and building preview materials.";
+      case "ready": return "Native material maps are active on the highest available LOD.";
+      case "partial":
+        if ((nativeMaterialsStatus.unsupportedBindingCount || 0) > 0) {
+          return `The preview is active; ${nativeMaterialsStatus.unsupportedBindingCount} advanced GTA shader binding${nativeMaterialsStatus.unsupportedBindingCount === 1 ? " is" : "s are"} deferred.`;
+        }
+        return "The preview is active, but some texture bindings could not be loaded.";
+      case "error": return "Native materials could not be loaded. The standard preview remains active.";
+      case "unavailable": return "Load a CodeWalker-backed .yft model to use native materials.";
+      default: return "Load a model to check native material availability.";
+    }
+  })();
 
   const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
   const currentModeLabel = modeLabels[textureMode] || "Preview";
@@ -1889,7 +1996,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                   variant="secondary"
                   className="flex-1"
                   disabled={!hasTemplateMap}
-                  title={hasTemplateMap ? "Download generated template map JSON" : "Load a .yft model to generate a template map"}
+                  title={hasTemplateMap ? "Download generated template map JSON" : "Load a .yft or .ydd model to generate a template map"}
                 >
                   Download Template
                 </CyberButton>
@@ -1902,7 +2009,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           ) : null}
 
           {textureMode === "livery" ? (
-            <div className="space-y-4" id="mode-panel-livery" role="tabpanel">
+            <div className="studio-mode-stack studio-mode-stack--livery" id="mode-panel-livery" role="group" aria-label="Livery controls">
               <CyberSection
                 title="Livery"
                 caption={primaryTemplateLabel}
@@ -2031,7 +2138,108 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           ) : null}
 
           {textureMode === "everything" ? (
-            <div className="space-y-4" id="mode-panel-everything" role="tabpanel">
+            <div className="studio-mode-stack studio-mode-stack--everything" id="mode-panel-everything" role="group" aria-label="All textures controls">
+              {experimentalSettings ? (
+                <CyberSection
+                  title="Native Materials"
+                  caption={nativeMaterialsCaption}
+                  open={panelOpen.nativeMaterials}
+                  onToggle={() => togglePanel("nativeMaterials")}
+                  contentId="panel-native-materials"
+                  icon={FlaskConical}
+                  color="blue"
+                  badge="EXPERIMENTAL"
+                >
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <CyberLabel className="mb-0">Render Model Textures</CyberLabel>
+                      <Toggle
+                        checked={nativeMaterialsEnabled}
+                        onChange={setNativeMaterialsEnabled}
+                        disabled={!nativeMaterialsAvailable && !nativeMaterialsEnabled}
+                        ariaLabel="Toggle experimental native model materials"
+                        tabIndex={panelOpen.nativeMaterials ? 0 : -1}
+                      />
+                    </div>
+
+                    <p className="m-0 text-[9px] leading-relaxed text-[var(--mg-primary)]/55">
+                      Uses embedded, sibling, and shared YTD textures when the bridge can resolve them. A selected manual texture overrides these maps.
+                    </p>
+
+                    <CyberCard>
+                      <div className="flex items-start justify-between gap-2">
+                        <div
+                          className="min-w-0 text-[9px] leading-relaxed text-[var(--mg-muted)]"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          {nativeMaterialsStatusMessage}
+                        </div>
+                        {nativeMaterialsActive && (nativeMaterialsStatus.state === "error" || (nativeMaterialsStatus.failedTextureCount || 0) > 0) ? (
+                          <button
+                            type="button"
+                            className="shrink-0 inline-flex h-7 items-center gap-1 border border-[var(--mg-border)] px-2 text-[9px] uppercase tracking-wider text-[var(--mg-muted)] transition-colors duration-200 hover:border-[var(--mg-accent)] hover:text-[var(--mg-fg)] focus-visible:ring-2 focus-visible:ring-[var(--mg-accent)]"
+                            onClick={() => setNativeMaterialsReloadToken((token) => token + 1)}
+                            aria-label="Retry loading native model materials"
+                            tabIndex={panelOpen.nativeMaterials ? 0 : -1}
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                            Retry
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {nativeMaterialsStatus.state === "loading" ? (
+                        <div className="mt-2">
+                          <div
+                            className="h-1 overflow-hidden bg-[var(--mg-border)]"
+                            role="progressbar"
+                            aria-label="Native material texture loading progress"
+                            aria-valuemin={0}
+                            aria-valuemax={nativeMaterialsPlannedCount || undefined}
+                            aria-valuenow={nativeMaterialsCompleteCount}
+                          >
+                            <div
+                              className="h-full bg-[var(--mg-accent)] transition-[width] duration-200"
+                              style={{ width: `${nativeMaterialsProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {nativeMaterialsAvailable ? (
+                        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-[var(--mg-border)] pt-2 text-[9px]">
+                          <div className="flex justify-between gap-2">
+                            <dt className="text-[var(--mg-primary)]/50">Active meshes</dt>
+                            <dd className="m-0 text-[var(--mg-fg)]">{nativeMaterialsStatus.activeMeshCount ?? nativeMaterialsStatus.meshCount ?? 0}</dd>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <dt className="text-[var(--mg-primary)]/50">Textures</dt>
+                            <dd className="m-0 text-[var(--mg-fg)]">
+                              {nativeMaterialsStatus.loadedTextureCount ?? 0}/{nativeMaterialsPlannedCount || nativeMaterialsStatus.uniqueTextureCount || 0}
+                            </dd>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <dt className="text-[var(--mg-primary)]/50">Hidden LOD</dt>
+                            <dd className="m-0 text-[var(--mg-fg)]">{nativeMaterialsStatus.hiddenLodMeshCount ?? 0}</dd>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <dt className="text-[var(--mg-primary)]/50">Missing / failed</dt>
+                            <dd className="m-0 text-[var(--mg-fg)]">
+                              {nativeMaterialsStatus.missingBindingCount ?? 0} / {nativeMaterialsStatus.failedTextureCount ?? 0}
+                            </dd>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <dt className="text-[var(--mg-primary)]/50">Deferred maps</dt>
+                            <dd className="m-0 text-[var(--mg-fg)]">{nativeMaterialsStatus.unsupportedBindingCount ?? 0}</dd>
+                          </div>
+                        </dl>
+                      ) : null}
+                    </CyberCard>
+                  </div>
+                </CyberSection>
+              ) : null}
+
               <CyberSection
                 title="Texture"
                 caption={primaryTemplateLabel}
@@ -2161,7 +2369,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           ) : null}
 
           {textureMode === "eup" ? (
-            <div className="space-y-4" id="mode-panel-eup" role="tabpanel">
+            <div className="studio-mode-stack studio-mode-stack--eup" id="mode-panel-eup" role="group" aria-label="EUP controls">
               <CyberSection
                 title="Uniform"
                 caption={primaryTemplateLabel}
@@ -2210,11 +2418,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           ) : null}
 
           {textureMode === "multi" ? (
-            <div className="space-y-4" id="mode-panel-multi" role="tabpanel">
-              <div className="flex bg-[var(--mg-bg)] p-1 border border-[var(--mg-border)] rounded-none">
+            <div className="studio-mode-stack studio-mode-stack--multi" id="mode-panel-multi" role="group" aria-label="Multi preview controls">
+              <div className="studio-multi-kind" role="tablist" aria-label="Multi preview asset type">
                 <button
                   type="button"
-                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "livery" ? "bg-[var(--mg-surface)] text-[var(--mg-primary)]" : "text-[var(--mg-primary)]/50 hover:text-[var(--mg-primary)]"}`}
+                  role="tab"
+                  aria-selected={dualTextureMode === "livery"}
+                  className={`studio-multi-kind-btn${dualTextureMode === "livery" ? " is-active" : ""}`}
                   onClick={() => setDualTextureMode("livery")}
                 >
                   <Car className="h-3 w-3" />
@@ -2222,7 +2432,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 </button>
                 <button
                   type="button"
-                  className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-none transition-colors ${dualTextureMode === "eup" ? "bg-[var(--mg-surface)] text-[var(--mg-primary)]" : "text-[var(--mg-primary)]/50 hover:text-[var(--mg-primary)]"}`}
+                  role="tab"
+                  aria-selected={dualTextureMode === "eup"}
+                  className={`studio-multi-kind-btn${dualTextureMode === "eup" ? " is-active" : ""}`}
                   onClick={() => setDualTextureMode("eup")}
                 >
                   <Shirt className="h-3 w-3" />
@@ -2246,6 +2458,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     type="button"
                     className={`cs-multi-slot-btn cs-multi-slot-btn--a ${dualSelectedSlot === "A" ? "is-active" : ""}`}
                     onClick={() => setDualSelectedSlot("A")}
+                    aria-pressed={dualSelectedSlot === "A"}
                   >
                     <div className="cs-multi-slot-btn-bar" />
                     <span className="cs-multi-slot-btn-glyph">A</span>
@@ -2255,6 +2468,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                     type="button"
                     className={`cs-multi-slot-btn cs-multi-slot-btn--b ${dualSelectedSlot === "B" ? "is-active" : ""}`}
                     onClick={() => setDualSelectedSlot("B")}
+                    aria-pressed={dualSelectedSlot === "B"}
                   >
                     <div className="cs-multi-slot-btn-bar" />
                     <span className="cs-multi-slot-btn-glyph">B</span>
@@ -2497,8 +2711,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           <CyberTabPanel id="aesthetics" active={activePanelTab === "aesthetics"}>
 
           <CyberSection
-            title="Appearance"
-            caption="Colors"
+            title={textureMode === "multi" ? "Slot Colors" : textureMode === "eup" ? "Uniform Scene" : "Vehicle Colors"}
+            caption={textureMode === "multi" ? "A / B & backdrop" : textureMode === "eup" ? "Body & backdrop" : "Paint slots & backdrop"}
             open={panelOpen.colors}
             onToggle={() => togglePanel("colors")}
             contentId="panel-colors"
@@ -2640,7 +2854,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           {/* ── Vehicle Materials Section ── */}
           <CyberSection
             title="Materials"
-            caption={`${materialType.charAt(0).toUpperCase() + materialType.slice(1)} & Surface`}
+            caption={`${textureMode === "multi" ? "Shared " : ""}${materialType.charAt(0).toUpperCase() + materialType.slice(1)} surface`}
             open={panelOpen.materials}
             onToggle={() => togglePanel("materials")}
             contentId="panel-materials"
@@ -2714,14 +2928,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           {/* ── Scene Lighting ── */}
           <CyberSection
             title="Lighting"
-            caption="Scene illumination"
+            caption={`${Math.round(lightAzimuth)}° / ${Math.round(lightElevation)}°`}
             open={panelOpen.lighting}
             onToggle={() => togglePanel("lighting")}
             contentId="panel-lighting"
             icon={Sun}
             color="yellow"
           >
-              <div className="space-y-3">
+              <div className="studio-lighting-panel">
+                <div className="studio-lighting-lead">
+                  <span className="studio-lighting-kicker">// Key light</span>
+                  <p>Drag the source around the hemisphere and watch the preview respond in real time.</p>
+                </div>
                 <LightDome
                   azimuth={lightAzimuth}
                   elevation={lightElevation}
@@ -2738,7 +2956,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
                 />
                 <button
                   type="button"
-                  className="panel-cam-action-btn w-full mt-1"
+                  className="panel-cam-action-btn studio-lighting-reset"
                   onClick={resetLighting}
                   title="Reset lighting to defaults"
                 >
@@ -2947,6 +3165,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             materialRoughness={matRoughness}
             materialClearcoat={matClearcoat}
             materialTexturePath={activeMaterialTexturePath}
+            nativeMaterialsEnabled={nativeMaterialsActive}
+            nativeMaterialsReloadToken={nativeMaterialsReloadToken}
             onModelInfo={handleModelInfo}
             onModelError={handleModelError}
             onModelLoading={handleModelLoading}
@@ -2958,6 +3178,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             onTextureError={handleTextureError}
             onWindowTextureError={handleWindowTextureError}
             onFormatWarning={handleFormatWarning}
+            onNativeMaterialsStatus={handleNativeMaterialsStatus}
           />
         )}
 

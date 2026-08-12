@@ -21,6 +21,9 @@ Per-slot color controls for primary, secondary, accent, and glass materials—pa
 ### CLMESH Binary Cache (v4.0)
 A new `.clmesh` binary mesh format replaces the old JSON pipeline between the CodeWalker bridge and the viewer. Smaller payloads, faster loads, and proper multi-UV channel support (UV2/UV3/UV4).
 
+### Experimental Native Materials (v4.0)
+Enable Experimental Settings, then open **All Textures → Native Materials** to resolve a YFT model's embedded, sibling, resource, and supported shared-game YTD textures automatically. The preview selects the highest available LOD, streams deduplicated DDS maps with progress reporting, and leaves manual texture selection as the final override.
+
 ### Skeleton Parsing (v4.0)
 The YFT parser now reads skeleton/bone data, enabling correct skinning setup for models that rely on bone transforms.
 
@@ -57,7 +60,7 @@ The dedicated environment for managing complex livery projects with multiple var
 
 ### Also shipped in recent releases
 - **Model Shadows (v3.8):** Real-time shadow rendering for improved depth perception.
-- **Template Generator (beta) (v3.7):** Auto-create layered PSD templates directly from `.yft` models with live preview, manual marker selection (Alt/Ctrl/Shift + click), flexible `.psd`/`.png` exports, and cage wireframe overlay.
+- **Template Generator (beta) (v3.7+):** Auto-create layered PSD templates directly from vehicle `.yft` and EUP `.ydd` models with live preview, manual marker selection (Alt/Ctrl/Shift + click), flexible `.psd`/`.png` exports, and cage wireframe overlay.
 
 ---
 
@@ -69,8 +72,8 @@ The dedicated environment for managing complex livery projects with multiple var
 - **Interactive Light Dome:** Drag-to-position hemisphere lighting for simultaneous azimuth/elevation control.
 - **Multi-Angle Preview Capture:** Batch screenshot export from selectable camera angles with zoom and watermark support.
 - **Preview Watermarks:** Configurable text watermarks with font, color, opacity, position, and rotation controls.
-- **In-App Bug Reporting:** Submit bug reports with environment detection and optional console logs.
-- **Template Generator (beta):** Auto-generate layered PSD templates directly from `.yft` models with live preview and manual marker selection.
+- **In-App Feedback:** Submit structured bug reports or feature requests with environment detection and optional console logs for bugs.
+- **Template Generator (beta):** Auto-generate layered PSD templates directly from vehicle `.yft` and EUP `.ydd` models with live preview, per-format UV targeting, multi-drawable batch export, and manual marker selection.
 - **PSD Variant Builder:** Manage complex livery projects with multiple variants, layer groups, and batch export to PNG.
 - **Live Texture Reloading:** Uses a native file watcher to detect saves in your design software and reloads textures in milliseconds.
 - **Five Powerful Viewing Modes:**
@@ -113,7 +116,7 @@ Livery work is iterative. In-game testing is slow and breaks your flow. Cortex S
 
 ## Limitations (By Design)
 
-* **Not a material editor.** Cortex Studio doesn’t aim to replace a full material/shader workflow or in-game tuning.
+* **Not a material editor.** Experimental Native Materials provides a best-effort CodeWalker/OpenIV-style preview, but it does not reproduce every GTA shader, render state, animation, or in-game lighting behavior.
 * **Preview-focused.** It’s built to **view liveries/textures in real time** on a 3D model—fast iteration, quick inspection, and instant feedback.
 * **Asset fidelity depends on the source files.** What you see is constrained by the model/material setup and naming conventions in the asset.
 
@@ -124,7 +127,7 @@ Livery work is iterative. In-game testing is slow and breaks your flow. Cortex S
 - `src/` - React UI, Three.js viewer, and logic.
 - `src/components/VariantsPage.jsx` - The PSD Variant Builder.
 - `src/components/TemplateGenerationPage.jsx` - Template Generator workspace for auto-generating PSD templates.
-- `src/components/BugReportModal.jsx` - In-app bug report modal with environment detection.
+- `src/components/BugReportModal.jsx` - In-app bug and feature-request modal with environment detection.
 - `src/components/LightDome.jsx` - Interactive hemisphere lighting control.
 - `src/components/ContextMenu.jsx` - Radix-based context menu wrapper with Cortex styling.
 - `src/lib/yft.js` - High-performance YFT/YDD parser (with skeleton/bone support).
@@ -134,7 +137,7 @@ Livery work is iterative. In-game testing is slow and breaks your flow. Cortex S
 - `src/lib/camera-framing.js` - Camera bounds computation and auto-framing system.
 - `src/lib/camera-state.js` - Camera state clone/sync for persistence across model swaps.
 - `src/lib/watermark.js` - Preview watermark configuration and rendering.
-- `src/lib/bug-report.js` - Bug report payload builder with environment detection.
+- `src/lib/bug-report.js` - Feedback payload builder, GitHub formatter, and environment detection.
 - `src/lib/pdn.js` - Paint.NET file decoder with Web Worker and Tauri fallback.
 - `src-tauri/` - Rust-based Tauri v2 backend for file system access, file watching, and mesh cache management.
 - `tools/codewalker-bridge/` - C# sidecar that parses `.yft` files via CodeWalker.Core and emits `.clmesh` caches.
@@ -177,9 +180,9 @@ bun run tauri build
 - **Light Dome:** Drag the sun indicator on the hemisphere widget to adjust both lighting direction and elevation simultaneously.
 - **Multi-Angle Previews:** Click the capture button, select which angles to export, set a zoom level, and generate batch screenshots in one pass.
 - **Preview Watermarks:** Configure automatic text watermarks in Settings → Watermark to stamp all preview captures.
-- **Bug Reports:** Click the bug icon in the toolbar to submit a report with environment details and optional console logs.
+- **Feedback:** Click the feedback icon in the toolbar to submit a bug report or feature request. Environment details are added automatically, and bug reports can optionally include recent console logs.
 - **UI Scaling:** Adjust the interface scale in Settings if you need larger or smaller UI elements.
-- **Template Generator:** Start a new project from the home screen to auto-generate a PSD template from your `.yft` model—no more manual UV mapping.
+- **Template Generator:** Start a new project from the home screen to auto-generate PSD templates from `.yft` vehicles or `.ydd` EUP clothing. Multi-drawable YDD dictionaries export one template per drawable to avoid overlapping UV layouts.
 - **Manual Marker Selection:** In Template Generator, use Alt/Ctrl/Shift + click to pick individual markers. Selections stay staged until you confirm.
 - **The Variant Sidebar:** Use it to create "Night", "High-Vis", or "Stealth" versions of your liveries in one project file.
 - **Double-Click Layers:** In the Variant Builder, double-click a layer in the panel to "Solo" it.

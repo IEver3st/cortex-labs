@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { decodeBC7Block } from "./bc7";
+import { decodeBC7Block } from "./bc7.js";
 
 const DDS_MAGIC = 0x20534444;
 const DDSD_MIPMAPCOUNT = 0x20000;
@@ -243,7 +243,7 @@ function getMipSize(w, h, info) {
   return w * h * info.blockBytes;
 }
 
-export function parseDDS(buffer) {
+export function parseDDS(buffer, options = {}) {
   const data = new Uint8Array(buffer);
   const view = new DataView(buffer);
 
@@ -317,7 +317,9 @@ export function parseDDS(buffer) {
   const info = getFormatInfo(fmt);
   if (!info) return null;
 
-  console.log(`[DDS] Parsing: ${width}x${height}, format=${fmt}, mips=${mipMapCount}`);
+  if (options.log !== false) {
+    console.log(`[DDS] Parsing: ${width}x${height}, format=${fmt}, mips=${mipMapCount}`);
+  }
 
   const baseSize = getMipSize(width, height, info);
   if (dataOffset + baseSize > data.length) {

@@ -49,7 +49,7 @@ node_modules/
 .bun-cache/
 
 # AI / Agent systems
-AGENTS.md
+# AGENTS.md is repository policy and is intentionally tracked.
 .agents/
 *.agents*
 .claude/

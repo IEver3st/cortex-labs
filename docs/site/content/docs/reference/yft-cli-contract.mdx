@@ -47,15 +47,17 @@ CodeWalkerBridge.exe --input <path-to-yft> --output <path-to-clmesh>
 
 `manifest.json` includes exported texture inventory plus per-mesh binding metadata used by the frontend.
 
-- `version`
+- `version` (currently `4`)
 - `inputPath`
 - `generatedAtUtc`
 - `meshCount`
 - `textureCount`
-- `textures[]`: `name`, `source`, `relativePath`, `nameHash`
-- `meshes[]`: `name`, `materialName`, `shaderName`, `shaderHash`, `shaderFileName`, `renderBucket`, `drawableIndex`, `modelIndex`, `geometryIndex`, `uvSets`, `textureBindings`, `textureRefs`, `resolvedTexturePaths`
+- `textures[]`: `name`, `source` (`ytd`, `shared`, or `embedded`), `relativePath`, `nameHash`
+- `meshes[]`: `name`, `materialName`, `shaderName`, `shaderHash`, `shaderFileName`, `renderBucket`, `drawableIndex`, `modelIndex`, `lodLevel`, `lodModelIndex`, `geometryIndex`, `uvSets`, `textureBindings`, `textureRefs`, `resolvedTexturePaths`
 
 Each `textureBindings[]` entry includes `paramName`, `textureName`, `relativePath`, `source`, `nameHash`, `usage`, and optional `uvSet`.
+
+Manifest v4 adds `lodLevel` (`high`, `med`, `low`, `vlow`, `extra`, or `unknown`) and `lodModelIndex`. The frontend uses these fields to select the highest available LOD independently for each drawable.
 
 ## Mesh cache schema
 
@@ -75,6 +77,8 @@ Each `textureBindings[]` entry includes `paramName`, `textureName`, `relativePat
 
 ## Notes
 
-- The app caches parsed meshes based on input path + modified time + file size.
+- The app caches parsed meshes based on input path + modified time + file size plus an internal parser revision. The native-material/LOD contract uses the `parse_yft_v6` revision.
 - The `.clmesh` cache is parsed in the frontend into Three.js geometry.
+- With Experimental Settings enabled, **All Textures → Native Materials** resolves shader textures from sibling, embedded, resource, and supported shared game YTDs. Manual texture selections override native maps on targeted meshes.
+- Advanced dirt/detail/mask bindings that require GTA-specific shader controls are reported as deferred instead of being applied with guessed semantics.
 - Frontend texture binding is best-effort Three.js material assignment, not full GTA shader parity.

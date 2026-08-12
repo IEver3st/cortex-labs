@@ -1,26 +1,29 @@
 import { getVersion as getTauriAppVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import appMeta from "../../package.json";
-import { getConsoleLogEntries } from "./console-log-buffer";
+import { getConsoleLogEntries } from "./console-log-buffer.js";
+import {
+  BUG_REPORT_SCHEMA_VERSION,
+  buildBugReportIssue,
+  deriveBugReportLabels,
+  formatBugReportIssueBody,
+  formatBugReportIssueTitle,
+  validateBugReportDraft as validateBugReportDraftCore,
+} from "./bug-report-core.js";
+export {
+  BUG_REPORT_SCHEMA_VERSION,
+  BUG_REPORT_MIN_SUBMIT_MS,
+  BUG_REPORT_SUMMARY_MIN,
+  BUG_REPORT_SUMMARY_MAX,
+  BUG_REPORT_DETAILS_MIN,
+  BUG_REPORT_DETAILS_MAX,
+  buildBugReportIssue,
+  deriveBugReportLabels,
+  formatBugReportIssueBody,
+  formatBugReportIssueTitle,
+} from "./bug-report-core.js";
 
-export const BUG_REPORT_SCHEMA_VERSION = 1;
-export const BUG_REPORT_MIN_SUBMIT_MS = 2000;
-export const BUG_REPORT_SUMMARY_MIN = 5;
-export const BUG_REPORT_SUMMARY_MAX = 140;
-export const BUG_REPORT_DETAILS_MIN = 10;
-export const BUG_REPORT_DETAILS_MAX = 4000;
 export const BUG_REPORT_ENDPOINT = (import.meta.env?.VITE_BUG_REPORT_ENDPOINT || "").trim();
-
-const PRIORITY_VALUES = new Set(["normal", "high"]);
-
-function normalizeLineEndings(value) {
-  return value.replace(/\r\n?/g, "\n");
-}
-
-function normalizeText(value) {
-  if (typeof value !== "string") return "";
-  return normalizeLineEndings(value).trim();
-}
 
 export function isTauriRuntime() {
   return (
@@ -151,62 +154,10 @@ export function formatEnvironmentSummary(environment) {
 }
 
 export function validateBugReportDraft(draft, options = {}) {
-  const endpoint = (options.endpoint ?? BUG_REPORT_ENDPOINT).trim();
-  const openedAt = options.openedAt || "";
-  const now = Date.now();
-  const openedAtMs = Date.parse(openedAt);
-
-  const summary = normalizeText(draft?.summary);
-  const reproSteps = normalizeText(draft?.reproSteps);
-  const expectedBehavior = normalizeText(draft?.expectedBehavior);
-  const actualBehavior = normalizeText(draft?.actualBehavior);
-  const priority = PRIORITY_VALUES.has(draft?.priority) ? draft.priority : "normal";
-  const honeypot = normalizeText(draft?.honeypot);
-
-  const fieldErrors = {};
-
-  if (!summary || summary.length < BUG_REPORT_SUMMARY_MIN) {
-    fieldErrors.summary = `Summary must be at least ${BUG_REPORT_SUMMARY_MIN} characters.`;
-  } else if (summary.length > BUG_REPORT_SUMMARY_MAX) {
-    fieldErrors.summary = `Summary must be ${BUG_REPORT_SUMMARY_MAX} characters or less.`;
-  }
-
-  for (const [field, label, value] of [
-    ["reproSteps", "Repro steps", reproSteps],
-    ["expectedBehavior", "Expected behavior", expectedBehavior],
-    ["actualBehavior", "Actual behavior", actualBehavior],
-  ]) {
-    if (!value || value.length < BUG_REPORT_DETAILS_MIN) {
-      fieldErrors[field] = `${label} must be at least ${BUG_REPORT_DETAILS_MIN} characters.`;
-    } else if (value.length > BUG_REPORT_DETAILS_MAX) {
-      fieldErrors[field] = `${label} must be ${BUG_REPORT_DETAILS_MAX} characters or less.`;
-    }
-  }
-
-  let formError = "";
-  if (!endpoint) {
-    formError = "Bug reporting is not configured in this build.";
-  } else if (honeypot) {
-    formError = "Bug report validation failed.";
-  } else if (!Number.isFinite(openedAtMs)) {
-    formError = "Bug report session expired. Please reopen the form.";
-  } else if (now - openedAtMs < BUG_REPORT_MIN_SUBMIT_MS) {
-    formError = "Please take a moment to describe the issue before submitting.";
-  }
-
-  return {
-    fieldErrors,
-    formError,
-    sanitizedDraft: {
-      summary,
-      reproSteps,
-      expectedBehavior,
-      actualBehavior,
-      priority,
-      includeConsoleLogs: Boolean(draft?.includeConsoleLogs),
-      honeypot,
-    },
-  };
+  return validateBugReportDraftCore(draft, {
+    ...options,
+    endpoint: options.endpoint ?? BUG_REPORT_ENDPOINT,
+  });
 }
 
 export async function buildBugReportPayload(draft, options = {}) {
@@ -214,7 +165,7 @@ export async function buildBugReportPayload(draft, options = {}) {
   const openedAt = options.openedAt || new Date().toISOString();
   const validation = validateBugReportDraft(draft, { endpoint, openedAt });
   if (validation.formError || Object.keys(validation.fieldErrors).length > 0) {
-    const error = new Error(validation.formError || "Bug report validation failed.");
+    const error = new Error(validation.formError || "Feedback validation failed.");
     error.fieldErrors = validation.fieldErrors;
     throw error;
   }
@@ -226,13 +177,7 @@ export async function buildBugReportPayload(draft, options = {}) {
   return {
     schemaVersion: BUG_REPORT_SCHEMA_VERSION,
     createdAt: submittedAt,
-    issue: {
-      summary: validation.sanitizedDraft.summary,
-      reproSteps: validation.sanitizedDraft.reproSteps,
-      expectedBehavior: validation.sanitizedDraft.expectedBehavior,
-      actualBehavior: validation.sanitizedDraft.actualBehavior,
-      priority: validation.sanitizedDraft.priority,
-    },
+    issue: buildBugReportIssue(validation.sanitizedDraft),
     environment,
     consoleLogs: {
       included: validation.sanitizedDraft.includeConsoleLogs,
@@ -246,117 +191,9 @@ export async function buildBugReportPayload(draft, options = {}) {
   };
 }
 
-function escapeCodeFenceText(value) {
-  return value.replace(/```/g, "``\u200b`");
-}
-
-function truncateToChars(value, maxChars) {
-  if (value.length <= maxChars) return value;
-  return `${value.slice(0, Math.max(0, maxChars - 17))}\n...[truncated]`;
-}
-
-const BUG_REPORT_MAX_LOG_CHARS = 12000;
-const BUG_REPORT_MAX_BODY_CHARS = 60000;
-
-function formatConsoleLogBlock(payload) {
-  if (!payload.consoleLogs?.included || !payload.consoleLogs.entries?.length) {
-    return "Not included";
-  }
-  const text = payload.consoleLogs.entries
-    .map((entry) => `[${entry.timestamp}] [${entry.level?.toUpperCase()}] ${entry.message}`)
-    .join("\n");
-  return escapeCodeFenceText(truncateToChars(text, BUG_REPORT_MAX_LOG_CHARS));
-}
-
-function buildEnvironmentBullets(env) {
-  const browser = [env.browserName, env.browserVersion].filter(Boolean).join(" ") || "Unknown";
-  const os = [env.osName, env.osVersion].filter(Boolean).join(" ") || "Unknown";
-  return [
-    `- App version: \`${env.appVersion || "unknown"}\``,
-    `- Runtime: \`${env.runtime}\``,
-    `- Browser: \`${browser}\``,
-    `- OS: \`${os}\``,
-    `- Device: \`${env.deviceType}\``,
-    `- Locale: \`${env.locale || "n/a"}\``,
-    `- URL: \`${env.currentUrl || "n/a"}\``,
-  ].join("\n");
-}
-
-function formatBugReportIssueTitle(summary) {
-  return `[Bug] ${summary}`;
-}
-
-function formatBugReportIssueBody(payload) {
-  const buildBody = (logsText, metadataText) => `## Summary
-${payload.issue.summary}
-
-## Repro Steps
-${payload.issue.reproSteps}
-
-## Expected Behavior
-${payload.issue.expectedBehavior}
-
-## Actual Behavior
-${payload.issue.actualBehavior}
-
-## Priority
-${payload.issue.priority === "high" ? "High" : "Normal"}
-
-## Environment
-${buildEnvironmentBullets(payload.environment)}
-
-## Console Logs
-\`\`\`text
-${logsText}
-\`\`\`
-
-## Raw Metadata
-\`\`\`json
-${metadataText}
-\`\`\`
-`;
-
-  let logsText = formatConsoleLogBlock(payload);
-  let metadataText = JSON.stringify(payload.environment, null, 2);
-  let body = buildBody(logsText, metadataText);
-
-  if (body.length > BUG_REPORT_MAX_BODY_CHARS) {
-    logsText = truncateToChars(logsText, Math.floor(BUG_REPORT_MAX_LOG_CHARS / 2));
-    body = buildBody(logsText, metadataText);
-  }
-  if (body.length > BUG_REPORT_MAX_BODY_CHARS) {
-    metadataText = JSON.stringify(
-      {
-        appVersion: payload.environment.appVersion,
-        runtime: payload.environment.runtime,
-        browserName: payload.environment.browserName,
-        browserVersion: payload.environment.browserVersion,
-        osName: payload.environment.osName,
-        osVersion: payload.environment.osVersion,
-        deviceType: payload.environment.deviceType,
-        isIOS: payload.environment.isIOS,
-        locale: payload.environment.locale,
-      },
-      null,
-      2,
-    );
-    body = buildBody(logsText, metadataText);
-  }
-
-  return body;
-}
-
-function deriveBugReportLabels(payload) {
-  const labels = ["bug", "from-app"];
-  if (payload.environment?.runtime === "web") labels.push("web");
-  if (payload.environment?.isIOS) labels.push("ios");
-  if (payload.issue?.priority === "high") labels.push("high-priority");
-  return labels;
-}
-
 export async function submitBugReport(payload, endpoint = BUG_REPORT_ENDPOINT) {
   if (isTauriRuntime() && (!endpoint || endpoint === "tauri://native")) {
-    const title = formatBugReportIssueTitle(payload.issue.summary);
+    const title = formatBugReportIssueTitle(payload.issue);
     const body = formatBugReportIssueBody(payload);
     const labels = deriveBugReportLabels(payload);
     const result = await invoke("submit_bug_report", {
@@ -381,7 +218,7 @@ export async function submitBugReport(payload, endpoint = BUG_REPORT_ENDPOINT) {
     });
   } catch (err) {
     if (err?.name === "TimeoutError" || err?.name === "AbortError") {
-      throw new Error("Bug report submission timed out. Check your connection and try again.");
+      throw new Error("Feedback submission timed out. Check your connection and try again.");
     }
     throw err;
   }
@@ -396,7 +233,7 @@ export async function submitBugReport(payload, endpoint = BUG_REPORT_ENDPOINT) {
   if (!response.ok || !responseBody?.ok) {
     const message =
       responseBody?.error ||
-      `Bug report submission failed with HTTP ${response.status}.`;
+      `Feedback submission failed with HTTP ${response.status}.`;
     throw new Error(message);
   }
 

@@ -25,21 +25,36 @@ export function CyberPanel({ children, collapsed, isBooting, statusBar, footer, 
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
     >
       {hasTabs && (
-        <nav className="cyber-tab-rail" role="tablist">
+        <nav className="cyber-tab-rail" role="tablist" aria-label="Control panel views">
           {tabs.map((tab) => {
             const TabIcon = tab.icon;
             return (
               <button
                 key={tab.id}
+                id={`cyber-tab-${tab.id}`}
                 type="button"
                 role="tab"
                 aria-selected={activeTab === tab.id}
                 aria-controls={`cyber-tab-panel-${tab.id}`}
                 className={safeCn("cyber-tab-btn", activeTab === tab.id && "cyber-tab-btn--active")}
+                tabIndex={activeTab === tab.id ? 0 : -1}
                 onClick={() => onTabChange?.(tab.id)}
+                onKeyDown={(event) => {
+                  const currentIndex = tabs.findIndex((item) => item.id === tab.id);
+                  let nextIndex = currentIndex;
+                  if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
+                  else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+                  else if (event.key === "Home") nextIndex = 0;
+                  else if (event.key === "End") nextIndex = tabs.length - 1;
+                  else return;
+                  event.preventDefault();
+                  onTabChange?.(tabs[nextIndex].id);
+                  event.currentTarget.parentElement?.querySelectorAll('[role="tab"]')?.[nextIndex]?.focus();
+                }}
                 title={tab.label}
               >
                 {TabIcon && <TabIcon className="cyber-tab-icon" />}
+                <span className="cyber-tab-label">{tab.label}</span>
               </button>
             );
           })}
@@ -61,6 +76,8 @@ export function CyberTabPanel({ id, active, children }) {
       role="tabpanel"
       className={safeCn("cyber-tab-panel", active && "cyber-tab-panel--active")}
       aria-hidden={!active}
+      aria-labelledby={`cyber-tab-${id}`}
+      hidden={!active}
     >
       {children}
     </div>
@@ -103,6 +120,7 @@ export function CyberSection({ title, caption, open, onToggle, contentId, childr
         id={contentId}
         className="cyber-section-body"
         aria-hidden={!open}
+        inert={!open}
       >
         <div className="cyber-section-content">
           {children}
@@ -113,7 +131,7 @@ export function CyberSection({ title, caption, open, onToggle, contentId, childr
 }
 
 export function CyberButton({ children, onClick, variant = "blue", className, disabled, ...props }) {
-  const baseStyles = "relative group w-full h-9 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden";
+  const baseStyles = "relative group w-full h-9 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden";
   
   const variants = {
     blue: "cs-btn--primary",
@@ -168,6 +186,7 @@ export function ColorRow({ label, value, onChange, onReset, onCopy, swatches, pi
             style={{ fontFamily: "var(--font-hud)", borderRadius: "var(--mg-radius)" }}
             value={value}
             onChange={(event) => onChange(event.currentTarget.value)}
+            aria-label={`${label} hex value`}
           />
           <button type="button" className="cs-copy-btn" onClick={() => onCopy(value)} title="Copy hex"><Copy className="h-3 w-3" /></button>
           <button
@@ -246,6 +265,7 @@ export function MaterialSlider({ label, value, onChange, min = 0, max = 1, step 
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value))}
           className="cs-mat-slider-input"
+          aria-label={label}
         />
         <div className="cs-mat-slider-fill" style={{ width: `${((value - min) / (max - min)) * 100}%` }} />
       </div>

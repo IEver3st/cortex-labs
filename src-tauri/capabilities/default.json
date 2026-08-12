@@ -19,12 +19,14 @@
     {
       "identifier": "fs:scope",
       "allow": [
+        { "path": "$HOME/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOCUMENT/**" },
         { "path": "$DOWNLOAD/**" },
         { "path": "$APPDATA/**" },
         { "path": "$LOCALDATA/**" },
-        { "path": "$TEMP/**" }
+        { "path": "$TEMP/**" },
+        { "path": "$RESOURCE/**" }
       ]
     },
     "opener:default",

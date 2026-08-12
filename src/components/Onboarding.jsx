@@ -1,516 +1,451 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
+  ArrowRight,
   Car,
+  Check,
+  ChevronDown,
   Layers,
-  Shirt,
   Link2,
   Palette,
-  Monitor,
-  Keyboard,
-  Settings,
-  Sparkles,
-  ChevronRight,
-  ChevronLeft,
-  Check,
-  Command,
-  Eye,
-  Grid3x3,
-  Gamepad2,
-  LayoutPanelLeft,
-  SlidersHorizontal,
+  RotateCcw,
+  Shirt,
   Zap,
-  Rocket,
-  ArrowRight,
 } from "lucide-react";
-import { loadPrefs, savePrefs } from "../lib/prefs";
+import { emitPrefsUpdated, loadPrefs, savePrefs } from "../lib/prefs";
+import {
+  DEFAULT_HOTKEYS,
+  HOTKEY_ACTIONS,
+  formatHotkey,
+  mergeHotkeys,
+} from "../lib/hotkeys";
+import cortexLogo from "../../src-tauri/icons/cortex-logo.svg";
 
-/* ─── Step definitions ────────────────────────────────────────────── */
-const STEPS = [
-  { id: "welcome", label: "Welcome" },
-  { id: "workspace", label: "Mode" },
-  { id: "preferences", label: "Setup" },
-  { id: "ready", label: "Launch" },
-];
+const RECOMMENDED_PREFS = {
+  showGrid: false,
+  showHints: true,
+  legacyLayersLayout: false,
+  liveryExteriorOnly: false,
+  showRecents: true,
+  uiScale: 1,
+};
 
 const START_OPTIONS = [
   {
     id: "livery",
     label: "Livery",
-    desc: "Vehicle textures, paint jobs, and livery editing with real-time preview",
+    desc: "Vehicle textures, liveries, and surface inspection",
+    actionLabel: "Open Livery",
     icon: Car,
-    color: "var(--mg-primary)",
-    shortcut: "Alt + 1",
+    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_LIVERY,
   },
   {
     id: "everything",
     label: "All",
-    desc: "Full mesh browser — preview every model, material, and texture in one view",
+    desc: "Every mesh and texture in one general viewer",
+    actionLabel: "Open All",
     icon: Layers,
-    color: "#3b82f6",
-    shortcut: "Alt + 2",
+    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_ALL,
   },
   {
     id: "eup",
     label: "EUP",
-    desc: "Emergency uniforms — clothing textures and EUP outfit editing",
+    desc: "Uniform, clothing, and character texture work",
+    actionLabel: "Open EUP",
     icon: Shirt,
-    color: "#f59e0b",
-    shortcut: "Alt + 3",
+    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_EUP,
   },
   {
     id: "multi",
     label: "Multi",
-    desc: "Dual viewport for side-by-side model comparison and diffing",
+    desc: "Side-by-side model and material comparison",
+    actionLabel: "Open Multi",
     icon: Link2,
-    color: "#ec4899",
-    shortcut: "Alt + 4",
+    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_MULTI,
   },
   {
     id: "variants",
-    label: "Variants",
-    desc: "PSD workflow — apply layer groups and export texture variants in bulk",
+    label: "Variant Builder",
+    desc: "Layered PSD and PDN recipes with grouped exports",
+    actionLabel: "Open Variant Builder",
     icon: Palette,
-    color: "#a855f7",
-    shortcut: "Alt + 5",
+    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_VARIANTS,
+  },
+  {
+    id: "templategen",
+    label: "Template Generation",
+    desc: "Generate layered PSD templates from supported YFT assets",
+    actionLabel: "Open Template Generation",
+    icon: Zap,
+    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_TEMPLATE_GEN,
   },
 ];
 
-/* ─── Settings that can be configured during onboarding ───────────── */
 function getInitialPrefs() {
+  const storedDefaults = loadPrefs()?.defaults;
+  const defaults =
+    storedDefaults && typeof storedDefaults === "object" ? storedDefaults : {};
+  return Object.fromEntries(
+    Object.entries(RECOMMENDED_PREFS).map(([key, value]) => [key, defaults[key] ?? value]),
+  );
+}
+
+function getWorkspaceOptions() {
   const prefs = loadPrefs();
-  const d = prefs?.defaults ?? {};
-  return {
-    showGrid: d.showGrid ?? false,
-    showHints: d.showHints ?? true,
-    legacyLayersLayout: d.legacyLayersLayout ?? false,
-    liveryExteriorOnly: d.liveryExteriorOnly ?? false,
-    showRecents: d.showRecents ?? true,
-    uiScale: d.uiScale ?? 1.0,
-  };
+  const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
+  const hotkeys = mergeHotkeys(stored, DEFAULT_HOTKEYS);
+
+  return START_OPTIONS.map((option) => {
+    const formatted = formatHotkey(hotkeys[option.hotkeyAction]);
+    const shortcut = formatted === "Not set" ? null : formatted.replaceAll(" + ", "+");
+    return { ...option, shortcut };
+  });
 }
 
-function persistPref(key, value) {
-  const prefs = loadPrefs() ?? {};
-  const defaults = prefs.defaults ?? {};
-  defaults[key] = value;
-  savePrefs({ ...prefs, defaults });
+function saveOnboardingPrefs(nextPrefs) {
+  const stored = loadPrefs() ?? {};
+  const defaults =
+    stored.defaults && typeof stored.defaults === "object" ? stored.defaults : {};
+  savePrefs({ ...stored, defaults: { ...defaults, ...nextPrefs } });
+  emitPrefsUpdated();
 }
 
-/* ─── Reusable toggle row ─────────────────────────────────────────── */
-function SettingToggle({ icon: Icon, label, hint, checked, onChange }) {
+function SettingToggle({ label, hint, checked, onChange }) {
   return (
     <button
       type="button"
       className="onb-setting-row"
+      role="switch"
+      aria-checked={checked}
       onClick={() => onChange(!checked)}
     >
-      <div className="onb-setting-icon">
-        <Icon className="w-4 h-4" />
-      </div>
-      <div className="onb-setting-text">
+      <span className="onb-setting-copy">
         <span className="onb-setting-label">{label}</span>
-        {hint && <span className="onb-setting-hint">{hint}</span>}
-      </div>
-      <div className={`onb-switch ${checked ? "is-on" : ""}`}>
-        <motion.div
-          className="onb-switch-thumb"
-          animate={{ x: checked ? 16 : 0 }}
-          transition={{ type: "spring", stiffness: 500, damping: 35 }}
-        />
-      </div>
+        <span className="onb-setting-hint">{hint}</span>
+      </span>
+      <span className={`onb-switch ${checked ? "is-on" : ""}`} aria-hidden="true">
+        <span className="onb-switch-thumb" />
+      </span>
     </button>
   );
 }
 
-/* ─── Step progress bar ───────────────────────────────────────────── */
-function StepIndicator({ current, total }) {
-  return (
-    <div className="onb-steps">
-      {Array.from({ length: total }, (_, i) => (
-        <div key={i} className="onb-step-track">
-          <motion.div
-            className="onb-step-fill"
-            initial={false}
-            animate={{
-              scaleX: i < current ? 1 : i === current ? 0.5 : 0,
-            }}
-            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════ */
 export default function Onboarding({ onComplete }) {
-  const [step, setStep] = useState(0);
-  const [selectedStart, setSelectedStart] = useState("livery");
+  const [selectedStart, setSelectedStart] = useState(null);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
   const [prefs, setPrefs] = useState(getInitialPrefs);
-  const ease = useMemo(() => [0.22, 1, 0.36, 1], []);
+  const rootRef = useRef(null);
+  const headingRef = useRef(null);
+  const workspaceRefs = useRef([]);
+  const reduceMotion = useReducedMotion();
+  const workspaceOptions = useMemo(getWorkspaceOptions, []);
 
-  const next = useCallback(
-    () => setStep((s) => Math.min(s + 1, STEPS.length - 1)),
-    [],
+  const selectedMeta = useMemo(
+    () => workspaceOptions.find((option) => option.id === selectedStart) ?? null,
+    [selectedStart, workspaceOptions],
   );
-  const prev = useCallback(() => setStep((s) => Math.max(s - 1, 0)), []);
+
+  const isRecommended = useMemo(
+    () =>
+      Object.entries(RECOMMENDED_PREFS).every(([key, value]) => Object.is(prefs[key], value)),
+    [prefs],
+  );
 
   const complete = useCallback(
-    (payload = { type: "home" }) => onComplete?.(payload),
+    (action = { type: "home" }) => onComplete?.(action),
     [onComplete],
   );
 
   const togglePref = useCallback((key, value) => {
-    setPrefs((p) => ({ ...p, [key]: value }));
-    persistPref(key, value);
+    setPrefs((current) => ({ ...current, [key]: value }));
+    saveOnboardingPrefs({ [key]: value });
   }, []);
 
-  const selectedMeta = useMemo(
-    () => START_OPTIONS.find((opt) => opt.id === selectedStart) ?? START_OPTIONS[0],
-    [selectedStart],
-  );
-  const SelectedStartIcon = selectedMeta.icon;
+  const resetRecommended = useCallback(() => {
+    const next = { ...RECOMMENDED_PREFS };
+    setPrefs(next);
+    saveOnboardingPrefs(next);
+  }, []);
 
-  const launchSelected = useCallback(
-    () => complete({ type: "launch", target: selectedStart }),
-    [complete, selectedStart],
+  const launch = useCallback(() => {
+    if (!selectedStart) {
+      complete({ type: "home" });
+      return;
+    }
+    complete({ type: "launch", target: selectedStart });
+  }, [complete, selectedStart]);
+
+  const handleWorkspaceKeyDown = useCallback(
+    (event, index) => {
+      const key = event.key;
+      let nextIndex = index;
+      if (key === "ArrowDown" || key === "ArrowRight") {
+        nextIndex = (index + 1) % workspaceOptions.length;
+      } else if (key === "ArrowUp" || key === "ArrowLeft") {
+        nextIndex = (index - 1 + workspaceOptions.length) % workspaceOptions.length;
+      } else if (key === "Home") {
+        nextIndex = 0;
+      } else if (key === "End") {
+        nextIndex = workspaceOptions.length - 1;
+      } else {
+        return;
+      }
+
+      event.preventDefault();
+      const option = workspaceOptions[nextIndex];
+      setSelectedStart(option.id);
+      workspaceRefs.current[nextIndex]?.focus();
+    },
+    [workspaceOptions],
   );
 
   useEffect(() => {
+    const previousFocus = document.activeElement;
+    headingRef.current?.focus({ preventScroll: true });
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
         complete({ type: "home" });
+        return;
+      }
+      if (event.key !== "Tab" || !rootRef.current) return;
+
+      const focusable = Array.from(
+        rootRef.current.querySelectorAll(
+          'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => !element.hasAttribute("aria-hidden"));
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || document.activeElement === headingRef.current)
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
+
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+    };
   }, [complete]);
 
-  /* ─── slide transition props ─── */
-  const slideMotion = {
-    initial: { opacity: 0, x: 40 },
-    animate: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: -40 },
-    transition: { duration: 0.28, ease },
-  };
-
   return (
-    <motion.div
+    <main
+      ref={rootRef}
       className="onb-overlay"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.35, ease }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="onb-heading"
     >
-      <motion.div
-        className="onb-container"
-        initial={{ opacity: 0, y: 20, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 12, scale: 0.97 }}
-        transition={{ duration: 0.45, ease }}
-      >
-        {/* ─── Header bar ─── */}
-        <div className="onb-header">
-          <StepIndicator current={step} total={STEPS.length} />
+      <div className="onb-container">
+        <header className="onb-header">
+          <div className="onb-brand-lockup">
+            <img src={cortexLogo} alt="" className="onb-brand-logo" draggable={false} />
+            <span className="onb-brand-name">Cortex Studio</span>
+            <span className="onb-brand-divider" aria-hidden="true" />
+            <span className="onb-brand-context">Getting started</span>
+          </div>
+
           <button
             type="button"
             className="onb-skip-btn"
             onClick={() => complete({ type: "home" })}
           >
-            Skip
-            <ArrowRight className="w-3 h-3" />
+            Skip to Studio
+            <ArrowRight aria-hidden="true" />
           </button>
-        </div>
+        </header>
 
-        {/* ─── Body ─── */}
-        <div className="onb-body">
-          <AnimatePresence mode="wait" initial={false}>
+        <div className="onb-scroll">
+          <section className="onb-content" aria-describedby="onb-supporting-copy">
+            <div className="onb-intro">
+              <div className="onb-eyebrow">First run</div>
+              <h1 id="onb-heading" ref={headingRef} tabIndex={-1}>
+                Choose where you want to start.
+              </h1>
+              <p id="onb-supporting-copy">
+                You can access every workspace later from Studio Home.
+              </p>
+            </div>
 
-            {/* ═══ Step 0: Welcome ═══ */}
-            {step === 0 && (
-              <motion.div key="welcome" className="onb-slide onb-slide--welcome" {...slideMotion}>
-                <motion.div
-                  className="onb-welcome-glow"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.6, delay: 0.1, ease }}
-                >
-                  <Zap className="w-8 h-8 text-[var(--mg-primary)]" />
-                </motion.div>
-
-                <motion.div
-                  className="onb-welcome-brand"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: 0.15, ease }}
-                >
-                  Cortex Studio
-                </motion.div>
-
-                <motion.div
-                  className="onb-welcome-sub"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.4, delay: 0.25, ease }}
-                >
-                  A 3D livery previewer and texture workspace for FiveM modders.
-                  This guide helps you pick a workspace, configure your preferences, and launch.
-                </motion.div>
-
-                <div className="onb-feature-grid">
-                  {[
-                    { icon: Sparkles, color: "var(--mg-primary)", title: "Quick Launch", body: "Pick a mode and open a working tab in one click. No file setup needed." },
-                    { icon: Command, color: "#a78bfa", title: "Keyboard First", body: "Alt+1 through Alt+5 create mode tabs instantly from anywhere." },
-                    { icon: SlidersHorizontal, color: "#f59e0b", title: "Your Preferences", body: "Configure viewer, UI scale, and layout settings right in this wizard." },
-                  ].map((feat, i) => (
-                    <motion.div
-                      key={feat.title}
-                      className="onb-feature-card"
-                      initial={{ opacity: 0, y: 16 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.35, delay: 0.3 + i * 0.08, ease }}
-                    >
-                      <div className="onb-feature-icon" style={{ color: feat.color }}>
-                        <feat.icon className="w-5 h-5" />
-                      </div>
-                      <div className="onb-feature-title">{feat.title}</div>
-                      <div className="onb-feature-body">{feat.body}</div>
-                    </motion.div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-
-            {/* ═══ Step 1: Pick Workspace ═══ */}
-            {step === 1 && (
-              <motion.div key="workspace" className="onb-slide" {...slideMotion}>
-                <div className="onb-section-header">
-                  <div className="onb-section-badge">Step 2</div>
-                  <div className="onb-slide-title">Choose Your Workspace</div>
-                  <div className="onb-slide-hint">
-                    Select the mode you want to open first. You can add more tabs anytime via the toolbar.
-                  </div>
-                </div>
-
-                <div className="onb-mode-grid">
-                  {START_OPTIONS.map((opt) => {
-                    const Icon = opt.icon;
-                    const isActive = selectedStart === opt.id;
-                    return (
-                      <motion.button
-                        key={opt.id}
-                        type="button"
-                        className={`onb-mode-card ${isActive ? "is-active" : ""}`}
-                        style={{ "--mode-color": opt.color }}
-                        onClick={() => setSelectedStart(opt.id)}
-                        whileHover={{ y: -3, transition: { duration: 0.15 } }}
-                        whileTap={{ scale: 0.97 }}
-                      >
-                        {isActive && (
-                          <motion.div
-                            className="onb-mode-check"
-                            initial={{ scale: 0 }}
-                            animate={{ scale: 1 }}
-                            transition={{ type: "spring", stiffness: 500, damping: 25 }}
-                          >
-                            <Check className="w-3 h-3" />
-                          </motion.div>
-                        )}
-                        <div className="onb-mode-icon-wrap">
-                          <Icon className="onb-mode-icon" />
-                        </div>
-                        <span className="onb-mode-label">{opt.label}</span>
-                        <span className="onb-mode-desc">{opt.desc}</span>
-                        <span className="onb-mode-shortcut">{opt.shortcut}</span>
-                      </motion.button>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            )}
-
-            {/* ═══ Step 2: Preferences ═══ */}
-            {step === 2 && (
-              <motion.div key="preferences" className="onb-slide" {...slideMotion}>
-                <div className="onb-section-header">
-                  <div className="onb-section-badge">Step 3</div>
-                  <div className="onb-slide-title">Configure Preferences</div>
-                  <div className="onb-slide-hint">
-                    Customize the experience. These can all be changed later in Settings.
-                  </div>
-                </div>
-
-                <div className="onb-settings-grid">
-                  {/* ── Viewer group ── */}
-                  <div className="onb-settings-group">
-                    <div className="onb-settings-group-title">
-                      <Eye className="w-3.5 h-3.5" />
-                      Viewer
-                    </div>
-                    <SettingToggle
-                      icon={Grid3x3}
-                      label="Show Grid"
-                      hint="Display a ground-plane grid in the 3D viewport"
-                      checked={prefs.showGrid}
-                      onChange={(v) => togglePref("showGrid", v)}
-                    />
-                    <div className="onb-setting-row" aria-hidden="true">
-                      <div className="onb-setting-icon">
-                        <Gamepad2 className="w-4 h-4" />
-                      </div>
-                      <div className="onb-setting-text">
-                        <span className="onb-setting-label">Free-Cam</span>
-                        <span className="onb-setting-hint">Always available: W/A/S/D move, Q/E rise, Shift to boost</span>
-                      </div>
-                      <div className="onb-switch is-on">
-                        <div className="onb-switch-thumb" style={{ transform: "translateX(16px)" }} />
-                      </div>
-                    </div>
-                    <SettingToggle
-                      icon={Car}
-                      label="Exterior Only"
-                      hint="Hide interior, glass, and wheel meshes in livery mode"
-                      checked={prefs.liveryExteriorOnly}
-                      onChange={(v) => togglePref("liveryExteriorOnly", v)}
-                    />
-                  </div>
-
-                  {/* ── UI group ── */}
-                  <div className="onb-settings-group">
-                    <div className="onb-settings-group-title">
-                      <Monitor className="w-3.5 h-3.5" />
-                      Interface
-                    </div>
-                    <SettingToggle
-                      icon={LayoutPanelLeft}
-                      label="Legacy Layers Layout"
-                      hint="Use the classic side-by-side variant builder panel"
-                      checked={prefs.legacyLayersLayout}
-                      onChange={(v) => togglePref("legacyLayersLayout", v)}
-                    />
-                    <SettingToggle
-                      icon={Sparkles}
-                      label="Show Hints"
-                      hint="Display contextual help text in the interface"
-                      checked={prefs.showHints}
-                      onChange={(v) => togglePref("showHints", v)}
-                    />
-                    <SettingToggle
-                      icon={Keyboard}
-                      label="Show Recents"
-                      hint="Show recently opened files on the home screen"
-                      checked={prefs.showRecents}
-                      onChange={(v) => togglePref("showRecents", v)}
-                    />
-                  </div>
-                </div>
-
-                {/* ── UI Scale slider ── */}
-                <div className="onb-scale-row">
-                  <div className="onb-scale-info">
-                    <span className="onb-setting-label">UI Scale</span>
-                    <span className="onb-scale-value">{(prefs.uiScale * 100).toFixed(0)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="1.4"
-                    step="0.05"
-                    value={prefs.uiScale}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      togglePref("uiScale", v);
+            <div
+              className="onb-workspace-list"
+              role="radiogroup"
+              aria-label="Starting destination"
+            >
+              {workspaceOptions.map((option, index) => {
+                const Icon = option.icon;
+                const isSelected = selectedStart === option.id;
+                const isTabStop = selectedStart ? isSelected : index === 0;
+                return (
+                  <button
+                    key={option.id}
+                    ref={(node) => {
+                      workspaceRefs.current[index] = node;
                     }}
-                    className="onb-slider"
-                  />
-                </div>
-              </motion.div>
-            )}
-
-            {/* ═══ Step 3: Ready ═══ */}
-            {step === 3 && (
-              <motion.div key="ready" className="onb-slide onb-slide--ready" {...slideMotion}>
-                <motion.div
-                  className="onb-ready-check"
-                  initial={{ scale: 0, rotate: -20 }}
-                  animate={{ scale: 1, rotate: 0 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 18, delay: 0.1 }}
-                >
-                  <Rocket className="w-7 h-7" />
-                </motion.div>
-
-                <motion.div
-                  className="onb-slide-title"
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2, duration: 0.3, ease }}
-                >
-                  You're Ready
-                </motion.div>
-                <motion.div
-                  className="onb-slide-hint"
-                  style={{ textAlign: "center", maxWidth: 340 }}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.3, duration: 0.3, ease }}
-                >
-                  Your preferences are saved. Launch <strong style={{ color: "var(--mg-fg)" }}>{selectedMeta.label}</strong> to
-                  start working, or head to the home screen.
-                </motion.div>
-
-                <div className="onb-ready-actions">
-                  <motion.button
                     type="button"
-                    className="onb-launch-btn"
-                    onClick={launchSelected}
-                    initial={{ opacity: 0, y: 8 }}
+                    className={`onb-workspace-row ${isSelected ? "is-selected" : ""}`}
+                    role="radio"
+                    aria-checked={isSelected}
+                    aria-keyshortcuts={option.shortcut ?? undefined}
+                    tabIndex={isTabStop ? 0 : -1}
+                    onClick={() => setSelectedStart(option.id)}
+                    onKeyDown={(event) => handleWorkspaceKeyDown(event, index)}
+                  >
+                    <span className="onb-workspace-icon" aria-hidden="true">
+                      <Icon />
+                    </span>
+                    <span className="onb-workspace-copy">
+                      <span className="onb-workspace-label">{option.label}</span>
+                      <span className="onb-workspace-desc">{option.desc}</span>
+                    </span>
+                    {option.shortcut ? (
+                      <kbd className="onb-workspace-shortcut">{option.shortcut}</kbd>
+                    ) : null}
+                    <span className="onb-workspace-choice" aria-hidden="true">
+                      {isSelected ? <Check /> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="onb-preferences">
+              <div className="onb-preferences-summary">
+                <span>
+                  {isRecommended
+                    ? "Recommended Studio settings will be used."
+                    : "Your saved Studio settings will be used."}
+                </span>
+                <button
+                  type="button"
+                  className="onb-customize-btn"
+                  aria-expanded={customizeOpen}
+                  aria-controls="onb-customize-panel"
+                  onClick={() => setCustomizeOpen((open) => !open)}
+                >
+                  {customizeOpen ? "Close" : "Customize"}
+                  <ChevronDown aria-hidden="true" />
+                </button>
+              </div>
+
+              <AnimatePresence initial={false}>
+                {customizeOpen ? (
+                  <motion.section
+                    id="onb-customize-panel"
+                    className="onb-customize-panel"
+                    aria-labelledby="onb-customize-heading"
+                    initial={reduceMotion ? false : { opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.35, duration: 0.3, ease }}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.16 }}
                   >
-                    <SelectedStartIcon className="w-4 h-4" />
-                    <span>Launch {selectedMeta.label}</span>
-                    <ArrowRight className="w-4 h-4 ml-auto opacity-50" />
-                  </motion.button>
+                    <div className="onb-customize-heading-row">
+                      <div>
+                        <span className="onb-panel-kicker">Optional</span>
+                        <h2 id="onb-customize-heading">Customize your starting settings</h2>
+                      </div>
+                      <button
+                        type="button"
+                        className="onb-reset-btn"
+                        onClick={resetRecommended}
+                        disabled={isRecommended}
+                      >
+                        <RotateCcw aria-hidden="true" />
+                        Reset to recommended
+                      </button>
+                    </div>
 
-                  <motion.button
-                    type="button"
-                    className="onb-nav-btn onb-nav-back onb-ready-secondary"
-                    onClick={() => complete({ type: "home" })}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.45, duration: 0.3, ease }}
-                  >
-                    Go to Home Screen
-                  </motion.button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                    <div className="onb-customize-grid">
+                      <section className="onb-settings-group" aria-labelledby="onb-viewport-settings">
+                        <h3 id="onb-viewport-settings">Viewport</h3>
+                        <SettingToggle
+                          label="Show grid"
+                          hint="Display the ground grid in viewers."
+                          checked={prefs.showGrid}
+                          onChange={(value) => togglePref("showGrid", value)}
+                        />
+                        <SettingToggle
+                          label="Show hints"
+                          hint="Keep contextual guidance visible."
+                          checked={prefs.showHints}
+                          onChange={(value) => togglePref("showHints", value)}
+                        />
+                        <SettingToggle
+                          label="Exterior only"
+                          hint="Focus Livery on exterior surfaces."
+                          checked={prefs.liveryExteriorOnly}
+                          onChange={(value) => togglePref("liveryExteriorOnly", value)}
+                        />
+                      </section>
+
+                      <section className="onb-settings-group" aria-labelledby="onb-studio-settings">
+                        <h3 id="onb-studio-settings">Studio</h3>
+                        <SettingToggle
+                          label="Show recent projects"
+                          hint="Keep recent work available on Home."
+                          checked={prefs.showRecents}
+                          onChange={(value) => togglePref("showRecents", value)}
+                        />
+                        <SettingToggle
+                          label="Legacy layers"
+                          hint="Place layers below the viewer."
+                          checked={prefs.legacyLayersLayout}
+                          onChange={(value) => togglePref("legacyLayersLayout", value)}
+                        />
+                      </section>
+
+                      <section className="onb-settings-group onb-settings-group--interface" aria-labelledby="onb-interface-settings">
+                        <h3 id="onb-interface-settings">Interface</h3>
+                        <div className="onb-scale-row">
+                          <label htmlFor="onb-ui-scale">
+                            <span>Interface scale</span>
+                            <span>{Math.round(prefs.uiScale * 100)}%</span>
+                          </label>
+                          <input
+                            id="onb-ui-scale"
+                            type="range"
+                            min="0.5"
+                            max="1.4"
+                            step="0.05"
+                            value={prefs.uiScale}
+                            aria-valuetext={`${Math.round(prefs.uiScale * 100)} percent`}
+                            onChange={(event) =>
+                              togglePref("uiScale", Number.parseFloat(event.currentTarget.value))
+                            }
+                            className="onb-slider"
+                          />
+                        </div>
+                      </section>
+                    </div>
+                  </motion.section>
+                ) : null}
+              </AnimatePresence>
+            </div>
+
+            <div className="onb-launch-row">
+              <span className="onb-launch-context">
+                {selectedMeta
+                  ? `${selectedMeta.label} will open in a new Studio tab.`
+                  : "Start from Home to keep every workspace within reach."}
+              </span>
+              <button type="button" className="onb-launch-btn" onClick={launch}>
+                {selectedMeta?.actionLabel ?? "Start from Home"}
+                <ArrowRight aria-hidden="true" />
+              </button>
+            </div>
+          </section>
         </div>
-
-        {/* ─── Navigation footer ─── */}
-        <div className="onb-nav">
-          {step > 0 ? (
-            <button type="button" className="onb-nav-btn onb-nav-back" onClick={prev}>
-              <ChevronLeft className="w-3.5 h-3.5" />
-              <span>Back</span>
-            </button>
-          ) : (
-            <div />
-          )}
-
-          {step < STEPS.length - 1 && (
-            <button type="button" className="onb-nav-btn onb-nav-next" onClick={next}>
-              <span>{step === 0 ? "Get Started" : "Next"}</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </main>
   );
 }

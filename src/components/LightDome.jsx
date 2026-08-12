@@ -1,219 +1,214 @@
-import { useRef, useCallback } from "react";
+import { useCallback, useId, useRef } from "react";
+import {
+  getLightCompassLabel,
+  LIGHT_DOME_CENTER,
+  LIGHT_DOME_RADIUS,
+  lightDirectionFromPoint,
+  normalizeLightAzimuth,
+  projectLightDirection,
+} from "../lib/light-direction";
 
-/**
- * LightDome — unified 3D hemisphere lighting control.
- *
- * A single interactive dome graphic where dragging the sun indicator
- * updates both azimuth (0–360°) and elevation (0–90°) simultaneously.
- *
- * Mapping:
- *   angle from center → azimuth (clockwise from north)
- *   distance from center → elevation (center = 90° zenith, edge = 0° horizon)
- */
+const LIGHT_PRESETS = [
+  { id: "studio", label: "Studio", azimuth: 54, elevation: 46 },
+  { id: "front", label: "Front", azimuth: 0, elevation: 32 },
+  { id: "side", label: "Side", azimuth: 90, elevation: 28 },
+  { id: "rim", label: "Rim", azimuth: 225, elevation: 18 },
+];
+
+const CARDINALS = [
+  { label: "N", degrees: 0 },
+  { label: "E", degrees: 90 },
+  { label: "S", degrees: 180 },
+  { label: "W", degrees: 270 },
+];
+
+const ELEVATION_RINGS = [30, 60];
+
 export default function LightDome({
   azimuth = 54,
   elevation = 46,
   onAzimuthChange,
   onElevationChange,
 }) {
-  const svgRef = useRef(null);
+  const fieldRef = useRef(null);
+  const draggingRef = useRef(false);
+  const instructionId = useId();
+  const { x: sunX, y: sunY } = projectLightDirection(azimuth, elevation);
+  const compassLabel = getLightCompassLabel(azimuth);
 
-  // Dome geometry constants (viewBox 0 0 100 100, center at 50,50)
-  const CX = 50;
-  const CY = 50;
-  const R_MAX = 42; // outer ring radius (horizon)
-
-  // Forward projection: (azimuth, elevation) → screen (x, y)
-  const azRad = azimuth * (Math.PI / 180);
-  const elRad = elevation * (Math.PI / 180);
-  const r = ((90 - elevation) / 90) * R_MAX;
-  const sunX = CX + r * Math.sin(azRad);
-  const sunY = CY - r * Math.cos(azRad);
-
-  // Inverse projection: screen (x, y) → (azimuth, elevation)
-  const computeFromPointer = useCallback((clientX, clientY) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    // Map screen pixels to viewBox coordinates
-    const sx = ((clientX - rect.left) / rect.width) * 100;
-    const sy = ((clientY - rect.top) / rect.height) * 100;
-    const dx = sx - CX;
-    const dy = CY - sy; // flip y so up = positive
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const clampedDist = Math.min(dist, R_MAX);
-    // Azimuth: atan2(dx, dy) gives clockwise from north
-    let az = Math.atan2(dx, dy) * (180 / Math.PI);
-    if (az < 0) az += 360;
-    // Elevation: center = 90°, edge = 0°
-    const el = 90 - (clampedDist / R_MAX) * 90;
-    onAzimuthChange?.(Math.round(az));
-    onElevationChange?.(Math.round(el));
+  const updateDirection = useCallback((nextAzimuth, nextElevation) => {
+    onAzimuthChange?.(Math.round(normalizeLightAzimuth(nextAzimuth)));
+    onElevationChange?.(Math.max(0, Math.min(90, Math.round(nextElevation))));
   }, [onAzimuthChange, onElevationChange]);
 
-  const onPointerDown = useCallback((e) => {
-    e.preventDefault();
-    const svg = e.currentTarget;
-    svg.setPointerCapture(e.pointerId);
-    computeFromPointer(e.clientX, e.clientY);
-    const onMove = (ev) => computeFromPointer(ev.clientX, ev.clientY);
-    const onUp = () => {
-      svg.style.cursor = "crosshair";
-      svg.removeEventListener("pointermove", onMove);
-      svg.removeEventListener("pointerup", onUp);
-      svg.removeEventListener("pointercancel", onUp);
-    };
-    svg.style.cursor = "grabbing";
-    svg.addEventListener("pointermove", onMove);
-    svg.addEventListener("pointerup", onUp);
-    svg.addEventListener("pointercancel", onUp);
-  }, [computeFromPointer]);
+  const updateFromPointer = useCallback((clientX, clientY) => {
+    const field = fieldRef.current;
+    if (!field) return;
+    const rect = field.getBoundingClientRect();
+    const pointX = ((clientX - rect.left) / rect.width) * 100;
+    const pointY = ((clientY - rect.top) / rect.height) * 100;
+    const next = lightDirectionFromPoint(pointX, pointY);
+    updateDirection(next.azimuth, next.elevation);
+  }, [updateDirection]);
 
-  // Elevation contour rings (30°, 60°)
-  const elevationRings = [30, 60].map((deg) => {
-    const ringR = ((90 - deg) / 90) * R_MAX;
-    return { deg, r: ringR };
-  });
+  const handlePointerDown = useCallback((event) => {
+    event.preventDefault();
+    draggingRef.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateFromPointer(event.clientX, event.clientY);
+  }, [updateFromPointer]);
 
-  // Cardinal azimuth ticks
-  const cardinals = [
-    { label: "N", deg: 0 },
-    { label: "E", deg: 90 },
-    { label: "S", deg: 180 },
-    { label: "W", deg: 270 },
-  ];
+  const handlePointerMove = useCallback((event) => {
+    if (!draggingRef.current) return;
+    updateFromPointer(event.clientX, event.clientY);
+  }, [updateFromPointer]);
+
+  const stopDragging = useCallback((event) => {
+    draggingRef.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const handleKeyDown = useCallback((event) => {
+    const step = event.shiftKey ? 1 : 5;
+    let nextAzimuth = azimuth;
+    let nextElevation = elevation;
+
+    if (event.key === "ArrowLeft") nextAzimuth -= step;
+    else if (event.key === "ArrowRight") nextAzimuth += step;
+    else if (event.key === "ArrowUp") nextElevation += step;
+    else if (event.key === "ArrowDown") nextElevation -= step;
+    else return;
+
+    event.preventDefault();
+    updateDirection(nextAzimuth, nextElevation);
+  }, [azimuth, elevation, updateDirection]);
 
   return (
-    <div className="cs-light-dome">
-      <svg
-        ref={svgRef}
-        viewBox="0 0 100 100"
-        className="cs-light-dome-svg"
-        style={{
-          cursor: "crosshair",
-          touchAction: "none",
-          userSelect: "none",
-          WebkitUserSelect: "none",
-        }}
-        onPointerDown={onPointerDown}
+    <div className="cs-light-control">
+      <div
+        ref={fieldRef}
+        className="cs-light-field"
+        role="group"
+        tabIndex={0}
+        aria-label={`Light direction: ${compassLabel}, ${azimuth} degrees azimuth, ${elevation} degrees elevation`}
+        aria-describedby={instructionId}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={stopDragging}
+        onPointerCancel={stopDragging}
+        onKeyDown={handleKeyDown}
       >
-        {/* Dome radial gradient fill */}
-        <defs>
-          <radialGradient id="cs-dome-grad" cx="50%" cy="42%" r="55%">
-            <stop offset="0%" stopColor="rgba(217,121,82,0.06)" />
-            <stop offset="60%" stopColor="rgba(90,85,79,0.04)" />
-            <stop offset="100%" stopColor="rgba(31,30,29,0.12)" />
-          </radialGradient>
-        </defs>
-        <circle cx={CX} cy={CY} r={R_MAX} fill="url(#cs-dome-grad)" />
+        <span id={instructionId} className="sr-only">
+          Drag across the lighting field to move the key light. Use arrow keys to adjust it by five degrees, or hold Shift for one-degree adjustments.
+        </span>
+        <svg viewBox="0 0 100 100" className="cs-light-dome-svg" aria-hidden="true" focusable="false">
+          <circle className="cs-light-dome-surface" cx={LIGHT_DOME_CENTER} cy={LIGHT_DOME_CENTER} r={LIGHT_DOME_RADIUS} />
 
-        {/* Outer horizon ring */}
-        <circle
-          cx={CX} cy={CY} r={R_MAX}
-          fill="none"
-          stroke="rgba(90,85,79,0.35)"
-          strokeWidth="0.6"
-          style={{ pointerEvents: "none" }}
-        />
+          {ELEVATION_RINGS.map((degrees) => (
+            <circle
+              key={degrees}
+              className="cs-light-dome-contour"
+              cx={LIGHT_DOME_CENTER}
+              cy={LIGHT_DOME_CENTER}
+              r={((90 - degrees) / 90) * LIGHT_DOME_RADIUS}
+            />
+          ))}
 
-        {/* Ghost ring slightly inside horizon */}
-        <circle
-          cx={CX} cy={CY} r={R_MAX + 2.5}
-          fill="none"
-          stroke="rgba(90,85,79,0.1)"
-          strokeWidth="0.4"
-          style={{ pointerEvents: "none" }}
-        />
+          <line className="cs-light-dome-axis" x1="50" y1="10" x2="50" y2="90" />
+          <line className="cs-light-dome-axis" x1="10" y1="50" x2="90" y2="50" />
 
-        {/* Elevation contour rings */}
-        {elevationRings.map(({ deg, r: ringR }) => (
-          <circle
-            key={deg}
-            cx={CX} cy={CY} r={ringR}
-            fill="none"
-            stroke="rgba(90,85,79,0.18)"
-            strokeWidth="0.4"
-            strokeDasharray="1.2 2"
-            style={{ pointerEvents: "none" }}
-          />
-        ))}
-
-        {/* Cardinal tick marks */}
-        {cardinals.map(({ label, deg }) => {
-          const rad = deg * (Math.PI / 180);
-          const x1 = CX + (R_MAX - 3) * Math.sin(rad);
-          const y1 = CY - (R_MAX - 3) * Math.cos(rad);
-          const x2 = CX + (R_MAX + 3) * Math.sin(rad);
-          const y2 = CY - (R_MAX + 3) * Math.cos(rad);
-          const lx = CX + (R_MAX + 7) * Math.sin(rad);
-          const ly = CY - (R_MAX + 7) * Math.cos(rad);
-          return (
-            <g key={label} style={{ pointerEvents: "none" }}>
-              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(90,85,79,0.5)" strokeWidth="0.7" />
+          {CARDINALS.map(({ label, degrees }) => {
+            const radians = degrees * (Math.PI / 180);
+            const labelX = LIGHT_DOME_CENTER + (LIGHT_DOME_RADIUS + 6) * Math.sin(radians);
+            const labelY = LIGHT_DOME_CENTER - (LIGHT_DOME_RADIUS + 6) * Math.cos(radians);
+            return (
               <text
-                x={lx} y={ly}
-                fontSize="4"
-                fontFamily="var(--font-hud)"
-                fill="rgba(90,85,79,0.6)"
+                key={label}
+                className="cs-light-dome-cardinal"
+                x={labelX}
+                y={labelY}
                 textAnchor="middle"
                 dominantBaseline="central"
               >
                 {label}
               </text>
-            </g>
-          );
-        })}
+            );
+          })}
 
-        {/* Elevation label ticks (0°, 30°, 60°, 90°) along south axis */}
-        {[0, 30, 60, 90].map((deg) => {
-          const tickR = ((90 - deg) / 90) * R_MAX;
-          return (
-            <text
-              key={deg}
-              x={CX + tickR + 2}
-              y={CY + 1}
-              fontSize="3"
-              fontFamily="var(--font-hud)"
-              fill="rgba(90,85,79,0.35)"
-              textAnchor="start"
-              dominantBaseline="central"
-              style={{ pointerEvents: "none" }}
-            >
-              {deg}°
-            </text>
-          );
-        })}
+          <circle className="cs-light-dome-zenith" cx={LIGHT_DOME_CENTER} cy={LIGHT_DOME_CENTER} r="1.2" />
+          <line
+            className="cs-light-dome-vector"
+            x1={LIGHT_DOME_CENTER}
+            y1={LIGHT_DOME_CENTER}
+            x2={sunX}
+            y2={sunY}
+          />
+          <g className="cs-light-dome-source" transform={`translate(${sunX} ${sunY})`}>
+            <circle className="cs-light-dome-source-hit" r="7" />
+            <circle className="cs-light-dome-source-ring" r="4" />
+            <circle className="cs-light-dome-source-core" r="2.4" />
+          </g>
+        </svg>
+        <div className="cs-light-field-hint" aria-hidden="true">Drag light</div>
+      </div>
 
-        {/* Center dot (zenith) */}
-        <circle cx={CX} cy={CY} r="1" fill="rgba(90,85,79,0.3)" style={{ pointerEvents: "none" }} />
-
-        {/* Spoke from center to sun */}
-        <line
-          x1={CX} y1={CY} x2={sunX} y2={sunY}
-          stroke="rgba(217,121,82,0.35)"
-          strokeWidth="0.6"
-          style={{ pointerEvents: "none" }}
-        />
-
-        {/* Sun indicator */}
-        <g style={{ transform: `translate(${sunX}px, ${sunY}px)`, pointerEvents: "none" }}>
-          <circle cx="0" cy="0" r="7" fill="rgba(217,121,82,0.1)" />
-          <circle cx="0" cy="0" r="4" fill="rgba(217,121,82,0.22)" />
-          <circle cx="0" cy="0" r="2.5" fill="#D97952" />
-          <circle cx="0" cy="0" r="1.2" fill="rgba(252,248,240,0.9)" />
-        </g>
-      </svg>
-
-      {/* Digital readouts */}
       <div className="cs-light-dome-readouts">
         <div className="cs-light-dome-readout">
-          <span className="cs-light-dome-readout-label">AZ</span>
+          <span className="cs-light-dome-readout-label">Direction</span>
+          <span className="cs-light-dome-readout-value">{compassLabel}</span>
+        </div>
+        <div className="cs-light-dome-readout">
+          <span className="cs-light-dome-readout-label">Azimuth</span>
           <span className="cs-light-dome-readout-value">{azimuth}°</span>
         </div>
         <div className="cs-light-dome-readout">
-          <span className="cs-light-dome-readout-label">EL</span>
+          <span className="cs-light-dome-readout-label">Elevation</span>
           <span className="cs-light-dome-readout-value">{elevation}°</span>
         </div>
+      </div>
+
+      <div className="cs-light-axes">
+        <label className="cs-light-axis-control">
+          <span>Azimuth</span>
+          <input
+            type="range"
+            min="0"
+            max="359"
+            step="1"
+            value={azimuth}
+            onChange={(event) => updateDirection(Number(event.currentTarget.value), elevation)}
+          />
+        </label>
+        <label className="cs-light-axis-control">
+          <span>Elevation</span>
+          <input
+            type="range"
+            min="0"
+            max="90"
+            step="1"
+            value={elevation}
+            onChange={(event) => updateDirection(azimuth, Number(event.currentTarget.value))}
+          />
+        </label>
+      </div>
+
+      <div className="cs-light-presets" role="group" aria-label="Lighting presets">
+        {LIGHT_PRESETS.map((preset) => {
+          const isActive = azimuth === preset.azimuth && elevation === preset.elevation;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              className={`cs-light-preset${isActive ? " is-active" : ""}`}
+              aria-pressed={isActive}
+              onClick={() => updateDirection(preset.azimuth, preset.elevation)}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

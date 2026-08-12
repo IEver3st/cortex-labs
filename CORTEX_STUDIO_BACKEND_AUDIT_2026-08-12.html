@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Evidence-backed technical backend audit of Cortex Studio, including isolated fixes, protected-file findings, and verification results."
+    />
+    <title>Cortex Studio backend audit — 2026-08-12</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090a09;
+        --surface: #0e100f;
+        --surface-2: #131614;
+        --line: #292d2a;
+        --line-strong: #414742;
+        --text: #f0f1ec;
+        --muted: #a1a7a0;
+        --dim: #747b74;
+        --accent: #d8ded4;
+        --good: #8fc391;
+        --good-bg: #101a12;
+        --warn: #d8b86f;
+        --warn-bg: #1b170e;
+        --bad: #df8589;
+        --bad-bg: #1d1112;
+        --info: #8eb5d3;
+        --info-bg: #101820;
+        --mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--sans);
+        line-height: 1.55;
+      }
+      a { color: inherit; }
+      a:focus-visible, summary:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      code, .mono {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+      }
+      code { overflow-wrap: anywhere; }
+      .shell {
+        width: min(1420px, calc(100% - 48px));
+        margin: 0 auto;
+        padding: 36px 0 64px;
+      }
+      .eyebrow, .section-kicker, th, .label {
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+      .topline {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid var(--line);
+      }
+      h1 {
+        max-width: 900px;
+        margin: 7px 0 9px;
+        font-size: clamp(2rem, 4vw, 3.35rem);
+        line-height: 1.02;
+        letter-spacing: -0.045em;
+      }
+      .dek { max-width: 820px; margin: 0; color: var(--muted); font-size: 1rem; }
+      .stamp {
+        min-width: 230px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--muted);
+        font: 0.77rem/1.65 var(--mono);
+      }
+      .stamp strong { color: var(--text); font-weight: 650; }
+      .verdict {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(300px, 0.8fr);
+        gap: 16px;
+        margin: 24px 0 16px;
+      }
+      .verdict-main, .decision {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        padding: 24px;
+      }
+      .verdict-main { border-left: 3px solid var(--warn); }
+      .verdict-main h2 { margin: 6px 0 10px; font-size: 1.55rem; letter-spacing: -0.025em; }
+      .verdict-main p, .decision p { margin: 0; color: var(--muted); }
+      .decision h3 { margin: 6px 0 8px; font-size: 1rem; }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+        margin: 16px 0 0;
+      }
+      .metric { min-height: 108px; border: 1px solid var(--line); background: var(--surface); padding: 16px; }
+      .metric strong { display: block; margin-bottom: 8px; font: 700 1.8rem/1 var(--mono); }
+      .metric span { color: var(--muted); font-size: 0.78rem; }
+      nav {
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        display: flex;
+        gap: 6px;
+        margin: 24px 0 40px;
+        padding: 8px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        background: rgba(9, 10, 9, 0.96);
+        backdrop-filter: blur(8px);
+      }
+      nav a {
+        flex: 0 0 auto;
+        min-height: 36px;
+        padding: 9px 12px;
+        border: 1px solid transparent;
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-decoration: none;
+      }
+      nav a:hover { border-color: var(--line); color: var(--text); }
+      section { scroll-margin-top: 88px; margin-top: 44px; }
+      .section-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(240px, 0.35fr);
+        gap: 24px;
+        align-items: end;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .section-head h2 { margin: 5px 0 0; font-size: 1.65rem; letter-spacing: -0.03em; }
+      .section-head p { margin: 0; color: var(--muted); font-size: 0.86rem; }
+      .scope-grid, .boundary-grid, .action-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .panel { border: 1px solid var(--line); background: var(--surface); padding: 20px; }
+      .panel h3 { margin: 5px 0 10px; font-size: 1rem; }
+      .panel p, .panel li { color: var(--muted); font-size: 0.88rem; }
+      .panel ul { margin: 10px 0 0; padding-left: 20px; }
+      .panel li + li { margin-top: 7px; }
+      .flow {
+        display: grid;
+        grid-template-columns: minmax(150px, 0.8fr) 40px minmax(180px, 1fr) 40px minmax(240px, 1.2fr);
+        align-items: stretch;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      .node { border: 1px solid var(--line); background: var(--surface); padding: 18px; }
+      .node strong { display: block; margin-bottom: 7px; }
+      .node span { color: var(--muted); font-size: 0.8rem; }
+      .arrow { display: grid; place-items: center; color: var(--dim); font: 1.1rem var(--mono); }
+      .table-wrap { margin-top: 16px; overflow-x: auto; border: 1px solid var(--line); }
+      table { width: 100%; min-width: 1040px; border-collapse: collapse; background: var(--surface); font-size: 0.84rem; }
+      th { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--line-strong); background: var(--surface-2); }
+      td { padding: 14px 12px; vertical-align: top; border-bottom: 1px solid var(--line); color: var(--muted); }
+      tbody tr:last-child td { border-bottom: 0; }
+      td strong { display: block; margin-bottom: 4px; color: var(--text); }
+      .id { width: 62px; color: var(--text); font-family: var(--mono); }
+      .status, .severity {
+        display: inline-block;
+        padding: 4px 7px;
+        border: 1px solid var(--line);
+        font: 700 0.69rem var(--mono);
+        white-space: nowrap;
+      }
+      .fixed { color: var(--good); background: var(--good-bg); border-color: #2d4a31; }
+      .protected { color: var(--warn); background: var(--warn-bg); border-color: #4b3d20; }
+      .high { color: var(--bad); background: var(--bad-bg); border-color: #533033; }
+      .medium { color: var(--warn); background: var(--warn-bg); border-color: #4b3d20; }
+      .low { color: var(--info); background: var(--info-bg); border-color: #29445a; }
+      .evidence { color: var(--dim); font: 0.74rem/1.55 var(--mono); overflow-wrap: anywhere; }
+      .gate-list { margin-top: 16px; border: 1px solid var(--line); background: var(--surface); }
+      .gate {
+        display: grid;
+        grid-template-columns: 120px minmax(240px, 1fr) minmax(260px, 1.15fr);
+        gap: 18px;
+        align-items: start;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .gate:last-child { border-bottom: 0; }
+      .gate p { margin: 0; color: var(--muted); font-size: 0.84rem; }
+      .gate code { color: var(--text); font-size: 0.78rem; }
+      .callout {
+        margin-top: 16px;
+        padding: 16px 18px;
+        border: 1px solid #4b3d20;
+        background: var(--warn-bg);
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+      .callout strong { color: var(--warn); }
+      details { margin-top: 16px; border: 1px solid var(--line); background: var(--surface); }
+      summary { cursor: pointer; padding: 14px 16px; color: var(--text); font-weight: 650; }
+      details div { padding: 0 16px 16px; color: var(--muted); font-size: 0.84rem; }
+      footer { margin-top: 52px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--dim); font-size: 0.76rem; }
+      @media (max-width: 980px) {
+        .topline, .section-head { grid-template-columns: 1fr; display: grid; }
+        .stamp { min-width: 0; }
+        .verdict { grid-template-columns: 1fr; }
+        .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .flow { grid-template-columns: 1fr; }
+        .arrow { min-height: 24px; transform: rotate(90deg); }
+        .gate { grid-template-columns: 100px minmax(0, 1fr); }
+        .gate p:last-child { grid-column: 2; }
+      }
+      @media (max-width: 640px) {
+        html { scroll-behavior: auto; }
+        .shell { width: min(100% - 32px, 1420px); padding-top: 24px; }
+        .scope-grid, .boundary-grid, .action-grid, .metrics { grid-template-columns: 1fr; }
+        .metric { min-height: 92px; }
+        nav { margin-top: 18px; }
+        .gate { grid-template-columns: 1fr; gap: 8px; }
+        .gate p:last-child { grid-column: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+      @media print {
+        :root { color-scheme: light; --bg: #fff; --surface: #fff; --surface-2: #f4f4f1; --text: #111; --muted: #444; --dim: #666; --line: #ccc; --line-strong: #999; }
+        nav { position: static; backdrop-filter: none; }
+        .shell { width: 100%; padding: 0; }
+        section { break-inside: avoid; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topline">
+        <div>
+          <div class="eyebrow">Cortex Studio · technical backend audit</div>
+          <h1>Backend builds, but its trust boundary is not release-ready.</h1>
+          <p class="dek">
+            Five isolated backend defects were repaired without editing the active Rust, capability, renderer,
+            or CodeWalker work owned by other agents. Four high-value risks remain in those protected files and
+            should be handled after their current work lands.
+          </p>
+        </div>
+        <div class="stamp" aria-label="Audit context">
+          <strong>2026-08-12 03:29 CDT</strong><br />
+          branch <strong>main</strong><br />
+          commit <strong>6361124</strong><br />
+          checkout <strong>behind origin/main by 1</strong><br />
+          evidence <strong>current dirty worktree</strong>
+        </div>
+      </header>
+
+      <div class="verdict">
+        <section class="verdict-main" aria-labelledby="verdict-title">
+          <div class="section-kicker">Verdict</div>
+          <h2 id="verdict-title">Implementation evidence is green; security closure is incomplete.</h2>
+          <p>
+            The renderer, docs backend, Rust crate, and CodeWalker bridge compile. The repaired web submission
+            boundary now accepts the current schema safely. A desktop-held GitHub credential path, arbitrary
+            updater URL inspection, broad filesystem authority, and incomplete asset-cache invalidation remain
+            outside this patch because their files are being changed by other agents.
+          </p>
+        </section>
+        <aside class="decision" aria-labelledby="decision-title">
+          <div class="section-kicker">Decision</div>
+          <h3 id="decision-title">Do not call the backend release-ready yet.</h3>
+          <p>Merge the isolated server fixes, then close the four protected trust/cache findings and repeat desktop runtime tests.</p>
+        </aside>
+      </div>
+
+      <div class="metrics" aria-label="Audit metrics">
+        <div class="metric"><strong>5</strong><span>backend defects fixed</span></div>
+        <div class="metric"><strong>4</strong><span>protected-file risks remain</span></div>
+        <div class="metric"><strong>32</strong><span>focused tests passed</span></div>
+        <div class="metric"><strong>2</strong><span>production builds passed</span></div>
+        <div class="metric"><strong>0</strong><span>agent-owned files edited</span></div>
+      </div>
+
+      <nav aria-label="Report sections">
+        <a href="#scope">Scope</a>
+        <a href="#boundary">Trust boundary</a>
+        <a href="#fixed">Fixed</a>
+        <a href="#remaining">Remaining</a>
+        <a href="#verification">Verification</a>
+        <a href="#actions">Next actions</a>
+      </nav>
+
+      <section id="scope">
+        <div class="section-head">
+          <div><div class="section-kicker">01 · Scope</div><h2>Current checkout, preservation-first</h2></div>
+          <p>Static review plus direct build/test evidence. No secret files were opened and no external mutation was attempted.</p>
+        </div>
+        <div class="scope-grid">
+          <article class="panel">
+            <div class="label">Audited</div>
+            <h3>Backend and integration surfaces</h3>
+            <ul>
+              <li>Tauri command boundary, file watchers, filesystem/process calls, PDN limits, updater inspection, and bug submission.</li>
+              <li>CodeWalker sidecar discovery, conversion, cache/manifest production, and CLMESH contract.</li>
+              <li>Next.js bug-report API, validation, GitHub label/issue creation, request sizing, and origin enforcement.</li>
+              <li>Updater/release utilities, root and docs production builds, Rust checks, and focused parser/material/template suites.</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <div class="label">Preserved</div>
+            <h3>Parallel-agent ownership boundary</h3>
+            <ul>
+              <li>No edits to <code>src-tauri/src/lib.rs</code>, <code>src-tauri/capabilities/default.json</code>, <code>tools/codewalker-bridge/Program.cs</code>, renderer/parser work, or the dirty changelog.</li>
+              <li>Fixes are limited to clean docs-backend files, one clean Next config, one backend test file, documentation, and this report.</li>
+              <li>Tauri dev was not restarted or stopped; an existing <code>cargo run</code> process was left intact.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="boundary">
+        <div class="section-head">
+          <div><div class="section-kicker">02 · Architecture</div><h2>Two issue-submission paths cross different trust boundaries</h2></div>
+          <p>The server path is now bounded and allowlisted. The native path still places repository authority on the desktop.</p>
+        </div>
+        <div class="flow" role="img" aria-label="Renderer data flows through Tauri commands to local files, sidecars, updater networks, and GitHub, while web submissions flow through the docs API to GitHub">
+          <div class="node"><strong>React renderer</strong><span>User paths, model data, update endpoint, report content</span></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node"><strong>Tauri command boundary</strong><span>Rust validates some formats and sizes; several commands accept raw renderer values</span></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node"><strong>Local / external effects</strong><span>Filesystem watchers and writes · CodeWalker process/cache · updater HTTP · GitHub issue API</span></div>
+        </div>
+        <div class="flow" role="img" aria-label="Web reporter data flows through the Next.js API to GitHub">
+          <div class="node"><strong>Web reporter</strong><span>Schema v1 or v2 JSON with browser Origin</span></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node"><strong>Next.js report API</strong><span>Origin allowlist · 64 KiB streaming cap · typed normalization · managed labels</span></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node"><strong>GitHub API</strong><span>Server-only token creates a validated issue</span></div>
+        </div>
+      </section>
+
+      <section id="fixed">
+        <div class="section-head">
+          <div><div class="section-kicker">03 · Remediation</div><h2>Five isolated defects fixed</h2></div>
+          <p>Severity reflects product impact and exploitability, not an arbitrary score.</p>
+        </div>
+        <div class="table-wrap" role="region" aria-label="Fixed backend findings" tabindex="0">
+          <table>
+            <thead><tr><th>ID</th><th>Severity</th><th>Finding</th><th>Impact</th><th>Remediation</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="id">B-01</td><td><span class="severity high">High</span></td>
+                <td><strong>Reporter/server schema split</strong><span class="evidence">client schemaVersion 2 · server previously required 1</span></td>
+                <td>Every web-endpoint submission from the current reporter was rejected before GitHub.</td>
+                <td>Server now accepts v1 bug reports and v2 bug/feature reports, normalizes to v2, and formats feature issues correctly.</td>
+                <td><span class="status fixed">Fixed + tested</span></td>
+              </tr>
+              <tr>
+                <td class="id">B-02</td><td><span class="severity medium">Medium</span></td>
+                <td><strong>Origin validation failed open</strong><span class="evidence">missing Origin returned early</span></td>
+                <td>Non-browser clients could bypass the configured origin allowlist and submit issue spam.</td>
+                <td>Missing, empty-config, and unlisted origins now fail closed; configured trailing slashes normalize safely.</td>
+                <td><span class="status fixed">Fixed + tested</span></td>
+              </tr>
+              <tr>
+                <td class="id">B-03</td><td><span class="severity medium">Medium</span></td>
+                <td><strong>Payload cap applied after allocation</strong><span class="evidence">request.text() preceded byte-length check</span></td>
+                <td>An oversized request could consume memory before the 64 KiB guard ran.</td>
+                <td>Body reading is now streamed, Content-Length is checked early, actual bytes are capped, and oversize returns HTTP 413.</td>
+                <td><span class="status fixed">Fixed + tested</span></td>
+              </tr>
+              <tr>
+                <td class="id">B-04</td><td><span class="severity medium">Medium</span></td>
+                <td><strong>Required default labels were not manageable</strong><span class="evidence">bug / enhancement absent from MANAGED_LABELS</span></td>
+                <td>Repositories without default labels could not accept reports even when label creation was enabled.</td>
+                <td><code>bug</code> and <code>enhancement</code> are now explicit managed labels with deterministic metadata.</td>
+                <td><span class="status fixed">Fixed + tested</span></td>
+              </tr>
+              <tr>
+                <td class="id">B-05</td><td><span class="severity low">Low</span></td>
+                <td><strong>Next traced the wrong workspace root</strong><span class="evidence">selected C:\Users\User via unrelated package-lock.json</span></td>
+                <td>Build discovery and deployment tracing were broader and less reproducible than the docs project.</td>
+                <td><code>turbopack.root</code> is pinned to <code>docs/site</code>; the production warning disappeared on rebuild.</td>
+                <td><span class="status fixed">Fixed + built</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="remaining">
+        <div class="section-head">
+          <div><div class="section-kicker">04 · Residual risk</div><h2>Four findings remain in protected files</h2></div>
+          <p>Confirmed by current source inspection. No remediation was applied because those files are under active parallel work.</p>
+        </div>
+        <div class="table-wrap" role="region" aria-label="Remaining backend findings" tabindex="0">
+          <table>
+            <thead><tr><th>ID</th><th>Severity</th><th>Finding</th><th>Evidence</th><th>Recommended closure</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="id">R-01</td><td><span class="severity high">High</span></td>
+                <td><strong>Desktop GitHub authority</strong>The native command reads <code>GITHUB_TOKEN</code> and accepts renderer-composed title, body, and labels.</td>
+                <td class="evidence">src-tauri/src/lib.rs:1065-1143 · src/lib/bug-report.js:194-206</td>
+                <td>Remove the desktop token path. Route all reports through the validated server API with server-only credentials.</td>
+                <td><span class="status protected">Protected / open</span></td>
+              </tr>
+              <tr>
+                <td class="id">R-02</td><td><span class="severity high">High</span></td>
+                <td><strong>Arbitrary updater inspection URL</strong>The renderer supplies a URL to native Reqwest without an allowlist, timeout, or response-size cap.</td>
+                <td class="evidence">src-tauri/src/lib.rs:307-375</td>
+                <td>Use the compiled updater endpoint only, require HTTPS and the expected host/path, and add connect/total timeouts plus bounded decoding.</td>
+                <td><span class="status protected">Protected / open</span></td>
+              </tr>
+              <tr>
+                <td class="id">R-03</td><td><span class="severity medium">Medium</span></td>
+                <td><strong>Incomplete YFT cache identity and partial-output acceptance</strong>Cache identity covers only YFT path/mtime/size; a lone mesh file is treated as a valid hit.</td>
+                <td class="evidence">src-tauri/src/lib.rs:813-851 · neighbor YTD/meta data also influence Program.cs output</td>
+                <td>Hash all conversion dependencies or a stable manifest fingerprint. Write mesh/manifest/meta atomically and require a complete, version-valid cache entry.</td>
+                <td><span class="status protected">Protected / open</span></td>
+              </tr>
+              <tr>
+                <td class="id">R-04</td><td><span class="severity medium">Medium</span></td>
+                <td><strong>Unvalidated 16-bit serialization limits</strong>Mesh count and UTF-8 string lengths are cast to <code>ushort</code> before writing.</td>
+                <td class="evidence">tools/codewalker-bridge/Program.cs:1331 · 1431-1441</td>
+                <td>Reject counts/strings beyond the format limit before any output write; emit an actionable format error and add boundary tests.</td>
+                <td><span class="status protected">Protected / open</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout"><strong>Capability note:</strong> the dirty Tauri capability file now grants read/write scope across <code>$HOME/**</code> and <code>$RESOURCE/**</code>. Confirm that breadth is essential after the active workflow changes land; picker-scoped intent should remain the effective boundary.</div>
+      </section>
+
+      <section id="verification">
+        <div class="section-head">
+          <div><div class="section-kicker">05 · Evidence</div><h2>Verification matrix</h2></div>
+          <p>Green local gates are implementation evidence, not signing, updater publication, or clean-machine release authority.</p>
+        </div>
+        <div class="gate-list">
+          <div class="gate"><span class="status fixed">Pass</span><code>node --test docs/site/src/lib/bug-report.test.ts</code><p>5/5: v2 feature, v1 compatibility, invalid type, fail-closed origin, streamed byte cap.</p></div>
+          <div class="gate"><span class="status fixed">Pass</span><code>bun run test:feedback · test:clmesh · test:native-materials · test:pdn · test:template</code><p>27/27 existing focused tests passed.</p></div>
+          <div class="gate"><span class="status fixed">Pass</span><code>bun run build</code><p>Renderer production build completed; existing large-chunk warning remains.</p></div>
+          <div class="gate"><span class="status fixed">Pass</span><code>bun run --cwd docs/site build</code><p>Next production build and TypeScript passed; wrong-root warning removed. Existing metadataBase warning remains.</p></div>
+          <div class="gate"><span class="status fixed">Pass</span><code>cargo check --manifest-path src-tauri/Cargo.toml</code><p>Rust crate compiled successfully.</p></div>
+          <div class="gate"><span class="status fixed">Pass</span><code>cargo clippy --manifest-path src-tauri/Cargo.toml</code><p>Completed with 9 style warnings in the protected Rust file.</p></div>
+          <div class="gate"><span class="status fixed">Pass</span><code>dotnet build tools/codewalker-bridge/CodeWalkerBridge.csproj -c Release</code><p>.NET 10 bridge built with 0 warnings and 0 errors.</p></div>
+          <div class="gate"><span class="status protected">Not green</span><code>cargo fmt --manifest-path src-tauri/Cargo.toml --check</code><p>Formatting diff exists only in protected <code>src-tauri/src/lib.rs</code>; it was not modified.</p></div>
+        </div>
+        <details>
+          <summary>Not exercised in this audit</summary>
+          <div>
+            No live GitHub issue was created, no update was installed, no Tauri dev process was restarted, no representative YFT/YTD was converted end-to-end in the UI, and no FiveM in-game, signed installer, updater publication, clean-machine, or public-release claim was made.
+          </div>
+        </details>
+      </section>
+
+      <section id="actions">
+        <div class="section-head">
+          <div><div class="section-kicker">06 · Next action</div><h2>Close trust first, then cache fidelity</h2></div>
+          <p>Recommended order minimizes credential exposure before touching conversion behavior.</p>
+        </div>
+        <div class="action-grid">
+          <article class="panel"><div class="label">1 · Security</div><h3>Retire native GitHub credentials</h3><p>Make the validated server route the only issue-creation authority. Keep tokens out of desktop runtime configuration.</p></article>
+          <article class="panel"><div class="label">2 · Network</div><h3>Constrain updater inspection</h3><p>Compile the endpoint into Rust, allowlist HTTPS host/path, and bound connection time and response bytes.</p></article>
+          <article class="panel"><div class="label">3 · Fidelity</div><h3>Version a complete cache transaction</h3><p>Fingerprint every sidecar input, validate mesh plus manifest together, and publish cache files atomically.</p></article>
+          <article class="panel"><div class="label">4 · Runtime proof</div><h3>Repeat desktop failure-path tests</h3><p>Exercise malformed cache, changed YTD/meta, missing labels, denied origin, oversized body, updater timeout, and report failure states.</p></article>
+        </div>
+      </section>
+
+      <footer>
+        Generated from the current checkout at <span class="mono">C:\Users\User\Desktop\Cortex Labs\cortex-labs</span>. Findings distinguish implemented fixes, protected current-source risks, and unverified owner-controlled release state.
+      </footer>
+    </main>
+  </body>
+</html>

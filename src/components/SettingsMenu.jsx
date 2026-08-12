@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Sun, Moon, Stamp } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Check } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { exists as fsExists } from "@tauri-apps/plugin-fs";
-import appMeta from "../../package.json";
 import HotkeyInput from "./HotkeyInput";
 import { Toggle } from "./ui/toggle";
 import {
@@ -14,6 +13,15 @@ import {
   mergeHotkeys,
 } from "../lib/hotkeys";
 import { emitPrefsUpdated, loadPrefs, savePrefs } from "../lib/prefs";
+import {
+  THEME_PRESETS,
+  applyAppearance,
+  applyColorScheme,
+  applyThemePreset,
+  normalizeColorScheme,
+  normalizeThemePreset,
+  resolveColorScheme,
+} from "../lib/theme";
 import { hasSeenWhatsNew, getAppVersion } from "../lib/changelog";
 import { useUpdateChecker } from "../lib/updater";
 import {
@@ -32,6 +40,8 @@ import {
 
 /* ─── Built-in defaults (canonical source) ─── */
 const BUILT_IN_DEFAULTS = {
+  colorScheme: "dark",
+  themePreset: "roan",
   darkMode: true,
   liveryExteriorOnly: false,
   windowTemplateEnabled: false,
@@ -90,8 +100,12 @@ function getStoredDefaults() {
   const prefs = loadPrefs();
   const stored = sanitizeStoredDefaults(prefs?.defaults);
   const merged = { ...BUILT_IN_DEFAULTS, ...stored };
+  const colorScheme = normalizeColorScheme(merged.colorScheme, merged.darkMode);
   return {
     ...merged,
+    colorScheme,
+    themePreset: normalizeThemePreset(merged.themePreset),
+    darkMode: resolveColorScheme(colorScheme) === "dark",
     uiScale: clampUiScale(merged.uiScale),
     autoTemplateExportFormat: normalizeAutoTemplateExportFormat(merged.autoTemplateExportFormat),
     templateMarkerPickModifier: normalizeTemplateMarkerPickModifier(
@@ -101,6 +115,10 @@ function getStoredDefaults() {
       merged.templateMarkerRegenerateBehavior,
     ),
   };
+}
+
+function settingsSignature(defaults, hotkeys) {
+  return JSON.stringify({ defaults, hotkeys });
 }
 
 function getStoredHotkeys() {
@@ -128,6 +146,7 @@ function ColorField({ label, value, onChange, onReset }) {
           className="settings-input flex-1"
           value={value}
           onChange={(event) => onChange(event.currentTarget.value)}
+          aria-label={`${label} hex color`}
         />
         <button
           type="button"
@@ -141,42 +160,223 @@ function ColorField({ label, value, onChange, onReset }) {
   );
 }
 
+const THEME_OPTIONS = [
+  { id: "system", label: "System", description: "Match your operating system" },
+  { id: "light", label: "Light", description: "Bright, neutral studio surfaces" },
+  { id: "dark", label: "Dark", description: "Lower-glare workspace surfaces" },
+];
+
+const SETTINGS_SECTION_GROUPS = [
+  {
+    id: "workspace",
+    label: "Workspace",
+    items: [
+      { id: "general", label: "System", description: "Interface scaling and core behavior.", icon: Monitor },
+      { id: "viewer", label: "Viewer", description: "Interaction and rendering defaults.", icon: Car },
+      { id: "appearance", label: "Appearance", description: "Theme, window chrome, and studio colors.", icon: Palette },
+      { id: "watermark", label: "Watermark", description: "Automatic preview watermarks.", icon: Stamp },
+    ],
+  },
+  {
+    id: "input",
+    label: "Input",
+    items: [
+      { id: "hotkeys", label: "Shortcuts", description: "Global keyboard configurations.", icon: Clock },
+    ],
+  },
+  {
+    id: "support",
+    label: "Support",
+    items: [
+      { id: "about", label: "About", description: "Version, updates, and advanced access.", icon: Info },
+    ],
+  },
+];
+
+const SETTINGS_SECTIONS = SETTINGS_SECTION_GROUPS.flatMap((group) => group.items);
+
+function ThemeChoice({ option, selected, onSelect }) {
+  return (
+    <button
+      type="button"
+      className={`settings-theme-choice ${selected ? "is-selected" : ""}`}
+      aria-pressed={selected}
+      onClick={() => onSelect(option.id)}
+    >
+      <span className={`settings-theme-preview is-${option.id}`} aria-hidden="true">
+        <span className="settings-theme-preview-rail">
+          <span />
+          <span />
+          <span />
+        </span>
+        <span className="settings-theme-preview-canvas">
+          <span className="settings-theme-preview-toolbar" />
+          <span className="settings-theme-preview-line is-wide" />
+          <span className="settings-theme-preview-line" />
+          <span className="settings-theme-preview-control" />
+        </span>
+      </span>
+      <span className="settings-theme-choice-copy">
+        <span className="settings-theme-choice-label">{option.label}</span>
+        <span className="settings-theme-choice-description">{option.description}</span>
+      </span>
+      <span className="settings-theme-choice-check" aria-hidden="true">
+        {selected ? <Check /> : null}
+      </span>
+    </button>
+  );
+}
+
+function ThemePresetChoice({ option, selected, onSelect }) {
+  const previewStyle = {
+    "--theme-preset-dark": option.modes.dark.background,
+    "--theme-preset-surface": option.modes.dark.surface,
+    "--theme-preset-ink": option.modes.dark.foreground,
+    "--theme-preset-light": option.modes.light.background,
+    "--theme-preset-accent": option.modes.dark.primary,
+  };
+
+  return (
+    <label
+      className={`settings-preset-choice ${selected ? "is-selected" : ""}`}
+      style={previewStyle}
+    >
+      <input
+        type="radio"
+        name="theme-preset"
+        value={option.id}
+        checked={selected}
+        onChange={() => onSelect(option.id)}
+      />
+      <span className="settings-preset-preview" aria-hidden="true">
+        <span className="settings-preset-preview-rail">
+          <span />
+          <span />
+          <span />
+        </span>
+        <span className="settings-preset-preview-workspace">
+          <span className="settings-preset-preview-title" />
+          <span className="settings-preset-preview-line is-wide" />
+          <span className="settings-preset-preview-line" />
+          <span className="settings-preset-preview-action" />
+        </span>
+      </span>
+      <span className="settings-preset-choice-copy">
+        <span className="settings-preset-choice-label">{option.name}</span>
+        <span className="settings-preset-choice-description">{option.description}</span>
+      </span>
+      <span className="settings-preset-swatches" aria-hidden="true">
+        <span style={{ background: option.modes.dark.background }} />
+        <span style={{ background: option.modes.light.background }} />
+        <span style={{ background: option.modes.dark.primary }} />
+      </span>
+      <span className="settings-preset-choice-check" aria-hidden="true">
+        {selected ? <Check /> : null}
+      </span>
+    </label>
+  );
+}
+
 /**
  * SettingsMenu — self-contained settings panel.
  * Reads/writes prefs directly via loadPrefs()/savePrefs().
  * Shell renders this in the chrome bar; it emits onSettingsSaved when prefs are persisted.
  */
-export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
-  const [open, setOpen] = useState(false);
+export default function SettingsMenu({
+  pageTarget,
+  pageOpen = false,
+  onOpenChange,
+  onSettingsSaved,
+  onOpenReleaseNotes,
+}) {
+  const open = Boolean(pageOpen);
   const [hoveringIcon, setHoveringIcon] = useState(false);
   const [activeSection, setActiveSection] = useState("general");
-  const [portalNode, setPortalNode] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [previewFolderExists, setPreviewFolderExists] = useState(true);
   const [watermarkPreview, setWatermarkPreview] = useState("");
   const updater = useUpdateChecker();
+  const prefersReducedMotion = useReducedMotion();
 
   const [draft, setDraft] = useState(() => getStoredDefaults());
   const [hotkeysDraft, setHotkeysDraft] = useState(() => getStoredHotkeys());
+  const [savedSignature, setSavedSignature] = useState(() =>
+    settingsSignature(getStoredDefaults(), getStoredHotkeys()),
+  );
+  const pageRef = useRef(null);
+  const settingsButtonRef = useRef(null);
+  const wasOpenRef = useRef(false);
+
+  const setOpen = useCallback((nextOpen) => {
+    onOpenChange?.(Boolean(nextOpen));
+  }, [onOpenChange]);
 
   const isTauriRuntime =
     typeof window !== "undefined" &&
     typeof window.__TAURI_INTERNALS__ !== "undefined";
 
+  const closeSettings = useCallback(() => {
+    const stored = getStoredDefaults();
+    applyAppearance({
+      colorScheme: stored.colorScheme,
+      themePreset: stored.themePreset,
+      legacyDarkMode: stored.darkMode,
+    });
+    setOpen(false);
+  }, [setOpen]);
+
   // Refresh draft from storage when the dialog opens
   useEffect(() => {
     if (open) {
-      setDraft(getStoredDefaults());
-      setHotkeysDraft(getStoredHotkeys());
+      const nextDraft = getStoredDefaults();
+      const nextHotkeys = getStoredHotkeys();
+      setDraft(nextDraft);
+      setHotkeysDraft(nextHotkeys);
+      setSavedSignature(settingsSignature(nextDraft, nextHotkeys));
       setConfirmReset(false);
+      window.setTimeout(() => {
+        (pageRef.current ?? document.querySelector(".settings-page"))?.focus();
+      }, 0);
+    } else if (wasOpenRef.current) {
+      const stored = getStoredDefaults();
+      applyAppearance({
+        colorScheme: stored.colorScheme,
+        themePreset: stored.themePreset,
+        legacyDarkMode: stored.darkMode,
+      });
+      window.setTimeout(() => {
+        (settingsButtonRef.current ?? document.querySelector('button[aria-label="Settings"]'))?.focus();
+      }, 0);
     }
+    wasOpenRef.current = open;
   }, [open]);
 
   const performReset = () => {
     setDraft({ ...BUILT_IN_DEFAULTS });
     setHotkeysDraft({ ...DEFAULT_HOTKEYS });
     setConfirmReset(false);
+    applyAppearance({
+      colorScheme: BUILT_IN_DEFAULTS.colorScheme,
+      themePreset: BUILT_IN_DEFAULTS.themePreset,
+      legacyDarkMode: BUILT_IN_DEFAULTS.darkMode,
+    });
   };
+
+  const selectColorScheme = useCallback((colorScheme) => {
+    const normalized = normalizeColorScheme(colorScheme);
+    const { resolvedTheme } = applyColorScheme(normalized);
+    setDraft((prev) => ({
+      ...prev,
+      colorScheme: normalized,
+      darkMode: resolvedTheme === "dark",
+    }));
+  }, []);
+
+  const selectThemePreset = useCallback((themePreset) => {
+    const normalized = normalizeThemePreset(themePreset);
+    applyThemePreset(normalized);
+    setDraft((prev) => ({ ...prev, themePreset: normalized }));
+  }, []);
 
   const updateWatermark = useCallback((key, value) => {
     setDraft((prev) => ({
@@ -200,17 +400,12 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
       if (event.key === "Escape") {
         // Don't close if walkthrough is controlling this dialog
         if (document.querySelector(".settings-page.is-walkthrough-elevated")) return;
-        setOpen(false);
+        closeSettings();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open]);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    setPortalNode(document.body);
-  }, []);
+  }, [closeSettings, open]);
 
   useEffect(() => {
     if (!open || !isTauriRuntime) return;
@@ -239,9 +434,11 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
   useEffect(() => {
     const handleOpen = () => setOpen(true);
-    const handleClose = () => setOpen(false);
+    const handleClose = () => closeSettings();
     const handleNav = (e) => {
-      if (e.detail?.section) setActiveSection(e.detail.section);
+      if (e.detail?.section) {
+        setActiveSection(e.detail.section === "experimental" ? "about" : e.detail.section);
+      }
     };
     
     window.addEventListener("cortex:open-settings", handleOpen);
@@ -253,27 +450,21 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
       window.removeEventListener("cortex:close-settings", handleClose);
       window.removeEventListener("cortex:nav-settings", handleNav);
     };
-  }, []);
+  }, [closeSettings, setOpen]);
 
-  const sections = useMemo(
-    () => [
-      { id: "general", label: "System", description: "Interface scaling and core behavior.", icon: Monitor },
-      { id: "viewer", label: "Viewer", description: "Interaction and rendering defaults.", icon: Car },
-      { id: "hotkeys", label: "Shortcuts", description: "Global keyboard configurations.", icon: Clock },
-      { id: "appearance", label: "Design", description: "Color schemes and interface aesthetics.", icon: Palette },
-      { id: "watermark", label: "Watermark", description: "Automatic preview watermarks.", icon: Stamp },
-      { id: "experimental", label: "Experimental", description: "Beta features and diagnostic tools.", icon: FlaskConical },
-      { id: "about", label: "About", description: "Version info and release notes.", icon: Info },
-    ],
-    [],
+  const activeMeta = SETTINGS_SECTIONS.find((section) => section.id === activeSection) ?? SETTINGS_SECTIONS[0];
+  const draftSignature = useMemo(
+    () => settingsSignature(draft, hotkeysDraft),
+    [draft, hotkeysDraft],
   );
-
-  const activeMeta = sections.find((section) => section.id === activeSection) ?? sections[0];
+  const hasChanges = draftSignature !== savedSignature;
 
   const save = useCallback(() => {
     const normalizedUiScale = clampUiScale(draft.uiScale);
     const normalizedDraft = {
       ...draft,
+      colorScheme: normalizeColorScheme(draft.colorScheme, draft.darkMode),
+      themePreset: normalizeThemePreset(draft.themePreset),
       uiScale: normalizedUiScale,
       autoTemplateExportFormat: normalizeAutoTemplateExportFormat(draft.autoTemplateExportFormat),
       templateMarkerPickModifier: normalizeTemplateMarkerPickModifier(
@@ -283,8 +474,12 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
         draft.templateMarkerRegenerateBehavior,
       ),
     };
-    // Apply dark mode immediately
-    document.documentElement.classList.toggle('dark', normalizedDraft.darkMode ?? true);
+    const { resolvedTheme } = applyAppearance({
+      colorScheme: normalizedDraft.colorScheme,
+      themePreset: normalizedDraft.themePreset,
+      legacyDarkMode: normalizedDraft.darkMode,
+    });
+    normalizedDraft.darkMode = resolvedTheme === "dark";
     const prefs = loadPrefs() || {};
     savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: hotkeysDraft });
     emitPrefsUpdated();
@@ -293,7 +488,8 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
     window.dispatchEvent(
       new CustomEvent("cortex:ui-scale-changed", { detail: { scale: normalizedUiScale } }),
     );
-    setOpen(false);
+    setDraft(normalizedDraft);
+    setSavedSignature(settingsSignature(normalizedDraft, hotkeysDraft));
     onSettingsSaved?.();
   }, [draft, hotkeysDraft, onSettingsSaved]);
 
@@ -313,7 +509,8 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
   };
 
   const toggleOpen = () => {
-    setOpen((prev) => !prev);
+    if (open) closeSettings();
+    else setOpen(true);
   };
 
   const handleSelectPreviewFolder = useCallback(async () => {
@@ -350,114 +547,126 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
       },
     });
 
+    setSavedSignature((signature) => {
+      try {
+        const saved = JSON.parse(signature);
+        return settingsSignature(
+          { ...saved.defaults, showRecents: nextShowRecents },
+          saved.hotkeys,
+        );
+      } catch {
+        return signature;
+      }
+    });
+
     onSettingsSaved?.();
   }, [draft.showRecents, onSettingsSaved]);
 
   return (
     <div className="settings-anchor">
       <motion.button
+        ref={settingsButtonRef}
         type="button"
-        className="settings-cog"
+        className={`settings-cog ${open ? "is-active" : ""}`}
         aria-label="Settings"
+        aria-pressed={open}
+        title="Settings"
         onClick={toggleOpen}
         onMouseEnter={() => setHoveringIcon(true)}
         onMouseLeave={() => setHoveringIcon(false)}
       >
         <motion.span
           className="settings-cog-icon"
-          animate={hoveringIcon ? { rotate: 360 } : { rotate: 0 }}
-          transition={
-            hoveringIcon
-              ? { repeat: Infinity, duration: 0.8, ease: "linear" }
-              : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
-          }
+          animate={prefersReducedMotion ? { rotate: 0 } : hoveringIcon ? { rotate: 90 } : { rotate: 0 }}
+          transition={{ duration: prefersReducedMotion ? 0 : 0.14, ease: [0.22, 1, 0.36, 1] }}
         >
           <Settings className="settings-cog-svg" />
         </motion.span>
       </motion.button>
 
-      {portalNode
+      {pageTarget
         ? createPortal(
             <AnimatePresence>
               {open ? (
-                <motion.div
+                <motion.section
+                  ref={pageRef}
                   className="settings-page"
-                  initial={{ opacity: 0 }}
+                  aria-labelledby="settings-page-title"
+                  tabIndex={-1}
+                  autoFocus
+                  initial={prefersReducedMotion ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                  onClick={(e) => {
-                    // Don't close if walkthrough is controlling this dialog
-                    if (e.currentTarget.classList.contains("is-walkthrough-elevated")) return;
-                    setOpen(false);
-                  }}
+                  exit={prefersReducedMotion ? { opacity: 1 } : { opacity: 0 }}
+                  transition={{ duration: prefersReducedMotion ? 0 : 0.16, ease: [0.22, 1, 0.36, 1] }}
                 >
                   <motion.div
                     className="settings-dialog"
-                    initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 8, scale: 0.98 }}
-                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                    onClick={(e) => e.stopPropagation()}
+                    initial={prefersReducedMotion ? false : { opacity: 0, x: 8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={prefersReducedMotion ? { opacity: 1, x: 0 } : { opacity: 0, x: 8 }}
+                    transition={{ duration: prefersReducedMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] }}
                   >
-                    <div className="settings-dialog-header">
-                      <button
-                        type="button"
-                        className="settings-back"
-                        onClick={() => setOpen(false)}
-                        aria-label="Back"
-                      >
-                        <ArrowLeft className="settings-back-icon" aria-hidden="true" />
-                      </button>
-                      <div className="settings-dialog-title-group">
-                        <div className="settings-dialog-title">Settings</div>
-                        <div className="settings-dialog-sub">Cortex Studio</div>
-                      </div>
-                    </div>
                     <div className="settings-shell">
-                      <nav className="settings-nav" aria-label="Settings sections">
-                        <div className="settings-nav-list" role="list">
-                          {sections.map((section) => {
-                            const Icon = section.icon;
-                            const isActive = activeSection === section.id;
-                            return (
-                              <motion.button
-                                key={section.id}
-                                type="button"
-                                className={`settings-nav-item ${isActive ? "is-active" : ""}`}
-                                onClick={() => setActiveSection(section.id)}
-                                aria-current={isActive ? "page" : undefined}
-                                whileTap={{ scale: 0.98 }}
-                              >
-                                <div className="flex items-center gap-2.5">
-                                  <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: isActive ? 'var(--mg-primary)' : 'var(--mg-muted)', opacity: isActive ? 1 : 0.6 }} />
-                                  <div className="flex flex-col text-left">
-                                    <span className="settings-nav-item-label">{section.label}</span>
-                                    <span className="settings-nav-item-meta line-clamp-1">{section.description}</span>
-                                  </div>
-                                </div>
-                              </motion.button>
-                            );
-                          })}
-                        </div>
-                         <div className="settings-version">v{appMeta.version}</div>
-                      </nav>
-
-                      <div className="settings-content">
-                        <div className="settings-content-header">
-                          <div className="settings-content-title">{activeMeta.label}</div>
-                          <div className="settings-content-sub">{activeMeta.description}</div>
-                        </div>
-
-                        <AnimatePresence mode="wait">
-                          <motion.div
-                            key={activeSection}
-                            className="settings-content-body custom-scrollbar"
-                            initial={{ opacity: 0, x: 10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: -10 }}
-                            transition={{ duration: 0.15, ease: "easeOut" }}
+                      <aside className="settings-nav">
+                        <div className="settings-dialog-header">
+                          <button
+                            type="button"
+                            className="settings-back"
+                            onClick={closeSettings}
+                            aria-label="Back to workspace"
                           >
+                            <ArrowLeft className="settings-back-icon" aria-hidden="true" />
+                          </button>
+                          <div className="settings-dialog-title-group">
+                            <h1 className="settings-dialog-title" id="settings-page-title">Settings</h1>
+                            <div className="settings-dialog-sub">Cortex Studio</div>
+                          </div>
+                        </div>
+                        <nav className="settings-nav-list" aria-label="Settings sections">
+                          {SETTINGS_SECTION_GROUPS.map((group) => (
+                            <div className="settings-nav-group" key={group.id}>
+                              <div className="settings-nav-group-label">{group.label}</div>
+                              {group.items.map((section) => {
+                                const Icon = section.icon;
+                                const isActive = activeSection === section.id;
+                                return (
+                                  <motion.button
+                                    key={section.id}
+                                    type="button"
+                                    className={`settings-nav-item ${isActive ? "is-active" : ""}`}
+                                    onClick={() => setActiveSection(section.id)}
+                                    aria-current={isActive ? "page" : undefined}
+                                    title={section.description}
+                                  >
+                                    <Icon className="settings-nav-item-icon" aria-hidden="true" />
+                                    <span className="settings-nav-item-copy">
+                                      <span className="settings-nav-item-label">{section.label}</span>
+                                    </span>
+                                  </motion.button>
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </nav>
+                      </aside>
+
+                      <main className="settings-content">
+                        <div className="settings-content-header">
+                          <div className="settings-content-heading">
+                            <h2 className="settings-content-title">{activeMeta.label}</h2>
+                            <div className="settings-content-sub">{activeMeta.description}</div>
+                          </div>
+                          {hasChanges ? (
+                            <div className="settings-save-state has-changes" aria-live="polite">
+                              Unsaved changes
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div
+                          key={activeSection}
+                          className="settings-content-body custom-scrollbar"
+                        >
                             {/* ─── General (System) ─── */}
                             {activeSection === "general" ? (
                               <div className="space-y-6">
@@ -641,6 +850,17 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                   <div className="settings-panel-title">Render Effects</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
+                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Show 3D Grid</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Display the ground grid in Studio viewers</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.showGrid}
+                                      onChange={(v) => setDraft((p) => ({ ...p, showGrid: v }))}
+                                      ariaLabel="Toggle 3D grid"
+                                    />
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
                                       <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Ground Shadows</div>
                                       <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Project a floor shadow under the vehicle in Studio viewers</div>
                                     </div>
@@ -720,43 +940,53 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                             {/* ─── Appearance (Design) ─── */}
                             {activeSection === "appearance" ? (
-                              <div className="space-y-6">
-                                  <section className="settings-panel">
-                                    <div className="settings-panel-title">Environment Controls</div>
-                                    <div className="settings-row">
-                                      <div className="settings-row-label">
-                                        <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Show 3D Grid</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Display ground grid in the viewer</div>
-                                      </div>
-                                      <Toggle
-                                        checked={draft.showGrid}
-                                        onChange={(v) => setDraft((p) => ({ ...p, showGrid: v }))}
-                                        ariaLabel="Toggle 3D grid"
+                              <div className="settings-appearance-stack">
+                                <section className="settings-panel settings-theme-panel">
+                                  <div className="settings-panel-title">Color Scheme</div>
+                                  <p className="settings-panel-description">
+                                    Choose how Cortex Studio looks. System follows your operating system automatically.
+                                  </p>
+                                  <div className="settings-theme-grid" role="group" aria-label="Color scheme">
+                                    {THEME_OPTIONS.map((option) => (
+                                      <ThemeChoice
+                                        key={option.id}
+                                        option={option}
+                                        selected={draft.colorScheme === option.id}
+                                        onSelect={selectColorScheme}
                                       />
-                                    </div>
-                                  </section>
-
-                                  <section className="settings-panel">
-                                    <div className="settings-panel-title">Interface Aesthetic</div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Dark Mode</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Toggle between dark and light interface theme</div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <Sun className="h-3 w-3" style={{ color: draft.darkMode ? 'var(--mg-muted)' : 'var(--mg-primary)', opacity: draft.darkMode ? 0.4 : 1, transition: 'all 0.2s ease' }} />
-                                      <Toggle
-                                        checked={draft.darkMode}
-                                        onChange={(v) => setDraft((p) => ({ ...p, darkMode: v }))}
-                                        ariaLabel="Toggle dark mode"
-                                      />
-                                      <Moon className="h-3 w-3" style={{ color: draft.darkMode ? 'var(--mg-primary)' : 'var(--mg-muted)', opacity: draft.darkMode ? 1 : 0.4, transition: 'all 0.2s ease' }} />
-                                    </div>
+                                    ))}
                                   </div>
+                                </section>
+
+                                <section className="settings-panel settings-preset-panel">
+                                  <div className="settings-panel-heading-row">
+                                    <div>
+                                      <div className="settings-panel-title">Studio Palette</div>
+                                      <p className="settings-panel-description">
+                                        Recolor the full workbench while preserving your selected light or dark mode.
+                                      </p>
+                                    </div>
+                                    <span className="settings-panel-count">{THEME_PRESETS.length} presets</span>
+                                  </div>
+                                  <fieldset className="settings-preset-grid">
+                                    <legend className="sr-only">Studio palette</legend>
+                                    {THEME_PRESETS.map((option) => (
+                                      <ThemePresetChoice
+                                        key={option.id}
+                                        option={option}
+                                        selected={draft.themePreset === option.id}
+                                        onSelect={selectThemePreset}
+                                      />
+                                    ))}
+                                  </fieldset>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Window Chrome</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Window Controls Style</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Select visual theme for window buttons</div>
+                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Choose the visual style for minimize, maximize, and close</div>
                                     </div>
                                     <div className="settings-seg">
                                       <button
@@ -778,7 +1008,10 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                 </section>
 
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Default Environment Colors</div>
+                                  <div className="settings-panel-title">Studio Defaults</div>
+                                  <p className="settings-panel-description">
+                                    Set the starting colors used by viewers and generated templates.
+                                  </p>
                                    <div className="grid grid-cols-2 gap-4 mt-2">
                                     <ColorField
                                       label="Base Body"
@@ -974,42 +1207,18 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                               </div>
                             ) : null}
 
-                            {/* ─── Experimental ─── */}
-                            {activeSection === "experimental" ? (
-                              <div className="space-y-6">
-                                <section className="settings-panel" style={{ border: '1px solid color-mix(in srgb, var(--mg-destructive) 15%, transparent)', background: 'color-mix(in srgb, var(--mg-destructive) 4%, transparent)' }}>
-                                  <div className="flex gap-4 items-start">
-                                    <FlaskConical className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--mg-destructive)' }} />
-                                    <div className="flex-1">
-                                      <div className="font-bold uppercase text-[9px] tracking-[0.12em] mb-2" style={{ color: 'var(--mg-destructive)' }}>Beta Access Protocol</div>
-                                      <div className="settings-row border-none p-0 mb-4">
-                                        <div className="text-[10px] max-w-[28ch]" style={{ color: 'var(--mg-muted)' }}>Unlock unstable features and engineering tools</div>
-                                        <Toggle
-                                          checked={draft.experimentalSettings}
-                                          onChange={(v) => setDraft((p) => ({ ...p, experimentalSettings: v }))}
-                                          ariaLabel="Toggle experimental features"
-                                        />
-                                      </div>
-                                      <div className="text-[9px] leading-relaxed italic" style={{ color: 'var(--mg-destructive)', opacity: 0.6 }}>
-                                        Warning: These features are not production-ready. Enabling them may cause memory leaks or renderer crashes.
-                                      </div>
-                                    </div>
-                                  </div>
-                                </section>
-                              </div>
-                            ) : null}
-
                             {/* ─── About ─── */}
                             {activeSection === "about" ? (
-                              <div className="space-y-3">
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Application</div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Version</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Current installed version</div>
-                                    </div>
-                                    <span className="font-mono text-[11px]" style={{ color: 'var(--mg-primary)' }}>v{getAppVersion()}</span>
+                              <div className="settings-about-stack">
+                                <section className="settings-about-intro" aria-labelledby="settings-about-product">
+                                  <div className="settings-about-copy">
+                                    <div className="settings-about-kicker">Cortex Studio</div>
+                                    <h3 className="settings-about-product" id="settings-about-product">Built for the livery workflow</h3>
+                                    <p>Windows-first livery development for GTA V and FiveM, from source asset to verified export.</p>
+                                  </div>
+                                  <div className="settings-about-version-block">
+                                    <span>Installed version</span>
+                                    <strong>v{getAppVersion()}</strong>
                                   </div>
                                 </section>
 
@@ -1019,7 +1228,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                                   {/* Published feed behind installed build */}
                                   {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind === "ahead" ? (
-                                    <div className="settings-update-status settings-update-status--error">
+                                    <div className="settings-update-status settings-update-status--error" role="alert">
                                       <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
                                       <div className="flex-1 min-w-0">
                                         <div className="text-[10px]" style={{ color: 'var(--mg-destructive)' }}>Published feed is behind this build</div>
@@ -1041,7 +1250,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                                   {/* Up-to-date state */}
                                   {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind !== "ahead" ? (
-                                    <div className="settings-update-status settings-update-status--ok">
+                                    <div className="settings-update-status settings-update-status--ok" role="status">
                                       <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
                                       <div className="flex-1 min-w-0">
                                         <div className="text-[10px]" style={{ color: 'var(--mg-fg)' }}>You're up to date</div>
@@ -1063,7 +1272,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                                   {/* Never checked / idle */}
                                   {!updater.available && !updater.checking && !updater.error && !updater.lastChecked ? (
-                                    <div className="settings-update-status">
+                                    <div className="settings-update-status" role="status">
                                       <RefreshCw className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-muted)' }} />
                                       <div className="flex-1 min-w-0">
                                         <div className="text-[10px]" style={{ color: 'var(--mg-fg)' }}>Check for updates</div>
@@ -1082,10 +1291,10 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                                   {/* Checking spinner */}
                                   {updater.checking ? (
-                                    <div className="settings-update-status">
+                                    <div className="settings-update-status" role="status">
                                       <motion.div
-                                        animate={{ rotate: 360 }}
-                                        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                                        animate={prefersReducedMotion ? { rotate: 0 } : { rotate: 360 }}
+                                        transition={prefersReducedMotion ? { duration: 0 } : { repeat: Infinity, duration: 1, ease: "linear" }}
                                         className="shrink-0"
                                       >
                                         <Loader className="h-3.5 w-3.5" style={{ color: 'var(--mg-primary)' }} />
@@ -1096,7 +1305,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
 
                                   {/* Error state */}
                                   {updater.error && !updater.checking ? (
-                                    <div className="settings-update-status settings-update-status--error">
+                                    <div className="settings-update-status settings-update-status--error" role="alert">
                                       <AlertCircle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
                                       <div className="flex-1 min-w-0">
                                         <div className="text-[10px]" style={{ color: 'var(--mg-destructive)' }}>Check failed</div>
@@ -1172,7 +1381,7 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                       type="button"
                                       className="settings-mini"
                                       onClick={() => {
-                                        setOpen(false);
+                                        closeSettings();
                                         setTimeout(() => onOpenReleaseNotes?.(), 220);
                                       }}
                                     >
@@ -1180,10 +1389,40 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                                     </button>
                                   </div>
                                 </section>
+
+                                <section className="settings-panel settings-experimental-panel">
+                                  <div className="settings-panel-heading-row">
+                                    <div>
+                                      <div className="settings-panel-title">Experimental</div>
+                                      <p className="settings-panel-description">
+                                        Opt into early features and engineering diagnostics from one advanced area.
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="settings-experimental-row">
+                                    <FlaskConical className="settings-experimental-icon" aria-hidden="true" />
+                                    <div className="settings-experimental-copy">
+                                      <div className="settings-experimental-label">Experimental features</div>
+                                      <div className="settings-experimental-description">
+                                        Enable features that are still being validated for everyday projects.
+                                      </div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.experimentalSettings}
+                                      onChange={(v) => setDraft((p) => ({ ...p, experimentalSettings: v }))}
+                                      ariaLabel="Toggle experimental features"
+                                    />
+                                  </div>
+                                  <div className="settings-experimental-note" role="note">
+                                    <AlertTriangle aria-hidden="true" />
+                                    <span>
+                                      Experimental features may be unstable. If a workflow behaves unexpectedly, disable this setting and restart Cortex Studio.
+                                    </span>
+                                  </div>
+                                </section>
                               </div>
                             ) : null}
-                          </motion.div>
-                        </AnimatePresence>
+                        </div>
 
                         <div className="settings-footer">
                           {confirmReset ? (
@@ -1206,19 +1445,19 @@ export default function SettingsMenu({ onSettingsSaved, onOpenReleaseNotes }) {
                               <button type="button" className="settings-secondary" onClick={() => setConfirmReset(true)}>
                                 Reset all
                               </button>
-                              <button type="button" className="settings-primary" onClick={save}>
-                                Save
+                              <button type="button" className="settings-primary" onClick={save} disabled={!hasChanges}>
+                                Save changes
                               </button>
                             </div>
                           )}
                         </div>
-                      </div>
+                      </main>
                     </div>
                   </motion.div>
-                </motion.div>
+                </motion.section>
               ) : null}
             </AnimatePresence>,
-            portalNode,
+            pageTarget,
           )
         : null}
     </div>

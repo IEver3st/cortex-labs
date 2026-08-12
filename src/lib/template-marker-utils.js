@@ -37,7 +37,7 @@ export function resolveTemplateMarkerVisible(marker, visibilityMap = {}) {
   const explicitValue = visibilityMap?.[marker?.key];
   if (explicitValue === true) return true;
   if (explicitValue === false) return false;
-  return marker?.defaultVisible !== false;
+  return false;
 }
 
 export function buildMarkerSelectionDraft(markers, selectionMap = {}) {
@@ -51,7 +51,9 @@ export function buildMarkerSelectionDraft(markers, selectionMap = {}) {
       next[marker.key] = explicitValue;
       continue;
     }
-    next[marker.key] = marker.defaultVisible !== false;
+    // Marker candidates are suggestions, not placements. Keep every new
+    // candidate off until the user explicitly chooses its location.
+    next[marker.key] = false;
   }
 
   return next;
@@ -60,6 +62,10 @@ export function buildMarkerSelectionDraft(markers, selectionMap = {}) {
 export function countSelectedMarkers(selectionMap = {}) {
   const entries = selectionMap && typeof selectionMap === "object" ? Object.values(selectionMap) : [];
   return entries.reduce((count, value) => count + (value === true ? 1 : 0), 0);
+}
+
+export function isMarkerPlacementDecisionRequired(markers, confirmed = false) {
+  return Array.isArray(markers) && markers.length > 0 && confirmed !== true;
 }
 
 export function toggleMarkerSelection(selectionMap = {}, markerKey) {
@@ -82,9 +88,7 @@ export function buildResetMarkerVisibility(markers) {
   const next = {};
   for (const marker of Array.isArray(markers) ? markers : []) {
     if (!marker?.key) continue;
-    if (marker.defaultVisible === false) {
-      next[marker.key] = false;
-    }
+    next[marker.key] = false;
   }
   return next;
 }
@@ -109,9 +113,7 @@ export function reconcileMarkerVisibility({
       next[marker.key] = explicitValue;
       continue;
     }
-    if (marker.defaultVisible === false) {
-      next[marker.key] = false;
-    }
+    next[marker.key] = false;
   }
 
   return next;

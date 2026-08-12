@@ -4,6 +4,28 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## Unreleased
+
+### Added
+- **In-app feature requests** - The feedback modal now submits structured feature requests alongside bug reports, with request-specific prompts and GitHub labels
+- **Studio appearance presets** - Appearance settings now include 12 full-workbench palettes, instant unsaved preview, and independent System, Light, and Dark color schemes
+- **Automatic EUP template generation** - Template Generator now accepts `.ydd` clothing models, uses EUP UV/material behavior, omits vehicle-only PSD layers, and exports separate templates for multi-drawable dictionaries
+
+### Changed
+- **Feedback modal flow** - Bug reports now start with a clearer report-type choice, use a compact fixed action footer, and blur the workspace heavily without a dialog shadow
+- **First-run setup** - Replaced the multi-step Getting Started wizard with one focused destination choice, Home-first launch, and optional inline preference customization
+- **Settings workspace** - Reorganized Settings into compact task groups, moved experimental access into About, and reduced repeated navigation and version details
+- **Experimental settings** - Removed the Beta badge from the Experimental section header
+- **Viewer control panels** - Removed the duplicated workflow summary and decorative step labels so each panel starts with its actionable tabs and controls
+- **Format-aware template pipeline** - Template maps now preserve their real `yft`/`ydd` source type and select UV channels, preview targeting, and mesh scope according to the loaded model format
+- **Mode-aware control panel** - Livery, All Textures, EUP, and Multi now use workflow-specific sidebar hierarchy, while Scene lighting adds direct drag positioning, keyboard adjustment, precision sliders, and quick lighting presets
+
+### Fixed
+- **Active tab seam** - Active tabs now stay visually fused to their workspace after opening and switching tabs
+- **Theme-aware controls** - Buttons, toggles, focus states, and translucent workbench accents now follow the active Studio palette instead of retaining the Roan clay color
+
+---
+
 ## [4.0.0] - 2026-07-02 — ROAN
 
 > Named after the Roan Mountains / Roan Highlands on the Tennessee–North Carolina border.
