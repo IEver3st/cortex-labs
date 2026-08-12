@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout release source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
@@ -94,9 +94,8 @@ jobs:
           releaseBody: ${{ steps.release.outputs.notes }}
           releaseDraft: ${{ steps.release.outputs.release_draft }}
           prerelease: false
-          uploadUpdaterJson: true
+          includeUpdaterJson: true
           updaterJsonPreferNsis: true
-          uploadUpdaterSignatures: true
           retryAttempts: 2
           tauriScript: bun tauri
           args: --target x86_64-pc-windows-msvc
