@@ -329,27 +329,23 @@ async fn inspect_updater_release(endpoint: String) -> Result<serde_json::Value, 
             .json::<UpdaterFeed>()
             .map_err(|e| format!("Failed to parse updater feed: {e}"))?;
 
-        let version = feed
-            .version
-            .and_then(|value| {
-                let trimmed = value.trim().to_string();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed)
-                }
-            });
+        let version = feed.version.and_then(|value| {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
 
-        let pub_date = feed
-            .pub_date
-            .and_then(|value| {
-                let trimmed = value.trim().to_string();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed)
-                }
-            });
+        let pub_date = feed.pub_date.and_then(|value| {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
 
         let url = feed.platforms.and_then(|platforms| {
             platforms.into_values().find_map(|platform| {
@@ -1078,12 +1074,12 @@ struct BugReportResult {
 
 #[tauri::command]
 async fn submit_bug_report(payload: BugReportIssuePayload) -> Result<BugReportResult, String> {
-    let token = std::env::var("GITHUB_TOKEN")
-        .map_err(|_| "GITHUB_TOKEN is not configured.".to_string())?;
-    let owner = std::env::var("GITHUB_OWNER")
-        .map_err(|_| "GITHUB_OWNER is not configured.".to_string())?;
-    let repo = std::env::var("GITHUB_REPO")
-        .map_err(|_| "GITHUB_REPO is not configured.".to_string())?;
+    let token =
+        std::env::var("GITHUB_TOKEN").map_err(|_| "GITHUB_TOKEN is not configured.".to_string())?;
+    let owner =
+        std::env::var("GITHUB_OWNER").map_err(|_| "GITHUB_OWNER is not configured.".to_string())?;
+    let repo =
+        std::env::var("GITHUB_REPO").map_err(|_| "GITHUB_REPO is not configured.".to_string())?;
 
     tauri::async_runtime::spawn_blocking(move || {
         let client = reqwest::blocking::Client::builder()
@@ -1213,7 +1209,8 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
     use flate2::read::GzDecoder;
     use std::io::Read;
 
-    let file_meta = std::fs::metadata(&path).map_err(|e| format!("Failed to stat PDN file: {e}"))?;
+    let file_meta =
+        std::fs::metadata(&path).map_err(|e| format!("Failed to stat PDN file: {e}"))?;
     if file_meta.len() > MAX_PDN_FILE_BYTES {
         return Err(format!(
             "PDN file exceeds safety limit ({} bytes > {} bytes).",
@@ -1237,7 +1234,9 @@ fn decode_pdn(path: String) -> Result<serde_json::Value, String> {
     if width == 0 || height == 0 || width > MAX_PDN_DIMENSION || height > MAX_PDN_DIMENSION {
         return Err(format!("Invalid PDN dimensions: {width}x{height}"));
     }
-    let initial_expected_size = (width as usize).saturating_mul(height as usize).saturating_mul(4);
+    let initial_expected_size = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4);
     if initial_expected_size == 0 || initial_expected_size > MAX_PDN_OUTPUT_BYTES {
         return Err(format!(
             "PDN image dimensions exceed safety output limit ({} bytes > {} bytes).",
@@ -1586,7 +1585,9 @@ fn load_dotenv() {
     let candidates = [
         PathBuf::from(".env"),
         PathBuf::from("../.env"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join(".env"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(".env"),
     ];
 
     for path in &candidates {

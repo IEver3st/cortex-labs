@@ -193,6 +193,10 @@ bun run dev
 bun run tauri build
 ```
 
+### Releasing
+
+After committing a versioned release on `main`, run `bun run release`. GitHub Actions builds, signs, uploads, verifies, and publishes the Windows release; see [docs/RELEASING.md](docs/RELEASING.md) for the one-time signing setup and failure behavior.
+
 ---
 
 ## Workflow Tips
