@@ -14,6 +14,7 @@ import Onboarding from "./components/Onboarding";
 import SettingsMenu from "./components/SettingsMenu";
 import WhatsNew from "./components/WhatsNew";
 import BugReportModal from "./components/BugReportModal";
+import UpdateToolbarControl from "./components/UpdateToolbarControl";
 import * as Ctx from "./components/ContextMenu";
 import appMeta from "../package.json";
 import cortexLogo from "../src-tauri/icons/cortex-logo.svg";
@@ -569,10 +570,11 @@ export default function Shell() {
 
   const isToolbarWindowDragTarget = useCallback((target) => {
     if (!(target instanceof Element)) return false;
+    if (!isWindowDragGestureTarget(target)) return false;
     if (target.closest(".shell-new-tab-menu")) return false;
     if (target.closest(".settings-page")) return false;
     return true;
-  }, []);
+  }, [isWindowDragGestureTarget]);
 
   const clearToolbarDragGesture = useCallback(() => {
     toolbarDragGestureRef.current = null;
@@ -928,6 +930,8 @@ export default function Shell() {
 
               </Ctx.Content>
             </Ctx.Root>
+
+            <UpdateToolbarControl />
 
             <div className="settings-anchor">
               <motion.button

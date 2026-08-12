@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import Shell from "./Shell";
+import TooltipProvider from "./components/TooltipProvider";
 import "./index.css";
 import { loadPrefs } from "./lib/prefs";
 import { installConsoleLogCapture } from "./lib/console-log-buffer";
@@ -19,5 +20,6 @@ installConsoleLogCapture();
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <Shell />
+    <TooltipProvider />
   </React.StrictMode>,
 );

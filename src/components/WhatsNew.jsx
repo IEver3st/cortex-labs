@@ -107,10 +107,11 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
   }, [forceOpen]);
 
   const handleDismiss = useCallback(() => {
+    clearCopyTimer();
     setVisible(false);
     if (!isManual) markWhatsNewSeen();
     onClose?.();
-  }, [isManual, onClose]);
+  }, [clearCopyTimer, isManual, onClose]);
 
   useEffect(() => {
     if (!visible) return undefined;

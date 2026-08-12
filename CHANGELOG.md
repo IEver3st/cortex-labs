@@ -7,6 +7,7 @@ All notable changes to Cortex Studio are documented here.
 ## Unreleased
 
 ### Changed
+- **Automatic toolbar updates** - Available releases now download immediately with visible toolbar progress, then become a single restart action that installs the staged update and reopens Cortex Studio
 - **Toolbar cleanup** - Removed the permanent Getting Started shortcut after initial setup while preserving the first-run onboarding flow
 - **Template Generator workbench** - Rebuilt the empty and loaded experiences around a compact inspector, dominant model canvas, optional Model/Template/Split views, contextual marker actions, and theme-aware Studio controls
 - **Model preview free camera** - WASD now follows the camera through full 3D space, right-mouse mouse-look rotates in place, Q/E adjusts elevation, and Alt/Shift provide precision and boosted movement without hijacking keys outside the focused preview
@@ -14,6 +15,8 @@ All notable changes to Cortex Studio are documented here.
 
 ### Fixed
 - **Interface scale adjustment** - Getting Started now previews slider values locally and applies the app-wide scale only after the interaction ends, keeping the control stable while dragging or using the keyboard
+- **Preview export folder action** - The Preview Complete dialog now opens the saved image destination reliably and keeps folder-opening errors visible in the dialog
+- **Theme-aware tooltips** - Replaced native browser hover labels with compact Studio tooltips that follow the active palette, keyboard focus, reduced-motion preferences, and viewport edges
 
 ---
 

@@ -1271,6 +1271,7 @@ function ViewerComponent({
       fitRef,
       requestRenderRef,
       domElement: rendererRef.current?.domElement,
+      isActiveRef,
     });
   }, [sceneReady, wasdEnabled]);
 

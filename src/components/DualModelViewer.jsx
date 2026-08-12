@@ -669,6 +669,7 @@ export default function DualModelViewer({
       fitRef,
       requestRenderRef,
       domElement: rendererRef.current?.domElement,
+      isActiveRef,
     });
   }, [sceneReady, wasdEnabled]);
 

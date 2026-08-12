@@ -2557,6 +2557,12 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
   box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.5);
 }
 
+.viewer-shell canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .viewer-shell canvas:focus-visible {
   outline: 1px solid var(--mg-primary);
   outline-offset: -2px;
@@ -2701,31 +2707,6 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
   text-align: center;
 }
 
-.update-toast {
-  position: absolute;
-  bottom: calc(56px * var(--es-ui-scale));
-  right: calc(12px * var(--es-ui-scale));
-  z-index: 50;
-  pointer-events: auto;
-}
-
-.update-toast-content {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  width: calc(300px * var(--es-ui-scale));
-  padding: calc(20px * var(--es-ui-scale));
-  gap: calc(16px * var(--es-ui-scale));
-
-  border-radius: var(--es-radius-control);
-  background: #FCFAF8;
-  border: 1px solid rgba(31, 30, 29, 0.08);
-
-  font-family: var(--font-hud);
-  font-size: calc(11px * var(--es-ui-scale));
-  letter-spacing: 0.04em;
-}
-
 .titlebar-controls--mac {
   display: inline-flex;
   align-items: center;
@@ -2795,90 +2776,6 @@ input[type="range"].range-sm:focus-visible::-webkit-slider-thumb {
 .mac-max::before {
   content: "+";
   font-size: 10px;
-}
-
-.update-toast-header {
-  display: flex;
-  flex-direction: column;
-  gap: calc(6px * var(--es-ui-scale));
-  width: 100%;
-}
-
-.update-toast-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.update-toast-label {
-  text-transform: uppercase;
-  color: #ffffff;
-  font-size: calc(10px * var(--es-ui-scale));
-  letter-spacing: 0.1em;
-  font-weight: 700;
-}
-
-.update-toast-version {
-  color: var(--es-info);
-  background: rgba(14, 165, 233, 0.1);
-  padding: 2px 6px;
-  border-radius: 0;
-  font-weight: 600;
-  font-size: calc(10px * var(--es-ui-scale));
-}
-
-.update-toast-desc {
-  color: rgba(31, 30, 29, 0.6);
-  font-size: calc(11.5px * var(--es-ui-scale));
-  line-height: 1.4;
-}
-
-.update-toast-footer {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-top: calc(4px * var(--es-ui-scale));
-}
-
-.update-toast-dismiss-btn {
-  background: transparent;
-  border: none;
-  padding: 4px 0;
-  color: rgba(31, 30, 29, 0.4);
-  font-family: var(--font-hud);
-  font-size: calc(10.5px * var(--es-ui-scale));
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-.update-toast-dismiss-btn:hover {
-  color: rgba(31, 30, 29, 0.8);
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
-
-.update-toast-link-blue {
-  color: var(--es-info);
-  font-weight: 500;
-}
-
-.update-toast-link-blue:hover {
-  color: #a5e4ff;
-}
-
-.status-strip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: calc(10px * var(--es-ui-scale));
-  color: rgba(90, 85, 79, 0.55);
-  padding: 0;
-  border-radius: 0;
-  border: none;
-  background: transparent;
 }
 
 .status-dot {
@@ -3795,7 +3692,21 @@ label {
   font-size: calc(11px * var(--es-ui-scale));
   border: 1px solid transparent;
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s,
+    color 0.15s,
+    opacity 0.15s,
+    transform 0.15s;
+}
+
+.gen-preview-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.gen-preview-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .gen-preview-btn--open {
@@ -3818,6 +3729,15 @@ label {
 .gen-preview-btn--close:hover {
   background: rgba(31, 30, 29, 0.08);
   color: rgba(90, 85, 79, 0.9);
+}
+
+.gen-preview-error {
+  max-width: 360px;
+  color: var(--es-danger);
+  font-family: var(--font-hud);
+  font-size: calc(10px * var(--es-ui-scale));
+  line-height: 1.45;
+  text-align: center;
 }
 
 /* Preview Zoom Prompt */
@@ -4616,7 +4536,7 @@ html.dark .gen-preview-btn--close:hover {
   background: var(--mg-primary);
   border-radius: 2px;
   min-width: 0;
-  will-change: width;
+  transition: width 180ms ease-out;
 }
 
 .settings-update-progress-pct {
@@ -5085,6 +5005,242 @@ html.dark .gen-preview-btn--close:hover {
   width: 16px;
   min-width: 8px;
   height: 100%;
+}
+
+/* -- Update lifecycle -- */
+.shell-update-slot {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  width: calc(170px * var(--es-ui-scale));
+  height: 100%;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-right: calc(4px * var(--es-ui-scale));
+  -webkit-app-region: no-drag;
+}
+
+.shell-update-control {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: calc(27px * var(--es-ui-scale));
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: calc(6px * var(--es-ui-scale));
+  overflow: hidden;
+  padding: 0 calc(9px * var(--es-ui-scale));
+  border: 1px solid color-mix(in srgb, var(--mg-primary) 28%, var(--mg-border));
+  border-radius: calc(4px * var(--es-ui-scale));
+  background: color-mix(in srgb, var(--mg-primary) 8%, var(--mg-surface));
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: calc(8.5px * var(--es-ui-scale));
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+  transition:
+    background-color 140ms ease-out,
+    border-color 140ms ease-out,
+    color 140ms ease-out;
+}
+
+button.shell-update-control {
+  cursor: pointer;
+}
+
+.shell-update-control:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mg-primary) 72%, white);
+  outline-offset: -2px;
+}
+
+.shell-update-control-content {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: calc(6px * var(--es-ui-scale));
+}
+
+.shell-update-icon {
+  width: calc(12px * var(--es-ui-scale));
+  height: calc(12px * var(--es-ui-scale));
+  flex: 0 0 auto;
+}
+
+.shell-update-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell-update-version {
+  color: var(--mg-muted);
+  font-size: calc(7.5px * var(--es-ui-scale));
+}
+
+.shell-update-percent {
+  min-width: calc(28px * var(--es-ui-scale));
+  margin-left: auto;
+  color: var(--mg-primary);
+  text-align: right;
+}
+
+.shell-update-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--mg-primary) 13%, transparent);
+}
+
+.shell-update-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--mg-primary);
+  transition: width 180ms ease-out;
+}
+
+.shell-update-control.is-ready {
+  border-color: var(--mg-primary);
+  background: var(--mg-primary);
+  color: #fffaf6;
+}
+
+.shell-update-control.is-ready.has-error {
+  border-color: var(--mg-destructive);
+  background: var(--mg-destructive);
+}
+
+.shell-update-control.is-installing {
+  cursor: wait;
+  border-color: color-mix(in srgb, var(--mg-primary) 38%, var(--mg-border));
+  color: var(--mg-primary);
+  opacity: 1;
+}
+
+.shell-update-control.is-error {
+  border-color: color-mix(in srgb, var(--mg-destructive) 42%, var(--mg-border));
+  background: color-mix(in srgb, var(--mg-destructive) 9%, var(--mg-surface));
+  color: var(--mg-destructive);
+}
+
+.shell-update-spinner {
+  animation: shell-update-spin 900ms linear infinite;
+}
+
+.shell-update-control.is-indeterminate .shell-update-progress-fill,
+.settings-update-progress-fill.is-indeterminate {
+  animation: shell-update-indeterminate 1.1s ease-in-out infinite;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .shell-update-control.is-ready:hover {
+    border-color: color-mix(in srgb, var(--mg-primary) 86%, black);
+    background: color-mix(in srgb, var(--mg-primary) 86%, black);
+  }
+
+  .shell-update-control.is-ready.has-error:hover {
+    border-color: color-mix(in srgb, var(--mg-destructive) 86%, black);
+    background: color-mix(in srgb, var(--mg-destructive) 86%, black);
+  }
+
+  .shell-update-control.is-error:hover {
+    border-color: var(--mg-destructive);
+    background: color-mix(in srgb, var(--mg-destructive) 15%, var(--mg-surface));
+  }
+}
+
+@media (max-width: 1080px) {
+  .shell-update-slot {
+    width: calc(128px * var(--es-ui-scale));
+  }
+
+  .shell-update-version {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell-update-slot {
+    width: calc(70px * var(--es-ui-scale));
+  }
+
+  .shell-update-control {
+    padding-inline: calc(7px * var(--es-ui-scale));
+  }
+
+  .shell-update-control:not(.is-downloading) .shell-update-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .shell-update-control.is-downloading .shell-update-label {
+    display: none;
+  }
+}
+
+@keyframes shell-update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shell-update-indeterminate {
+  from {
+    transform: translateX(-115%);
+  }
+  to {
+    transform: translateX(270%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-update-spinner,
+  .shell-update-control.is-indeterminate .shell-update-progress-fill,
+  .settings-update-progress-fill.is-indeterminate {
+    animation: none;
+  }
+
+  .shell-update-control.is-indeterminate .shell-update-progress-fill,
+  .settings-update-progress-fill.is-indeterminate {
+    width: 100% !important;
+    opacity: 0.55;
+    transform: none;
+  }
+
+  .shell-update-progress-fill,
+  .settings-update-progress-fill {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .shell-update-control {
+    border-color: ButtonText;
+  }
+
+  .shell-update-control:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .shell-update-progress-fill,
+  .settings-update-progress-fill {
+    background: Highlight;
+  }
 }
 
 /* -- Context portal -- */
@@ -14873,13 +15029,58 @@ a {
   animation: shimmer 1.8s ease-in-out infinite;
 }
 
-/* ── Tooltip Fade ── */
+/* ── Studio Tooltips ── */
 
-[data-tooltip]::after,
-[data-tooltip]::before {
-  transition:
-    opacity 0.18s var(--ease-smooth),
-    transform 0.18s var(--ease-smooth);
+.studio-tooltip {
+  position: fixed;
+  z-index: 10000;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 5px 7px;
+  border: 1px solid color-mix(in srgb, var(--mg-fg) 14%, var(--mg-border));
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--mg-input-bg) 92%, var(--mg-surface));
+  color: var(--mg-fg);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--mg-fg) 13%, transparent);
+  font-family: var(--font-main);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  white-space: pre-line;
+  animation: studio-tooltip-in 120ms var(--ease-out-quart) both;
+}
+
+.studio-tooltip[data-placement="bottom"] {
+  --studio-tooltip-enter-y: -2px;
+  transform-origin: top center;
+}
+
+.studio-tooltip[data-placement="top"] {
+  --studio-tooltip-enter-y: 2px;
+  transform-origin: bottom center;
+}
+
+@keyframes studio-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--studio-tooltip-enter-y, -2px));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (forced-colors: active) {
+  .studio-tooltip {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
 }
 
 /* ── Stagger Animation Utility Classes ── */
@@ -16041,18 +16242,6 @@ html.dark .home-page {
    Follows the Home hierarchy: structural regions, compact rows, one accent.
    ========================================================================== */
 
-.studio-lighting-kicker {
-  display: block;
-  color: var(--mg-muted);
-  font-family: var(--font-hud);
-  font-size: 8px;
-  font-weight: 500;
-  line-height: 1.2;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  opacity: 0.78;
-}
-
 .cyber-tab-rail {
   min-height: 35px;
   background: var(--mg-bg);
@@ -16333,22 +16522,7 @@ html.dark .cyber-tab-btn--active {
 .studio-lighting-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.studio-lighting-lead {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
   gap: 10px;
-}
-
-.studio-lighting-lead p {
-  margin: 0;
-  color: var(--mg-muted);
-  font-family: var(--font-main);
-  font-size: 8.5px;
-  line-height: 1.4;
 }
 
 .cs-light-control {
@@ -16359,14 +16533,11 @@ html.dark .cyber-tab-btn--active {
 
 .cs-light-instrument {
   display: grid;
-  grid-template-columns: minmax(104px, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(104px, 0.75fr) minmax(0, 1.25fr);
   align-items: center;
-  gap: 12px;
+  gap: 18px;
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--mg-border);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--mg-surface) 34%, transparent);
+  padding: 2px 4px 4px;
 }
 
 .cs-light-field {
@@ -16405,13 +16576,6 @@ html.dark .cyber-tab-btn--active {
   fill: color-mix(in srgb, var(--mg-fg) 1.5%, transparent);
   stroke: color-mix(in srgb, var(--mg-fg) 34%, transparent);
   stroke-width: 0.7px;
-}
-
-.cs-light-dome-contour {
-  fill: none;
-  stroke: color-mix(in srgb, var(--mg-fg) 16%, transparent);
-  stroke-width: 0.4px;
-  stroke-dasharray: 1.4 2.2;
 }
 
 .cs-light-dome-axis {
@@ -16454,69 +16618,16 @@ html.dark .cyber-tab-btn--active {
   stroke-width: 0.7px;
 }
 
-.cs-light-field-hint {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  text-align: center;
-  color: var(--mg-muted);
-  font-family: var(--font-hud);
-  font-size: 6.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  opacity: 0.62;
-  pointer-events: none;
-}
-
 .cs-light-tuning {
+  width: 100%;
   min-width: 0;
-}
-
-.cs-light-direction-summary {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 6px;
-  margin-bottom: 9px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--mg-border);
-}
-
-.cs-light-direction-label {
-  color: var(--mg-muted);
-  font-family: var(--font-hud);
-  font-size: 7px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.72;
-}
-
-.cs-light-direction-summary strong {
-  color: var(--mg-fg);
-  font-family: var(--font-main);
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1;
-}
-
-.cs-light-direction-angles {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--mg-muted);
-  font-family: var(--font-hud);
-  font-size: 7.5px;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  opacity: 0.76;
+  align-self: center;
 }
 
 .cs-light-axes {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
 }
 
 .cs-light-axis-control {

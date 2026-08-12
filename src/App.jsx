@@ -7,7 +7,6 @@ import { listen } from "@tauri-apps/api/event";
 import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
 // Window controls handled by Shell
 import { AlertTriangle, ArrowUpRight, Box, Boxes, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun, FlaskConical, RefreshCw } from "lucide-react";
-import { useUpdateChecker } from "./lib/updater";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
 import Onboarding from "./components/Onboarding";
 // SettingsMenu now rendered by Shell
@@ -190,8 +189,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
     typeof window.__TAURI_INTERNALS__?.invoke === "function";
 
-  const update = useUpdateChecker();
-
   const [defaults, setDefaults] = useState(() => getInitialDefaults());
   const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
@@ -352,6 +349,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [previewProgress, setPreviewProgress] = useState({ current: 0, total: 0, preset: "" });
   const [previewComplete, setPreviewComplete] = useState(false);
   const [previewOutputPath, setPreviewOutputPath] = useState("");
+  const [previewFolderOpening, setPreviewFolderOpening] = useState(false);
+  const [previewFolderOpenError, setPreviewFolderOpenError] = useState("");
   const [previewPromptOpen, setPreviewPromptOpen] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomDraft, setPreviewZoomDraft] = useState(1);
@@ -1345,6 +1344,40 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     return await resolveExistingPreviewFolderPath(preferredPath, fallbackPath, fsExists);
   }, [isTauriRuntime]);
 
+  const handleOpenPreviewFolder = useCallback(async () => {
+    if (previewFolderOpening) return;
+
+    setPreviewFolderOpenError("");
+    if (!isTauriRuntime) {
+      setPreviewFolderOpenError("Open Folder is only available in the Cortex Studio desktop app.");
+      return;
+    }
+
+    const prefs = loadPrefs() || {};
+    const fallbackFolder = prefs?.defaults?.previewFolder || "";
+    const targetFolder = await resolveExistingFolder(previewOutputPath, fallbackFolder);
+    if (!targetFolder) {
+      setPreviewFolderOpenError("The preview export folder could not be found. Choose it again before the next capture.");
+      return;
+    }
+
+    setPreviewFolderOpening(true);
+    try {
+      const opened = await openFolderPath(targetFolder);
+      if (!opened) {
+        setPreviewFolderOpenError("Windows could not open the preview export folder. The saved images are still available at the selected destination.");
+        return;
+      }
+
+      setPreviewComplete(false);
+    } catch (error) {
+      console.error("Failed to open preview folder:", targetFolder, error);
+      setPreviewFolderOpenError("Windows could not open the preview export folder. The saved images are still available at the selected destination.");
+    } finally {
+      setPreviewFolderOpening(false);
+    }
+  }, [isTauriRuntime, previewFolderOpening, previewOutputPath, resolveExistingFolder]);
+
   const ensurePreviewFolderReady = useCallback(async () => {
     const prefs = loadPrefs() || {};
     const savedFolder = prefs?.defaults?.previewFolder || "";
@@ -1469,6 +1502,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
       const resolvedOutputFolder = await resolveExistingFolder(outputFolder, folder);
       setPreviewOutputPath(resolvedOutputFolder);
+      setPreviewFolderOpenError("");
       setPreviewProgress({ current: presetKeys.length, total: presetKeys.length, preset: "Complete" });
       setGeneratingPreview(false);
       setPreviewComplete(true);
@@ -2929,7 +2963,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           {/* ── Scene Lighting ── */}
           <CyberSection
             title="Lighting"
-            caption={`${Math.round(lightAzimuth)}° / ${Math.round(lightElevation)}°`}
             open={panelOpen.lighting}
             onToggle={() => togglePanel("lighting")}
             contentId="panel-lighting"
@@ -2937,10 +2970,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             color="yellow"
           >
               <div className="studio-lighting-panel">
-                <div className="studio-lighting-lead">
-                  <span className="studio-lighting-kicker">// Key light</span>
-                  <p>Drag the source around the hemisphere and watch the preview respond in real time.</p>
-                </div>
                 <LightDome
                   azimuth={lightAzimuth}
                   elevation={lightElevation}
@@ -3135,6 +3164,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             onModelAInfo={handleDualModelAInfo}
             onModelBInfo={handleDualModelBInfo}
             onFormatWarning={handleFormatWarning}
+            isActive={isActive}
           />
         ) : (
           <Viewer
@@ -3182,6 +3212,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             onWindowTextureError={handleWindowTextureError}
             onFormatWarning={handleFormatWarning}
             onNativeMaterialsStatus={handleNativeMaterialsStatus}
+            isActive={isActive}
           />
         )}
 
@@ -3199,60 +3230,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
             <span><kbd>LMB</kbd>: Orbit · Scroll: Zoom</span>
           </div>
         ) : null}
-
-        {/* Update notification toast */}
-        <AnimatePresence>
-          {update.available && !update.dismissed ? (
-            <motion.div
-              className="update-toast"
-              initial={{ opacity: 0, y: 20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.97 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <div className="update-toast-content">
-                <div className="update-toast-header">
-                  <div className="update-toast-title-row">
-                    <span className="update-toast-label">Update available</span>
-                    <span className="update-toast-version">v{update.latest}</span>
-                  </div>
-                  <div className="update-toast-desc">
-                    A new version of Cortex Studio is available to download. Would you like to download it now?
-                  </div>
-                </div>
-                
-                <div className="update-toast-footer status-strip">
-                  <button
-                    type="button"
-                    className="update-toast-dismiss-btn update-toast-link-blue"
-                    disabled={update.installing}
-                    onClick={async () => {
-                      const installed = await update.install();
-                      if (installed) {
-                        showToast("Update installed. Restart Cortex Studio to finish.");
-                      }
-                    }}
-                  >
-                    {update.installing
-                      ? `Installing...${update.progressPercent > 0 ? ` ${update.progressPercent}%` : ""}`
-                      : "Download & Install"}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="update-toast-dismiss-btn"
-                    onClick={update.dismiss}
-                  >
-                    Not now
-                  </button>
-                </div>
-                {update.error ? (
-                  <div className="update-toast-desc text-[var(--es-danger)] pt-2">{update.error}</div>
-                ) : null}
-              </div>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
 
         {/* Action toasts */}
         <div className="cs-toast-stack">
@@ -3625,33 +3602,21 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               <div className="gen-preview-sub">
                 {previewExportCount} screenshot{previewExportCount === 1 ? "" : "s"} exported successfully
               </div>
+              {previewFolderOpenError ? (
+                <div className="gen-preview-error" role="alert">
+                  {previewFolderOpenError}
+                </div>
+              ) : null}
               <div className="gen-preview-actions">
                 <button
                   type="button"
                   className="gen-preview-btn gen-preview-btn--open"
-                  onClick={async () => {
-                    if (isTauriRuntime && previewOutputPath) {
-                      const prefs = loadPrefs() || {};
-                      const fallbackFolder = prefs?.defaults?.previewFolder || "";
-                      const targetFolder = await resolveExistingFolder(previewOutputPath, fallbackFolder);
-                      if (!targetFolder) {
-                        showToast("Preview export folder no longer exists. Choose a new folder before capturing again.");
-                        return;
-                      }
-
-                      const opened = await openFolderPath(targetFolder);
-                      if (!opened) {
-                        console.error("Failed to open preview folder:", targetFolder);
-                        showToast("Failed to open the preview export folder.");
-                        return;
-                      }
-
-                      setPreviewComplete(false);
-                    }
-                  }}
+                  disabled={previewFolderOpening}
+                  aria-busy={previewFolderOpening}
+                  onClick={handleOpenPreviewFolder}
                 >
                   <FolderOpen className="w-3.5 h-3.5" />
-                  Open Folder
+                  {previewFolderOpening ? "Opening..." : "Open Folder"}
                 </button>
                 <button
                   type="button"

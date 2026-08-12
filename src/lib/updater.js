@@ -4,9 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import tauriConfig from "../../src-tauri/tauri.conf.json";
+import { createDownloadMetrics, reduceDownloadEvent } from "./updater-state";
 
 const CHECK_INTERVAL = 30 * 60 * 1000;
-const INITIAL_DELAY_MS = 5000;
 const IS_DEV = typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
 const UPDATER_ENDPOINT = tauriConfig?.plugins?.updater?.endpoints?.[0] ?? "";
 
@@ -14,12 +14,15 @@ const INITIAL_STATE = {
   available: false,
   latest: null,
   notes: "",
+  downloading: false,
+  downloaded: false,
+  installed: false,
   installing: false,
   checking: false,
   progressPercent: 0,
+  progressKnown: false,
   error: "",
   lastChecked: null,
-  dismissed: false,
   currentVersion: null,
   publishedLatest: null,
   statusKind: "idle",
@@ -31,10 +34,10 @@ const store = {
   listeners: new Set(),
   initialized: false,
   timerId: null,
-  initialDelayId: null,
   update: null,
-  downloadedBytes: 0,
-  totalBytes: 0,
+  downloadMetrics: createDownloadMetrics(),
+  downloadInFlight: null,
+  installInFlight: null,
   checkInFlight: false,
   currentVersionPromise: null,
 };
@@ -167,7 +170,7 @@ function mapUpdateCheckError(error) {
   return "Unable to reach update server.";
 }
 
-function mapInstallError(error) {
+function mapDownloadError(error) {
   const message = String(error || "").toLowerCase();
 
   if (message.includes("404")) {
@@ -183,7 +186,15 @@ function mapInstallError(error) {
     return "Update download failed. Check latest.json URL and release assets.";
   }
 
-  return "Update installed but relaunch failed. Please restart Cortex Studio manually.";
+  return "Update download failed. Check your connection and try again.";
+}
+
+function mapInstallError(error) {
+  const message = String(error || "").toLowerCase();
+  if (message.includes("signature")) {
+    return "Update package signature verification failed.";
+  }
+  return "Update could not be installed. Try again or restart Cortex Studio manually.";
 }
 
 function isInvalidReleaseJsonError(error) {
@@ -193,7 +204,7 @@ function isInvalidReleaseJsonError(error) {
 
 async function runCheck({ manual = false } = {}) {
   if (!isTauriRuntime()) return;
-  if (store.checkInFlight) return;
+  if (store.checkInFlight || store.state.available) return;
 
   store.checkInFlight = true;
   setStoreState((prev) => ({
@@ -217,9 +228,13 @@ async function runCheck({ manual = false } = {}) {
         available: true,
         latest: update.version ?? null,
         notes: update.body ?? "",
+        downloading: true,
+        downloaded: false,
+        installed: false,
         installing: false,
         checking: false,
         progressPercent: 0,
+        progressKnown: false,
         error: "",
         lastChecked: Date.now(),
         currentVersion: resolvedCurrentVersion,
@@ -227,6 +242,7 @@ async function runCheck({ manual = false } = {}) {
         statusKind: "available",
         statusNote: "",
       });
+      void downloadUpdate();
     } else {
       const diagnostics = await inspectPublishedRelease(currentVersion ?? store.state.currentVersion);
       emit({
@@ -234,9 +250,13 @@ async function runCheck({ manual = false } = {}) {
         available: false,
         latest: null,
         notes: "",
+        downloading: false,
+        downloaded: false,
+        installed: false,
         installing: false,
         checking: false,
         progressPercent: 0,
+        progressKnown: false,
         error: "",
         lastChecked: Date.now(),
         currentVersion: currentVersion ?? store.state.currentVersion,
@@ -268,84 +288,128 @@ function ensureUpdaterInitialized() {
 
   if (IS_DEV) return;
 
-  store.initialDelayId = setTimeout(() => {
-    runCheck({ manual: false });
-  }, INITIAL_DELAY_MS);
+  void runCheck({ manual: false });
 
   store.timerId = setInterval(() => {
     runCheck({ manual: false });
   }, CHECK_INTERVAL);
 }
 
-function dismissUpdateNotice() {
-  setStoreState((prev) => ({ ...prev, dismissed: true }));
+async function downloadUpdate() {
+  if (!isTauriRuntime()) return false;
+  const update = store.update;
+  if (!update) return false;
+  if (store.downloadInFlight) return store.downloadInFlight;
+
+  const task = (async () => {
+    store.downloadMetrics = createDownloadMetrics();
+
+    setStoreState((prev) => ({
+      ...prev,
+      available: true,
+      downloading: true,
+      downloaded: false,
+      installed: false,
+      installing: false,
+      progressPercent: 0,
+      progressKnown: false,
+      error: "",
+    }));
+
+    try {
+      await update.download((event) => {
+        const previousMetrics = store.downloadMetrics;
+        const nextMetrics = reduceDownloadEvent(previousMetrics, event);
+        store.downloadMetrics = nextMetrics;
+
+        if (
+          nextMetrics.progressPercent !== previousMetrics.progressPercent ||
+          nextMetrics.progressKnown !== previousMetrics.progressKnown ||
+          event.event === "Started" ||
+          event.event === "Finished"
+        ) {
+          setStoreState((prev) => ({
+            ...prev,
+            progressPercent: nextMetrics.progressPercent,
+            progressKnown: nextMetrics.progressKnown,
+          }));
+        }
+      });
+
+      setStoreState((prev) => ({
+        ...prev,
+        downloading: false,
+        downloaded: true,
+        progressPercent: 100,
+        error: "",
+      }));
+      return true;
+    } catch (error) {
+      console.error("Failed to download update:", error);
+      setStoreState((prev) => ({
+        ...prev,
+        downloading: false,
+        downloaded: false,
+        progressPercent: 0,
+        progressKnown: false,
+        error: mapDownloadError(error),
+      }));
+      return false;
+    }
+  })();
+
+  store.downloadInFlight = task;
+  try {
+    return await task;
+  } finally {
+    if (store.downloadInFlight === task) store.downloadInFlight = null;
+  }
 }
 
 async function installUpdate() {
   if (!isTauriRuntime()) return false;
+  if (store.installInFlight) return store.installInFlight;
 
   const update = store.update;
-  if (!update) return false;
+  if (!update || (!store.state.downloaded && !store.state.installed)) return false;
 
-  store.downloadedBytes = 0;
-  store.totalBytes = 0;
-
-  setStoreState((prev) => ({
-    ...prev,
-    installing: true,
-    progressPercent: 0,
-    error: "",
-  }));
-
-  try {
-    await update.downloadAndInstall((event) => {
-      if (event.event === "Started") {
-        store.downloadedBytes = 0;
-        store.totalBytes = Number(event.data?.contentLength || 0);
-        setStoreState((prev) => ({ ...prev, progressPercent: 0 }));
-        return;
-      }
-
-      if (event.event === "Progress") {
-        store.downloadedBytes += Number(event.data?.chunkLength || 0);
-        const nextTotal = Number(event.data?.contentLength || store.totalBytes || 0);
-        if (nextTotal > 0) {
-          store.totalBytes = nextTotal;
-          const ratio = store.downloadedBytes / nextTotal;
-          const percent = Math.max(0, Math.min(100, Math.round(ratio * 100)));
-          setStoreState((prev) => ({ ...prev, progressPercent: percent }));
-        }
-        return;
-      }
-
-      if (event.event === "Finished") {
-        setStoreState((prev) => ({ ...prev, progressPercent: 100 }));
-      }
-    });
-
-    await relaunch();
-    store.update = null;
+  const task = (async () => {
     setStoreState((prev) => ({
       ...prev,
-      available: false,
-      latest: null,
-      notes: "",
-      installing: false,
-      checking: false,
-      progressPercent: 100,
+      installing: true,
       error: "",
-      dismissed: true,
     }));
-    return true;
-  } catch (error) {
-    console.error("Failed to install update:", error);
-    setStoreState((prev) => ({
-      ...prev,
-      installing: false,
-      dismissed: false,
-      error: mapInstallError(error),
-    }));
-    return false;
+
+    try {
+      if (!store.state.installed) {
+        await update.install();
+        setStoreState((prev) => ({
+          ...prev,
+          downloaded: false,
+          installed: true,
+        }));
+      }
+
+      await relaunch();
+      return true;
+    } catch (error) {
+      console.error("Failed to install or relaunch update:", error);
+      setStoreState((prev) => ({
+        ...prev,
+        installing: false,
+        error: prev.installed
+          ? "Update installed. Restart Cortex Studio manually to finish."
+          : mapInstallError(error),
+      }));
+      return false;
+    }
+  })();
+
+  store.installInFlight = task;
+  try {
+    return await task;
+  } finally {
+    if (store.installInFlight === task) store.installInFlight = null;
   }
 }
 
@@ -357,17 +421,17 @@ export function useUpdateChecker() {
     return subscribe(setState);
   }, []);
 
-  const dismiss = useCallback(() => {
-    dismissUpdateNotice();
-  }, []);
-
   const checkNow = useCallback(() => {
     runCheck({ manual: true });
+  }, []);
+
+  const download = useCallback(async () => {
+    return downloadUpdate();
   }, []);
 
   const install = useCallback(async () => {
     return installUpdate();
   }, []);
 
-  return { ...state, dismiss, install, checkNow };
+  return { ...state, download, install, checkNow };
 }

@@ -22,8 +22,6 @@ const CARDINALS = [
   { label: "W", degrees: 270 },
 ];
 
-const ELEVATION_RINGS = [30, 60];
-
 export default function LightDome({
   azimuth = 54,
   elevation = 46,
@@ -107,16 +105,6 @@ export default function LightDome({
           <svg viewBox="0 0 100 100" className="cs-light-dome-svg" aria-hidden="true" focusable="false">
             <circle className="cs-light-dome-surface" cx={LIGHT_DOME_CENTER} cy={LIGHT_DOME_CENTER} r={LIGHT_DOME_RADIUS} />
 
-            {ELEVATION_RINGS.map((degrees) => (
-              <circle
-                key={degrees}
-                className="cs-light-dome-contour"
-                cx={LIGHT_DOME_CENTER}
-                cy={LIGHT_DOME_CENTER}
-                r={((90 - degrees) / 90) * LIGHT_DOME_RADIUS}
-              />
-            ))}
-
             <line className="cs-light-dome-axis" x1="50" y1="10" x2="50" y2="90" />
             <line className="cs-light-dome-axis" x1="10" y1="50" x2="90" y2="50" />
 
@@ -152,16 +140,9 @@ export default function LightDome({
               <circle className="cs-light-dome-source-core" r="2.4" />
             </g>
           </svg>
-          <div className="cs-light-field-hint" aria-hidden="true">Drag light</div>
         </div>
 
         <div className="cs-light-tuning">
-          <div className="cs-light-direction-summary">
-            <span className="cs-light-direction-label">Direction</span>
-            <strong>{compassLabel}</strong>
-            <span className="cs-light-direction-angles">{azimuth}° az · {elevation}° el</span>
-          </div>
-
           <div className="cs-light-axes">
             <label className="cs-light-axis-control">
               <span className="cs-light-axis-header">

@@ -1304,7 +1304,7 @@ export default function SettingsMenu({
                                   ) : null}
 
                                   {/* Error state */}
-                                  {updater.error && !updater.checking ? (
+                                  {updater.error && !updater.checking && !updater.available ? (
                                     <div className="settings-update-status settings-update-status--error" role="alert">
                                       <AlertCircle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
                                       <div className="flex-1 min-w-0">
@@ -1325,36 +1325,75 @@ export default function SettingsMenu({
                                   {updater.available ? (
                                     <div className="settings-update-available">
                                       <div className="settings-update-available-header">
-                                        <Download className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
+                                        {updater.installing ? (
+                                          <motion.span
+                                            className="shrink-0"
+                                            animate={prefersReducedMotion ? { rotate: 0 } : { rotate: 360 }}
+                                            transition={prefersReducedMotion ? { duration: 0 } : { repeat: Infinity, duration: 1, ease: "linear" }}
+                                          >
+                                            <Loader className="h-3.5 w-3.5" style={{ color: 'var(--mg-primary)' }} />
+                                          </motion.span>
+                                        ) : updater.error ? (
+                                          <AlertCircle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
+                                        ) : updater.downloaded || updater.installed ? (
+                                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
+                                        ) : (
+                                          <Download className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
+                                        )}
                                         <div className="flex-1 min-w-0">
                                           <div className="text-[10px] font-medium" style={{ color: 'var(--mg-primary)' }}>
                                             Update available — v{updater.latest}
                                           </div>
                                           <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
-                                            {updater.installing ? "Downloading and installing..." : "Ready to install"}
+                                            {updater.installing
+                                              ? "Updating and reopening Cortex Studio..."
+                                              : updater.error
+                                                ? updater.error
+                                                : updater.installed
+                                                  ? "Installed. Restart Cortex Studio to finish."
+                                                  : updater.downloaded
+                                                    ? "Downloaded and ready to install"
+                                                    : "Downloading in the background..."}
                                           </div>
                                         </div>
-                                        {!updater.installing ? (
+                                        {!updater.installing && (updater.downloaded || updater.installed) ? (
                                           <button
                                             type="button"
                                             className="settings-update-install-btn"
                                             onClick={updater.install}
                                           >
-                                            Install
+                                            {updater.installed ? "Restart" : updater.error ? "Retry update" : "Restart to update"}
+                                          </button>
+                                        ) : updater.error && !updater.downloading ? (
+                                          <button
+                                            type="button"
+                                            className="settings-update-install-btn"
+                                            onClick={updater.download}
+                                          >
+                                            Retry download
                                           </button>
                                         ) : null}
                                       </div>
 
-                                      {updater.installing ? (
-                                        <div className="settings-update-progress">
+                                      {updater.downloading ? (
+                                        <div
+                                          className="settings-update-progress"
+                                          role="progressbar"
+                                          aria-label={`Downloading Cortex Studio v${updater.latest}`}
+                                          aria-valuemin={0}
+                                          aria-valuemax={100}
+                                          aria-valuenow={updater.progressKnown ? updater.progressPercent : undefined}
+                                          aria-valuetext={updater.progressKnown ? `${updater.progressPercent}% downloaded` : "Downloading update"}
+                                        >
                                           <div className="settings-update-progress-track">
-                                            <motion.div
-                                              className="settings-update-progress-fill"
-                                              animate={{ width: `${updater.progressPercent}%` }}
-                                              transition={{ duration: 0.3, ease: "easeOut" }}
+                                            <div
+                                              className={`settings-update-progress-fill ${updater.progressKnown ? "" : "is-indeterminate"}`.trim()}
+                                              style={{ width: updater.progressKnown ? `${updater.progressPercent}%` : "38%" }}
                                             />
                                           </div>
-                                          <span className="settings-update-progress-pct">{updater.progressPercent}%</span>
+                                          <span className="settings-update-progress-pct">
+                                            {updater.progressKnown ? `${updater.progressPercent}%` : "···"}
+                                          </span>
                                         </div>
                                       ) : null}
 

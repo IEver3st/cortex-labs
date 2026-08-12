@@ -1101,6 +1101,7 @@ export function setupWasdControls({
   fitRef,
   requestRenderRef,
   domElement,
+  isActiveRef,
 }) {
   const state = wasdStateRef.current;
   const controls = controlsRef.current;
@@ -1115,6 +1116,7 @@ export function setupWasdControls({
   const lookEuler = new THREE.Euler(0, 0, 0, "YXZ");
   let lookDistance = 1;
   let orbitEnabledBeforeLook = true;
+  let orbitDampingBeforeLook = true;
 
   state.precision = false;
   state.looking = false;
@@ -1141,10 +1143,14 @@ export function setupWasdControls({
   const isActive = () =>
     state.forward || state.back || state.left || state.right || state.up || state.down;
 
+  const isControlSurfaceActive = () => isActiveRef?.current !== false;
+
   const isEngaged = () =>
-    state.looking ||
-    document.pointerLockElement === domElement ||
-    document.activeElement === domElement;
+    isControlSurfaceActive() && (
+      state.looking ||
+      document.pointerLockElement === domElement ||
+      document.activeElement === domElement
+    );
 
   const stopLoop = () => {
     if (wasdFrameRef.current) {
@@ -1155,6 +1161,12 @@ export function setupWasdControls({
 
   let lastTime = 0;
   const tick = (time) => {
+    if (!isControlSurfaceActive()) {
+      resetKeys();
+      finishLooking({ releasePointerLock: true });
+      return;
+    }
+
     const delta = Math.min((time - lastTime) / 1000, 0.05);
     lastTime = time;
 
@@ -1244,6 +1256,7 @@ export function setupWasdControls({
     state.lookButtonDown = false;
     state.pointerLocked = false;
     domElement.classList.remove("is-fly-looking");
+    controls.enableDamping = orbitDampingBeforeLook;
     controls.enabled = orbitEnabledBeforeLook;
     if (releasePointerLock && document.pointerLockElement === domElement) {
       document.exitPointerLock?.();
@@ -1260,7 +1273,10 @@ export function setupWasdControls({
     state.lookButtonDown = true;
     state.looking = true;
     orbitEnabledBeforeLook = controls.enabled;
+    orbitDampingBeforeLook = controls.enableDamping;
     controls.enabled = false;
+    controls.enableDamping = false;
+    controls.update();
     lookDistance = THREE.MathUtils.clamp(
       camera.position.distanceTo(controls.target),
       Math.max((fitRef.current?.baseDistance || 1) * 0.05, 0.05),
