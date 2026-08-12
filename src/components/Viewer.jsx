@@ -1135,9 +1135,26 @@ function ViewerComponent({
             modelRef.current.rotateZ(angle);
             break;
           default:
-            break;
+            return;
         }
-        requestRenderRef.current?.();
+        modelRef.current.updateMatrixWorld(true);
+        const rotatedBounds = computeFramingBounds(
+          modelRef.current,
+          new THREE.Box3().setFromObject(modelRef.current),
+        );
+        if (rotatedBounds) {
+          fitRef.current = {
+            ...fitRef.current,
+            bounds: rotatedBounds.clone(),
+            center: rotatedBounds.getCenter(new THREE.Vector3()),
+          };
+          applyCameraFrame(
+            cameraStateRef.current.presetKey,
+            cameraStateRef.current.zoomFactor,
+          );
+        } else {
+          requestRenderRef.current?.();
+        }
       },
       captureScreenshot: () => {
         if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return null;
@@ -2733,7 +2750,7 @@ function ViewerComponent({
     };
   }, [materialTexturePath, textureLoader, flipTextureY, requestRender]);
 
-  return <div ref={containerRef} className="h-full w-full" />;
+  return <div ref={containerRef} className="model-viewer h-full w-full" />;
 }
 
 export default memo(ViewerComponent);

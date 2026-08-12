@@ -14,9 +14,13 @@ import {
   MousePointer2,
   PanelTop,
   RefreshCw,
+  RotateCw,
+  Scan,
   Shirt,
   Trash2,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import Viewer from "./Viewer";
 import { Button } from "./ui/button";
@@ -45,6 +49,15 @@ const SIZE_OPTIONS = [4096, 2048, 1024, 512];
 const NOOP = () => {};
 const DEFAULT_AUTO_TEMPLATE_COLOR = "#c9d8ee";
 const DEFAULT_AUTO_TEMPLATE_EXPORT_FORMAT = "psd";
+const TEMPLATE_PREVIEW_ZOOM_MIN = 0.25;
+const TEMPLATE_PREVIEW_ZOOM_MAX = 4;
+const TEMPLATE_PREVIEW_ZOOM_STEP = 0.25;
+
+function clampTemplatePreviewZoom(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 1;
+  return Math.min(TEMPLATE_PREVIEW_ZOOM_MAX, Math.max(TEMPLATE_PREVIEW_ZOOM_MIN, numericValue));
+}
 
 function normalizeAutoTemplateExportFormat(value) {
   if (value === "png" || value === "psd_png") return value;
@@ -434,17 +447,70 @@ export default function TemplateGenerationPage({
     offsetX: 0,
     offsetY: 0,
   }));
+  const [templatePreviewZoom, setTemplatePreviewZoom] = useState(1);
   const [viewMode, setViewMode] = useState(() =>
     normalizeTemplateViewMode(workspaceState?.viewMode),
   );
   const [modelLoading, setModelLoading] = useState(false);
   const [modelLoadError, setModelLoadError] = useState("");
+  const [modelViewerReady, setModelViewerReady] = useState(false);
   const persistTimerRef = useRef(null);
   const regenerateTimerRef = useRef(null);
   const saveNoticeTimerRef = useRef(null);
   const previewShellRef = useRef(null);
+  const modelViewerApiRef = useRef(null);
   const templatePolicy = getTemplateModelPolicy(modelPath);
   const isWindowTemplate = templatePurpose === "windows" && !templatePolicy.isEup;
+
+  const handleModelViewerReady = useCallback((api) => {
+    modelViewerApiRef.current = api;
+    setModelViewerReady(Boolean(api));
+  }, []);
+
+  const handleFrameModel = useCallback(() => {
+    modelViewerApiRef.current?.reset?.();
+  }, []);
+
+  const handleRotateModel = useCallback((axis) => {
+    modelViewerApiRef.current?.rotateModel?.(axis);
+  }, []);
+
+  const adjustTemplatePreviewZoom = useCallback((direction) => {
+    setTemplatePreviewZoom((current) =>
+      clampTemplatePreviewZoom(current + direction * TEMPLATE_PREVIEW_ZOOM_STEP),
+    );
+  }, []);
+
+  const fitTemplatePreview = useCallback(() => {
+    setTemplatePreviewZoom(1);
+  }, []);
+
+  const handleTemplatePreviewKeyDown = useCallback(
+    (event) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        adjustTemplatePreviewZoom(-1);
+        return;
+      }
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        adjustTemplatePreviewZoom(1);
+        return;
+      }
+      if (event.key === "0") {
+        event.preventDefault();
+        fitTemplatePreview();
+      }
+    },
+    [adjustTemplatePreviewZoom, fitTemplatePreview],
+  );
+
+  useEffect(() => {
+    if (modelPath) return;
+    modelViewerApiRef.current = null;
+    setModelViewerReady(false);
+  }, [modelPath]);
 
   useEffect(() => {
     if (!settingsVersion) return;
@@ -553,7 +619,10 @@ export default function TemplateGenerationPage({
     const node = previewShellRef.current;
     const updateViewport = () => {
       setPreviewViewport(
-        getContainedTemplateViewport(node.clientWidth || 0, node.clientHeight || 0),
+        getContainedTemplateViewport(
+          Math.max(0, (node.clientWidth || 0) - 24),
+          Math.max(0, (node.clientHeight || 0) - 24),
+        ),
       );
     };
 
@@ -1239,14 +1308,9 @@ export default function TemplateGenerationPage({
   const markerSelectionHint = isMarkerEditMode
     ? "Markers start off. Choose only the locations where a marker belongs before saving."
     : "Only these confirmed locations will be included in the saved template.";
-  const markerOverlayStyle = {
-    left: `${previewViewport.offsetX}px`,
-    top: `${previewViewport.offsetY}px`,
-    width: `${previewViewport.size}px`,
-    height: `${previewViewport.size}px`,
-  };
+  const templatePreviewDisplaySize = previewViewport.size * templatePreviewZoom;
   const showMarkerSelectionOverlay =
-    previewUrl && hasDetectedIslands && previewViewport.size > 0 && isMarkerEditMode;
+    previewUrl && hasDetectedIslands && templatePreviewDisplaySize > 0 && isMarkerEditMode;
   const markerSelectionPickingActive = isMarkerEditMode;
   const globalMarkerColor = (() => {
     const first = detectedIslands[0];
@@ -1727,9 +1791,38 @@ export default function TemplateGenerationPage({
                         <small>{isWindowTemplate ? "Select geometry" : modelFileName}</small>
                       </span>
                     </div>
-                    <span className="tg-pane-meta">
-                      {isWindowTemplate ? selectedPartCountLabel : templatePolicy.label}
-                    </span>
+                    <div className="tg-pane-header-actions">
+                      <div className="tg-viewport-tools" role="toolbar" aria-label="Model view controls">
+                        <button
+                          type="button"
+                          className="tg-viewport-tool is-frame"
+                          onClick={handleFrameModel}
+                          disabled={!modelViewerReady || modelLoading || Boolean(modelLoadError)}
+                          aria-label="Frame model in default view"
+                          title="Frame model in default view"
+                        >
+                          <Scan aria-hidden />
+                        </button>
+                        <span className="tg-viewport-tool-separator" aria-hidden />
+                        {["x", "y", "z"].map((axis) => (
+                          <button
+                            key={axis}
+                            type="button"
+                            className="tg-viewport-tool is-rotate"
+                            onClick={() => handleRotateModel(axis)}
+                            disabled={!modelViewerReady || modelLoading || Boolean(modelLoadError)}
+                            aria-label={`Rotate model 90 degrees around ${axis.toUpperCase()} axis`}
+                            title={`Rotate model 90° around ${axis.toUpperCase()} axis`}
+                          >
+                            <RotateCw aria-hidden />
+                            <span>{axis.toUpperCase()}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <span className="tg-pane-meta">
+                        {isWindowTemplate ? selectedPartCountLabel : templatePolicy.label}
+                      </span>
+                    </div>
                   </header>
                   <div className="tg-pane-content tg-model-shell">
                     <Viewer
@@ -1790,7 +1883,7 @@ export default function TemplateGenerationPage({
                         isWindowTemplate ? handleTemplatePartPick : undefined
                       }
                       onModelInfo={handleModelInfo}
-                      onReady={NOOP}
+                      onReady={handleModelViewerReady}
                       onTextureReload={NOOP}
                       onTextureError={NOOP}
                       onWindowTextureError={NOOP}
@@ -1852,13 +1945,59 @@ export default function TemplateGenerationPage({
                         </small>
                       </span>
                     </div>
-                    <span className="tg-pane-meta">
-                      {previewUrl ? `${exportSize} × ${exportSize}` : "Waiting"}
-                    </span>
+                    <div className="tg-pane-header-actions">
+                      <div className="tg-viewport-tools" role="toolbar" aria-label="Template zoom controls">
+                        <button
+                          type="button"
+                          className="tg-viewport-tool is-template-zoom"
+                          onClick={() => adjustTemplatePreviewZoom(-1)}
+                          disabled={!previewUrl || templatePreviewZoom <= TEMPLATE_PREVIEW_ZOOM_MIN}
+                          aria-label="Zoom template out"
+                          aria-keyshortcuts="-"
+                          title="Zoom out (-)"
+                        >
+                          <ZoomOut aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          className="tg-viewport-tool is-template-fit"
+                          onClick={fitTemplatePreview}
+                          disabled={!previewUrl}
+                          aria-label={`Fit template to view. Current zoom ${Math.round(templatePreviewZoom * 100)} percent`}
+                          aria-keyshortcuts="0"
+                          title="Fit template to view (0)"
+                        >
+                          {templatePreviewZoom === 1
+                            ? "Fit"
+                            : `${Math.round(templatePreviewZoom * 100)}%`}
+                        </button>
+                        <button
+                          type="button"
+                          className="tg-viewport-tool is-template-zoom"
+                          onClick={() => adjustTemplatePreviewZoom(1)}
+                          disabled={!previewUrl || templatePreviewZoom >= TEMPLATE_PREVIEW_ZOOM_MAX}
+                          aria-label="Zoom template in"
+                          aria-keyshortcuts="+"
+                          title="Zoom in (+)"
+                        >
+                          <ZoomIn aria-hidden />
+                        </button>
+                      </div>
+                      <span className="tg-pane-meta">
+                        {previewUrl ? `${exportSize} × ${exportSize}` : "Waiting"}
+                      </span>
+                    </div>
                   </header>
                   <div
                     ref={previewShellRef}
                     className={`tg-preview-shell${isMarkerEditMode ? " is-edit-mode" : ""}`}
+                    tabIndex={previewUrl ? 0 : undefined}
+                    onKeyDown={handleTemplatePreviewKeyDown}
+                    aria-label={
+                      previewUrl
+                        ? "Template preview. Use minus and plus to zoom, or zero to fit."
+                        : undefined
+                    }
                   >
                     {generationError ? (
                       <div className="tg-preview-state is-error" role="alert">
@@ -1879,11 +2018,60 @@ export default function TemplateGenerationPage({
                         </span>
                       </div>
                     ) : previewUrl ? (
-                      <img
-                        src={previewUrl}
-                        alt="Generated template preview"
-                        className="tg-preview-image"
-                      />
+                      <div className="tg-preview-scroll-region">
+                        <div
+                          className="tg-preview-canvas"
+                          style={{
+                            width: `${templatePreviewDisplaySize}px`,
+                            height: `${templatePreviewDisplaySize}px`,
+                          }}
+                        >
+                          <img
+                            src={previewUrl}
+                            alt="Generated template preview"
+                            className="tg-preview-image"
+                            draggable="false"
+                          />
+
+                          {showMarkerSelectionOverlay ? (
+                            <div className="tg-preview-marker-overlay is-pick-mode">
+                              {markerOverlayMarkers.map((marker, index) => {
+                                const markerKey = marker?.key || `overlay-${index}`;
+                                const markerRect = getMarkerTextureRect(marker);
+                                if (!markerRect) return null;
+                                const markerSelected =
+                                  pendingMarkerSelection[markerKey] === true;
+                                const markerLabel = marker?.label || `Marker ${index + 1}`;
+                                return (
+                                  <button
+                                    key={markerKey}
+                                    type="button"
+                                    className={`tg-preview-marker-hitbox${markerSelected ? " is-selected" : ""}${
+                                      hoveredMarkerKey === markerKey ? " is-hovered" : ""
+                                    }`}
+                                    style={{
+                                      left: `${(markerRect.x / exportSize) * 100}%`,
+                                      top: `${(markerRect.y / exportSize) * 100}%`,
+                                      width: `${(markerRect.width / exportSize) * 100}%`,
+                                      height: `${(markerRect.height / exportSize) * 100}%`,
+                                    }}
+                                    onMouseEnter={() => setHoveredMarker(markerKey)}
+                                    onMouseLeave={clearHoveredMarker}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      handleTogglePendingMarkerSelection(markerKey);
+                                    }}
+                                    aria-pressed={markerSelected}
+                                    aria-label={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
+                                    title={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
+                                  />
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
                     ) : (
                       <div className="tg-preview-state" role="status">
                         {generating ? (
@@ -1901,47 +2089,6 @@ export default function TemplateGenerationPage({
                         </span>
                       </div>
                     )}
-
-                    {showMarkerSelectionOverlay ? (
-                      <div
-                        className="tg-preview-marker-overlay is-pick-mode"
-                        style={markerOverlayStyle}
-                      >
-                        {markerOverlayMarkers.map((marker, index) => {
-                          const markerKey = marker?.key || `overlay-${index}`;
-                          const markerRect = getMarkerTextureRect(marker);
-                          if (!markerRect) return null;
-                          const markerSelected =
-                            pendingMarkerSelection[markerKey] === true;
-                          const markerLabel = marker?.label || `Marker ${index + 1}`;
-                          return (
-                            <button
-                              key={markerKey}
-                              type="button"
-                              className={`tg-preview-marker-hitbox${markerSelected ? " is-selected" : ""}${
-                                hoveredMarkerKey === markerKey ? " is-hovered" : ""
-                              }`}
-                              style={{
-                                left: `${(markerRect.x / exportSize) * previewViewport.size}px`,
-                                top: `${(markerRect.y / exportSize) * previewViewport.size}px`,
-                                width: `${(markerRect.width / exportSize) * previewViewport.size}px`,
-                                height: `${(markerRect.height / exportSize) * previewViewport.size}px`,
-                              }}
-                              onMouseEnter={() => setHoveredMarker(markerKey)}
-                              onMouseLeave={clearHoveredMarker}
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                handleTogglePendingMarkerSelection(markerKey);
-                              }}
-                              aria-pressed={markerSelected}
-                              aria-label={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
-                              title={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
-                            />
-                          );
-                        })}
-                      </div>
-                    ) : null}
 
                     {generating && previewUrl ? (
                       <div className="tg-preview-busy" role="status">

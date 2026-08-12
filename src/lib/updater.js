@@ -8,7 +8,13 @@ import { createDownloadMetrics, reduceDownloadEvent } from "./updater-state";
 
 const CHECK_INTERVAL = 30 * 60 * 1000;
 const IS_DEV = typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
+const PREVIEW_UPDATE_MODE = IS_DEV
+  ? String(import.meta.env?.VITE_PREVIEW_UPDATE ?? "").trim().toLowerCase()
+  : "";
 const UPDATER_ENDPOINT = tauriConfig?.plugins?.updater?.endpoints?.[0] ?? "";
+
+const PREVIEW_UPDATE_VERSION = "4.2.0";
+const PREVIEW_UPDATE_BODY = "Preview mode — no update package will be downloaded or installed.";
 
 const INITIAL_STATE = {
   available: false,
@@ -38,6 +44,8 @@ const store = {
   downloadMetrics: createDownloadMetrics(),
   downloadInFlight: null,
   installInFlight: null,
+  previewMode: "",
+  previewTimerId: null,
   checkInFlight: false,
   currentVersionPromise: null,
 };
@@ -202,6 +210,118 @@ function isInvalidReleaseJsonError(error) {
   return message.includes("valid release json");
 }
 
+function normalizePreviewUpdateMode(value) {
+  if (["1", "true", "available", "ready"].includes(value)) return "ready";
+  if (["downloading", "progress"].includes(value)) return "downloading";
+  if (["error", "failed"].includes(value)) return "error";
+  if (["installing", "updating"].includes(value)) return "installing";
+  return "";
+}
+
+function getPreviewUpdateState(mode) {
+  const common = {
+    available: true,
+    latest: PREVIEW_UPDATE_VERSION,
+    notes: PREVIEW_UPDATE_BODY,
+    downloading: false,
+    downloaded: false,
+    installed: false,
+    installing: false,
+    checking: false,
+    progressPercent: 100,
+    progressKnown: true,
+    error: "",
+    lastChecked: Date.now(),
+    currentVersion: "4.1.0",
+    publishedLatest: PREVIEW_UPDATE_VERSION,
+    statusKind: "available",
+    statusNote: "Preview update state",
+  };
+
+  if (mode === "downloading") {
+    return {
+      ...common,
+      downloading: true,
+      progressPercent: 62,
+      statusNote: "Preview download progress",
+    };
+  }
+
+  if (mode === "error") {
+    return {
+      ...common,
+      progressPercent: 0,
+      progressKnown: false,
+      error: "Preview download failed. Choose Retry update to test the recovery state.",
+      statusNote: "Preview download error",
+    };
+  }
+
+  if (mode === "installing") {
+    return {
+      ...common,
+      downloaded: true,
+      installing: true,
+      statusNote: "Preview install and relaunch state",
+    };
+  }
+
+  return {
+    ...common,
+    downloaded: true,
+    statusNote: "Preview ready-to-restart state",
+  };
+}
+
+function initializePreviewUpdater() {
+  const mode = normalizePreviewUpdateMode(PREVIEW_UPDATE_MODE);
+  if (!mode) return false;
+
+  store.previewMode = mode;
+  store.update = {
+    version: PREVIEW_UPDATE_VERSION,
+    currentVersion: "4.1.0",
+    body: PREVIEW_UPDATE_BODY,
+  };
+  emit({ ...store.state, ...getPreviewUpdateState(mode) });
+
+  if (mode === "installing") {
+    store.previewTimerId = setTimeout(() => {
+      setStoreState((prev) => ({ ...prev, installing: false, error: "" }));
+      store.previewTimerId = null;
+    }, 2400);
+  }
+
+  return true;
+}
+
+function startPreviewDownload() {
+  if (store.previewTimerId) clearTimeout(store.previewTimerId);
+
+  setStoreState((prev) => ({
+    ...prev,
+    downloading: true,
+    downloaded: false,
+    installed: false,
+    installing: false,
+    progressPercent: 62,
+    progressKnown: true,
+    error: "",
+  }));
+
+  store.previewTimerId = setTimeout(() => {
+    setStoreState((prev) => ({
+      ...prev,
+      downloading: false,
+      downloaded: true,
+      progressPercent: 100,
+      progressKnown: true,
+      error: "",
+    }));
+    store.previewTimerId = null;
+  }, 1200);
+}
+
 async function runCheck({ manual = false } = {}) {
   if (!isTauriRuntime()) return;
   if (store.checkInFlight || store.state.available) return;
@@ -281,8 +401,11 @@ async function runCheck({ manual = false } = {}) {
 }
 
 function ensureUpdaterInitialized() {
-  if (store.initialized || !isTauriRuntime()) return;
+  if (store.initialized) return;
   store.initialized = true;
+
+  if (initializePreviewUpdater()) return;
+  if (!isTauriRuntime()) return;
 
   void ensureCurrentVersionLoaded();
 
@@ -296,6 +419,22 @@ function ensureUpdaterInitialized() {
 }
 
 async function downloadUpdate() {
+  if (store.previewMode) {
+    if (store.previewMode === "error") {
+      startPreviewDownload();
+      return false;
+    }
+    setStoreState((prev) => ({
+      ...prev,
+      downloading: false,
+      downloaded: true,
+      progressPercent: 100,
+      progressKnown: true,
+      error: "",
+    }));
+    return true;
+  }
+
   if (!isTauriRuntime()) return false;
   const update = store.update;
   if (!update) return false;
@@ -367,6 +506,22 @@ async function downloadUpdate() {
 }
 
 async function installUpdate() {
+  if (store.previewMode) {
+    if (store.previewTimerId) clearTimeout(store.previewTimerId);
+    setStoreState((prev) => ({ ...prev, installing: true, error: "" }));
+    store.previewTimerId = setTimeout(() => {
+      setStoreState((prev) => ({
+        ...prev,
+        installing: false,
+        downloaded: false,
+        installed: true,
+        error: "",
+      }));
+      store.previewTimerId = null;
+    }, 1200);
+    return true;
+  }
+
   if (!isTauriRuntime()) return false;
   if (store.installInFlight) return store.installInFlight;
 
@@ -417,8 +572,9 @@ export function useUpdateChecker() {
   const [state, setState] = useState(store.state);
 
   useEffect(() => {
+    const unsubscribe = subscribe(setState);
     ensureUpdaterInitialized();
-    return subscribe(setState);
+    return unsubscribe;
   }, []);
 
   const checkNow = useCallback(() => {

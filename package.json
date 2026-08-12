@@ -10,6 +10,7 @@
     "tauri": "bun tools/tauri-wrapper.mjs",
     "test:updater": "node --test src/lib/updater-state.test.mjs",
     "test:feedback": "node --test src/lib/bug-report.test.mjs",
+    "test:camera": "node --test src/lib/camera-framing.test.mjs src/lib/camera-flight.test.mjs",
     "test:clmesh": "node --test src/lib/clmesh.test.mjs",
     "test:native-materials": "node --test src/lib/native-dds.test.mjs src/lib/native-material-plan.test.mjs",
     "test:pdn": "node --test src/lib/pdn.test.mjs",

@@ -7,7 +7,7 @@ import {
 
 /**
  * ContextMenu — thin wrapper around @radix-ui/react-context-menu
- * with Cortex Studio dark styling. Exported primitives mirror Radix's API.
+ * with Cortex Studio styling. Exported primitives mirror Radix's API.
  */
 
 const ContextMenuAnchorContext = React.createContext(null);
@@ -28,15 +28,32 @@ export function Trigger({ children, ...props }) {
   const handleContextMenu = React.useCallback(
     (event) => {
       if (pointerRef) {
-        pointerRef.current = { x: event.clientX, y: event.clientY };
+        let x = event.clientX;
+        let y = event.clientY;
+
+        // Keyboard-invoked context menus report 0,0. Anchor those beside the
+        // focused element so Shift+F10 follows the same spatial contract.
+        if (x === 0 && y === 0 && event.target instanceof Element) {
+          const rect = event.target.getBoundingClientRect();
+          x = rect.left + Math.min(rect.width / 2, 16);
+          y = rect.top + Math.min(rect.height, 24);
+        }
+
+        pointerRef.current = { x, y };
       }
       onContextMenu?.(event);
+      event.stopPropagation();
     },
     [onContextMenu, pointerRef],
   );
 
   return (
-    <CM.Trigger asChild {...rest} onContextMenu={handleContextMenu}>
+    <CM.Trigger
+      asChild
+      data-cortex-context-menu-trigger=""
+      {...rest}
+      onContextMenu={handleContextMenu}
+    >
       {children}
     </CM.Trigger>
   );
@@ -59,6 +76,7 @@ export function Content({
     if (typeof window === "undefined") return undefined;
 
     let rafId = 0;
+    let settleTimer = 0;
 
     const syncPosition = () => {
       const node = contentRef.current;
@@ -72,12 +90,14 @@ export function Content({
 
     syncPosition();
     rafId = requestAnimationFrame(syncPosition);
+    settleTimer = window.setTimeout(syncPosition, 140);
 
     window.addEventListener("resize", syncPosition);
     window.addEventListener("cortex:ui-scale-changed", syncPosition);
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
+      if (settleTimer) window.clearTimeout(settleTimer);
       window.removeEventListener("resize", syncPosition);
       window.removeEventListener("cortex:ui-scale-changed", syncPosition);
     };
@@ -117,5 +137,13 @@ export function Label({ children, ...props }) {
     <CM.Label className="ctx-menu-label" {...props}>
       {children}
     </CM.Label>
+  );
+}
+
+export function Shortcut({ children, ...props }) {
+  return (
+    <span className="ctx-menu-shortcut" aria-hidden="true" {...props}>
+      {children}
+    </span>
   );
 }

@@ -15,6 +15,7 @@ import SettingsMenu from "./components/SettingsMenu";
 import WhatsNew from "./components/WhatsNew";
 import BugReportModal from "./components/BugReportModal";
 import UpdateToolbarControl from "./components/UpdateToolbarControl";
+import GlobalContextMenu from "./components/GlobalContextMenu";
 import * as Ctx from "./components/ContextMenu";
 import appMeta from "../package.json";
 import cortexLogo from "../src-tauri/icons/cortex-logo.svg";
@@ -32,6 +33,7 @@ import {
   DEFAULT_HOTKEYS,
   HOTKEY_ACTIONS,
   findMatchingAction,
+  formatHotkey,
   mergeHotkeys,
 } from "./lib/hotkeys";
 
@@ -688,8 +690,61 @@ export default function Shell() {
     { mode: "templategen", icon: Sparkles, label: "Template Gen", type: "templategen" },
   ], []);
 
+  const workspaceContextOptions = useMemo(() => [
+    {
+      id: "livery",
+      icon: Car,
+      label: "New Livery",
+      onSelect: () => handleNavigate("viewer", null, "livery"),
+      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_LIVERY]),
+    },
+    {
+      id: "everything",
+      icon: Layers,
+      label: "New All",
+      onSelect: () => handleNavigate("viewer", null, "everything"),
+      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_ALL]),
+    },
+    {
+      id: "eup",
+      icon: Shirt,
+      label: "New EUP",
+      onSelect: () => handleNavigate("viewer", null, "eup"),
+      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_EUP]),
+    },
+    {
+      id: "multi",
+      icon: Link2,
+      label: "New Multi",
+      onSelect: () => handleNavigate("viewer", null, "multi"),
+      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_MULTI]),
+    },
+    {
+      id: "variants",
+      icon: Palette,
+      label: "New Variant Builder",
+      onSelect: () => handleNavigate("variants"),
+      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_VARIANTS]),
+    },
+    {
+      id: "templategen",
+      icon: Sparkles,
+      label: "New Template Generator",
+      onSelect: () => handleNavigate("templategen", null, "templategen"),
+      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_TEMPLATE_GEN]),
+    },
+  ], [handleNavigate, hotkeys]);
+
 
   return (
+    <GlobalContextMenu
+      newTabOptions={workspaceContextOptions}
+      onOpenHome={() => {
+        setSettingsOpen(false);
+        setActiveTabId("home");
+      }}
+      onOpenSettings={() => setSettingsOpen(true)}
+    >
     <div className="shell-root">
       <AnimatePresence>{!booted ? <AppLoader /> : null}</AnimatePresence>
 
@@ -1068,5 +1123,6 @@ export default function Shell() {
         </>
       )}
     </div>
+    </GlobalContextMenu>
   );
 }
