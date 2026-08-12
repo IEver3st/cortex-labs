@@ -95,3 +95,7 @@ tools/codewalker-bridge/obj/
 /*.scratch.*
 /notes*.md
 /scratch*
+
+# GTA V/FiveM source assets must never be committed.
+*.[yY][dD][dD]
+*.[yY][tT][dD]
