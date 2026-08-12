@@ -70,19 +70,17 @@ export function Content({
   ...props
 }) {
   const pointerRef = React.useContext(ContextMenuAnchorContext);
-  const contentRef = React.useRef(null);
+  const [contentNode, setContentNode] = React.useState(null);
 
   React.useLayoutEffect(() => {
-    if (typeof window === "undefined") return undefined;
+    if (typeof window === "undefined" || !contentNode) return undefined;
 
     let rafId = 0;
     let settleTimer = 0;
 
     const syncPosition = () => {
-      const node = contentRef.current;
-      if (!node) return;
       positionContextMenuPortal({
-        contentEl: node,
+        contentEl: contentNode,
         pointer: pointerRef?.current,
         sideOffset,
       });
@@ -101,12 +99,12 @@ export function Content({
       window.removeEventListener("resize", syncPosition);
       window.removeEventListener("cortex:ui-scale-changed", syncPosition);
     };
-  }, [pointerRef, sideOffset]);
+  }, [contentNode, pointerRef, sideOffset]);
 
   return (
     <CM.Portal>
       <CM.Content
-        ref={contentRef}
+        ref={setContentNode}
         className={`ctx-menu-content ${className}`}
         sideOffset={sideOffset}
         {...props}
