@@ -6,50 +6,36 @@ All notable changes to Cortex Studio are documented here.
 
 ## Unreleased
 
-### Changed
-- **Studio context menus** - Added a theme-aware right-click layer across the workspace with contextual editing commands, quick workspace actions, keyboard navigation, and guarded viewport positioning
-- **Automatic toolbar updates** - Available releases now download immediately with visible toolbar progress, then become a single restart action that installs the staged update and reopens Cortex Studio
-- **Compact update control** - Reduced the updater's toolbar footprint while preserving its progress, restart, retry, and keyboard-accessible states
-- **Toolbar cleanup** - Removed the permanent Getting Started shortcut after initial setup while preserving the first-run onboarding flow
-- **Template Generator workbench** - Rebuilt the empty and loaded experiences around a compact inspector, dominant model canvas, optional Model/Template/Split views, contextual marker actions, and theme-aware Studio controls
-- **Model preview free camera** - WASD now follows the camera through full 3D space, right-mouse mouse-look rotates in place, Q/E adjusts elevation, and Alt/Shift provide precision and boosted movement without hijacking keys outside the focused preview
-- **Release notes workspace** - Rebuilt What's New as a compact release ledger with category filters, always-readable change details, responsive desktop layouts, and clearer keyboard and clipboard feedback
-
-### Fixed
-- **Template preview framing** - Generated templates now open fitted to the available canvas with dedicated zoom-out, fit, and zoom-in controls for detailed UV inspection
-- **Model viewport framing** - Model canvases now stay centered at high display scaling, with one-click default framing and 90-degree axis rotation controls in Template Generator
-- **Interface scale adjustment** - Getting Started now previews slider values locally and applies the app-wide scale only after the interaction ends, keeping the control stable while dragging or using the keyboard
-- **Preview export folder action** - The Preview Complete dialog now opens the saved image destination reliably and keeps folder-opening errors visible in the dialog
-- **Theme-aware tooltips** - Replaced native browser hover labels with compact Studio tooltips that follow the active palette, keyboard focus, reduced-motion preferences, and viewport edges
+- Nothing yet
 
 ---
 
-## [4.1.0] - 2026-08-12 — PRISM
+## [4.1.0] - 2026-08-12 - PRISM
 
-> Named for the way this release refracts one focused Studio workflow across personal appearances, vehicle liveries, EUP clothing, and format-aware template output.
+PRISM cleans up the whole Studio and makes templates, previews, updates, and feedback easier to use.
 
 ### Added
-- **In-app feature requests** - The feedback modal now submits structured feature requests alongside bug reports, with request-specific prompts and GitHub labels
-- **Studio appearance presets** - Appearance settings now include 12 full-workbench palettes, instant unsaved preview, and independent System, Light, and Dark color schemes
-- **Automatic EUP template generation** - Template Generator now accepts `.ydd` clothing models, uses EUP UV/material behavior, omits vehicle-only PSD layers, and exports separate templates for multi-drawable dictionaries
+- **Themes** - Added 12 color presets with separate System, Light, and Dark choices
+- **EUP templates** - Template Generator now supports `.ydd` files and exports each drawable separately when needed
+- **Native materials** - Added an experimental way to load materials from game textures while keeping manual textures as the final choice
+- **Feature requests** - Feedback now supports feature requests as well as bug reports
 
 ### Changed
-- **Lighting controls** - Condensed the Environment lighting workspace into a compact direction instrument with inline angle refinement, segmented presets, and a single output row
-- **Feedback modal flow** - Bug reports now start with a clearer report-type choice, use a compact fixed action footer, and blur the workspace heavily without a dialog shadow
-- **First-run setup** - Replaced the multi-step Getting Started wizard with one focused destination choice, Home-first launch, and optional inline preference customization
-- **Settings workspace** - Reorganized Settings into compact task groups, moved experimental access into About, and reduced repeated navigation and version details
-- **Experimental settings** - Removed the Beta badge from the Experimental section header
-- **Viewer control panels** - Removed the duplicated workflow summary and decorative step labels so each panel starts with its actionable tabs and controls
-- **Format-aware template pipeline** - Template maps now preserve their real `yft`/`ydd` source type and select UV channels, preview targeting, and mesh scope according to the loaded model format
-- **Mode-aware control panel** - Livery, All Textures, EUP, and Multi now use workflow-specific sidebar hierarchy, while Scene lighting adds direct drag positioning, keyboard adjustment, precision sliders, and quick lighting presets
+- **Template Generator** - Rebuilt the workspace with Model, Template, and Split views, better marker tools, zoom controls, model rotation, and a free camera
+- **Studio layout** - Cleaned up Home, first-time setup, Settings, viewer sidebars, tabs, and the toolbar
+- **Lighting** - Made lighting smaller and easier to adjust with dragging, presets, keyboard controls, and sliders
+- **Template handling** - YFT and YDD files now keep their real format so UVs, materials, and mesh selection work correctly
+- **Updates** - Updates now download in the toolbar and install when you restart the app
+- **What's New** - Rebuilt the release notes with simple filters and better keyboard support
+- **Right-click and tooltips** - Added a global right-click menu and Studio tooltips that follow the current theme
 
 ### Fixed
-- **Active tab seam** - Active tabs now stay visually fused to their workspace after opening and switching tabs
-- **Theme-aware controls** - Buttons, toggles, focus states, and translucent workbench accents now follow the active Studio palette instead of retaining the Roan clay color
+- **UI fixes** - Fixed theme colors, active tab seams, interface scaling, high-DPI framing, and context menu positioning
+- **Preview export** - Open Folder now works reliably and shows an error when it fails
 
 ---
 
-## [4.0.0] - 2026-07-02 — ROAN
+## [4.0.0] - 2026-07-02 - ROAN
 
 > Named after the Roan Mountains / Roan Highlands on the Tennessee–North Carolina border.
 
@@ -93,7 +79,7 @@ All notable changes to Cortex Studio are documented here.
 ### Added
 - **Model shadows** - Added shadow rendering for improved depth perception on models
 - **Missing set file warning** - Added warning when users don't have a set file configured for capturing previews
-- **Template Generator manual marker selection** - Pick individual markers with Alt/Ctrl/Shift + click in "Marker Edit Mode"—selections stay staged until you confirm
+- **Template Generator manual marker selection** - Pick individual markers with Alt/Ctrl/Shift + click in "Marker Edit Mode". Selections stay staged until you confirm
 
 ### Changed
 - **PDN support improved** - Enhanced Paint.NET file handling and compatibility
