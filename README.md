@@ -268,7 +268,7 @@ Do not publish credentials, paid assets, or proprietary source files in an issue
 
 ## License
 
-Cortex Studio is available under the [MIT License](./LICENSE).
+Cortex Studio is source-available under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Copying, modifying, distributing, or using Cortex Studio for commercial purposes requires a separate written license from the licensor.
 
 ## Disclaimer
 
