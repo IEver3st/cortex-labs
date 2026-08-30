@@ -15,7 +15,7 @@ Work directly with vehicle and EUP models, watch texture edits update in real ti
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![License](https://img.shields.io/github/license/IEver3st/cortex-labs)](./LICENSE)
 
-[Download Cortex Studio](https://github.com/IEver3st/cortex-labs/releases/latest) · [Read the guide](./docs/site/content/docs/index.mdx) · [Report a problem](https://github.com/IEver3st/cortex-labs/issues/new) · [View changelog](./CHANGELOG.md) · [Support on Ko-fi](https://ko-fi.com/C1C41TSVBX)
+[Official product page](https://frommeans.com/cortex/cortex-studio) · [Download Cortex Studio](https://github.com/IEver3st/cortex-labs/releases/latest) · [Read the guide](./docs/site/content/docs/index.mdx) · [Report a problem](https://github.com/IEver3st/cortex-labs/issues/new) · [View changelog](./CHANGELOG.md) · [Support on Ko-fi](https://ko-fi.com/C1C41TSVBX)
 
 **Spend less time exporting and loading. Spend more time designing.**
 
