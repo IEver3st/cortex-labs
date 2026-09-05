@@ -126,6 +126,7 @@ Do not weaken assertions, silently skip a failing path, or replace an end-to-end
 
 ## Implementation taste
 
+- Before any UI, layout, styling, or visual review work, read `DESIGN.md` completely and apply its project signature, decision order, stress cases, and native-rendered proof requirements.
 - Follow the surrounding ESM JavaScript/JSX and Rust style. Avoid broad formatting or unrelated cleanup in a focused change.
 - Extend existing CSS custom properties and controls before inventing a parallel visual system. Keep dense desktop workflows readable at the supported minimum window size.
 - Preserve explicit user choices across regeneration and reload. A heuristic may suggest a default; it must not erase a manual choice.

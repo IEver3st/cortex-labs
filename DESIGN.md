@@ -6,6 +6,21 @@ Cortex Studio should feel like an IDE, asset browser, and professional desktop u
 
 This document defines the shared visual and interaction vocabulary for product UI. It is prescriptive about hierarchy, colour, density, and feedback, but it does not require every workflow to use the same layout. A model viewer, layer inspector, template builder, and Home page may need different structures while still clearly belonging to Cortex Studio.
 
+## Decision standard
+
+Apply this order: task clarity, navigation and context, hierarchy, asset truth, robustness, polish, distinctiveness, decoration. A distinctive treatment that weakens the production workflow does not ship.
+
+Cortex Studio's signature is the neutral IDE-like workbench, scarce orange selection and focus rules, persistent asset context, and the relationship between the model viewer, rows, layers, and inspectors. Product data and authored assets create the visual interest.
+
+- Give each workspace one leading production task while keeping selection, save, validation, and export state legible.
+- Use typography, alignment, pane geometry, model imagery, and structural rules before cards or extra chrome.
+- Show real assets and outputs. Never manufacture a terminal, model state, or successful export for appearance.
+- Containment must represent an actual object or working boundary.
+- Motion explains navigation, selection, disclosure, loading, and spatial continuity. Nothing moves continuously for atmosphere.
+- If two generic patterns appear together, such as card grids, decorative pills, glow, repeated eyebrow headings, or filler descriptions, stop and subtract.
+
+Before handoff, stress supported desktop sizes, long filenames and paths, empty and large projects, missing textures, parse and export failures, keyboard-only use, zoom, high contrast where practical, and reduced motion. Build and browser output are not Tauri runtime or native-sidecar proof.
+
 ## Authority and scope
 
 The rendered Home / Overview workbench is the canonical visual reference. When older UI, an earlier CSS declaration, a stock primitive, or an old comment conflicts with the rendered Home direction, follow Home and the rules in this document.
@@ -366,4 +381,3 @@ Before merging visual work, confirm:
 - the layout reflows deliberately at narrower desktop widths without accidental horizontal overflow;
 - light and dark themes, keyboard navigation, contrast, and reduced motion have been checked;
 - no global primitive restyle creates unrelated regressions.
-
