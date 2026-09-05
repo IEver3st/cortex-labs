@@ -73,43 +73,11 @@ Generated output includes `dist/`, `src-tauri/target/`, `src-tauri/gen/`, `docs/
 
 ## Working in the repository
 
-Use Bun as the package manager in both projects; preserve `bun.lock` files. Root test scripts intentionally invoke Node's test runner.
+Use Bun in the app and `docs/site`, preserving their lockfiles. Root test scripts intentionally use Node's test runner; `package.json` owns focused suites such as `test:clmesh`, `test:native-materials`, `test:pdn`, and `test:template`.
 
-```powershell
-# Root app
-bun install --frozen-lockfile
-bun run dev
-bun run tauri dev
+Use `bun run build` for the renderer. For Rust changes, use Cargo fmt/check/clippy against `src-tauri/Cargo.toml` as applicable. Docs have their own `types:check`, `build`, and changed-file lint scripts under `docs/site`.
 
-# Focused JavaScript suites
-bun run test:clmesh
-bun run test:native-materials
-bun run test:pdn
-bun run test:template
-
-# Production renderer build
-bun run build
-
-# Rust/Tauri checks
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml
-
-# Documentation site
-bun install --cwd docs/site --frozen-lockfile
-bun run --cwd docs/site types:check
-bun run --cwd docs/site build
-# For changed .ts/.tsx/.css/.json files owned by Biome:
-bun run --cwd docs/site lint -- <changed-paths>
-```
-
-The CodeWalker bridge targets .NET 10 and references `external/CodeWalker/CodeWalker.Core` outside this repository. When that dependency is present, build it from the repo root with:
-
-```powershell
-dotnet build tools/codewalker-bridge/CodeWalkerBridge.csproj -c Release
-```
-
-Do not treat a missing external CodeWalker checkout as an application failure when the task does not touch the bridge.
+The CodeWalker bridge targets .NET 10 and needs `external/CodeWalker/CodeWalker.Core` outside this repository. When available and relevant, build `tools/codewalker-bridge/CodeWalkerBridge.csproj` in Release. A missing external checkout is not an unrelated app failure. Native verification follows global monitor and process-ownership restrictions.
 
 ## Verification
 
