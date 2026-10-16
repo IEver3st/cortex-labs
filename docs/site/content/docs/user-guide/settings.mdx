@@ -1,23 +1,36 @@
 ---
 title: Settings
-description: System, Viewer, Appearance, Watermark, Shortcuts, and About settings.
+description: System, Viewer, Studio, Appearance, Watermark, Shortcuts, and About settings.
 ---
 
-Open Settings from the top bar (gear icon).
+Open Settings from the top bar (gear icon). Changes apply when you choose **Save changes**; leaving Settings without saving discards them. **Reset all** puts every setting and shortcut back to its default, and **Save changes** keeps that.
 
 ## System
 
-- **UI scale**: scales the interface via a CSS variable (`--es-ui-scale`).
-- **Recents**: show/hide recent workspaces on the Home screen.
+- **UI Scaling**: scales the interface from 50% to 140%.
+- **Projects on Home**: **Show projects** lists saved projects on Home and is saved as soon as you switch it. **Default order** sorts the list by last opened, name, or type. **Confirm before deleting** asks first when you delete a project from Home; files on disk are never touched.
+- **Preview Export Path**: the folder preview captures are saved to. When it is empty, Cortex Studio asks where to save each capture. If the folder no longer exists, Settings warns you, and captures can't be saved until you choose a folder that exists or clear the path.
+- **Variant Export Path**: the output folder new Variant Builder and Template Generator workspaces start with. When it is empty, you choose a folder on each export.
+- **Auto Template Save Format**: whether the Template Generator saves templates as PSD, PNG, or both.
 
 ## Viewer
 
-- **Exterior only default**
-- **Window/glass targeting behavior**
-- **Free camera**: focus a model preview for scoped WASD flight, right-mouse free-look, Q/E elevation, Alt precision, and Shift boost
-- **Render effects**: a global `Ground Shadows` toggle for Studio viewer tabs
-- **Grid visibility**
-- **Light intensity / glossiness** defaults
+- **Free-Cam**: always on in Studio previews. Focus a model preview, then fly with WASD, look with the right mouse button, rise and drop with Q/E, hold Alt for precision, and hold Shift to boost.
+- **Start in Exterior Only**: new Livery and All Textures workspaces open with interior, glass and wheels hidden. Each workspace still toggles it from the camera deck, and saved projects keep their own setting.
+- **Load EUP Textures**: picking a clothing model in EUP also loads the texture dictionary beside it into the Uniform slot. A texture you choose yourself is never replaced.
+- **Standard Model Warning**: opening a vehicle `.yft` that isn't the `_hi` model says so, because up close the game draws the `_hi` model and the standard one can lack its window template, material slots and detail. When the `_hi` model is in the same folder, **Open _hi model** loads it instead. **Never show this again** in the warning turns this off.
+- **Panel Camera Controls**: moves the camera shots from the camera deck into the side panel in Livery, All Textures, EUP, Multi, and Sirens. The rotate buttons stay on the bottom bar.
+- **Legacy Layers Layout**: places the Variant Builder layers panel at the bottom instead of on the right.
+- **Render Effects**: **Show 3D Grid**, **Ground Shadows**, and **Ambient Occlusion**. Livery, All Textures, EUP, Multi, and Sirens tabs share these: a change here, or from the matching camera deck button, applies to every open tab of those kinds. The grid and ground shadow are workbench options; the showroom always has shadows and never shows the grid. EUP Studio, Prop Studio, and Photo Mode have their own grid, shadow, and ambient occlusion buttons, saved with each workspace.
+
+## Studio
+
+The scene, light, plate, and steering that new work starts with. Open workspaces and saved projects keep their own values.
+
+- **Showroom**: pick Vehicles (Livery, All Textures, Multi), EUP (EUP Studio and EUP), or Props (Prop Studio), then set whether new workspaces open in Workbench or Showroom, the spotlight direction and strength, floor reflections, and the light beam. Each also sets the floor finish; EUP and Props set the rim light; Props sets the dark room level. Each workspace has its own restore button.
+- **Lighting**: starting light intensity (also Prop Studio's fill light), and the vehicle key light's direction and height. **Reset** in a workspace's Light panel returns to these values.
+- **Plate style and text**: the plate drawn on vehicles with a plate mesh. Editing the plate in the Meta tab overrides it for that workspace.
+- **Front wheel angle**: the steering a vehicle starts with, up to 45° either way. It is capped at the vehicle's handling.meta steering lock; vehicles without a lock keep their wheels straight.
 
 ## Shortcuts
 
@@ -28,26 +41,42 @@ Customize all key actions (new tabs, file selection, viewer toggles).
 - **Color scheme**: follow the operating system or keep the interface in Light or Dark mode.
 - **Studio palette**: choose from 12 full-workbench color presets. Palette and color scheme are independent, so every preset supports both light and dark surfaces.
 - **Window chrome**: switch between Standard and Elegant window controls.
-- **Studio defaults**: set the starting body, background, template fill, and template background colors.
+- **Studio defaults**: **Base Body** and **Base Background** set the starting paint and backdrop colors. **Auto Template Fill** and **Auto Template Background** set the UV fill and background colors of templates the Template Generator builds; open Template Generator tabs rebuild with the new colors when you save.
+- **Reduce motion**: follow the Windows animation setting, or always turn interface animations off.
+- **Show shortcut keys**: hide the keycaps shown next to actions. Shortcuts keep working.
 
 Palette and color-scheme changes preview immediately. Use **Save changes** to keep them; leaving Settings without saving restores the previous appearance.
 
 ## Watermark
 
-Configure the text, typeface, size, color, opacity, position, and rotation applied to captured previews. The page includes a live preview of the saved watermark configuration.
+Stamp preview captures with text, your own logo, or both side by side.
+
+With **Stamp captures** on, the watermark goes on every still image you capture or save: Livery, All and EUP Textures captures and saved views, Kit Shoot images, Photo Mode photos, Prop Studio saved views, and EUP Studio shots, saved views and colourway sheets. Videos, EUP Studio batch thumbnails and Prop Studio **Export image** files stay unmarked, so clothing-menu and inventory icons come out clean.
+
+- **Presets**: start from Corner signature, Studio plate, Center stamp, Tiled proof, Logo corner, or Logo + name. Presets change the design only; your text and logo stay.
+- **Logo import**: choose a PNG, WebP, SVG, or JPEG. Cortex keeps a resized copy (up to 1024 px) in your settings and never changes the original file. **Match watermark color** fills the logo with the watermark color for one-color marks.
+- **Type**: font, weight, italic, capitals, letter spacing, and size.
+- **Style**: plain, shadow, outline, or a solid plate behind the mark, plus color, plate color, and opacity.
+- **Placement**: anchor to any edge, corner, or the center, or tile the mark across the image, with edge margin, tile spacing, and rotation.
+
+Sizes are relative to the captured image's short side, so the watermark looks the same on small and large captures. The live preview shows the mark on a dark or light 16:9 scene. Watermarks saved by earlier versions keep their look, with their pixel size converted against a 1080 px capture.
 
 ## About
 
-About shows the installed version, software-update status, and release notes. When a release is available, Cortex Studio downloads it in the background and shows progress in the main toolbar; once ready, choose **Restart to update** to install it and reopen the app. Experimental features and diagnostics now live in the advanced area at the bottom of About instead of a separate Settings destination.
-
-If something behaves strangely after enabling experimental features, disable them and restart Cortex Studio.
+About shows the installed version, software-update status, and release notes. Turn off **Check automatically** to stop background update checks; **Check now** still works. **Open changelog** shows every release on a timeline, and **Show after updates** controls whether it opens once after an update. When a release is available, Cortex Studio downloads it in the background and shows progress in the main toolbar; once ready, choose **Restart to update** to install it and reopen the app.
 
 ## Feedback
 
-Use **Send feedback** in the top bar to submit a structured bug report or feature request without leaving Cortex Studio. Bug reports can optionally include recent console logs; app version and device context are added automatically.
+Use **Send feedback** in the top bar, or **Report a bug** / **Request a feature** in Settings > About, to file a structured issue without leaving Cortex Studio.
+
+- Choose **Bug report** or **Feature request**, then the **Area** it concerns. Area starts as the workflow you had open.
+- Bug reports ask for steps, what you expected, and what happened, plus **How often** it happens. Feature requests ask for the problem, the outcome you want, and why it matters.
+- **What gets sent** lists the app version and device details that are attached. Bug reports can also attach recent console logs; turn on **Attach console logs by default** in Settings > About to pre-select it.
+- Drafts are kept when you close the dialog and cleared after a successful send. **Discard draft** clears them yourself.
+- If this build can't send reports, use **Copy as Markdown** and paste it into a new GitHub issue.
 
 ## Persistence
 
 Settings are saved locally (no cloud, no accounts).
 
-`Ground Shadows` is a global viewer default. It applies immediately to open Studio viewer tabs, including multi-compare mode, and is not stored per workspace.
+Show 3D Grid, Ground Shadows, and Ambient Occlusion are not stored per workspace in Livery, All Textures, EUP, Multi, and Sirens; those tabs always follow the current setting. EUP Studio, Prop Studio, and Photo Mode save their own values with each workspace.

@@ -1,0 +1,77 @@
+---
+title: Photo Mode
+description: Stage game vehicles, people and props on one set and save framed photos.
+---
+
+Open **Photo Mode** from Home, the new-tab menu, or **Alt + 0**. It needs the desktop app: vehicles, peds, animations and props come from your GTA V install through the CodeWalker bridge.
+
+The page uses the viewer layout: what's on set on the left with **Take photo** pinned below, the scene in the middle with the camera deck, and an inspector on the right with **Object**, **Camera** and **Scene** tabs.
+
+## Building the set
+
+**Add** opens a picker with three kinds of object. A set holds up to 16.
+
+- **Vehicles** lists every vehicle your game files define, including DLC vehicles. Search by model name, display name or make, or filter by class. **Your own .yft…** adds a vehicle model from disk instead, with the textures found next to it and in its resource.
+- **People** adds the freemode male or female ped with a look (face, skin tone and hair) and a set of clothes. Both can change later in the inspector.
+- **Props** searches the game's drawables by name, for example `cone` or `barrier`. **Your own model…** adds a `.ydr`, `.yft` or `.ydd` from disk.
+
+New objects line up side by side so nothing starts inside anything else. The first time you add a game vehicle or prop, Cortex extracts it into its own cache; your game files are only read.
+
+Each row on the left shows the object and where it came from. Click a row, or click the object in the viewfinder, to select it, and **Esc** clears the selection. Double-click a row to frame it. The eye button (or **H**) hides the selected object without removing it, and **×** (or **Delete**) removes it. A row that failed to load is marked with a warning and a retry button; select it to see why.
+
+## Placing objects
+
+The selected object carries a gizmo. **G** or the move button drags it across the floor or lifts it; **R** or the turn button rotates it. The **Placement** group in the Object tab sets the same values exactly: left and right, back and forth, lift and turn. **Level and face front** puts it back on the floor facing forward.
+
+Objects rest on the floor by their lowest point, so wheels and feet touch it.
+
+## Vehicles
+
+Select a vehicle and open the **Vehicle** tab. The same settings work for game vehicles and for your own `.yft`, read from its resource the way the All workspace reads it.
+
+- **Doors** lists the doors, bonnet, boot and any other part the model can open, each with a slider from shut to fully open. **Open all** and **Close all** do every part at once. You can also click a door, the bonnet or the boot on the selected vehicle in the viewfinder to open or close it. A convertible gets a **Roof** slider when its roof animation is in the game files or its resource.
+- **Wheels** turns the front wheels left or right, up to the vehicle's steering lock when its handling is known.
+- **Mod kit** lists every slot of the vehicle's kit (spoilers, bumpers, skirts, hoods, roofs, liveries, interior parts and the rest) with the names the game shows, or the names your resource registers. Pick a part per slot, or **Stock**; **All stock** clears them. The first part you pick prepares the kit's models, which takes a few seconds for a car with a large kit. Parts that hide stock geometry (`turnOffBones`) hide it here too. A part fitted to a door, the bonnet or the boot in carcols (`<bone>`) moves with it; parts on `chassis` stay put, as in game.
+- **Extras** switches each `extra_N` on or off. Every extra starts off, as when the game spawns the vehicle.
+- **Livery** appears when the vehicle's texture dictionary has more than one `_sign_N` livery texture. Liveries that come from the mod kit are in its Livery slot.
+- **Lights** switches the emergency lights (when the vehicle has siren settings in its carcols), headlights or full beam, indicators and hazards, brake lights and extra lamps. Lit lamps glow and light the body, nearby vehicles and people, and the floor.
+- **Plate** sets the plate style and text, drawn from the game's plate textures, or over your own plate image (see [Plate](./meta-simulation#plate)).
+- **Paint** sets the six game colours: primary, secondary, pearlescent, wheels, interior trim and dashboard, from the game's palette or a custom colour with a finish. Which surfaces take which colour comes from the model's shaders, and a livery texture stays on top.
+
+Paint and lighting are a preview of the game's look, not an exact match.
+
+## People
+
+- **Appearance**: switch between the male and female ped, and pick a look and clothes.
+- **Pose**: choose from 17 poses, from standing and walking to leaning, sitting, kneeling, hands up and cuffed, or **Any game animation…** to search the game's animation dictionaries and pick any clip in them.
+- **Frame** picks the moment of the animation the photo shows. The play button (or **Space**) plays it in place; pausing keeps the frame it stopped on.
+
+If an animation isn't in your game files, the Pose group says so and the person keeps their previous pose.
+
+## Camera
+
+The deck frames the whole set from the **Front**, **Rear**, **Side**, **3/4**, **Low** or **Top**; the camera preset shortcuts (**Alt + F**, **B**, **S**, **A** and **T** by default) do the same. The crosshair (or **F**, or **Reset View**) frames the selection, or the whole set when nothing is selected. **Toggle Control Panel** (**\\** by default) hides the side panels. See [Hotkeys](./hotkeys). Orbit with the left mouse button, pan with the right, and zoom with the wheel.
+
+In the Camera tab:
+
+- **Lens** sets the focal length from 14 to 200 mm. Wide lenses exaggerate depth; 85 mm and longer flatten it.
+- **Saved views** keeps up to 12 camera positions with their lens, so you can return to a shot after rearranging the set.
+- **Photo** sets the size: 1920 × 1080, 2560 × 1440, 3840 × 2160, 2048 × 2048, 1080 × 1350 or 1080 × 1920. **Frame guide** shows that frame in the viewfinder with thirds and dims everything outside it.
+
+## Taking the photo
+
+**Take photo** (or **P**, or the **Save This View** shortcut, **Alt + P** by default) asks where to save, renders the frame at the chosen size, and saves a PNG. The gizmo never appears in the photo. A note in the viewfinder shows where the file went, with **Show** to open its folder.
+
+On the workbench, **Background: Transparent** saves a cut-out with no floor, grid or backdrop. The showroom is always part of the picture.
+
+## Spotlights
+
+In the showroom every object gets its own spotlight, set in the **Spotlight** group of the Object tab: switch it off, change its **Strength**, pick where it shines **from** (top, front, back, left or right of that object, or **Scene** to follow the Scene tab), give it a **Colour**, and show or hide its **Beam**. Up to six objects are lit at once; the Object tab says when an object waits for a free spotlight. Spotlights only show on the Showroom stage.
+
+## Scene
+
+The Scene tab holds the stage: **Workbench** with your backdrop colour, grid and ground shadows, or **Showroom**, a dark studio with a reflective floor and one spotlight sized to everything on set. In the showroom the Scene tab sets the direction and strength every spotlight starts from, the floor's reflections, the beams and the floor finish. **Fill light** sets the overall light level, and **Dark room** dims the studio, spotlights included, so vehicle lights carry a night shot. **Vehicle lights** sets how strongly lit lamps glow, how much light they throw on their surroundings, and an optional haze along their beams.
+
+## Saving your work
+
+The set, every object's placement, paint, doors and pose, the camera, saved views and photo settings are saved with the project and come back when you reopen it from Home.

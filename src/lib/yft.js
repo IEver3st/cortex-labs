@@ -6,6 +6,7 @@ const MAX_MODELS = 64;
 const MAX_YDD_DRAWABLES = 512;
 const MAX_GEOMETRIES = 256;
 const MAX_VERTICES = 1000000;
+const MAX_GEOMETRY_BONE_IDS = 1024;
 const MAX_INDICES = 3000000;
 const DEFAULT_SCAN_LIMIT = 0x10000;
 const DEFAULT_SCAN_STRIDE = 16;
@@ -598,6 +599,7 @@ function parseYddDictionary(reader, name, settings) {
     name,
     models: [],
     shaders: [],
+    skeleton: entries.find((entry) => entry.drawable.skeleton)?.drawable.skeleton || null,
     drawableEntries: entries.map((entry) => entry.metadata),
   };
   for (const entry of entries) {
@@ -780,6 +782,7 @@ function parseDrawable(reader, offset, name) {
   const skeleton = reader.validPtr(skeletonPtr)
     ? parseSkeleton(reader, reader.resolvePtr(skeletonPtr))
     : null;
+  drawable.skeleton = skeleton;
 
   return parseDrawableModels(reader, baseOffset, name, drawable, skeleton);
 }
@@ -870,7 +873,26 @@ function parseShader(reader, offset, index) {
     name: identifyMaterialName(nameHash, hashHex),
     hashHex,
     textureRefs,
+    // ShaderFX render bucket: 0 opaque, 1 alpha blend, 2 decal, 3 cutout, ...
+    renderBucket: reader.u8(offset + 0x11),
+    orderNumber: readShaderVectorParam(reader, offset, ORDER_NUMBER_HASH)?.[0] ?? 0,
+    ...decodeMatDiffuseColor(readShaderVectorParam(reader, offset, MAT_DIFFUSE_COLOR_HASH)),
   };
+}
+
+// joaat("matDiffuseColor"). Vehicle shaders set (2, layer, 0) to take a game
+// paint layer (1 primary .. 7 dashboard, as the bridge reports); any other
+// value is a fixed colour.
+const MAT_DIFFUSE_COLOR_HASH = 408880252;
+
+export function decodeMatDiffuseColor(value) {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every(Number.isFinite)) {
+    return { paintLayer: null, diffuseColor: null };
+  }
+  if (value[0] === 2 && Number.isInteger(value[1]) && value[1] >= 1 && value[1] <= 7) {
+    return { paintLayer: value[1], diffuseColor: null };
+  }
+  return { paintLayer: null, diffuseColor: value.slice() };
 }
 
 function joaatOrig(input) {
@@ -920,6 +942,43 @@ function readCString(reader, offset, maxLen = 256) {
     str += String.fromCharCode(ch);
   }
   return str || null;
+}
+
+// joaat("orderNumber"). Ped hair shaders use it to mark geometry layers that
+// are not drawn by default (CodeWalker skips ped_hair_spiked geometry > 0).
+const ORDER_NUMBER_HASH = 1617153586;
+
+// Reads one float4 shader parameter by name hash, or null when absent. Mirrors
+// the parameter walk in extractShaderTextureRefs.
+function readShaderVectorParam(reader, shaderOffset, wantedHash) {
+  const paramsPtr = reader.u64(shaderOffset + 0x00);
+  if (!reader.validPtr(paramsPtr)) return null;
+  const paramsBase = reader.resolvePtr(paramsPtr);
+  let paramCount = reader.u8(shaderOffset + 0x10);
+  const texParamCount = reader.u8(shaderOffset + 0x27);
+  if (paramCount === 0 || paramCount > 64) paramCount = texParamCount;
+  if (paramCount === 0 || paramCount > 64) return null;
+  const parameterSize = reader.u16(shaderOffset + 0x14);
+  let computedSize = 0;
+  const params = [];
+  for (let i = 0; i < paramCount; i++) {
+    const off = paramsBase + i * 16;
+    if (!reader.valid(off) || off + 16 > reader.len) return null;
+    const dataType = reader.u8(off);
+    params.push({ dataType, dataPtr: reader.u64(off + 0x08) });
+    computedSize += 16 + (dataType >= 1 ? 16 * dataType : 0);
+  }
+  const hashesOffset = parameterSize > 0 && parameterSize >= paramCount * 16 ? paramsBase + parameterSize : paramsBase + computedSize;
+  if (!reader.valid(hashesOffset) || hashesOffset + paramCount * 4 > reader.len) return null;
+  for (let p = 0; p < paramCount; p++) {
+    if ((reader.u32(hashesOffset + p * 4) >>> 0) !== wantedHash) continue;
+    const { dataType, dataPtr } = params[p];
+    if (dataType < 1 || !reader.validPtr(dataPtr)) return null;
+    const valueOffset = reader.resolvePtr(dataPtr);
+    if (!reader.valid(valueOffset) || valueOffset + 16 > reader.len) return null;
+    return [reader.f32(valueOffset), reader.f32(valueOffset + 4), reader.f32(valueOffset + 8), reader.f32(valueOffset + 12)];
+  }
+  return null;
 }
 
 function extractShaderTextureRefs(reader, shaderOffset, shaderName) {
@@ -1064,7 +1123,9 @@ function parseSkeleton(reader, offset) {
   if (!reader.validPtr(bonesPtr) || bonesCount === 0 || bonesCount > 256) return null;
 
   const bonesOffset = reader.resolvePtr(bonesPtr);
-  const bonesDataOffset = bonesOffset + 16;
+  // BonesPointer addresses the first 80-byte bone, after its list header.
+  const bonesDataOffset = bonesOffset;
+  if (bonesDataOffset + bonesCount * 80 > reader.len) return null;
 
   const bones = [];
   for (let i = 0; i < bonesCount; i++) {
@@ -1099,7 +1160,7 @@ function resolveBoneWorldTransform(bones, i) {
   bone._resolved = true;
 
   const parentIdx = bone.parentIndex;
-  if (parentIdx > 0 && parentIdx < bones.length && parentIdx !== i) {
+  if (parentIdx >= 0 && parentIdx < bones.length && parentIdx !== i) {
     resolveBoneWorldTransform(bones, parentIdx);
     const p = bones[parentIdx];
     bone.worldQx = p.worldQx * bone.qw + p.worldQw * bone.qx + p.worldQy * bone.qz - p.worldQz * bone.qy;
@@ -1172,6 +1233,7 @@ function parseDrawableModel(reader, offset, name, shaders, skeleton) {
   if (!reader.validPtr(geometriesPtr)) return null;
 
   const boneIndex = (skeletonBinding >> 24) & 0xff;
+  const hasSkin = ((skeletonBinding >> 8) & 0xff) !== 0;
   const bone = (skeleton && boneIndex > 0 && boneIndex < skeleton.bones.length)
     ? skeleton.bones[boneIndex]
     : null;
@@ -1199,8 +1261,18 @@ function parseDrawableModel(reader, offset, name, shaders, skeleton) {
       const shader = shaders[shaderIndex];
       mesh.materialName = shader?.name || `material_${shaderIndex}`;
       mesh.textureRefs = shader?.textureRefs || {};
+      mesh.renderBucket = shader?.renderBucket ?? 0;
+      mesh.orderNumber = shader?.orderNumber ?? 0;
+      mesh.paintLayer = shader?.paintLayer ?? null;
+      mesh.diffuseColor = shader?.diffuseColor ?? null;
       mesh.boneIndex = boneIndex;
       mesh.renderMaskFlags = renderMaskFlags;
+      // Component drawables carry no skeleton of their own; their bone ids index
+      // the ped's shared skeleton and are checked again when bound to it.
+      if (!hasSkin || !isValidSkin(mesh, skeleton ? skeleton.bones.length : Number.POSITIVE_INFINITY)) {
+        mesh.skinIndices = null;
+        mesh.skinWeights = null;
+      }
       model.meshes.push(mesh);
     }
   }
@@ -1217,6 +1289,7 @@ function parseGeometry(reader, offset, name) {
   const vertexDataPtr = reader.u64(offset + 0x78);
 
   const vertexDecl = parseVertexDeclaration(reader, offset);
+  const boneIds = parseGeometryBoneIds(reader, offset);
 
   let vertexData = null;
   if (reader.validPtr(vertexBufferPtr)) {
@@ -1264,8 +1337,51 @@ function parseGeometry(reader, offset, name) {
     uvs4: vertexData.uvs4,
     colors: vertexData.colors,
     tangents: vertexData.tangents,
+    skinIndices: mapSkinIndices(vertexData.blendIndices, boneIds),
+    skinWeights: vertexData.blendWeights,
     indices,
   };
+}
+
+// Geometry BoneIds map a vertex's blend index (a slot in the geometry's matrix
+// palette) to a skeleton bone index. Without the table the blend index already
+// addresses the skeleton.
+function parseGeometryBoneIds(reader, geomOffset) {
+  const ptr = reader.u64(geomOffset + 0x68);
+  const count = reader.u16(geomOffset + 0x72);
+  if (!count || count > MAX_GEOMETRY_BONE_IDS || !reader.validPtr(ptr)) return null;
+  const start = reader.resolvePtr(ptr);
+  if (!reader.valid(start) || start + count * 2 > reader.len) return null;
+  const ids = new Uint16Array(count);
+  for (let i = 0; i < count; i++) ids[i] = reader.u16(start + i * 2);
+  return ids;
+}
+
+function mapSkinIndices(blendIndices, boneIds) {
+  if (!blendIndices) return null;
+  const mapped = new Uint16Array(blendIndices.length);
+  for (let i = 0; i < blendIndices.length; i++) {
+    const slot = blendIndices[i];
+    if (boneIds) {
+      // A palette slot outside the table cannot be resolved; the whole skin is rejected.
+      if (slot >= boneIds.length) return null;
+      mapped[i] = boneIds[slot];
+    } else {
+      mapped[i] = slot;
+    }
+  }
+  return mapped;
+}
+
+// Skinning is only usable when every weighted influence names a real bone.
+function isValidSkin(mesh, boneCount) {
+  const { skinIndices, skinWeights } = mesh;
+  if (!skinIndices || !skinWeights) return false;
+  if (skinIndices.length !== skinWeights.length || skinIndices.length !== (mesh.positions.length / 3) * 4) return false;
+  for (let i = 0; i < skinIndices.length; i++) {
+    if (skinWeights[i] > 0 && skinIndices[i] >= boneCount) return false;
+  }
+  return true;
 }
 
 function parseVertexDeclaration(reader, geomOffset) {
@@ -1318,6 +1434,10 @@ function buildVertexDeclFromFlags(flags, types) {
     texcoordOffsets: Array(8).fill(-1),
     texcoordTypes: Array(8).fill(null),
     tangentOffset: -1,
+    blendWeightsOffset: -1,
+    blendIndicesOffset: -1,
+    blendWeightsType: null,
+    blendIndicesType: null,
     positionType: null,
     normalType: null,
     colorType: null,
@@ -1337,6 +1457,12 @@ function buildVertexDeclFromFlags(flags, types) {
     if (i === 0) {
       decl.positionOffset = offset;
       decl.positionType = type;
+    } else if (i === 1) {
+      decl.blendWeightsOffset = offset;
+      decl.blendWeightsType = type;
+    } else if (i === 2) {
+      decl.blendIndicesOffset = offset;
+      decl.blendIndicesType = type;
     } else if (i === 3) {
       decl.normalOffset = offset;
       decl.normalType = type;
@@ -1472,6 +1598,17 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
     hasColors = false;
 
   const format = vertexDecl || detectVertexFormat(stride);
+  // Blend weights and indices are four unsigned bytes each (Colour or UByte4),
+  // paired by byte position.
+  const isByte4 = (type) => type === 8 || type === 9;
+  const weightsOffset = format.blendWeightsOffset ?? -1;
+  const indicesOffset = format.blendIndicesOffset ?? -1;
+  const hasBlend =
+    weightsOffset >= 0 && indicesOffset >= 0 &&
+    isByte4(format.blendWeightsType) && isByte4(format.blendIndicesType) &&
+    weightsOffset + 4 <= stride && indicesOffset + 4 <= stride;
+  const blendWeights = hasBlend ? new Float32Array(safeCount * 4) : null;
+  const blendIndices = hasBlend ? new Uint8Array(safeCount * 4) : null;
 
   for (let i = 0; i < safeCount; i++) {
     const vOffset = offset + i * stride;
@@ -1492,6 +1629,21 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
     positions[i * 3] = px;
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
+
+    if (hasBlend) {
+      let total = 0;
+      for (let k = 0; k < 4; k++) {
+        const weight = reader.u8(vOffset + weightsOffset + k);
+        blendWeights[i * 4 + k] = weight;
+        blendIndices[i * 4 + k] = reader.u8(vOffset + indicesOffset + k);
+        total += weight;
+      }
+      // Normalise so quantised weights sum to exactly one; unweighted vertices
+      // follow their first influence.
+      for (let k = 0; k < 4; k++) {
+        blendWeights[i * 4 + k] = total > 0 ? blendWeights[i * 4 + k] / total : k === 0 ? 1 : 0;
+      }
+    }
 
     const normalOffset = format.normalOffset;
     const normalType = format.normalType;
@@ -1555,6 +1707,8 @@ function parseVertexData(reader, offset, stride, count, vertexDecl = null) {
     uvs4: hasUVs[3] ? uvSets[3] : null,
     colors: hasColors ? colors : null,
     tangents: null,
+    blendWeights,
+    blendIndices,
   };
 }
 

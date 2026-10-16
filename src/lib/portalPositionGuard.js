@@ -103,12 +103,14 @@ export function positionSelectPortal({
     triggerRect.bottom + sideOffset,
   );
 
+  const scale = getUiScale(uiScale);
+  // The content carries the UI zoom (see studio.css), so its CSS pixels are
+  // scaled on screen; convert the on-screen space below the trigger.
   const maxHeight = Math.floor(
-    window.innerHeight - desiredTop - VIEWPORT_MARGIN_PX,
+    (window.innerHeight - desiredTop - VIEWPORT_MARGIN_PX) / scale,
   );
   contentEl.style.maxHeight = `${Math.max(120, maxHeight)}px`;
 
-  const scale = getUiScale(uiScale);
   return guardWrapperPosition({ wrapper, desiredLeft, desiredTop, scale });
 }
 

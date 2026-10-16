@@ -18,14 +18,16 @@ self.onmessage = async (event) => {
       return;
     }
 
+    const overlayPngBytes = result.overlayPngBytes instanceof Uint8Array ? result.overlayPngBytes : null;
     self.postMessage(
       {
         result: {
           ...result,
           bytes,
+          overlayPngBytes,
         },
       },
-      [bytes.buffer],
+      overlayPngBytes ? [bytes.buffer, overlayPngBytes.buffer] : [bytes.buffer],
     );
   } catch (error) {
     self.postMessage({

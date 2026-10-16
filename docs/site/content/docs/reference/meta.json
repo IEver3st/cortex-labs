@@ -3,6 +3,7 @@
   "pages": [
     "supported-files",
     "yft-cli-contract",
+    "kit-shoot-manifest",
     "troubleshooting"
   ]
 }

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CVehicleModelInfo__InitDataList>
+  <residentTxd>vehshare</residentTxd>
+  <InitDatas>
+    <Item>
+      <modelName>sheriff3</modelName>
+      <txdName>sheriff3</txdName>
+      <handlingId>SHERIFF</handlingId>
+      <gameName>SHERIFF</gameName>
+      <vehicleMakeName>DECLASSE</vehicleMakeName>
+      <layout>LAYOUT_STANDARD</layout>
+      <type>VEHICLE_TYPE_CAR</type>
+      <plateType>VPT_FRONT_AND_BACK_PLATES</plateType>
+      <vehicleClass>VC_EMERGENCY</vehicleClass>
+      <wheelType>VWT_MUSCLE</wheelType>
+      <flags>FLAG_EXTRAS_REQUIRE FLAG_LAW_ENFORCEMENT</flags>
+    </Item>
+  </InitDatas>
+  <txdRelationships />
+</CVehicleModelInfo__InitDataList>

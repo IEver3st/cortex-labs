@@ -1,0 +1,836 @@
+/* Template Generator: a member of the viewer workspace family. The dock is
+   the pipeline (model, paint area, markers, output) with export pinned at its
+   foot; the stage shows the model and the flattened template side by side.
+   Shared lv- parts come from workspace/workspace.css; tm- rules only cover
+   what is specific to templates. */
+
+.tm-root.lv-root {
+  --lv-dock: clamp(270px, 23vw, 320px);
+  grid-template-columns: var(--lv-dock) minmax(0, 1fr);
+}
+
+.tm-root.lv-root.is-dock-closed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.tm-root.is-dock-closed .lv-dock {
+  border: 0;
+}
+
+.tm-note-icon {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  transform: translateY(2px);
+}
+
+/* ── Window parts ── */
+.tm-parts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tm-part {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 2px 2px 10px;
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  box-shadow: inset 0 0 0 1px var(--mg-border);
+  transition: box-shadow 140ms var(--cx-ease);
+}
+
+.tm-part.is-hovered {
+  box-shadow: inset 0 0 0 1px var(--mg-primary);
+}
+
+.tm-part-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tm-part .cx-icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.tm-part .cx-icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.tm-part-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tm-part-add {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+/* ── Marker colour ── */
+.tm-color-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.tm-color-chip {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 20%, transparent);
+}
+
+.tm-color-chip input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tm-color-chip:focus-within {
+  box-shadow: var(--cx-focus);
+}
+
+.tm-color-label {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.tm-color-hex {
+  font-family: var(--font-hud);
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+/* ── Output options ── */
+.tm-options {
+  display: grid;
+}
+
+.tm-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--cx-rule);
+}
+
+.tm-option:last-child {
+  border-bottom: 0;
+}
+
+/* An option with a dependent control (overlay colour) shares one rule. */
+.tm-option-block {
+  border-bottom: 1px solid var(--cx-rule);
+}
+
+.tm-option-block > .tm-option {
+  border-bottom: 0;
+}
+
+.tm-option-block > .tm-color-row {
+  padding: 0 0 10px;
+}
+
+.tm-option > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tm-option strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.tm-option small {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--mg-muted);
+}
+
+.tm-format {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.tm-format strong {
+  font-weight: 600;
+  color: var(--mg-fg);
+}
+
+/* ── Export (dock foot) ── */
+.tm-export {
+  display: grid;
+  gap: 12px;
+}
+
+.tm-dest {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 32px;
+}
+
+.tm-dest .cx-label {
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.tm-dest-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tm-dest-row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tm-dest-pick {
+  margin-left: auto;
+}
+
+.tm-dest-note {
+  margin: -6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--mg-muted);
+}
+
+.tm-export-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tm-export-btn {
+  flex: 1;
+  height: 36px;
+}
+
+.tm-rebuild-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+
+.tm-export-status {
+  min-height: 1.4em;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.tm-export-status.is-saved {
+  color: var(--cx-confirm);
+}
+
+.tm-root .is-spinning {
+  animation: tm-spin 900ms linear infinite;
+}
+
+/* ── Stage ── */
+.tm-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--mg-bg);
+  container-type: inline-size;
+}
+
+.tm-panes {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+}
+
+.tm-panes[hidden],
+.tm-pane[hidden] {
+  display: none;
+}
+
+.tm-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tm-pane + .tm-pane {
+  border-left: 1px solid var(--mg-border);
+}
+
+.tm-pane-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.tm-deck {
+  z-index: 3;
+}
+
+/* While choosing markers the placement bar owns the bottom edge, so zoom
+   moves under the size readout. */
+.tm-deck.is-raised {
+  top: calc(var(--lv-inset) + 40px);
+  right: var(--lv-inset);
+  bottom: auto;
+  left: auto;
+  transform: none;
+}
+
+.tm-view-switch {
+  z-index: 4;
+}
+
+.tm-alerts,
+.tm-toasts {
+  z-index: 5;
+}
+
+.tm-pane-state {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(86%, 460px);
+  padding: 10px 12px 10px 14px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  transform: translate(-50%, -50%);
+}
+
+.tm-pane-state > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tm-pane-state small {
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.tm-pane-state .cx-btn {
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.tm-pane-state > svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.tm-pane-state.is-error > svg {
+  color: var(--mg-destructive);
+}
+
+.tm-coach {
+  position: absolute;
+  top: calc(var(--lv-inset) + 50px);
+  left: var(--lv-inset);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(70%, 360px);
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tm-coach svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--mg-primary);
+}
+
+/* The template sheet sits on paper, inset from the pane edge. */
+.tm-sheet {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  outline: none;
+}
+
+.tm-sheet:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.tm-sheet.can-pan {
+  cursor: grab;
+}
+
+.tm-sheet.is-panning {
+  cursor: grabbing;
+}
+
+.tm-sheet-view {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.tm-sheet-canvas {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  box-shadow:
+    0 0 0 1px var(--mg-border),
+    0 10px 30px rgba(0, 0, 0, 0.16);
+}
+
+.tm-sheet-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.tm-sheet-state {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  max-width: 340px;
+  padding: 24px;
+  text-align: center;
+}
+
+.tm-sheet-state > svg {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 4px;
+  color: var(--mg-muted);
+}
+
+.tm-sheet-state.is-error > svg {
+  color: var(--mg-destructive);
+}
+
+.tm-sheet-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tm-sheet-copy {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.tm-sheet-state .cx-btn {
+  margin-top: 8px;
+}
+
+.tm-sheet-size,
+.tm-sheet-busy {
+  position: absolute;
+  top: var(--lv-inset);
+  right: var(--lv-inset);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tm-sheet-size span {
+  color: var(--mg-muted);
+}
+
+.tm-sheet-busy {
+  top: calc(var(--lv-inset) + 38px);
+  font-family: var(--font-main);
+  color: var(--mg-fg);
+}
+
+/* While drawing, the raised deck takes the slot under the size readout. */
+.tm-pane--sheet:has(.tm-deck.is-raised) .tm-sheet-busy {
+  top: calc(var(--lv-inset) + 92px);
+}
+
+.tm-zoom-value {
+  min-width: 52px;
+  font-family: var(--font-hud);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Marker boxes over the template. The SVG spans the sheet in 0..1 units, the
+   same space the export uses, so strokes use non-scaling widths. */
+.tm-boxes {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.tm-boxes.is-active {
+  pointer-events: all;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.tm-box-rect {
+  fill: color-mix(in srgb, var(--marker) 22%, transparent);
+  stroke: var(--marker);
+  stroke-width: 1.5px;
+  stroke-dasharray: 5 3;
+}
+
+.tm-boxes.is-active .tm-box-rect {
+  cursor: move;
+}
+
+.tm-box.is-selected .tm-box-rect {
+  stroke-width: 2px;
+  stroke-dasharray: none;
+}
+
+.tm-box-handle {
+  fill: var(--mg-bg);
+  stroke: var(--marker);
+  stroke-width: 1.5px;
+}
+
+.tm-box-handle.is-nw,
+.tm-box-handle.is-se {
+  cursor: nwse-resize;
+}
+
+.tm-box-handle.is-ne,
+.tm-box-handle.is-sw {
+  cursor: nesw-resize;
+}
+
+/* Number tag at each box's top-left, matching its row in the dock. */
+.tm-box-label {
+  position: absolute;
+  z-index: 1;
+  min-width: 16px;
+  padding: 0 4px;
+  transform: translate(0, -100%);
+  border-radius: 3px 3px 3px 0;
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+  font: italic 800 11px/16px var(--font-display);
+  text-align: center;
+  pointer-events: none;
+}
+
+.tm-sheet.is-drawing .tm-sheet-canvas {
+  box-shadow:
+    0 0 0 1px var(--mg-primary),
+    0 10px 30px rgba(0, 0, 0, 0.16);
+}
+
+/* ── Marker list (dock) ── */
+.tm-draw-btn {
+  justify-self: start;
+}
+
+.tm-draw-btn.is-on {
+  background: var(--cx-invert-bg);
+  border-color: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.tm-marker-list {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  margin: 0 -4px;
+  padding: 2px 4px;
+  overflow-y: auto;
+  list-style: none;
+  container-type: inline-size;
+}
+
+.tm-marker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "pick fill remove";
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 2px 0 4px;
+  border-radius: 5px;
+}
+
+.tm-marker-pick { grid-area: pick; }
+.tm-marker-fill { grid-area: fill; }
+.tm-marker-row > .cx-icon-btn { grid-area: remove; }
+
+/* A narrow dock can't hold the size readout and the fill choice side by
+   side (a 4096 x 4096 row needs about 244px), so the fill choice moves under
+   the marker. */
+@container (max-width: 246px) {
+  .tm-marker-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "pick remove"
+      "fill fill";
+    row-gap: 2px;
+    padding-bottom: 6px;
+  }
+  .tm-marker-fill {
+    justify-self: start;
+    margin-left: 24px;
+  }
+}
+
+.tm-marker-row:hover {
+  background: var(--cx-wash);
+}
+
+.tm-marker-row.is-selected {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.tm-marker-row.is-selected .tm-marker-size,
+.tm-marker-row.is-selected .cx-icon-btn {
+  color: var(--cx-invert-muted);
+}
+
+.tm-marker-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tm-marker-pick:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.tm-marker-pick .cx-display {
+  min-width: 14px;
+  font-size: 15px;
+}
+
+.tm-marker-size {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tm-marker-warn {
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--cx-caution);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tm-marker-fill .lv-seg-btn {
+  min-height: 22px;
+  padding: 0 7px;
+  font-size: 11.5px;
+}
+
+/* Marker drawing bar: replaces the deck while drawing. */
+.tm-markerbar {
+  position: absolute;
+  bottom: var(--lv-inset);
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(720px, calc(100% - 2 * var(--lv-inset)));
+  padding: 8px 8px 8px 16px;
+  border-radius: 11px;
+  transform: translateX(-50%);
+}
+
+.tm-markerbar-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.tm-markerbar-count .cx-display {
+  font-size: 24px;
+  color: var(--mg-fg);
+}
+
+.tm-markerbar-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--mg-muted);
+}
+
+.tm-markerbar-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ── Empty stage ── */
+.tm-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  gap: 8px;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.tm-empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.tm-empty-copy {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mg-muted);
+}
+
+.tm-spinner {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--mg-fg) 18%, transparent);
+  border-top-color: var(--mg-primary);
+  border-radius: 999px;
+  animation: tm-spin 800ms linear infinite;
+}
+
+@keyframes tm-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Narrow stages: stack the split vertically, tighten the bar ── */
+@container (max-width: 760px) {
+  .tm-stage.is-split .tm-panes {
+    grid-auto-flow: row;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+  .tm-stage.is-split .tm-pane + .tm-pane {
+    border-top: 1px solid var(--mg-border);
+    border-left: 0;
+  }
+  .tm-markerbar {
+    flex-wrap: wrap;
+  }
+  .tm-markerbar-hint {
+    flex-basis: 100%;
+    order: 3;
+  }
+  .tm-markerbar-actions {
+    margin-left: auto;
+  }
+}
+
+
+/* Short windows: the pinned foot would bury the steps, so the dock scrolls
+   as one column and export follows the last step. */
+@media (max-height: 720px) {
+  .tm-root .lv-dock {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .tm-root .lv-dock-scroll {
+    flex: none;
+    overflow: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tm-part {
+    transition: none;
+  }
+  .tm-root .is-spinning,
+  .tm-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+@media (forced-colors: active) {
+  .tm-box-rect,
+  .tm-box-handle {
+    stroke: Highlight;
+  }
+  .tm-marker-row.is-selected {
+    outline: 2px solid Highlight;
+  }
+}

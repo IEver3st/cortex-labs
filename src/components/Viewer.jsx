@@ -5,10 +5,15 @@ import { DDSLoader } from "three/examples/jsm/loaders/DDSLoader";
 import { TGALoader } from "three/examples/jsm/loaders/TGALoader";
 import { DFFLoader } from "dff-loader";
 import { invoke } from "@tauri-apps/api/core";
-import { readFile } from "@tauri-apps/plugin-fs";
-import { parseYft } from "../lib/yft";
+import { readFile, stat } from "@tauri-apps/plugin-fs";
+import { parseYftAsync } from "../lib/yft-loader";
 import { parseClmesh } from "../lib/clmesh.js";
-import { parseDDS } from "../lib/dds";
+import { getBridgeParseIdentity, getLoadedModelCacheKey, getModelCacheKey, isBridgeCancelled, readBridgeWarnings, requestBridgeParse } from "../lib/model-load.js";
+import { UV_ORIGIN_TOP, userTextureUvAttribute } from "../lib/clmesh-object.js";
+import { getModelExtras, loadVehicleModPart, summarizeParentTextures } from "../lib/vehicle-mod-parts.js";
+import { createPartSwapAnimator, enterDelay, prefersReducedMotion, SWAP_HANDOFF_MS } from "../lib/part-swap-animation.js";
+import { parseDDSAsync } from "../lib/dds";
+import { createTextureCache, getTextureCacheKey as buildTextureCacheKey } from "../lib/texture-cache.js";
 import { buildModelTemplateMap, buildModelTemplateSets } from "../lib/template-map";
 import { getTemplateModelPolicy } from "../lib/template-model";
 import {
@@ -24,13 +29,14 @@ import {
   hasRenderableMeshes,
   disposeObject,
   disposeMaterial,
-  createFloorGrid,
   normalizeLoadedMeshes,
   setupWasdControls,
   setupWheelWhileDragging,
   buildCageOverlay,
   disposeCageOverlay,
   loadTextureFromPath as loadTextureFromPathShared,
+  loadBlobTexture,
+  disposeTexture,
   loadPsdTexture,
   loadPdnTexture,
   YDD_SCAN_SETTINGS,
@@ -46,24 +52,61 @@ import {
   restoreViewerCameraState,
   syncViewerCameraPose,
 } from "../lib/camera-state.js";
-import { isTemplateMarkerModifierPressed } from "../lib/template-marker-utils.js";
 import {
   applyShadowFlags,
+  BLOOM_STRENGTH,
   configureShadowLight,
-  createShadowReceiver,
-  disposeShadowReceiver,
+  createAoPipeline,
+  createBloomPipeline,
+  createSolidWireMaterial,
+  disposeAoPipeline,
+  disposeBloomPipeline,
+  FLOOR_LIGHT_LAYER,
   renderWithEffects,
-  updateShadowReceiver,
-  updateDirectionalShadowFrustum,
+  resizeAoPipeline,
+  resizeBloomPipeline,
+  setAoBounds,
 } from "../lib/viewer-render-effects.js";
+import { createEmergencyLightRig } from "../lib/emergency-light-rig.js";
+import { TURNTABLE_DEFAULT_SPEED, stepTurntable, withTurntableAtRest } from "../lib/turntable.js";
+import { normalizeModelRotation, orientModel } from "../lib/model-orientation.js";
+import { isYtdTexturePath, resolveYtdTexturePath } from "../lib/ytd-texture.js";
+import { createPlateOverlay, findPlateMeshes } from "../lib/license-plate-overlay.js";
+import { buildPlateImage } from "../lib/license-plate-assets.js";
+import { anyLightOn, summarizeVehicleLights } from "../lib/emergency-lights.js";
 import { stabilizeObjectForWorld } from "../lib/model-normalization.js";
+import { createViewerStage } from "../lib/viewer-stage.js";
 import {
   applyNativeManifestToMeshes,
+  findLiveryTexturePrefix,
+  normalizeManifestLightBones,
+  resolvePaintLayerSlot,
   summarizeNativeMaterialMeshes,
 } from "../lib/native-material-plan.js";
-import { loadNativeMaterialView } from "../lib/native-materials.js";
+import { loadNativeMaterialView, loadNativeTextureSource, setNativeOverlayTexture } from "../lib/native-materials.js";
+import { createLiveryOverride, findLiveryModTexturePath, listTextureLiveries } from "../lib/vehicle-livery.js";
+import { applyFrontWheelSteering, getSteerableWheelMeshes } from "../lib/vehicle-steering.js";
+import { createVehicleRig, normalizeManifestSkeleton } from "../lib/vehicle-rig.js";
+import { isHiddenByBones } from "../lib/vehicle-modkits.js";
+import { shotFov } from "../lib/eup-export.js";
+import { countDrawnGeometry, summarizeMeshStats } from "../lib/mesh-stats.js";
+import {
+  FINISHED_PAINT_KEYS,
+  VEHICLE_PAINT_KEYS,
+  normalizeVehiclePaint,
+  paintDisplayColor,
+  paintFinishProfile,
+} from "../lib/vehicle-paint.js";
 
 const defaultBody = "#dfe4ea";
+// Night light preview: studio light multiplier and workbench backdrop.
+const NIGHT_LIGHT_SCALE = 0.08;
+const NIGHT_BACKGROUND = "#07080b";
+// How long the view holds still before siren markers re-check which lights sit
+// behind the body.
+const SIREN_SIDES_SETTLE_MS = 120;
+// Raycast time per frame for that check, so it never drops a frame.
+const SIREN_SIDES_BUDGET_MS = 3;
 const ALL_TARGET = "all";
 const MATERIAL_TARGET_PREFIX = "material:";
 const MESH_TARGET_PREFIX = "mesh:";
@@ -124,10 +167,14 @@ const EXTERIOR_EXCLUDE_TOKENS = [
   "under",
   "undercarriage",
 ];
-const TEXTURE_CACHE_LIMIT = 16;
-const textureCache = new Map();
+// Shared across every mounted viewer; keyed by path+flip, see texture-cache.js.
+const textureCache = createTextureCache();
 const MODEL_CACHE_LIMIT = 4;
 const modelCache = new Map();
+// A hidden tab keeps its renderer, but after this long its GPU textures are
+// dropped; three re-uploads them from the retained CPU-side images on the
+// next frame once the tab is active again.
+const IDLE_GPU_RELEASE_MS = 5 * 60 * 1000;
 const DEFAULT_MATERIAL_CONFIG = {
   type: "paint",
   lightIntensity: 1.0,
@@ -151,44 +198,10 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function buildVehicleSlotColors(baseColor = defaultBody) {
-  const resolved = baseColor || defaultBody;
-  return {
-    primary: resolved,
-    secondary: resolved,
-    accent: resolved,
-    glass: resolved,
-  };
-}
-
-function normalizeVehicleSlotColors(slotColors, baseColor = defaultBody) {
-  const fallback = buildVehicleSlotColors(baseColor);
-  if (!slotColors || typeof slotColors !== "object") return fallback;
-  return {
-    primary: slotColors.primary || fallback.primary,
-    secondary: slotColors.secondary || fallback.secondary,
-    accent: slotColors.accent || fallback.accent,
-    glass: slotColors.glass || fallback.glass,
-  };
-}
-
-function getVehicleSlotColor(slotColors, slot) {
-  const fallbackOrder = {
-    primary: ["primary"],
-    secondary: ["secondary", "primary"],
-    accent: ["accent", "secondary", "primary"],
-    glass: ["glass", "primary"],
-  };
-  const keys = fallbackOrder[slot] || fallbackOrder.primary;
-  for (const key of keys) {
-    const value = slotColors?.[key];
-    if (typeof value === "string" && value.trim()) return value;
-  }
-  return defaultBody;
-}
-
+// Paint slot for meshes without vehicle shader data (peds, props, models from
+// other tools), by name. Lights, badges and trim are not body paint.
 function detectVehicleColorSlot(names, isGlass) {
-  if (isGlass) return "glass";
+  if (isGlass) return null;
   const raw = names
     .map((name) => (typeof name === "string" ? name.trim().toLowerCase() : ""))
     .filter(Boolean)
@@ -197,33 +210,27 @@ function detectVehicleColorSlot(names, isGlass) {
   if (!raw) return null;
 
   if (
-    /vehicle[_-]?paint[_-]?2\b/.test(raw) ||
-    /car[_-]?paint[_-]?2\b/.test(raw) ||
-    /\bcarpaint2\b/.test(raw) ||
-    /\bsecondary\b/.test(raw)
+    /vehicle[_-]?paint[_-]?2/.test(raw) ||
+    /car[_-]?paint[_-]?2/.test(raw) ||
+    /carpaint2/.test(raw) ||
+    /secondary/.test(raw)
   ) {
     return "secondary";
   }
 
   if (
-    /vehicle[_-]?paint[_-]?[3-9]\d*\b/.test(raw) ||
-    /car[_-]?paint[_-]?[3-9]\d*\b/.test(raw) ||
-    /\bcarpaint[3-9]\d*\b/.test(raw) ||
-    raw.includes("vehicle_lightsemissive") ||
-    raw.includes("vehicle_lights") ||
     raw.includes("lightsemissive") ||
+    raw.includes("vehicle_lights") ||
     raw.includes("lightbar") ||
     raw.includes("emissive") ||
     raw.includes("siren") ||
     raw.includes("beacon") ||
     raw.includes("vehicle_detail") ||
-    raw.includes("vehicle_badge") ||
-    raw.includes("vehicle_badges") ||
     raw.includes("badge") ||
     raw.includes("accent") ||
     raw.includes("trim")
   ) {
-    return "accent";
+    return null;
   }
 
   if (
@@ -244,72 +251,56 @@ function detectVehicleColorSlot(names, isGlass) {
   return null;
 }
 
-function getTextureCacheKey(path, flipY, reloadToken) {
-  if (!path) return "";
-  const normalized = path.toString();
-  const token = Number.isFinite(reloadToken) ? reloadToken : 0;
-  return `${normalized}::${flipY ? "fy" : "nf"}::${token}`;
-}
+// Body paint meshes that count as the exterior shell.
+const EXTERIOR_PAINT_SLOTS = new Set(["primary", "secondary", "pearlescent"]);
 
-function touchTextureCache(key) {
-  const entry = textureCache.get(key);
-  if (!entry) return null;
-  textureCache.delete(key);
-  textureCache.set(key, entry);
-  return entry.texture;
+function getTextureCacheKey(path, flipY) {
+  return buildTextureCacheKey(path, flipY);
 }
 
 function getCachedTexture(key) {
-  if (!key) return null;
-  return touchTextureCache(key);
-}
-
-function pruneTextureCache() {
-  if (textureCache.size <= TEXTURE_CACHE_LIMIT) return;
-  for (const [key, entry] of textureCache) {
-    if (textureCache.size <= TEXTURE_CACHE_LIMIT) break;
-    if (entry.refs > 0) continue;
-    textureCache.delete(key);
-    entry.texture.dispose?.();
-  }
+  return textureCache.get(key);
 }
 
 function cacheTexture(key, texture) {
-  if (!key || !texture) return;
-  const existing = textureCache.get(key);
-  if (existing && existing.texture !== texture) {
-    existing.texture.dispose?.();
-  }
-  const refs = existing?.refs || 0;
-  textureCache.delete(key);
-  texture.userData = texture.userData || {};
-  texture.userData.cacheKey = key;
-  textureCache.set(key, { texture, refs });
-  pruneTextureCache();
+  textureCache.set(key, texture);
 }
 
 function retainTexture(texture) {
-  if (!texture) return;
-  const key = texture.userData?.cacheKey;
-  if (!key) return;
-  const entry = textureCache.get(key);
-  if (!entry) return;
-  entry.refs = (entry.refs || 0) + 1;
+  textureCache.retain(texture);
 }
 
 function releaseTexture(texture) {
-  if (!texture) return;
-  const key = texture.userData?.cacheKey;
-  if (!key) {
-    texture.dispose?.();
-    return;
-  }
-  const entry = textureCache.get(key);
-  if (!entry) {
-    texture.dispose?.();
-    return;
-  }
-  entry.refs = Math.max(0, (entry.refs || 0) - 1);
+  textureCache.release(texture);
+}
+
+// Per-viewer memory of the reload token a cache key was last loaded at. A
+// changed token means this viewer saw a file save, so the cached texture may
+// only be reused when another viewer already refreshed it (newer generation).
+function shouldReuseCachedTexture(seenMap, key, token) {
+  const seen = seenMap.get(key);
+  if (!seen) return true;
+  if (seen.token === token) return true;
+  return textureCache.getGeneration(key) > seen.generation;
+}
+
+function rememberLoadedTexture(seenMap, key, token) {
+  seenMap.set(key, { token, generation: textureCache.getGeneration(key) });
+}
+
+function collectMaterialTextures(object, out) {
+  if (!object) return out;
+  object.traverse((child) => {
+    if (!child?.isMesh) return;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (!material) continue;
+      for (const value of Object.values(material)) {
+        if (value?.isTexture) out.add(value);
+      }
+    }
+  });
+  return out;
 }
 
 function touchModelCache(key) {
@@ -317,12 +308,12 @@ function touchModelCache(key) {
   if (!entry) return null;
   modelCache.delete(key);
   modelCache.set(key, entry);
-  return entry.template;
+  return entry;
 }
 
-function getCachedModelTemplate(path) {
-  if (!path) return null;
-  return touchModelCache(path.toString());
+function getCachedModelTemplate(key) {
+  if (!key) return null;
+  return touchModelCache(key);
 }
 
 function pruneModelCache() {
@@ -334,24 +325,39 @@ function pruneModelCache() {
   }
 }
 
-function cacheModelTemplate(path, template) {
-  if (!path || !template) return;
-  const key = path.toString();
+// `key` comes from getModelCacheKey (file path, mtime, size and variant).
+// `meta.sourcePath` and `meta.fileKey` let a parse of a file that has since
+// been saved again drop the older version's entries, which are never read;
+// `meta.bridgeIdentity` does the same for a model from an older bridge parse.
+function cacheModelTemplate(key, template, meta = null) {
+  if (!key || !template) return;
   const existing = modelCache.get(key);
   if (existing?.template && existing.template !== template) {
     disposeObject(existing.template);
   }
+  if (meta?.sourcePath && meta.fileKey) {
+    for (const [otherKey, entry] of [...modelCache]) {
+      const olderParse = Boolean(meta.bridgeIdentity && entry.bridgeIdentity && entry.bridgeIdentity !== meta.bridgeIdentity);
+      if (entry.sourcePath !== meta.sourcePath || (entry.fileKey === meta.fileKey && !olderParse)) continue;
+      modelCache.delete(otherKey);
+      disposeObject(entry.template);
+    }
+  }
   modelCache.delete(key);
-  modelCache.set(key, { template });
+  modelCache.set(key, { template, ...(meta || {}) });
   pruneModelCache();
 }
 
-function cloneCachedModelTemplate(template) {
+// Geometries are read-only shared buffers (UV swaps keep their base sets in
+// geometry.userData), so the cached template shares them with the first live
+// object and only cache hits pay for a geometry clone. Materials are always
+// cloned because the viewer mutates them per tab.
+function cloneCachedModelTemplate(template, { cloneGeometry = true } = {}) {
   if (!template) return null;
   const clone = template.clone(true);
   clone.traverse((child) => {
     if (!child?.isMesh) return;
-    if (child.geometry?.clone) {
+    if (cloneGeometry && child.geometry?.clone) {
       child.geometry = child.geometry.clone();
     }
     if (Array.isArray(child.material)) {
@@ -396,7 +402,7 @@ function ViewerComponent({
   texturePath,
   windowTexturePath,
   bodyColor,
-  slotColors,
+  vehiclePaint,
   backgroundColor,
   backgroundImagePath = "",
   backgroundImageReloadToken = 0,
@@ -409,6 +415,9 @@ function ViewerComponent({
   liveryExteriorOnly = false,
   showWireframe = false,
   showCageWireframe = false,
+  // Shaded model with its triangle edges drawn over it; reports onMeshStats.
+  showSolidWireframe = false,
+  onMeshStats,
   flipTextureY = true,
   wasdEnabled = false,
   showGrid = false,
@@ -417,15 +426,44 @@ function ViewerComponent({
   lightElevation = 46,
   glossiness = 0.5,
   shadowsEnabled = false,
+  ambientOcclusion = false,
+  stage = "workbench",
+  stageSpot = 1,
+  stageReflect = 0.6,
+  stageBeam = true,
+  stageLight = "top",
+  stageFloor = "concrete",
+  // Showroom rim light strength; EUP passes its Settings > Studio value, vehicles have none.
+  stageRim = 0,
+  turntable = false,
+  turntableSpeed = TURNTABLE_DEFAULT_SPEED,
   materialType = "paint",
   materialLightIntensity = 1.0,
   materialGlossiness = 0.62,
   materialRoughness = 0.28,
   materialClearcoat = 0.72,
   materialTexturePath = "",
+  // Quarter turns the user applied ([x, y, z, w] or null); undefined leaves the
+  // orientation to rotateModel callers such as the Template Generator.
+  modelRotation = undefined,
   nativeMaterialsEnabled = false,
   nativeMaterialsReloadToken = 0,
+  vehicleMods = null,
+  gameLivery = null,
+  onGameLiveryStatus,
+  steeringAngle = 0,
+  roofClip = null,
+  onVehiclePartsChange,
+  onPaintSlotsChange,
+  vehicleLights = null,
+  licensePlate = null,
+  onLicensePlateStatus,
+  extrasPlan = null,
+  onVehicleModsStatus,
   onReady,
+  // Called right after each live frame is drawn, so DOM overlays can follow
+  // the camera in the same frame the canvas shows.
+  onFrame,
   onModelInfo,
   onModelError,
   onModelLoading,
@@ -433,13 +471,12 @@ function ViewerComponent({
   onTextureError,
   onWindowTextureError,
   onFormatWarning,
+  onAssetError,
   onNativeMaterialsStatus,
   isActive = true,
   includeTemplateGeometry = false,
-  templateMarkerPickModifier = "alt",
-  onTemplateMarkerUvHover,
-  onTemplateMarkerUvLeave,
-  onTemplateMarkerUvPick,
+  // Bumped to load the same model again after its files changed on disk.
+  modelReloadToken = 0,
   templatePartPickEnabled = false,
   selectedTemplatePartNames = EMPTY_TEMPLATE_PART_NAMES,
   hoveredTemplatePartName = "",
@@ -459,8 +496,13 @@ function ViewerComponent({
   const backgroundTextureRef = useRef(null);
   const templatePartOverlayRef = useRef(null);
   const lightsRef = useRef({ ambient: null, key: null, rim: null });
-  const shadowReceiverRef = useRef(null);
-  const gridRef = useRef(null);
+  const stageRef = useRef(null);
+  // The vehicle sits in this group; it turns about the world Y axis, which
+  // runs through the vehicle's centre (stabilizeObjectForWorld centres it).
+  const turntableRef = useRef(null);
+  const turntableStateRef = useRef({ on: turntable, speed: turntableSpeed });
+  turntableStateRef.current = { on: turntable, speed: turntableSpeed };
+  const stageModeRef = useRef(stage);
   const fitRef = useRef({
     bounds: null,
     center: new THREE.Vector3(),
@@ -471,6 +513,9 @@ function ViewerComponent({
   });
   const [sceneReady, setSceneReady] = useState(false);
   const requestRenderRef = useRef(null);
+  const reframeModelRef = useRef(null);
+  // The path of the model on screen: loading it again keeps the user's view.
+  const shownModelPathRef = useRef("");
   const wasdStateRef = useRef({
     forward: false,
     back: false,
@@ -482,41 +527,94 @@ function ViewerComponent({
   });
   const wasdFrameRef = useRef(0);
   const onReadyRef = useRef(onReady);
+  const onFrameRef = useRef(onFrame);
+  const compositeTextureRef = useRef(null);
+  const loadedTextureTokensRef = useRef(new Map());
+  const loadedWindowTextureTokensRef = useRef(new Map());
   const onModelInfoRef = useRef(onModelInfo);
   const onModelErrorRef = useRef(onModelError);
   const onModelLoadingRef = useRef(onModelLoading);
   const onTextureErrorRef = useRef(onTextureError);
   const onWindowTextureErrorRef = useRef(onWindowTextureError);
   const onFormatWarningRef = useRef(onFormatWarning);
+  // Background image and material map failures, which have no slot of their own.
+  const onAssetErrorRef = useRef(onAssetError);
+  onAssetErrorRef.current = onAssetError;
   const onNativeMaterialsStatusRef = useRef(onNativeMaterialsStatus);
-  const onTemplateMarkerUvHoverRef = useRef(onTemplateMarkerUvHover);
-  const onTemplateMarkerUvLeaveRef = useRef(onTemplateMarkerUvLeave);
-  const onTemplateMarkerUvPickRef = useRef(onTemplateMarkerUvPick);
-  const templateMarkerPickModifierRef = useRef(templateMarkerPickModifier);
+  const onVehicleModsStatusRef = useRef(onVehicleModsStatus);
+  const onGameLiveryStatusRef = useRef(onGameLiveryStatus);
+  onGameLiveryStatusRef.current = onGameLiveryStatus;
+  const vehicleModsRef = useRef(vehicleMods);
+  vehicleModsRef.current = vehicleMods;
   const templatePartPickEnabledRef = useRef(templatePartPickEnabled);
   const onTemplatePartHoverRef = useRef(onTemplatePartHover);
   const onTemplatePartLeaveRef = useRef(onTemplatePartLeave);
   const onTemplatePartPickRef = useRef(onTemplatePartPick);
   const isActiveRef = useRef(isActive);
   const shadowsEnabledRef = useRef(shadowsEnabled);
+  const ambientOcclusionRef = useRef(ambientOcclusion);
   const materialStateRef = useRef({});
-  const markerPickStateRef = useRef({
+  const templatePickStateRef = useRef({
     pointerId: null,
     startX: 0,
     startY: 0,
     moved: false,
-    controlsDisabled: false,
   });
   const cameraStateRef = useRef({
     presetKey: DEFAULT_CAMERA_PRESET,
     zoomFactor: 1,
   });
   const [modelVersion, setModelVersion] = useState(0);
+  const [vehicleModsRevision, setVehicleModsRevision] = useState(0);
+  // Bumped each time the model's native materials finish loading, so the game
+  // livery is put back on the fresh materials.
+  const [nativeReadyVersion, setNativeReadyVersion] = useState(0);
+  const lightRigRef = useRef(null);
+  // Far-side flags for the siren editor's markers, keyed by camera and anchors.
+  const sirenSidesRef = useRef({ rig: null, key: "", since: 0, done: "", scan: null, far: new Set() });
+  // Mod part and extra swaps animate on proxies (part-swap-animation.js).
+  const partSwapRef = useRef(null);
+  // Doors, bonnet, boot and convertible roof of the loaded vehicle (vehicle-rig.js).
+  const vehicleRigRef = useRef(null);
+  const vehiclePartDragRef = useRef(null);
+  const onVehiclePartsChangeRef = useRef(onVehiclePartsChange);
+  onVehiclePartsChangeRef.current = onVehiclePartsChange;
+  const onPaintSlotsChangeRef = useRef(onPaintSlotsChange);
+  onPaintSlotsChangeRef.current = onPaintSlotsChange;
+  const emitVehicleParts = () => onVehiclePartsChangeRef.current?.(snapshotVehicleRig(vehicleRigRef.current));
+  const bloomRef = useRef(null);
+  const plateOverlayRef = useRef(null);
+  const onLicensePlateStatusRef = useRef(onLicensePlateStatus);
+  onLicensePlateStatusRef.current = onLicensePlateStatus;
+  const aoRef = useRef(null);
+  const solidWireRef = useRef({ on: showSolidWireframe, material: null });
+  solidWireRef.current.on = showSolidWireframe;
+  const onMeshStatsRef = useRef(onMeshStats);
+  onMeshStatsRef.current = onMeshStats;
+  // null forces the first drawn frame to report.
+  const meshStatsKeyRef = useRef(null);
+  const solidWirePass = () => {
+    const wire = solidWireRef.current;
+    if (!wire.on || !modelRef.current) return null;
+    wire.material ||= createSolidWireMaterial();
+    return { roots: [modelRef.current], material: wire.material };
+  };
+  // Runs after each drawn frame: a cheap count, and the full summary only when
+  // the drawn geometry changed (a part swap, extras, exterior-only, a new model).
+  const reportMeshStats = () => {
+    const model = solidWireRef.current.on ? modelRef.current : null;
+    const counts = model ? countDrawnGeometry([model]) : null;
+    const key = counts ? `${counts.meshes}:${counts.triangles}:${counts.vertices}` : "";
+    if (key === meshStatsKeyRef.current) return;
+    meshStatsKeyRef.current = key;
+    onMeshStatsRef.current?.(model ? summarizeMeshStats([model]) : null);
+  };
+  const nightLights = Boolean(vehicleLights?.switches?.night && anyLightOn(vehicleLights.switches));
 
   const resolvedBodyColor = bodyColor || defaultBody;
-  const resolvedSlotColors = useMemo(
-    () => normalizeVehicleSlotColors(slotColors, resolvedBodyColor),
-    [slotColors, resolvedBodyColor],
+  const resolvedPaint = useMemo(
+    () => normalizeVehiclePaint(vehiclePaint, resolvedBodyColor),
+    [vehiclePaint, resolvedBodyColor],
   );
 
   const textureLoader = useMemo(() => new THREE.TextureLoader(), []);
@@ -525,6 +623,10 @@ function ViewerComponent({
   useEffect(() => {
     onReadyRef.current = onReady;
   }, [onReady]);
+
+  useEffect(() => {
+    onFrameRef.current = onFrame;
+  }, [onFrame]);
 
   useEffect(() => {
     onModelInfoRef.current = onModelInfo;
@@ -549,14 +651,8 @@ function ViewerComponent({
   }, [onNativeMaterialsStatus]);
 
   useEffect(() => {
-    onTemplateMarkerUvHoverRef.current = onTemplateMarkerUvHover;
-    onTemplateMarkerUvLeaveRef.current = onTemplateMarkerUvLeave;
-    onTemplateMarkerUvPickRef.current = onTemplateMarkerUvPick;
-  }, [onTemplateMarkerUvHover, onTemplateMarkerUvLeave, onTemplateMarkerUvPick]);
-
-  useEffect(() => {
-    templateMarkerPickModifierRef.current = templateMarkerPickModifier;
-  }, [templateMarkerPickModifier]);
+    onVehicleModsStatusRef.current = onVehicleModsStatus;
+  }, [onVehicleModsStatus]);
 
   useEffect(() => {
     templatePartPickEnabledRef.current = Boolean(templatePartPickEnabled);
@@ -570,12 +666,90 @@ function ViewerComponent({
     templatePartPickEnabled,
   ]);
 
+  const releaseIdleGpuResources = useCallback(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    const textures = new Set();
+    for (const texture of [
+      textureRef.current,
+      windowTextureRef.current,
+      materialTextureRef.current,
+      backgroundTextureRef.current,
+      sceneRef.current?.background,
+    ]) {
+      if (texture?.isTexture) textures.add(texture);
+    }
+    collectMaterialTextures(modelRef.current, textures);
+    for (const texture of textures) {
+      // A texture shared with another (possibly active) viewer stays resident.
+      if (textureCache.refsOf(texture) > 1) continue;
+      texture.dispose?.();
+    }
+    renderer.renderLists?.dispose?.();
+  }, []);
+
   useEffect(() => {
     isActiveRef.current = isActive;
     if (isActive) {
       requestRenderRef.current?.();
+      return undefined;
     }
-  }, [isActive]);
+    const timer = setTimeout(releaseIdleGpuResources, IDLE_GPU_RELEASE_MS);
+    return () => clearTimeout(timer);
+  }, [isActive, releaseIdleGpuResources]);
+
+  // Starting, stopping (the vehicle eases home) and speed changes need frames.
+  useEffect(() => {
+    requestRenderRef.current?.();
+  }, [turntable, turntableSpeed]);
+
+  // Imperative composite input (Variant Builder): the caller owns a canvas or
+  // ImageBitmap that is redrawn in place, so the same source only needs a GPU
+  // re-upload instead of a PNG encode/decode round trip.
+  const applyCompositeTexture = useCallback((source) => {
+    const previous = compositeTextureRef.current;
+    let texture = null;
+    if (source) {
+      if (previous && previous.image === source) {
+        texture = previous;
+        texture.needsUpdate = true;
+      } else {
+        texture = new THREE.CanvasTexture(source);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.flipY = true;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.anisotropy = rendererRef.current?.capabilities.getMaxAnisotropy() || 1;
+        texture.needsUpdate = true;
+      }
+    }
+    if (previous && previous !== texture) {
+      if (textureRef.current === previous) textureRef.current = null;
+      previous.dispose();
+    }
+    compositeTextureRef.current = texture;
+    if (textureRef.current !== texture) {
+      releaseTexture(textureRef.current);
+      textureRef.current = texture;
+    }
+    const materialState = materialStateRef.current;
+    if (modelRef.current) {
+      applyMaterials(
+        modelRef.current,
+        materialState.bodyColor,
+        texture,
+        materialState.textureTarget,
+        windowTextureRef.current,
+        materialState.windowTextureTarget,
+        materialState.liveryExteriorOnly,
+        materialState.textureMode,
+        materialState.glossiness,
+        materialState.showWireframe,
+      );
+      requestRenderRef.current?.();
+    }
+    onTextureErrorRef.current?.("");
+  }, []);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -630,7 +804,8 @@ function ViewerComponent({
     }
 
     if (overlayGroup.children.length === 0) return removeOverlay;
-    scene.add(overlayGroup);
+    // attach() keeps the copied world matrices and lets the turntable carry them.
+    (turntableRef.current || scene).attach(overlayGroup);
     templatePartOverlayRef.current = overlayGroup;
     requestRenderRef.current?.();
 
@@ -647,6 +822,11 @@ function ViewerComponent({
   }, [shadowsEnabled]);
 
   useEffect(() => {
+    ambientOcclusionRef.current = ambientOcclusion;
+    requestRenderRef.current?.();
+  }, [ambientOcclusion]);
+
+  useEffect(() => {
     const materialConfig = {
       type: materialType,
       lightIntensity: materialLightIntensity,
@@ -656,7 +836,7 @@ function ViewerComponent({
     };
     materialStateRef.current = {
       bodyColor: resolvedBodyColor,
-      slotColors: resolvedSlotColors,
+      vehiclePaint: resolvedPaint,
       textureTarget,
       windowTextureTarget,
       liveryExteriorOnly,
@@ -671,12 +851,12 @@ function ViewerComponent({
       modelRef.current.userData = modelRef.current.userData || {};
       modelRef.current.userData.materialConfig = materialConfig;
       modelRef.current.userData.materialDetailTexture = materialTextureRef.current || null;
-      modelRef.current.userData.slotColors = resolvedSlotColors;
+      modelRef.current.userData.vehiclePaint = resolvedPaint;
       modelRef.current.userData.nativeMaterialsEnabled = Boolean(nativeMaterialsEnabled);
     }
   }, [
     resolvedBodyColor,
-    resolvedSlotColors,
+    resolvedPaint,
     textureTarget,
     windowTextureTarget,
     liveryExteriorOnly,
@@ -700,7 +880,8 @@ function ViewerComponent({
     if (!containerRef.current) return;
 
     const scene = new THREE.Scene();
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+    // The stencil lets the solid wireframe tint each pixel once (renderSolidWire).
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: false, stencil: true });
     const getPixelRatio = () => Math.min(window.devicePixelRatio || 1, 1.5);
     renderer.setPixelRatio(getPixelRatio());
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
@@ -710,6 +891,7 @@ function ViewerComponent({
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
     camera.position.set(2.4, 1.2, 2.8);
+    camera.layers.enable(FLOOR_LIGHT_LAYER);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -731,12 +913,22 @@ function ViewerComponent({
     key.position.set(3.5, 4.5, 2.5);
     const rim = new THREE.DirectionalLight(0xffffff, 0.35 * lightIntensity);
     rim.position.set(-3, 2, -2.2);
-    configureShadowLight(key, shadowsEnabled);
-    const shadowReceiver = createShadowReceiver();
+    configureShadowLight(key, shadowsEnabled && stage !== "showroom");
 
     lightsRef.current = { ambient, key, rim };
-    shadowReceiverRef.current = shadowReceiver;
-    scene.add(ambient, key, rim, shadowReceiver);
+    scene.add(ambient, key, rim, key.target);
+
+    const stageApi = createViewerStage({ renderer, scene, keyLight: key });
+    stageApi.setBackgroundColor(backgroundColor);
+    stageApi.setShadows(shadowsEnabled);
+    stageApi.setMode(stage);
+    stageRef.current = stageApi;
+
+    const turntableGroup = new THREE.Group();
+    turntableGroup.name = "vehicle-turntable";
+    scene.add(turntableGroup);
+    turntableRef.current = turntableGroup;
+    const measureAtRest = (run) => withTurntableAtRest(turntableGroup, run);
 
     renderer.domElement.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -746,6 +938,7 @@ function ViewerComponent({
 
     rendererRef.current = renderer;
     sceneRef.current = scene;
+    partSwapRef.current = createPartSwapAnimator({ scene });
     cameraRef.current = camera;
     controlsRef.current = controls;
     setSceneReady(true);
@@ -754,6 +947,43 @@ function ViewerComponent({
     let isRendering = false;
     let renderRequested = false;
     const lastViewport = { width: 0, height: 0, pixelRatio: 0 };
+    // Bloom runs only while a vehicle light is on; the composer is created on
+    // first use and kept for the life of the renderer.
+    const renderView = (view) => {
+      const glow = lightRigRef.current?.glow ?? 1;
+      // Lit lamps always go through the glow pipeline so lenses never hide them;
+      // Glow 0 keeps the sharp lamp and drops only the bloom.
+      const wantBloom = Boolean(lightRigRef.current?.active);
+      if (wantBloom && !bloomRef.current) {
+        bloomRef.current = createBloomPipeline({
+          renderer,
+          scene,
+          camera: view,
+          width: lastViewport.width || containerRef.current?.clientWidth || 1,
+          height: lastViewport.height || containerRef.current?.clientHeight || 1,
+        });
+      }
+      if (bloomRef.current) {
+        bloomRef.current.enabled = wantBloom;
+        bloomRef.current.bloomPass.strength = BLOOM_STRENGTH * glow;
+      }
+      // AO is built on first use and kept, like bloom.
+      const wantAo = Boolean(ambientOcclusionRef.current);
+      if (wantAo && !aoRef.current) {
+        aoRef.current = createAoPipeline({
+          renderer,
+          scene,
+          camera: view,
+          width: lastViewport.width || containerRef.current?.clientWidth || 1,
+          height: lastViewport.height || containerRef.current?.clientHeight || 1,
+        });
+      }
+      if (aoRef.current) {
+        aoRef.current.enabled = wantAo;
+        if (wantAo) setAoBounds(aoRef.current, fitRef.current?.bounds);
+      }
+      renderWithEffects({ renderer, scene, camera: view, ao: aoRef.current, bloom: bloomRef.current, wire: solidWirePass() });
+    };
     const applyCameraFrame = (presetKey = cameraStateRef.current.presetKey, zoomFactor = cameraStateRef.current.zoomFactor, shouldRequestRender = true) => {
       if (!containerRef.current || !fitRef.current?.bounds) return;
       const { clientWidth, clientHeight } = containerRef.current;
@@ -776,7 +1006,8 @@ function ViewerComponent({
         near: framing.near,
         far: framing.far,
         minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
-        maxDistance: Math.max(framing.baseDistance * 10, 10),
+        // Zooming out stops at 4x the fitted distance so the model never shrinks to a speck.
+        maxDistance: Math.max(framing.baseDistance * 4, 1),
       });
 
       fitRef.current = {
@@ -792,11 +1023,84 @@ function ViewerComponent({
         zoomFactor,
       };
 
-      if (lightsRef.current.key?.castShadow) {
-        updateDirectionalShadowFrustum(lightsRef.current.key, framing.distance);
-      }
-
       if (shouldRequestRender) requestRenderRef.current?.();
+    };
+
+    // Frames the camera on the model where it now stands (after a turn).
+    const reframeModel = () => {
+      if (!modelRef.current) return;
+      const bounds = withTurntableAtRest(turntableRef.current, () => computeFramingBounds(
+        modelRef.current,
+        new THREE.Box3().setFromObject(modelRef.current),
+      ));
+      if (!bounds) {
+        requestRenderRef.current?.();
+        return;
+      }
+      fitRef.current = {
+        ...fitRef.current,
+        bounds: bounds.clone(),
+        center: bounds.getCenter(new THREE.Vector3()),
+      };
+      applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor);
+    };
+    reframeModelRef.current = reframeModel;
+
+    // Renders one frame from a framing preset with a throwaway camera. The
+    // caller must render the live camera again in the same task, so the
+    // browser never presents this frame and the user's view never moves.
+    const renderPresetShot = (presetKey, zoomFactor) => {
+      if (!containerRef.current || !fitRef.current?.bounds) return false;
+      const { clientWidth, clientHeight } = containerRef.current;
+      if (!clientWidth || !clientHeight) return false;
+      const framing = buildCameraFraming({
+        bounds: fitRef.current.bounds,
+        aspect: clientWidth / clientHeight,
+        fov: camera.fov,
+        presetKey,
+        zoomFactor,
+      });
+      const shot = camera.clone();
+      shot.position.copy(framing.position);
+      shot.up.copy(framing.up);
+      shot.near = framing.near;
+      shot.far = framing.far;
+      shot.lookAt(framing.target);
+      shot.updateProjectionMatrix();
+      shot.updateMatrixWorld(true);
+      if (turntableGroup.rotation.y === 0) {
+        renderView(shot);
+        return true;
+      }
+      // A named shot ("Front", "Side") is of the vehicle at rest, not wherever
+      // the turntable has it. Overlays that copy world matrices follow it there
+      // and back.
+      withTurntableAtRest(turntableGroup, () => {
+        syncWorldOverlays(shot);
+        renderView(shot);
+      });
+      syncWorldOverlays(camera);
+      return true;
+    };
+
+    const syncWorldOverlays = (view) => {
+      plateOverlayRef.current?.update();
+      lightRigRef.current?.update(view);
+    };
+
+    const restoreLiveFrame = () => {
+      renderView(camera);
+    };
+
+    const encodeCanvas = (thumbWidth) => {
+      const source = renderer.domElement;
+      if (!thumbWidth || source.width <= thumbWidth) return source.toDataURL("image/png");
+      const scale = thumbWidth / source.width;
+      const thumb = document.createElement("canvas");
+      thumb.width = Math.round(source.width * scale);
+      thumb.height = Math.round(source.height * scale);
+      thumb.getContext("2d").drawImage(source, 0, 0, thumb.width, thumb.height);
+      return thumb.toDataURL("image/jpeg", 0.88);
     };
 
     const canRenderFrame = () => {
@@ -805,24 +1109,44 @@ function ViewerComponent({
       return Boolean(container && container.clientWidth > 0 && container.clientHeight > 0);
     };
 
+    let turntableAt = null;
+    const advanceTurntable = () => {
+      const now = performance.now();
+      const { on, speed } = turntableStateRef.current;
+      const seconds = turntableAt == null ? 0 : (now - turntableAt) / 1000;
+      const next = stepTurntable(turntableGroup.rotation.y, { on: on && Boolean(modelRef.current), speed, seconds });
+      turntableAt = next.moving ? now : null;
+      if (next.yaw !== turntableGroup.rotation.y) {
+        turntableGroup.rotation.y = next.yaw;
+        stageRef.current?.setSpin(next.yaw);
+      }
+      return next.moving;
+    };
+
     const renderFrame = () => {
       frameId = 0;
       if (!canRenderFrame()) {
         isRendering = false;
+        turntableAt = null;
         return;
       }
+      const turning = advanceTurntable();
+      stageRef.current?.fit(fitRef.current?.bounds, modelRef.current, { atRest: measureAtRest });
+      stageRef.current?.constrainControls(controls);
       const needsUpdate = controls.update();
-      updateShadowReceiver(shadowReceiverRef.current, {
-        bounds: fitRef.current?.bounds,
-        camera,
-        enabled: shadowsEnabledRef.current,
-      });
-      renderWithEffects({
-        renderer,
-        scene,
-        camera,
-      });
-      if (renderRequested || needsUpdate) {
+      // Flashing lights keep the loop running; it stops when they do.
+      const lightsAnimating = lightRigRef.current?.update(camera) || false;
+      // Opening doors and a moving roof do too, and report where they settled.
+      const vehicleRig = vehicleRigRef.current;
+      const partsAnimating = vehicleRig?.update(performance.now()) || false;
+      if (vehicleRig && vehicleRig.wasAnimating && !partsAnimating) emitVehicleParts();
+      if (vehicleRig) vehicleRig.wasAnimating = partsAnimating;
+      const swapsAnimating = partSwapRef.current?.tick() || false;
+      plateOverlayRef.current?.update();
+      renderView(camera);
+      onFrameRef.current?.();
+      reportMeshStats();
+      if (renderRequested || needsUpdate || lightsAnimating || partsAnimating || swapsAnimating || turning) {
         renderRequested = false;
         frameId = requestAnimationFrame(renderFrame);
       } else {
@@ -843,19 +1167,8 @@ function ViewerComponent({
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
 
-    const restoreMarkerPickControls = () => {
-      if (!markerPickStateRef.current.controlsDisabled) return;
-      markerPickStateRef.current.controlsDisabled = false;
-      controls.enabled = true;
-    };
-
-    const isMarkerPickingEnabled = () =>
-      Boolean(
-        onTemplateMarkerUvHoverRef.current ||
-          onTemplateMarkerUvLeaveRef.current ||
-          onTemplateMarkerUvPickRef.current,
-      );
-
+    // Window templates: a click on glass adds or removes that part. Plain
+    // drags still orbit.
     const isPartPickingEnabled = () =>
       Boolean(
         templatePartPickEnabledRef.current &&
@@ -864,16 +1177,15 @@ function ViewerComponent({
             onTemplatePartPickRef.current),
       );
 
-    const isTemplatePickingEnabled = () =>
-      isMarkerPickingEnabled() || isPartPickingEnabled();
+    // Other click handlers stand down while a template pick owns the pointer.
+    const isTemplatePickingEnabled = isPartPickingEnabled;
 
-    const clearMarkerHover = () => {
+    const clearTemplatePickHover = () => {
       renderer.domElement.style.cursor = "";
-      onTemplateMarkerUvLeaveRef.current?.();
       onTemplatePartLeaveRef.current?.();
     };
 
-    const getTemplatePickHit = (event, markerOnly = false) => {
+    const getTemplatePickHit = (event) => {
       if (!modelRef.current) return null;
       const rect = renderer.domElement.getBoundingClientRect();
       if (!rect.width || !rect.height) return null;
@@ -891,14 +1203,7 @@ function ViewerComponent({
         const object = intersection?.object;
         if (!object?.isMesh || !object.visible) continue;
         if (object.userData?.templateSelectionOverlay) continue;
-        if (markerOnly && !object.userData?.templateMarkerInteractive) continue;
-        const uv = intersection?.uv;
-        if (markerOnly && (!uv || !Number.isFinite(uv.x) || !Number.isFinite(uv.y))) continue;
         return {
-          uv:
-            uv && Number.isFinite(uv.x) && Number.isFinite(uv.y)
-              ? { x: uv.x, y: uv.y }
-              : null,
           meshName: object.userData?.meshLabel || object.name || "",
           materialName: object.material?.name || object.userData?.baseMaterial?.name || "",
         };
@@ -906,135 +1211,230 @@ function ViewerComponent({
       return null;
     };
 
-    const handleMarkerPointerMove = (event) => {
-      if (!isTemplatePickingEnabled()) return;
-      const partPicking = isPartPickingEnabled();
-      const modifierActive = isTemplateMarkerModifierPressed(
-        event,
-        templateMarkerPickModifierRef.current,
-      );
-      if (!partPicking && !modifierActive) {
-        clearMarkerHover();
-        restoreMarkerPickControls();
-        return;
-      }
-
-      const hit = getTemplatePickHit(event, !partPicking);
+    const reportTemplatePickHover = (hit) => {
       renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
-      if (hit && partPicking) {
-        onTemplatePartHoverRef.current?.(hit);
-      } else if (hit) {
-        onTemplateMarkerUvHoverRef.current?.(hit);
-      } else if (partPicking) {
-        onTemplatePartLeaveRef.current?.();
-      } else {
-        onTemplateMarkerUvLeaveRef.current?.();
-      }
+      if (hit) onTemplatePartHoverRef.current?.(hit);
+      else onTemplatePartLeaveRef.current?.();
+    };
 
-      if (markerPickStateRef.current.pointerId !== null) {
+    const handleTemplatePickPointerMove = (event) => {
+      if (!isPartPickingEnabled()) return;
+      reportTemplatePickHover(getTemplatePickHit(event));
+      const state = templatePickStateRef.current;
+      if (state.pointerId !== null) {
         const distance = Math.hypot(
-          Number(event.clientX) - markerPickStateRef.current.startX,
-          Number(event.clientY) - markerPickStateRef.current.startY,
+          Number(event.clientX) - state.startX,
+          Number(event.clientY) - state.startY,
         );
-        if (distance > 6) {
-          markerPickStateRef.current.moved = true;
-        }
-      }
-
-      if (!partPicking) {
-        event.preventDefault();
-        event.stopPropagation();
+        if (distance > 6) state.moved = true;
       }
     };
 
-    const handleMarkerPointerDown = (event) => {
-      if (!isTemplatePickingEnabled()) return;
-      if (event.button !== 0) return;
-      const partPicking = isPartPickingEnabled();
-      if (
-        !partPicking &&
-        !isTemplateMarkerModifierPressed(event, templateMarkerPickModifierRef.current)
-      ) {
-        return;
-      }
-
-      markerPickStateRef.current.pointerId = event.pointerId ?? null;
-      markerPickStateRef.current.startX = Number(event.clientX) || 0;
-      markerPickStateRef.current.startY = Number(event.clientY) || 0;
-      markerPickStateRef.current.moved = false;
-      markerPickStateRef.current.controlsDisabled = !partPicking;
-      if (!partPicking) controls.enabled = false;
-
-      const hit = getTemplatePickHit(event, !partPicking);
-      renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
-      if (hit && partPicking) {
-        onTemplatePartHoverRef.current?.(hit);
-      } else if (hit) {
-        onTemplateMarkerUvHoverRef.current?.(hit);
-      } else if (partPicking) {
-        onTemplatePartLeaveRef.current?.();
-      } else {
-        onTemplateMarkerUvLeaveRef.current?.();
-      }
-
-      if (!partPicking) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
+    const handleTemplatePickPointerDown = (event) => {
+      if (!isPartPickingEnabled() || event.button !== 0) return;
+      const state = templatePickStateRef.current;
+      state.pointerId = event.pointerId ?? null;
+      state.startX = Number(event.clientX) || 0;
+      state.startY = Number(event.clientY) || 0;
+      state.moved = false;
+      reportTemplatePickHover(getTemplatePickHit(event));
     };
 
-    const handleMarkerPointerUp = (event) => {
-      if (!isTemplatePickingEnabled()) return;
-      const state = markerPickStateRef.current;
+    const handleTemplatePickPointerUp = (event) => {
+      if (!isPartPickingEnabled()) return;
+      const state = templatePickStateRef.current;
       if (state.pointerId !== null && event.pointerId !== state.pointerId) return;
-      const partPicking = isPartPickingEnabled();
-
-      if (
-        !partPicking &&
-        !isTemplateMarkerModifierPressed(event, templateMarkerPickModifierRef.current)
-      ) {
-        state.pointerId = null;
-        state.moved = false;
-        restoreMarkerPickControls();
-        clearMarkerHover();
-        return;
-      }
-
-      const hit = getTemplatePickHit(event, !partPicking);
-      renderer.domElement.style.cursor = hit ? "pointer" : "crosshair";
-
-      if (!state.moved && hit && partPicking) {
-        onTemplatePartPickRef.current?.(hit);
-      } else if (!state.moved && hit) {
-        onTemplateMarkerUvPickRef.current?.(hit);
-      } else if (!hit && partPicking) {
-        onTemplatePartLeaveRef.current?.();
-      } else if (!hit) {
-        onTemplateMarkerUvLeaveRef.current?.();
-      }
-
+      const hit = getTemplatePickHit(event);
+      reportTemplatePickHover(hit);
+      if (!state.moved && hit) onTemplatePartPickRef.current?.(hit);
       state.pointerId = null;
       state.moved = false;
-      restoreMarkerPickControls();
-      if (!partPicking) {
+    };
+
+    const handleTemplatePickPointerCancel = () => {
+      if (!isPartPickingEnabled()) return;
+      templatePickStateRef.current.pointerId = null;
+      templatePickStateRef.current.moved = false;
+      clearTemplatePickHover();
+    };
+
+    renderer.domElement.addEventListener("pointerdown", handleTemplatePickPointerDown, true);
+    renderer.domElement.addEventListener("pointermove", handleTemplatePickPointerMove, true);
+    renderer.domElement.addEventListener("pointerup", handleTemplatePickPointerUp, true);
+    renderer.domElement.addEventListener("pointerleave", handleTemplatePickPointerCancel, true);
+    renderer.domElement.addEventListener("pointercancel", handleTemplatePickPointerCancel, true);
+
+    // Vehicle parts: a click opens or closes a door, bonnet, boot or roof;
+    // Alt-drag swings a part to any angle. Plain drags still orbit.
+    const setPointerRay = (event) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (!rect.width || !rect.height) return false;
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+      raycaster.setFromCamera(pointer, camera);
+      return true;
+    };
+    const pickVehiclePart = (event) => {
+      const rig = vehicleRigRef.current;
+      if (!rig || !modelRef.current || !setPointerRay(event)) return null;
+      // The raycaster tests hidden meshes too; skip inactive LODs and hidden extras.
+      const candidates = [];
+      modelRef.current.traverseVisible((child) => {
+        if (child.isMesh && !child.userData?.templateSelectionOverlay) candidates.push(child);
+      });
+      for (const hit of raycaster.intersectObjects(candidates, false)) {
+        const object = hit.object;
+        // The nearest visible surface decides; a body panel in front blocks the door behind it.
+        const target = rig.targetForMesh(object);
+        return target ? { ...target, rig, mesh: object, point: hit.point.clone() } : null;
+      }
+      return null;
+    };
+    const vehicleClick = { pointerId: null, x: 0, y: 0, time: 0, target: null };
+    let hoverFrame = 0;
+    let hoverEvent = null;
+    const updatePartHover = () => {
+      hoverFrame = 0;
+      if (!hoverEvent || vehiclePartDragRef.current || isTemplatePickingEnabled()) return;
+      const target = pickVehiclePart(hoverEvent);
+      renderer.domElement.style.cursor = target ? (hoverEvent.altKey && target.kind === "part" ? "grab" : "pointer") : "";
+    };
+    const restoreVehicleDragControls = () => {
+      const drag = vehiclePartDragRef.current;
+      vehiclePartDragRef.current = null;
+      if (drag) controls.enabled = drag.controlsEnabled;
+    };
+    const dragValue = (drag, event) => {
+      if (!setPointerRay(event)) return null;
+      const ray = raycaster.ray;
+      if (drag.kind === "rotation" && Math.abs(ray.direction.dot(drag.axis)) > 0.2) {
+        // Grab the part: the angle the pointer sweeps around the hinge.
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(drag.axis, drag.grab);
+        const point = ray.intersectPlane(plane, new THREE.Vector3());
+        if (point) {
+          const from = drag.grab.clone().sub(drag.origin).projectOnPlane(drag.axis);
+          const to = point.sub(drag.origin).projectOnPlane(drag.axis);
+          if (from.lengthSq() > 1e-8 && to.lengthSq() > 1e-8) {
+            const angle = Math.atan2(drag.axis.dot(from.clone().cross(to)), from.dot(to));
+            return drag.startValue + angle;
+          }
+        }
+      }
+      // Edge-on hinges and slides: follow the grabbed point's on-screen direction of travel.
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      return drag.startValue + (dx * drag.screenDir.x + dy * drag.screenDir.y) / drag.pixelsPerUnit;
+    };
+    const handlePartPointerDown = (event) => {
+      if (event.button !== 0 || isTemplatePickingEnabled()) return;
+      const target = pickVehiclePart(event);
+      vehicleClick.pointerId = null;
+      if (!target) return;
+      if (event.altKey && target.kind === "part") {
+        const root = target.mesh.parent;
+        const frame = target.rig.getPartFrame(target.part.id);
+        if (!root || !frame) return;
+        root.updateMatrixWorld(true);
+        const origin = frame.origin.applyMatrix4(root.matrixWorld);
+        const axis = frame.axis.transformDirection(root.matrixWorld).normalize();
+        // How far the grabbed point moves on screen per radian or metre.
+        const travel = target.part.kind === "rotation"
+          ? axis.clone().cross(target.point.clone().sub(origin))
+          : axis.clone();
+        const rect = renderer.domElement.getBoundingClientRect();
+        const toScreen = (point) => {
+          const projected = point.clone().project(camera);
+          return new THREE.Vector2((projected.x + 1) * 0.5 * rect.width, (1 - projected.y) * 0.5 * rect.height);
+        };
+        const step = 0.01;
+        const screenDelta = toScreen(target.point.clone().addScaledVector(travel, step)).sub(toScreen(target.point));
+        const pixelsPerUnit = Math.max(40, screenDelta.length() / step);
+        vehiclePartDragRef.current = {
+          rig: target.rig,
+          id: target.part.id,
+          kind: target.part.kind,
+          origin,
+          axis,
+          grab: target.point,
+          startValue: target.rig.getValue(target.part.id),
+          startX: event.clientX,
+          startY: event.clientY,
+          screenDir: screenDelta.lengthSq() > 1e-6 ? screenDelta.normalize() : new THREE.Vector2(1, 0),
+          pixelsPerUnit,
+          pointerId: event.pointerId,
+          controlsEnabled: controls.enabled,
+        };
+        controls.enabled = false;
+        renderer.domElement.style.cursor = "grabbing";
+        try {
+          // Keeps the drag when the pointer leaves the canvas; dragging works without it.
+          renderer.domElement.setPointerCapture(event.pointerId);
+        } catch {
+          // The pointer is no longer active.
+        }
         event.preventDefault();
         event.stopPropagation();
+        return;
+      }
+      Object.assign(vehicleClick, { pointerId: event.pointerId, x: event.clientX, y: event.clientY, time: performance.now(), target });
+    };
+    const handlePartPointerMove = (event) => {
+      const drag = vehiclePartDragRef.current;
+      if (drag && event.pointerId === drag.pointerId) {
+        if (drag.rig !== vehicleRigRef.current) {
+          restoreVehicleDragControls();
+          return;
+        }
+        const value = dragValue(drag, event);
+        if (value != null && drag.rig.setValue(drag.id, value, { animate: false })) requestRenderFrame();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (vehicleClick.pointerId !== null && Math.hypot(event.clientX - vehicleClick.x, event.clientY - vehicleClick.y) > 5) {
+        vehicleClick.pointerId = null;
+      }
+      if (event.buttons === 0 && vehicleRigRef.current) {
+        hoverEvent = event;
+        if (!hoverFrame) hoverFrame = requestAnimationFrame(updatePartHover);
       }
     };
-
-    const handleMarkerPointerCancel = () => {
-      if (!isTemplatePickingEnabled()) return;
-      markerPickStateRef.current.pointerId = null;
-      markerPickStateRef.current.moved = false;
-      restoreMarkerPickControls();
-      clearMarkerHover();
+    const handlePartPointerUp = (event) => {
+      const drag = vehiclePartDragRef.current;
+      if (drag && event.pointerId === drag.pointerId) {
+        restoreVehicleDragControls();
+        if (renderer.domElement.hasPointerCapture?.(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
+        renderer.domElement.style.cursor = "";
+        emitVehicleParts();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const click = vehicleClick.pointerId === event.pointerId ? vehicleClick.target : null;
+      vehicleClick.pointerId = null;
+      if (!click || click.rig !== vehicleRigRef.current || performance.now() - vehicleClick.time > 500) return;
+      const toggled = click.kind === "roof" ? click.rig.toggle("roof") : click.rig.toggle(click.part.id);
+      if (toggled) {
+        emitVehicleParts();
+        requestRenderFrame();
+      }
     };
-
-    renderer.domElement.addEventListener("pointerdown", handleMarkerPointerDown, true);
-    renderer.domElement.addEventListener("pointermove", handleMarkerPointerMove, true);
-    renderer.domElement.addEventListener("pointerup", handleMarkerPointerUp, true);
-    renderer.domElement.addEventListener("pointerleave", handleMarkerPointerCancel, true);
-    renderer.domElement.addEventListener("pointercancel", handleMarkerPointerCancel, true);
+    const handlePartPointerCancel = (event) => {
+      vehicleClick.pointerId = null;
+      if (event.type === "pointerleave") {
+        hoverEvent = null;
+        if (!vehiclePartDragRef.current && !isTemplatePickingEnabled()) renderer.domElement.style.cursor = "";
+      }
+      if (event.type === "pointercancel" && vehiclePartDragRef.current?.pointerId === event.pointerId) {
+        restoreVehicleDragControls();
+        emitVehicleParts();
+      }
+    };
+    renderer.domElement.addEventListener("pointerdown", handlePartPointerDown, true);
+    renderer.domElement.addEventListener("pointermove", handlePartPointerMove, true);
+    renderer.domElement.addEventListener("pointerup", handlePartPointerUp, true);
+    renderer.domElement.addEventListener("pointerleave", handlePartPointerCancel, true);
+    renderer.domElement.addEventListener("pointercancel", handlePartPointerCancel, true);
 
     const applyResize = () => {
       if (!containerRef.current) return;
@@ -1057,18 +1457,18 @@ function ViewerComponent({
       }
       // false = don't touch canvas.style (avoids layout thrash during drag)
       renderer.setSize(clientWidth, clientHeight, false);
+      stageRef.current?.resize();
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
       if (fitRef.current?.bounds) {
         applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
       }
+      resizeBloomPipeline(bloomRef.current, clientWidth, clientHeight, pixelRatio);
+      resizeAoPipeline(aoRef.current, clientWidth, clientHeight, pixelRatio);
       if (!isActiveRef.current) return;
       const needsUpdate = controls.update();
-      renderWithEffects({
-        renderer,
-        scene,
-        camera,
-      });
+      renderView(camera);
+      onFrameRef.current?.();
       if (needsUpdate || renderRequested) {
         requestRenderFrame();
       }
@@ -1089,6 +1489,86 @@ function ViewerComponent({
     requestRenderFrame();
 
     onReadyRef.current?.({
+      setExtraVisible: (index, visible) => {
+        let found = false;
+        modelRef.current?.traverse((child) => {
+          if (!child.isMesh || child.userData?.extraIndex !== index) return;
+          child.userData.metaExtraVisible = visible;
+          child.visible = visible && child.userData.nativeLodActive !== false && child.userData.modHidden !== true;
+          found = true;
+        });
+        if (found) requestRenderRef.current?.();
+        return found;
+      },
+      /** Moves a vehicle part (joint units) or the roof ("roof", 0-1 of its clip). */
+      setVehiclePart: (id, value, { animate = true } = {}) => {
+        const rig = vehicleRigRef.current;
+        if (!rig?.setValue(id, value, { animate })) return false;
+        emitVehicleParts();
+        requestRenderRef.current?.();
+        return true;
+      },
+      toggleVehiclePart: (id) => {
+        const rig = vehicleRigRef.current;
+        if (!rig?.toggle(id)) return false;
+        emitVehicleParts();
+        requestRenderRef.current?.();
+        return true;
+      },
+      /** Opens or closes every door, bonnet and boot together; the roof is left alone. */
+      setAllVehicleParts: (open) => {
+        const rig = vehicleRigRef.current;
+        if (!rig) return;
+        rig.setAll(Boolean(open));
+        emitVehicleParts();
+        requestRenderRef.current?.();
+      },
+      /** Seconds on the vehicle light clock, or null when no light preview exists. */
+      getLightTime: () => lightRigRef.current?.time ?? null,
+      /** Scrubs the vehicle light clock and redraws. */
+      setLightTime: (seconds) => {
+        if (!lightRigRef.current) return;
+        lightRigRef.current.setTime(seconds);
+        requestRenderRef.current?.();
+      },
+      /**
+       * Siren positions in canvas CSS pixels for the siren editor's markers:
+       * [{ siren, x, y, behind, far }]. `behind` marks points behind the
+       * camera; `far` marks lights on the far side of the body, worked out
+       * once the view holds still (it raycasts the model).
+       */
+      getSirenMarkers: () => {
+        const rig = lightRigRef.current;
+        if (!rig) return [];
+        // OrbitControls moves the camera on each pointer event but its matrices
+        // only catch up at the next render; until then they pair the new
+        // position with the old rotation.
+        camera.updateMatrixWorld();
+        const width = renderer.domElement.clientWidth;
+        const height = renderer.domElement.clientHeight;
+        const point = new THREE.Vector3();
+        const anchors = rig.getSirenAnchors();
+        const sides = sirenSidesRef.current;
+        const key = [...camera.matrixWorld.elements, ...anchors.flatMap(({ position }) => position.toArray())]
+          .map((value) => value.toFixed(3)).join(",");
+        const now = performance.now();
+        if (sides.rig !== rig) Object.assign(sides, { rig, key: "", done: "", scan: null, far: new Set() });
+        if (key !== sides.key) Object.assign(sides, { key, since: now, scan: null });
+        else if (sides.done !== key && now - sides.since >= SIREN_SIDES_SETTLE_MS) {
+          sides.scan ||= rig.scanFarSirens(camera.getWorldPosition(point), anchors);
+          if (sides.scan.step(SIREN_SIDES_BUDGET_MS)) Object.assign(sides, { far: sides.scan.far, done: key, scan: null });
+        }
+        return anchors.map(({ siren, position }) => {
+          point.copy(position).project(camera);
+          return {
+            siren,
+            x: (point.x + 1) * 0.5 * width,
+            y: (1 - point.y) * 0.5 * height,
+            behind: point.z > 1,
+            far: sides.far.has(siren),
+          };
+        });
+      },
       getViewState: () => cloneViewerCameraState({
         camera,
         controls,
@@ -1105,10 +1585,6 @@ function ViewerComponent({
         });
         fitRef.current = restored.fit;
         cameraStateRef.current = restored.cameraState;
-
-        if (lightsRef.current.key?.castShadow) {
-          updateDirectionalShadowFrustum(lightsRef.current.key, restored.distance);
-        }
 
         requestRenderRef.current?.();
       },
@@ -1138,50 +1614,195 @@ function ViewerComponent({
             return;
         }
         modelRef.current.updateMatrixWorld(true);
-        const rotatedBounds = computeFramingBounds(
-          modelRef.current,
-          new THREE.Box3().setFromObject(modelRef.current),
-        );
-        if (rotatedBounds) {
-          fitRef.current = {
-            ...fitRef.current,
-            bounds: rotatedBounds.clone(),
-            center: rotatedBounds.getCenter(new THREE.Vector3()),
-          };
-          applyCameraFrame(
-            cameraStateRef.current.presetKey,
-            cameraStateRef.current.zoomFactor,
-          );
-        } else {
-          requestRenderRef.current?.();
-        }
+        reframeModel();
       },
       captureScreenshot: () => {
         if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return null;
-        // Render a fresh frame and capture it
-        renderWithEffects({
-          renderer: rendererRef.current,
-          scene: sceneRef.current,
-          camera: cameraRef.current,
-        });
+        // Render a fresh frame and capture it (the drawing buffer is not preserved)
+        renderView(cameraRef.current);
         return rendererRef.current.domElement.toDataURL("image/png");
       },
+      captureScreenshotBlob: () => {
+        if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return Promise.resolve(null);
+        renderView(cameraRef.current);
+        return new Promise((resolve) => {
+          rendererRef.current.domElement.toBlob((blob) => resolve(blob || null), "image/png");
+        });
+      },
+      /** Captures a preset framing without moving the live camera. */
+      captureFrame: ({ presetKey = null, zoomFactor = 1, thumbWidth = 0 } = {}) => {
+        if (presetKey ? !renderPresetShot(presetKey, zoomFactor) : false) return null;
+        if (!presetKey) restoreLiveFrame();
+        const dataUrl = encodeCanvas(thumbWidth);
+        if (presetKey) restoreLiveFrame();
+        return dataUrl;
+      },
+      captureFrameBlob: ({ presetKey = null, zoomFactor = 1 } = {}) => {
+        if (presetKey ? !renderPresetShot(presetKey, zoomFactor) : false) return Promise.resolve(null);
+        if (!presetKey) restoreLiveFrame();
+        // toBlob snapshots the drawing buffer when called, before the restore below.
+        const pending = new Promise((resolve) => {
+          renderer.domElement.toBlob((blob) => resolve(blob || null), "image/png");
+        });
+        if (presetKey) restoreLiveFrame();
+        return pending;
+      },
+      /** The live camera, so a Kit Shoot run keeps shooting from where it started. */
+      getCameraSnapshot: () => ({
+        position: camera.position.toArray(),
+        target: controls.target.toArray(),
+        up: camera.up.toArray(),
+        fov: camera.fov,
+        aspect: camera.aspect,
+      }),
+      /**
+       * Kit Shoot framing bounds: the vehicle's framing box, and the union of
+       * the loaded mod parts in `keys` (shown or hidden) and the stock meshes
+       * on `bones`. Boxes are `{ min, max }` arrays; focus is null when none
+       * of them is loaded.
+       */
+      measureVehicleMods: ({ keys = [], bones = [] } = {}) => {
+        const model = modelRef.current;
+        const vehicle = fitRef.current?.bounds;
+        if (!model || !vehicle) return null;
+        model.updateMatrixWorld(true);
+        const state = vehicleModStates.get(model);
+        const focus = new THREE.Box3();
+        for (const key of keys) {
+          const group = state?.groups.get(key);
+          if (group) focus.expandByObject(group);
+        }
+        const boneSet = new Set(bones.map((bone) => String(bone).toLowerCase()));
+        if (boneSet.size) {
+          getVehicleRoot(model)?.traverse((child) => {
+            if (!child.isMesh || isVehicleModMesh(child) || child.userData?.nativeLodActive === false) return;
+            if (isHiddenByBones(child.userData?.nativeMaterial?.boneChain, boneSet)) focus.expandByObject(child);
+          });
+        }
+        const toBox = (box) => ({ min: box.min.toArray(), max: box.max.toArray() });
+        return { vehicle: toBox(vehicle), focus: focus.isEmpty() ? null : toBox(focus) };
+      },
+      /**
+       * Renders the scene at exactly width x height into new 2D canvases, one
+       * per `{ pose, crop }`. A pose is `{ type: "view", camera }` with a
+       * getCameraSnapshot result (cropped to the output like EUP shots), or
+       * `{ type: "focus", box, direction, fov?, minDistance?, maxDistance? }`
+       * to frame a box from a direction. `crop` (`{ x, y, width, height }` as
+       * fractions of the frame, same aspect) renders that part of the frame at
+       * full resolution. The drawing buffer is resized once for the batch and
+       * restored before the browser paints, so the live view never shows it.
+       */
+      captureShots: ({ width, height, shots = [] }) => {
+        if (!fitRef.current?.bounds || !(width > 0) || !(height > 0)) return shots.map(() => null);
+        const outAspect = width / height;
+        const shotCamera = ({ pose, crop }) => {
+          const shot = camera.clone();
+          shot.aspect = outAspect;
+          if (pose?.type === "view" && pose.camera) {
+            const snapshot = pose.camera;
+            shot.position.fromArray(snapshot.position);
+            shot.up.fromArray(snapshot.up);
+            shot.fov = shotFov(snapshot.fov, snapshot.aspect, outAspect);
+            shot.lookAt(new THREE.Vector3().fromArray(snapshot.target));
+          } else if (pose?.type === "focus" && pose.box && pose.direction) {
+            const direction = new THREE.Vector3().fromArray(pose.direction).normalize();
+            const fov = Number.isFinite(pose.fov) ? pose.fov : camera.fov;
+            const framing = buildCameraFraming({
+              bounds: new THREE.Box3(new THREE.Vector3().fromArray(pose.box.min), new THREE.Vector3().fromArray(pose.box.max)),
+              aspect: outAspect,
+              fov,
+              direction,
+              minDistance: pose.minDistance,
+            });
+            const distance = Number.isFinite(pose.maxDistance) ? Math.min(framing.distance, pose.maxDistance) : framing.distance;
+            shot.fov = fov;
+            shot.position.copy(framing.target).addScaledVector(direction, distance);
+            shot.up.copy(framing.up);
+            shot.near = Math.min(framing.near, Math.max(0.01, distance * 0.05));
+            shot.far = framing.far;
+            shot.lookAt(framing.target);
+          } else {
+            return null;
+          }
+          if (crop && crop.width > 0 && crop.height > 0 && (crop.width < 1 || crop.height < 1)) {
+            const fullWidth = width / crop.width;
+            const fullHeight = height / crop.height;
+            shot.setViewOffset(fullWidth, fullHeight, crop.x * fullWidth, crop.y * fullHeight, width, height);
+          }
+          shot.updateProjectionMatrix();
+          shot.updateMatrixWorld(true);
+          return shot;
+        };
+
+        const previousRatio = renderer.getPixelRatio();
+        const previousSize = renderer.getSize(new THREE.Vector2());
+        try {
+          renderer.setPixelRatio(1);
+          renderer.setSize(width, height, false);
+          stageRef.current?.resize();
+          resizeBloomPipeline(bloomRef.current, width, height, 1);
+          resizeAoPipeline(aoRef.current, width, height, 1);
+          plateOverlayRef.current?.update();
+          return shots.map((entry) => {
+            const shot = shotCamera(entry);
+            if (!shot) return null;
+            renderView(shot);
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            canvas.getContext("2d").drawImage(renderer.domElement, 0, 0);
+            return canvas;
+          });
+        } finally {
+          renderer.setPixelRatio(previousRatio);
+          renderer.setSize(previousSize.x, previousSize.y, false);
+          stageRef.current?.resize();
+          const ratio = lastViewport.pixelRatio || previousRatio;
+          resizeBloomPipeline(bloomRef.current, previousSize.x, previousSize.y, ratio);
+          resizeAoPipeline(aoRef.current, previousSize.x, previousSize.y, ratio);
+          renderView(camera);
+        }
+      },
+      setCompositeTexture: (source) => applyCompositeTexture(source || null),
       getPresetKeys: () => CAMERA_PRESET_KEYS,
     });
 
     return () => {
       if (frameId) cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
-      renderer.domElement.removeEventListener("pointerdown", handleMarkerPointerDown, true);
-      renderer.domElement.removeEventListener("pointermove", handleMarkerPointerMove, true);
-      renderer.domElement.removeEventListener("pointerup", handleMarkerPointerUp, true);
-      renderer.domElement.removeEventListener("pointerleave", handleMarkerPointerCancel, true);
-      renderer.domElement.removeEventListener("pointercancel", handleMarkerPointerCancel, true);
-      restoreMarkerPickControls();
-      clearMarkerHover();
+      renderer.domElement.removeEventListener("pointerdown", handleTemplatePickPointerDown, true);
+      renderer.domElement.removeEventListener("pointermove", handleTemplatePickPointerMove, true);
+      renderer.domElement.removeEventListener("pointerup", handleTemplatePickPointerUp, true);
+      renderer.domElement.removeEventListener("pointerleave", handleTemplatePickPointerCancel, true);
+      renderer.domElement.removeEventListener("pointercancel", handleTemplatePickPointerCancel, true);
+      renderer.domElement.removeEventListener("pointerdown", handlePartPointerDown, true);
+      renderer.domElement.removeEventListener("pointermove", handlePartPointerMove, true);
+      renderer.domElement.removeEventListener("pointerup", handlePartPointerUp, true);
+      renderer.domElement.removeEventListener("pointerleave", handlePartPointerCancel, true);
+      renderer.domElement.removeEventListener("pointercancel", handlePartPointerCancel, true);
+      if (hoverFrame) cancelAnimationFrame(hoverFrame);
+      restoreVehicleDragControls();
+      vehicleRigRef.current = null;
+      clearTemplatePickHover();
       controls.removeEventListener("start", requestRenderFrame);
       controls.removeEventListener("change", requestRenderFrame);
       controls.removeEventListener("end", requestRenderFrame);
+      lightRigRef.current?.dispose();
+      lightRigRef.current = null;
+      plateOverlayRef.current?.dispose();
+      plateOverlayRef.current = null;
+      disposeBloomPipeline(bloomRef.current);
+      bloomRef.current = null;
+      disposeAoPipeline(aoRef.current);
+      aoRef.current = null;
+      solidWireRef.current.material?.dispose();
+      solidWireRef.current.material = null;
+      stageRef.current?.dispose();
+      stageRef.current = null;
+      turntableRef.current = null;
+      // Proxies share the model's geometry; they go before it is disposed.
+      partSwapRef.current?.dispose();
+      partSwapRef.current = null;
       if (scene.background === backgroundTextureRef.current) {
         scene.background = null;
       }
@@ -1189,18 +1810,24 @@ function ViewerComponent({
         disposeObject(modelRef.current);
         modelRef.current = null;
       }
-      backgroundTextureRef.current?.dispose?.();
+      disposeTexture(backgroundTextureRef.current);
       backgroundTextureRef.current = null;
+      if (compositeTextureRef.current) {
+        if (textureRef.current === compositeTextureRef.current) textureRef.current = null;
+        compositeTextureRef.current.dispose();
+        compositeTextureRef.current = null;
+      }
       releaseTexture(textureRef.current);
       textureRef.current = null;
       releaseTexture(windowTextureRef.current);
       windowTextureRef.current = null;
       releaseTexture(materialTextureRef.current);
       materialTextureRef.current = null;
-      disposeShadowReceiver(shadowReceiverRef.current);
-      shadowReceiverRef.current = null;
       controls.dispose();
       renderer.dispose();
+      // dispose() frees three's bookkeeping; the context itself only goes away
+      // once the browser collects it, so drop it explicitly.
+      renderer.forceContextLoss();
       renderer.domElement.removeEventListener("wheel", wheelWhileDragging);
       renderer.domElement.remove();
       setSceneReady(false);
@@ -1210,11 +1837,117 @@ function ViewerComponent({
 
   useEffect(() => {
     const { ambient, key, rim } = lightsRef.current;
-    if (ambient) ambient.intensity = 0.5 * lightIntensity;
-    if (key) key.intensity = 0.9 * lightIntensity;
-    if (rim) rim.intensity = 0.35 * lightIntensity;
+    const showroom = stage === "showroom";
+    // The night light preview drops the studio lights so emissives and siren
+    // spill read the way they do after dark.
+    const night = nightLights ? NIGHT_LIGHT_SCALE : 1;
+    if (ambient) ambient.intensity = (showroom ? 0.06 : 0.5) * lightIntensity * night;
+    if (key) key.intensity = (showroom ? 0.3 : 0.9) * lightIntensity * night;
+    if (rim) rim.intensity = (showroom ? 0.55 : 0.35) * lightIntensity * night;
+    stageRef.current?.setNight?.(night);
     requestRenderRef.current?.();
-  }, [lightIntensity]);
+  }, [lightIntensity, stage, nightLights]);
+
+  useEffect(() => {
+    if (!sceneReady) return;
+    let rig = lightRigRef.current;
+    if (rig && rig.model !== modelRef.current) {
+      rig.dispose();
+      rig = lightRigRef.current = null;
+    }
+    const lights = vehicleLights || null;
+    // Built for any model with lights: steady-burn extras can light with every switch off.
+    if (!rig && modelRef.current && sceneRef.current) {
+      rig = lightRigRef.current = createEmergencyLightRig({ scene: sceneRef.current, model: modelRef.current });
+    }
+    rig?.setState(lights || {});
+    requestRenderRef.current?.();
+  }, [vehicleLights, modelVersion, sceneReady]);
+
+  // Extras follow the vehicle state plan (spawn with none on); manual toggles are
+  // already folded into the plan by the host.
+  // An extra switched by hand drops off or bolts on. Extras the vehicle state
+  // switches (park and drive patterns, sirens, brakes, ULC buttons) are lights
+  // being switched, so they change at once as in game, as do the extras a
+  // model starts with and Kit Shoot's captures.
+  const extrasKey = Array.isArray(extrasPlan?.on) ? extrasPlan.on.join(",") : null;
+  const extrasManualKey = Array.isArray(extrasPlan?.manual) ? extrasPlan.manual.join(",") : "";
+  useEffect(() => {
+    const model = modelRef.current;
+    if (!sceneReady || extrasKey == null || !model) return;
+    const on = new Set(extrasKey ? extrasKey.split(",").map(Number) : []);
+    const manual = new Set(extrasManualKey ? extrasManualKey.split(",").map(Number) : []);
+    const leaving = new Map();
+    const arriving = new Map();
+    const changes = [];
+    model.traverse((child) => {
+      if (!child.isMesh || !Number.isInteger(child.userData?.extraIndex)) return;
+      const visible = on.has(child.userData.extraIndex);
+      if (child.userData.metaExtraVisible === visible) return;
+      changes.push([child, visible]);
+      if (!manual.has(child.userData.extraIndex)) return;
+      const parts = visible ? arriving : leaving;
+      parts.set(child.userData.extraIndex, [...(parts.get(child.userData.extraIndex) || []), child]);
+    });
+    if (!changes.length) return;
+    let settledAt = extrasSettledAt.get(model);
+    if (settledAt == null) extrasSettledAt.set(model, settledAt = performance.now() + EXTRAS_SETTLE_MS);
+    const swaps = partSwapRef.current;
+    const root = getVehicleRoot(model);
+    const animate = Boolean(swaps && root) && performance.now() > settledAt
+      && vehicleModsRef.current?.requestId == null && !prefersReducedMotion();
+    // Exits read the meshes' visibility, so they start before it changes.
+    if (animate) for (const meshes of leaving.values()) swaps.exit(meshes, { anchor: root });
+    for (const [child, visible] of changes) {
+      child.userData.metaExtraVisible = visible;
+      child.visible = visible && child.userData.nativeLodActive !== false && child.userData.modHidden !== true;
+    }
+    if (animate) {
+      [...arriving.values()].forEach((meshes, index) => swaps.enter(meshes, { anchor: root, delay: enterDelay(index, { handoff: leaving.size > 0 }) }));
+    }
+    requestRenderRef.current?.();
+  }, [extrasKey, extrasManualKey, modelVersion, sceneReady]);
+
+  // License plate: the game's plate style and text, composed from the game files
+  // (or over the user's own plate image) and drawn over the model's
+  // vehicle_licenseplate meshes.
+  const plateStyle = licensePlate?.style;
+  const plateText = licensePlate?.text;
+  const plateImagePath = licensePlate?.image?.path || "";
+  const plateImageStamp = licensePlate?.image?.stamp ?? 0;
+  useEffect(() => {
+    if (!sceneReady) return undefined;
+    let overlay = plateOverlayRef.current;
+    if (overlay && overlay.model !== modelRef.current) {
+      overlay.dispose();
+      overlay = plateOverlayRef.current = null;
+    }
+    if (!overlay && modelRef.current && sceneRef.current) {
+      overlay = plateOverlayRef.current = createPlateOverlay({ scene: sceneRef.current, model: modelRef.current });
+    }
+    if (!overlay) return undefined;
+    if (plateStyle == null || !isTauriRuntimeAvailable()) {
+      overlay.setImage(null);
+      requestRenderRef.current?.();
+      return undefined;
+    }
+    let cancelled = false;
+    const image = plateImagePath ? { path: plateImagePath, stamp: plateImageStamp } : null;
+    buildPlateImage({ style: plateStyle, text: plateText, image }, { invoke, readFile })
+      .then((image) => {
+        if (cancelled || plateOverlayRef.current !== overlay) return;
+        overlay.setImage(image);
+        onLicensePlateStatusRef.current?.({ ok: true });
+        requestRenderRef.current?.();
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        onLicensePlateStatusRef.current?.({ ok: false, error: String(error?.message || error) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [plateStyle, plateText, plateImagePath, plateImageStamp, modelVersion, sceneReady]);
 
   useEffect(() => {
     const { key } = lightsRef.current;
@@ -1227,34 +1960,30 @@ function ViewerComponent({
       r * Math.sin(elevRad),
       r * Math.cos(elevRad) * Math.cos(aziRad),
     );
-    if (shadowsEnabled) {
-      updateDirectionalShadowFrustum(key, fitRef.current?.distance);
-    }
     requestRenderRef.current?.();
-  }, [lightAzimuth, lightElevation, shadowsEnabled]);
+  }, [lightAzimuth, lightElevation]);
 
   useEffect(() => {
-    const renderer = rendererRef.current;
+    const stageApi = stageRef.current;
     const { key } = lightsRef.current;
-    if (!renderer || !key) return;
+    if (!stageApi || !key) return;
 
-    renderer.shadowMap.enabled = Boolean(shadowsEnabled);
-    configureShadowLight(key, shadowsEnabled);
+    stageModeRef.current = stage;
+    configureShadowLight(key, shadowsEnabled && stage !== "showroom");
+    stageApi.setMode(stage);
+    stageApi.setShadows(shadowsEnabled);
 
     if (modelRef.current) {
-      applyShadowFlags(modelRef.current, shadowsEnabled);
-    }
-    updateShadowReceiver(shadowReceiverRef.current, {
-      bounds: fitRef.current?.bounds,
-      camera: cameraRef.current,
-      enabled: shadowsEnabled,
-    });
-    if (shadowsEnabled) {
-      updateDirectionalShadowFrustum(key, fitRef.current?.distance);
+      applyShadowFlags(modelRef.current, stageApi.castsShadows);
     }
 
     requestRenderRef.current?.();
-  }, [shadowsEnabled]);
+  }, [shadowsEnabled, stage]);
+
+  useEffect(() => {
+    stageRef.current?.setShowroom({ spot: stageSpot, reflect: stageReflect, beam: stageBeam, light: stageLight, floor: stageFloor, rim: stageRim });
+    requestRenderRef.current?.();
+  }, [stageSpot, stageReflect, stageBeam, stageLight, stageFloor, stageRim]);
 
   useEffect(() => {
     if (!modelRef.current) return;
@@ -1294,19 +2023,21 @@ function ViewerComponent({
 
   useEffect(() => {
     if (!rendererRef.current) return;
-    rendererRef.current.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
+    rendererRef.current.setClearColor(new THREE.Color(nightLights ? NIGHT_BACKGROUND : backgroundColor || "#141414"), 1);
+    stageRef.current?.setBackgroundColor(nightLights ? NIGHT_BACKGROUND : backgroundColor);
     requestRender();
-  }, [backgroundColor]);
+  }, [backgroundColor, nightLights]);
 
   useEffect(() => {
     if (!sceneRef.current || !rendererRef.current) return;
     let cancelled = false;
 
     const clearBackground = () => {
-      if (sceneRef.current?.background === backgroundTextureRef.current) {
+      if (stageRef.current) stageRef.current.setUserBackground(null);
+      else if (sceneRef.current?.background === backgroundTextureRef.current) {
         sceneRef.current.background = null;
       }
-      backgroundTextureRef.current?.dispose?.();
+      disposeTexture(backgroundTextureRef.current);
       backgroundTextureRef.current = null;
       requestRender();
     };
@@ -1318,17 +2049,25 @@ function ViewerComponent({
 
     const loadBackground = async () => {
       let texture = null;
+      let failure = null;
       try {
         texture = await loadTextureFromPathShared(backgroundImagePath, textureLoader, rendererRef.current);
-      } catch {
-        texture = null;
+      } catch (error) {
+        failure = error;
+      }
+      // A newer background (or none) has taken over: leave its texture alone.
+      if (cancelled) {
+        disposeTexture(texture);
+        return;
       }
       if (!texture) {
         clearBackground();
-        return;
-      }
-      if (cancelled) {
-        texture.dispose?.();
+        const name = backgroundImagePath.split(/[\\/]/).pop();
+        onAssetErrorRef.current?.(
+          failure?.type === "unsupported-bit-depth"
+            ? `Background image ${name} is ${failure.bitDepth}-bit, which isn't supported. Save it as 8-bit.`
+            : `Background image ${name} couldn't be read.${failure?.message ? ` ${failure.message}` : ""}`,
+        );
         return;
       }
 
@@ -1358,15 +2097,19 @@ function ViewerComponent({
           blurredTexture.colorSpace = THREE.SRGBColorSpace;
           blurredTexture.wrapS = THREE.RepeatWrapping;
           blurredTexture.wrapT = THREE.RepeatWrapping;
-          texture.dispose();
+          // An ImageBitmap source is already upside down (loadBlobTexture), and
+          // the canvas copies it as it is.
+          blurredTexture.flipY = !texture.userData?.flipBaked;
+          disposeTexture(texture);
           finalTexture = blurredTexture;
         }
       }
 
       backgroundTextureRef.current = finalTexture;
-      sceneRef.current.background = finalTexture;
+      if (stageRef.current) stageRef.current.setUserBackground(finalTexture);
+      else sceneRef.current.background = finalTexture;
       if (previous && previous !== finalTexture) {
-        previous.dispose?.();
+        disposeTexture(previous);
       }
       requestRender();
     };
@@ -1379,29 +2122,26 @@ function ViewerComponent({
   }, [backgroundImagePath, backgroundImageReloadToken, backgroundImageBlur, textureLoader, requestRender]);
 
   useEffect(() => {
-    if (!sceneReady || !sceneRef.current) return;
-    if (showGrid && !gridRef.current) {
-      const grid = createFloorGrid();
-      sceneRef.current.add(grid);
-      gridRef.current = grid;
-      requestRender();
-    } else if (!showGrid && gridRef.current) {
-      sceneRef.current.remove(gridRef.current);
-      gridRef.current.geometry?.dispose?.();
-      gridRef.current.material?.dispose?.();
-      gridRef.current = null;
-      requestRender();
-    }
+    if (!sceneReady || !stageRef.current) return;
+    stageRef.current.setGrid(showGrid);
+    requestRender();
   }, [showGrid, sceneReady, requestRender]);
 
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
 
     if (!modelPath) {
+      shownModelPathRef.current = "";
       if (modelRef.current) {
-        sceneRef.current.remove(modelRef.current);
+        partSwapRef.current?.clear();
+        modelRef.current.removeFromParent();
         disposeObject(modelRef.current);
         modelRef.current = null;
+        onPaintSlotsChangeRef.current?.(null);
+      }
+      if (vehicleRigRef.current) {
+        vehicleRigRef.current = null;
+        emitVehicleParts();
       }
       onModelInfoRef.current?.({
         targets: [],
@@ -1428,37 +2168,78 @@ function ViewerComponent({
     }
 
     let cancelled = false;
+    // Aborted with the load: a bridge parse nobody else waits for is then
+    // cancelled (see requestBridgeParse), never one that already finished.
+    const bridgeLoad = new AbortController();
 
     const loadModel = async () => {
       onModelLoadingRef.current?.(true);
+      // A replaced or unmounted load reports nothing and never reaches the
+      // scene: errors go through fail(), awaits are followed by a cancelled
+      // check, and an object that was not committed is disposed in finally.
+      const fail = (message) => {
+        if (!cancelled) onModelErrorRef.current?.(message);
+      };
       let object = null;
+      let committed = false;
       let templateSourceObject = null;
+      let templateSourceIsCached = false;
       let nativeMaterialSummary = { available: false };
+      let bridgeWarnings = [];
       try {
         const extension = getFileExtension(modelPath);
         const shouldPreferBridgeYft = extension === "yft" && isTauriRuntime && !includeTemplateGeometry;
         const shouldBypassTemplateCache =
           includeTemplateGeometry && (extension === "yft" || extension === "ydd");
-        const cachedTemplate =
-          shouldPreferBridgeYft || shouldBypassTemplateCache ? null : getCachedModelTemplate(modelPath);
-        let shouldCacheModelTemplate = !shouldPreferBridgeYft;
-        if (cachedTemplate) {
-          object = cloneCachedModelTemplate(cachedTemplate);
+        // Cached parses are keyed on the file's mtime and size, so a model
+        // saved again is parsed again. Without them nothing is cached.
+        const fileInfo = isTauriRuntime ? await stat(modelPath).catch(() => null) : null;
+        if (cancelled) return;
+        const fileKey = getModelCacheKey(modelPath, fileInfo);
+        // The bridge is asked on every open: it reuses its parse while the model
+        // and every .ytd and meta file that parse read are unchanged (cheap), and
+        // parses again otherwise. A model built from a parse is cached per parse,
+        // never per .yft alone, so an edited texture dictionary always shows.
+        let bridgeResult = null;
+        let bridgeManifestInfo = null;
+        if (shouldPreferBridgeYft) {
+          try {
+            bridgeResult = await requestBridgeParse(invoke, modelPath, { signal: bridgeLoad.signal });
+            const manifestPath = typeof bridgeResult?.manifestPath === "string" ? bridgeResult.manifestPath.trim() : "";
+            bridgeManifestInfo = manifestPath ? await stat(manifestPath).catch(() => null) : null;
+          } catch (error) {
+            // A replaced load's parse was stopped on purpose: not an error.
+            if (cancelled) return;
+            if (!isBridgeCancelled(error)) console.warn("[YFT] Bridge load failed, falling back to JS parser:", error);
+          }
+          if (cancelled) return;
+        }
+        // The bridge parse carries game materials, lights and the skeleton; a
+        // JS parse of the same file does not, so they are cached apart.
+        let modelCacheKey = getLoadedModelCacheKey(modelPath, fileInfo, { bridgeResult, manifestInfo: bridgeManifestInfo });
+        let bridgeIdentity = bridgeResult ? getBridgeParseIdentity(bridgeResult, bridgeManifestInfo) : null;
+        const cachedEntry = shouldBypassTemplateCache || !modelCacheKey ? null : getCachedModelTemplate(modelCacheKey);
+        let shouldCacheModelTemplate = !shouldBypassTemplateCache;
+        if (cachedEntry?.template) {
+          object = cloneCachedModelTemplate(cachedEntry.template);
+          if (cachedEntry.nativeMaterialSummary) {
+            nativeMaterialSummary = cachedEntry.nativeMaterialSummary;
+          }
+          if (cachedEntry.bridgeWarnings) bridgeWarnings = cachedEntry.bridgeWarnings;
         }
 
         if (!object) {
           if (extension === "obj") {
-            onModelErrorRef.current?.(
+            fail(
               "out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported.",
             );
             return;
           }
 
           if (extension === "yft") {
-            if (shouldPreferBridgeYft) {
+            if (shouldPreferBridgeYft && bridgeResult) {
               try {
-                const bridgeResult = await invoke("parse_yft", { path: modelPath });
-                if (cancelled) return;
+                bridgeWarnings = readBridgeWarnings(bridgeResult);
 
                 const meshPath = typeof bridgeResult?.meshPath === "string" ? bridgeResult.meshPath.trim() : "";
                 const manifestPath = typeof bridgeResult?.manifestPath === "string" ? bridgeResult.manifestPath.trim() : "";
@@ -1469,14 +2250,22 @@ function ViewerComponent({
                   } catch {
                     meshBytes = null;
                   }
+                  if (cancelled) return;
 
                   if (meshBytes) {
                     let bridgeMeshes = parseClmesh(meshBytes);
+                    let parentTextures = null;
+                    let lightBones = [];
+                    let skeleton = null;
                     if (manifestPath) {
                       try {
                         const manifest = await readJsonFile(manifestPath);
+                        if (cancelled) return;
                         bridgeMeshes = applyNativeManifestToMeshes(bridgeMeshes, manifest, manifestPath);
                         nativeMaterialSummary = summarizeNativeMaterialMeshes(bridgeMeshes);
+                        parentTextures = summarizeParentTextures(manifest, manifestPath);
+                        lightBones = normalizeManifestLightBones(manifest);
+                        skeleton = normalizeManifestSkeleton(manifest);
                       } catch (error) {
                         console.warn("[YFT] Failed to read bridge manifest:", error);
                       }
@@ -1485,6 +2274,12 @@ function ViewerComponent({
                     if (bridgeMeshes?.length) {
                       object = buildClmeshObject(bridgeMeshes);
                       object.userData.sourceFormat = "yft";
+                      // Mod kit parts resolve textures from this vehicle's dictionary chain.
+                      object.userData.parentTextures = parentTextures;
+                      // Siren and lamp bone pivots for the vehicle light preview.
+                      object.userData.lightBones = lightBones;
+                      // Bind pose and joint limits for opening doors and roofs.
+                      object.userData.vehicleSkeleton = skeleton;
                       if (!hasRenderableMeshes(object)) {
                         disposeObject(object);
                         object = null;
@@ -1493,99 +2288,114 @@ function ViewerComponent({
                   }
                 }
               } catch (error) {
-                console.warn("[YFT] Bridge load failed, falling back to JS parser:", error);
+                // A replaced load's parse was stopped on purpose: not an error.
+                if (cancelled) return;
+                if (!isBridgeCancelled(error)) console.warn("[YFT] Bridge load failed, falling back to JS parser:", error);
               }
             }
 
             if (!object) {
+              // The bridge's warnings describe a model that is not shown.
+              bridgeWarnings = [];
+              // A JS parse is cached with this file's other JS parses.
+              modelCacheKey = getLoadedModelCacheKey(modelPath, fileInfo);
+              bridgeIdentity = null;
               let bytes = null;
               try {
                 bytes = await readFile(modelPath);
               } catch {
-                onModelErrorRef.current?.("Failed to read YFT file.");
+                fail("Failed to read YFT file.");
                 return;
               }
               if (cancelled) return;
               const name = getFileNameWithoutExtension(modelPath) || "yft_model";
               let drawable = null;
               try {
-                drawable = parseYft(bytes, name);
+                drawable = await parseYftAsync(bytes, name);
               } catch (err) {
+                if (cancelled) return;
                 console.error("[YFT] Parse error:", err);
-                onModelErrorRef.current?.("YFT parsing failed.");
+                fail("YFT parsing failed.");
                 return;
               }
+              if (cancelled) return;
               if (!drawable || !drawable.models?.length) {
-                onModelErrorRef.current?.("YFT parsing returned no drawable data.");
+                fail("YFT parsing returned no drawable data.");
                 return;
               }
 
               object = buildDrawableObject(drawable, { useVertexColors: false });
               if (!hasRenderableMeshes(object)) {
-                onModelErrorRef.current?.("YFT parsed but no mesh data was generated.");
+                fail("YFT parsed but no mesh data was generated.");
                 return;
               }
               shouldCacheModelTemplate = true;
             }
             object.userData.sourceFormat = "yft";
-
-            if (shouldPreferBridgeYft) {
-              try {
-                const bytes = await readFile(modelPath);
-                if (!cancelled) {
-                  const name = getFileNameWithoutExtension(modelPath) || "yft_model";
-                  const drawable = parseYft(bytes, name);
-                  if (drawable?.models?.length) {
-                    templateSourceObject = buildDrawableObject(drawable, { useVertexColors: false });
-                    templateSourceObject.userData.sourceFormat = "yft";
-                  }
-                }
-              } catch (error) {
-                console.warn("[YFT] Template source fallback failed:", error);
-              }
-            }
+            // The livery template map only needs mesh/material names, which the
+            // bridge object already carries; the JS parser is no longer re-run
+            // here. Template geometry (includeTemplateGeometry) takes the JS
+            // path for `object` itself, so no second parse exists on that path.
 
           } else if (extension === "ydd") {
             let bytes = null;
             try {
               bytes = await readFile(modelPath);
             } catch {
-              onModelErrorRef.current?.("Failed to read YDD file.");
+              fail("Failed to read YDD file.");
               return;
             }
             if (cancelled) return;
             const name = getFileNameWithoutExtension(modelPath) || "ydd_model";
             let drawable = null;
             try {
-              drawable = parseYft(bytes, name, YDD_SCAN_SETTINGS);
+              drawable = await parseYftAsync(bytes, name, YDD_SCAN_SETTINGS);
             } catch (err) {
+              if (cancelled) return;
               console.error("[YDD] Parse error:", err);
-              onModelErrorRef.current?.("YDD parsing failed.");
+              fail("YDD parsing failed.");
               return;
             }
+            if (cancelled) return;
             if (!drawable || !drawable.models?.length) {
-              onModelErrorRef.current?.("YDD parsing returned no drawable data.");
+              fail("YDD parsing returned no drawable data.");
               return;
             }
             object = buildDrawableObject(drawable, { useVertexColors: false });
             if (!hasRenderableMeshes(object)) {
-              onModelErrorRef.current?.("YDD parsed but no mesh data was generated.");
+              fail("YDD parsed but no mesh data was generated.");
               return;
             }
             object.userData.sourceFormat = "ydd";
 
             if (includeTemplateGeometry) {
-              try {
-                const templateDrawable = parseYft(bytes, name, {
-                  ...YDD_SCAN_SETTINGS,
-                  includeAllDrawables: true,
-                });
-                if (templateDrawable?.models?.length) {
-                  templateSourceObject = buildDrawableObject(templateDrawable, { useVertexColors: false });
-                  templateSourceObject.userData.sourceFormat = "ydd";
+              // Full-dictionary template source is read-only input for the
+              // template generator; keep it per file version so re-opening the
+              // same YDD in another tab does not re-parse it.
+              const templateCacheKey = getModelCacheKey(modelPath, fileInfo, "template");
+              const cachedTemplateSource = templateCacheKey ? getCachedModelTemplate(templateCacheKey)?.template || null : null;
+              if (cachedTemplateSource) {
+                templateSourceObject = cachedTemplateSource;
+                templateSourceIsCached = true;
+              } else {
+                try {
+                  const templateDrawable = await parseYftAsync(bytes, name, {
+                    ...YDD_SCAN_SETTINGS,
+                    includeAllDrawables: true,
+                  });
+                  if (cancelled) return;
+                  if (templateDrawable?.models?.length) {
+                    templateSourceObject = buildDrawableObject(templateDrawable, { useVertexColors: false });
+                    templateSourceObject.userData.sourceFormat = "ydd";
+                    if (templateCacheKey) {
+                      cacheModelTemplate(templateCacheKey, templateSourceObject, { sourcePath: modelPath, fileKey });
+                      templateSourceIsCached = true;
+                    }
+                  }
+                } catch (error) {
+                  if (cancelled) return;
+                  console.warn("[YDD] Full dictionary template source failed:", error);
                 }
-              } catch (error) {
-                console.warn("[YDD] Full dictionary template source failed:", error);
               }
             }
           } else if (extension === "clmesh") {
@@ -1593,21 +2403,23 @@ function ViewerComponent({
             try {
               bytes = await readFile(modelPath);
             } catch {
-              onModelErrorRef.current?.("Failed to read mesh cache.");
+              fail("Failed to read mesh cache.");
               return;
             }
             if (cancelled) return;
             const meshes = parseClmesh(bytes);
             if (!meshes || meshes.length === 0) {
-              onModelErrorRef.current?.("Mesh cache contained no meshes.");
+              fail("Mesh cache contained no meshes.");
               return;
             }
             object = buildClmeshObject(meshes);
           } else if (extension === "dff") {
+            const fileName = modelPath.split(/[\\/]/).pop();
             let bytes = null;
             try {
               bytes = await readFile(modelPath);
-            } catch {
+            } catch (error) {
+              fail(`Failed to read ${fileName}: ${error?.message || error}`);
               return;
             }
             if (cancelled) return;
@@ -1615,27 +2427,33 @@ function ViewerComponent({
             const loader = new DFFLoader();
             try {
               object = loader.parse(buffer);
-            } catch {
+            } catch (error) {
+              console.error("[DFF] Parse error:", error);
+              fail(`DFF parsing failed for ${fileName}.`);
               return;
             }
           } else {
-            onModelErrorRef.current?.("Unsupported model format.");
+            fail("Unsupported model format.");
             return;
           }
 
           if (!object) {
-            onModelErrorRef.current?.("Model loaded with no geometry.");
+            fail("Model loaded with no geometry.");
             return;
           }
 
           normalizeLoadedMeshes(object);
-          if (shouldCacheModelTemplate) {
-            const modelTemplate = cloneCachedModelTemplate(object);
+          if (shouldCacheModelTemplate && modelCacheKey) {
+            const modelTemplate = cloneCachedModelTemplate(object, { cloneGeometry: false });
             if (modelTemplate) {
-              cacheModelTemplate(modelPath, modelTemplate);
+              cacheModelTemplate(modelCacheKey, modelTemplate, { nativeMaterialSummary, bridgeWarnings, sourcePath: modelPath, fileKey, bridgeIdentity });
             }
           }
         }
+
+        // Everything from here to the swap into modelRef is synchronous, so
+        // this is the last point a newer load can have replaced this one.
+        if (cancelled) return;
 
         const glossFactor = 2 - 2 * glossiness;
         const meshes = getMeshList(object);
@@ -1724,8 +2542,20 @@ function ViewerComponent({
           }
         }
 
+        const vehicleRig = createVehicleRig({
+          skeleton: object.userData?.vehicleSkeleton || null,
+          meshes: getMeshList(object),
+        });
+
         onModelInfoRef.current?.({
           targets,
+          extras: getModelExtras(object),
+          // The model can pose doors and play a convertible roof clip.
+          vehiclePosable: Boolean(vehicleRig),
+          steerableWheels: getSteerableWheelMeshes(object).some((mesh) => mesh.userData.nativeMaterial.part === "wheel"),
+          lights: summarizeModelLights(object),
+          licensePlates: findPlateMeshes(object).length,
+          liveryTexturePrefix: findLiveryTexturePrefix(getMeshList(object).map((mesh) => mesh.userData?.textureRefs)),
           liveryTarget: liveryTarget?.value || "",
           liveryLabel: liveryTarget?.label || "",
           windowTarget: windowTarget?.value || "",
@@ -1739,10 +2569,12 @@ function ViewerComponent({
           windowTemplateError,
           templateSetWarning,
           nativeMaterials: nativeMaterialSummary,
+          // Non-fatal problems the CodeWalker bridge reported for this model.
+          bridgeWarnings,
         });
 
         if (templateSourceObject && templateSourceObject !== object) {
-          disposeObject(templateSourceObject);
+          if (!templateSourceIsCached) disposeObject(templateSourceObject);
           templateSourceObject = null;
         }
 
@@ -1750,6 +2582,18 @@ function ViewerComponent({
         const size = new THREE.Vector3();
         const center = new THREE.Vector3();
         box.getSize(size);
+
+        if (object?.userData?.sourceFormat === "ydd") {
+          // GTA drawables are Z-up; the .ydd parser keeps the file's axes. The
+          // X turn is EUP Studio's conversion (clothing upright, facing +Z); the
+          // half turn then faces it -Z like a vehicle, where this viewer's Front
+          // shot and showroom light directions look from.
+          object.rotateX(-Math.PI / 2);
+          object.applyQuaternion(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI));
+          object.updateMatrixWorld(true);
+          box.setFromObject(object);
+          box.getSize(size);
+        }
 
         if (object?.userData?.sourceFormat === "yft") {
           const didFix = maybeAutoFixYftUpAxis(object, size);
@@ -1768,21 +2612,31 @@ function ViewerComponent({
         sceneObject.userData = sceneObject.userData || {};
         sceneObject.userData.materialConfig = materialState.materialConfig || DEFAULT_MATERIAL_CONFIG;
         sceneObject.userData.materialDetailTexture = materialTextureRef.current || null;
-        sceneObject.userData.slotColors = materialState.slotColors || buildVehicleSlotColors(materialState.bodyColor);
+        sceneObject.userData.vehiclePaint = materialState.vehiclePaint || normalizeVehiclePaint(null, materialState.bodyColor);
         sceneObject.userData.nativeMaterialsEnabled = Boolean(materialState.nativeMaterialsEnabled);
-        applyShadowFlags(sceneObject, shadowsEnabled);
+        sceneObject.userData.sourceModelPath = modelPath;
+        applyShadowFlags(sceneObject, stageRef.current?.castsShadows ?? shadowsEnabled);
 
         if (modelRef.current) {
+          partSwapRef.current?.clear();
           disposeCageOverlay(sceneRef.current);
-          sceneRef.current.remove(modelRef.current);
+          modelRef.current.removeFromParent();
           disposeObject(modelRef.current);
         }
 
         modelRef.current = sceneObject;
-        sceneRef.current.add(sceneObject);
+        committed = true;
+        const reloadedInPlace = shownModelPathRef.current === modelPath;
+        shownModelPathRef.current = modelPath;
+        vehicleRigRef.current = vehicleRig;
+        emitVehicleParts();
+        onPaintSlotsChangeRef.current?.(collectPaintSlots(sceneObject));
+        (turntableRef.current || sceneRef.current).add(sceneObject);
         setModelVersion((version) => version + 1);
 
-        const fitBox = computeFramingBounds(sceneObject, new THREE.Box3().setFromObject(sceneObject)) || box.clone();
+        // Framing is measured on the vehicle at rest, whatever the turntable's angle.
+        const fitBox = withTurntableAtRest(turntableRef.current, () =>
+          computeFramingBounds(sceneObject, new THREE.Box3().setFromObject(sceneObject))) || box.clone();
         fitBox.getSize(size);
         fitBox.getCenter(center);
 
@@ -1794,12 +2648,12 @@ function ViewerComponent({
           Number.isFinite(center.y) &&
           Number.isFinite(center.z);
         if (!isBoundsValid) {
-          onModelErrorRef.current?.("Parsed model bounds are invalid.");
+          fail("Parsed model bounds are invalid.");
           return;
         }
         const maxDim = Math.max(size.x, size.y, size.z);
         if (!Number.isFinite(maxDim) || maxDim <= 0) {
-          onModelErrorRef.current?.("Parsed model geometry is empty.");
+          fail("Parsed model geometry is empty.");
           return;
         }
         const currentPreset = cameraStateRef.current?.presetKey || DEFAULT_CAMERA_PRESET;
@@ -1835,21 +2689,19 @@ function ViewerComponent({
             presetKey: framing.presetKey,
             zoomFactor: currentZoom,
           };
-          syncViewerCameraPose({
-            camera: cameraRef.current,
-            controls: controlsRef.current,
-            position: framing.position,
-            target: framing.target,
-            up: framing.up,
-            near: framing.near,
-            far: framing.far,
-            minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
-            maxDistance: Math.max(framing.baseDistance * 10, 10),
-          });
-        }
-
-        if (shadowsEnabled) {
-          updateDirectionalShadowFrustum(lightsRef.current.key, fitRef.current.distance);
+          if (!reloadedInPlace) {
+            syncViewerCameraPose({
+              camera: cameraRef.current,
+              controls: controlsRef.current,
+              position: framing.position,
+              target: framing.target,
+              up: framing.up,
+              near: framing.near,
+              far: framing.far,
+              minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
+              maxDistance: Math.max(framing.baseDistance * 4, 1),
+            });
+          }
         }
 
         applyMaterials(
@@ -1866,7 +2718,7 @@ function ViewerComponent({
         );
         // Rebuild cage overlay if it was enabled
         if (materialStateRef.current.showCageWireframe) {
-          buildCageOverlay(sceneObject, sceneRef.current);
+          attachCageOverlay(buildCageOverlay(sceneObject, sceneRef.current), turntableRef.current);
         }
         requestRender();
       } catch (error) {
@@ -1874,12 +2726,14 @@ function ViewerComponent({
           error && typeof error === "object" && "message" in error
             ? `Model load failed: ${error.message}`
             : "Model load failed.";
-        onModelErrorRef.current?.(message);
+        fail(message);
         console.error(error);
       } finally {
-        if (templateSourceObject && templateSourceObject !== object) {
+        if (templateSourceObject && templateSourceObject !== object && !templateSourceIsCached) {
           disposeObject(templateSourceObject);
         }
+        // Built but never shown: cancelled, or failed before the swap.
+        if (object && !committed) disposeObject(object);
         if (!cancelled) onModelLoadingRef.current?.(false);
       }
     };
@@ -1888,9 +2742,10 @@ function ViewerComponent({
 
     return () => {
       cancelled = true;
+      bridgeLoad.abort();
       onModelLoadingRef.current?.(false);
     };
-  }, [modelPath, sceneReady, includeTemplateGeometry, isTauriRuntime, textureLoader]);
+  }, [modelPath, modelReloadToken, sceneReady, includeTemplateGeometry, isTauriRuntime, textureLoader]);
 
   useEffect(() => {
     const object = modelRef.current;
@@ -1918,7 +2773,7 @@ function ViewerComponent({
       requestRenderRef.current?.();
     };
 
-    const nativeMeshes = getMeshList(object).filter((mesh) => mesh.userData?.nativeMaterial);
+    const nativeMeshes = getMeshList(object).filter((mesh) => mesh.userData?.nativeMaterial && !isVehicleModMesh(mesh));
     if (!enabled) {
       onNativeMaterialsStatusRef.current?.({
         state: "disabled",
@@ -1950,6 +2805,8 @@ function ViewerComponent({
           object,
           renderer: rendererRef.current,
           signal: controller.signal,
+          // Mod kit parts own their textures; see the vehicle mods effect.
+          excludeMesh: isVehicleModMesh,
           onSetup: (status) => {
             if (cancelled) return;
             onNativeMaterialsStatusRef.current?.({ ...status, state: "loading", available: true });
@@ -1972,6 +2829,7 @@ function ViewerComponent({
         }
 
         object.userData.nativeMaterialsReady = true;
+        setNativeReadyVersion((version) => version + 1);
         const status = resources.summary;
         onNativeMaterialsStatusRef.current?.({
           ...status,
@@ -2001,10 +2859,389 @@ function ViewerComponent({
     return () => {
       cancelled = true;
       controller.abort();
+      // The livery override's materials go with these resources.
+      liveryStates.get(object)?.override.forget();
       resources?.dispose?.();
       object.userData.nativeMaterialsReady = false;
     };
   }, [modelVersion, nativeMaterialsEnabled, nativeMaterialsReloadToken, sceneReady]);
+
+  // Shows the chosen game livery on the vehicle's own materials: a mod kit
+  // livery wins over a texture livery, as in game. Needs the native materials
+  // loaded; until then (or with them off) the model shows as modelled.
+  const applyGameLivery = useCallback(() => {
+    const model = modelRef.current;
+    const root = getVehicleRoot(model);
+    const state = model ? liveryStates.get(model) : null;
+    if (!root || !state || !model.userData?.nativeMaterialsReady) return;
+    const meshes = [];
+    root.traverse((child) => {
+      if (child.isMesh && !isVehicleModMesh(child)) meshes.push(child);
+    });
+    const mod = state.activeModPath ? state.mods.get(state.activeModPath)?.texture || null : null;
+    const sign = state.signNumber != null ? state.signs.get(state.signNumber) || null : null;
+    state.override.apply(meshes, { mod, sign });
+    requestRenderRef.current?.();
+  }, []);
+
+  // The texture liveries (`<prefix>_sign_N`) the vehicle's dictionary chain
+  // holds, reported once per model.
+  useEffect(() => {
+    const model = modelRef.current;
+    const root = getVehicleRoot(model);
+    if (!sceneReady || !root) {
+      onGameLiveryStatusRef.current?.(null);
+      return;
+    }
+    const meshes = [];
+    root.traverse((child) => {
+      if (child.isMesh && !isVehicleModMesh(child)) meshes.push(child);
+    });
+    const state = getLiveryState(model);
+    state.path = model.userData?.sourceModelPath || "";
+    state.list = listTextureLiveries(meshes, root.userData?.parentTextures || null);
+    state.error = "";
+    onGameLiveryStatusRef.current?.(describeLiveryState(state));
+  }, [modelVersion, sceneReady]);
+
+  useEffect(() => {
+    const model = modelRef.current;
+    if (!sceneReady || !getVehicleRoot(model)) return;
+    const state = getLiveryState(model);
+    const number = Number.isInteger(gameLivery) && state.list?.paths.has(gameLivery) ? gameLivery : null;
+    const request = ++state.signRequest;
+    const settle = (error = "") => {
+      state.signNumber = error ? null : number;
+      state.error = error;
+      applyGameLivery();
+      onGameLiveryStatusRef.current?.(describeLiveryState(state));
+    };
+    if (number == null || state.signs.has(number)) {
+      settle();
+      return;
+    }
+    loadNativeTextureSource(state.list.paths.get(number), rendererRef.current).then((texture) => {
+      if (liveryStates.get(model) !== state || state.signs.has(number)) texture.dispose();
+      else state.signs.set(number, texture);
+      if (request === state.signRequest) settle();
+    }).catch((error) => {
+      if (request === state.signRequest) settle(`Livery ${number} didn't load: ${error?.message || error}`);
+    });
+  }, [gameLivery, modelVersion, sceneReady, nativeReadyVersion, applyGameLivery]);
+
+  // Mod kit parts attach under the vehicle's normalized root so they share its
+  // orientation and offset; the bridge exports both in vehicle space. Each part
+  // owns its native textures, so toggling a mod never reloads the vehicle's.
+  useEffect(() => {
+    const model = modelRef.current;
+    const root = getVehicleRoot(model);
+    const parts = Array.isArray(vehicleMods?.parts) ? vehicleMods.parts : [];
+    const requestId = vehicleMods?.requestId ?? null;
+    if (!sceneReady || !root) {
+      onVehicleModsStatusRef.current?.({ requestId, settled: false, parts: {}, hiddenMeshCount: 0, boneDataAvailable: false, parentTexturesAvailable: false });
+      return;
+    }
+    let state = vehicleModStates.get(model);
+    if (!state) {
+      // textureLoads: controllers of part texture loads still running before
+      // the part is fitted, aborted when the model is replaced or unmounted.
+      state = { groups: new Map(), loading: new Set(), failures: new Map(), textureLoads: new Set() };
+      vehicleModStates.set(model, state);
+    }
+
+    const refresh = () => {
+      if (model.userData) delete model.userData.meshList;
+      const materialState = materialStateRef.current;
+      applyMaterials(
+        model,
+        materialState.bodyColor,
+        textureRef.current,
+        materialState.textureTarget,
+        windowTextureRef.current,
+        materialState.windowTextureTarget,
+        materialState.liveryExteriorOnly,
+        materialState.textureMode,
+        materialState.glossiness,
+        materialState.showWireframe,
+      );
+      requestRenderRef.current?.();
+    };
+    const bump = () => {
+      if (modelRef.current === model) setVehicleModsRevision((revision) => revision + 1);
+    };
+
+    // A livery mod's model is a placeholder; its texture is the livery.
+    const liveryParts = parts.filter((part) => part.slotType === LIVERY_MOD_SLOT);
+    const wanted = new Map(parts.filter((part) => part.slotType !== LIVERY_MOD_SLOT).map((part) => [part.key, part]));
+    let changed = false;
+    // Parts the user swaps drop off and bolt on. Parts already chosen when the
+    // model loads, and Kit Shoot's captures, change at once.
+    const swaps = partSwapRef.current;
+    const animate = Boolean(swaps) && state.primed && requestId == null && !prefersReducedMotion();
+    let exits = 0;
+    for (const [key, group] of state.groups) {
+      if (wanted.has(key)) continue;
+      state.groups.delete(key);
+      changed = true;
+      if (animate && group.visible) {
+        // Disposed once it has fallen away; out of the model meanwhile.
+        swaps.exit(group, { anchor: root, onDone: () => detachVehicleModGroup(group) });
+        group.parent?.remove(group);
+        exits += 1;
+      } else detachVehicleModGroup(group);
+      // After the exit has captured where the part sits on an open door.
+      vehicleRigRef.current?.detach(group);
+    }
+    for (const key of [...state.failures.keys()]) {
+      if (!wanted.has(key)) state.failures.delete(key);
+    }
+
+    const hiddenBones = new Set((vehicleMods?.hiddenBones || []).map((bone) => String(bone).toLowerCase()));
+    let hiddenMeshCount = 0;
+    let boneDataAvailable = false;
+    const stockHidden = [];
+    const stockShown = [];
+    root.traverse((child) => {
+      if (!child.isMesh || isVehicleModMesh(child)) return;
+      const chain = child.userData?.nativeMaterial?.boneChain;
+      if (Array.isArray(chain)) boneDataAvailable = true;
+      const hidden = isHiddenByBones(chain, hiddenBones);
+      if (hidden && child.userData?.nativeLodActive !== false) hiddenMeshCount += 1;
+      if ((child.userData.modHidden === true) !== hidden) (hidden ? stockHidden : stockShown).push(child);
+    });
+    // The stock part a mod replaces falls away as one piece (its meshes are
+    // still visible here; refresh() hides them) and comes back the same way.
+    if (animate && stockHidden.length && swaps.exit(stockHidden, { anchor: root })) exits += 1;
+    for (const child of stockHidden) child.userData.modHidden = true;
+    for (const child of stockShown) child.userData.modHidden = false;
+    if (stockHidden.length || stockShown.length) changed = true;
+    if (animate && stockShown.length) swaps.enter(stockShown, { anchor: root, delay: enterDelay(0, { handoff: exits > 0 }) });
+
+    // Kit Shoot keeps a slot's parts loaded and shows one at a time; showing
+    // or hiding a loaded part needs a render, not a material pass.
+    for (const [key, group] of state.groups) {
+      const visible = wanted.get(key)?.hidden !== true;
+      if (group.visible !== visible) {
+        group.visible = visible;
+        requestRenderRef.current?.();
+      }
+    }
+
+    const nativeEnabled = Boolean(nativeMaterialsEnabled);
+    for (const group of state.groups.values()) {
+      const current = modNativeStates.get(group);
+      const upToDate = current
+        ? current.enabled === nativeEnabled && current.token === nativeMaterialsReloadToken
+        : !nativeEnabled;
+      if (upToDate) continue;
+      if (current) {
+        disposeModNative(group);
+        changed = true;
+      }
+      if (!nativeEnabled) continue;
+      const controller = new AbortController();
+      const entry = {
+        enabled: true,
+        token: nativeMaterialsReloadToken,
+        controller,
+        resources: null,
+        summary: null,
+        state: "loading",
+        message: "",
+      };
+      modNativeStates.set(group, entry);
+      loadNativeMaterialView({
+        object: group,
+        renderer: rendererRef.current,
+        signal: controller.signal,
+        onRender: () => requestRenderRef.current?.(),
+      }).then((resources) => {
+        if (controller.signal.aborted) {
+          resources.dispose();
+          return;
+        }
+        Object.assign(entry, { resources, summary: resources.summary, state: "ready" });
+        refresh();
+        bump();
+      }).catch((error) => {
+        if (controller.signal.aborted || error?.name === "AbortError") return;
+        Object.assign(entry, { state: "error", message: error?.message || "Texture loading failed." });
+        bump();
+      });
+    }
+
+    for (const [key, part] of wanted) {
+      if (state.groups.has(key) || state.loading.has(key) || state.failures.has(key)) continue;
+      state.loading.add(key);
+      const animateIn = animate;
+      loadVehicleModPart(part.path, root.userData?.parentTextures || null, { invoke, readFile })
+        .then(async (group) => {
+          const stillWanted = () => modelRef.current === model &&
+            vehicleModsRef.current?.parts?.some((entry) => entry.key === key);
+          if (!stillWanted()) {
+            disposeObject(group);
+            return;
+          }
+          // The part's textures load before it is fitted, so it lands finished
+          // instead of landing grey and repainting. A toggle or reload meanwhile
+          // is reconciled by the native pass above on the next run.
+          if (nativeEnabled) {
+            const native = {
+              enabled: true,
+              token: nativeMaterialsReloadToken,
+              controller: new AbortController(),
+              resources: null,
+              summary: null,
+              state: "loading",
+              message: "",
+            };
+            state.textureLoads.add(native.controller);
+            try {
+              const resources = await loadNativeMaterialView({ object: group, renderer: rendererRef.current, signal: native.controller.signal });
+              Object.assign(native, { resources, summary: resources.summary, state: "ready" });
+            } catch (error) {
+              Object.assign(native, { state: "error", message: error?.message || "Texture loading failed." });
+            } finally {
+              state.textureLoads.delete(native.controller);
+            }
+            if (native.controller.signal.aborted || !stillWanted()) {
+              native.resources?.dispose();
+              disposeObject(group);
+              return;
+            }
+            modNativeStates.set(group, native);
+          }
+          applyShadowFlags(group, stageRef.current?.castsShadows ?? shadowsEnabledRef.current);
+          group.visible = vehicleModsRef.current?.parts?.find((entry) => entry.key === key)?.hidden !== true;
+          root.add(group);
+          // Fitted to its kit bone so it opens with a door, bonnet or boot.
+          vehicleRigRef.current?.attach(group, part.bone);
+          state.groups.set(key, group);
+          refresh();
+          const swapper = partSwapRef.current;
+          if (animateIn && swapper && group.visible && vehicleModsRef.current?.requestId == null && !prefersReducedMotion()) {
+            swapper.enter(group, { anchor: root, delay: swapper.active ? SWAP_HANDOFF_MS : 0 });
+            requestRenderRef.current?.();
+          }
+        })
+        .catch((error) => {
+          if (modelRef.current === model) state.failures.set(key, error?.message || String(error));
+        })
+        .finally(() => {
+          state.loading.delete(key);
+          bump();
+        });
+    }
+
+    const livery = getLiveryState(model);
+    for (const [path, entry] of livery.mods) {
+      if (liveryParts.some((part) => part.path === path)) continue;
+      entry.texture?.dispose();
+      livery.mods.delete(path);
+    }
+    for (const part of liveryParts) {
+      if (livery.mods.has(part.path)) continue;
+      const entry = { state: "loading", texture: null, message: "" };
+      livery.mods.set(part.path, entry);
+      (async () => {
+        const group = await loadVehicleModPart(part.path, root.userData?.parentTextures || null, { invoke, readFile });
+        try {
+          const texturePath = findLiveryModTexturePath(group);
+          if (!texturePath) throw new Error("The livery part carries no livery texture.");
+          return await loadNativeTextureSource(texturePath, rendererRef.current);
+        } finally {
+          disposeObject(group);
+        }
+      })().then((texture) => {
+        if (livery.mods.get(part.path) !== entry) {
+          texture.dispose();
+          return;
+        }
+        Object.assign(entry, { state: "ready", texture });
+        if (livery.activeModPath === part.path) applyGameLivery();
+        bump();
+      }).catch((error) => {
+        if (livery.mods.get(part.path) !== entry) return;
+        Object.assign(entry, { state: "error", message: error?.message || String(error) });
+        bump();
+      });
+    }
+    // Kit Shoot keeps a slot's options loaded and shows one at a time.
+    const activeLiveryPath = liveryParts.find((part) => part.hidden !== true)?.path || "";
+    if (livery.activeModPath !== activeLiveryPath) {
+      livery.activeModPath = activeLiveryPath;
+      applyGameLivery();
+    }
+
+    if (changed) refresh();
+    state.primed = true;
+
+    const partStatus = {};
+    for (const part of liveryParts) {
+      const entry = livery.mods.get(part.path);
+      partStatus[part.key] = entry?.state === "error"
+        ? { state: "error", message: entry.message }
+        : { state: entry?.state === "ready" ? "ready" : "loading", textures: null };
+    }
+    for (const key of wanted.keys()) {
+      const group = state.groups.get(key);
+      const native = group ? modNativeStates.get(group) : null;
+      if (state.failures.has(key)) {
+        partStatus[key] = { state: "error", message: state.failures.get(key) };
+      } else if (!group) {
+        partStatus[key] = { state: "loading" };
+      } else {
+        partStatus[key] = {
+          state: "ready",
+          textures: native ? {
+            state: native.state,
+            message: native.message,
+            loaded: native.summary?.loadedTextureCount ?? 0,
+            failed: native.summary?.failedTextureCount ?? 0,
+            missing: native.summary?.missingBindingCount ?? 0,
+          } : null,
+        };
+      }
+    }
+    // Settled: every wanted part has loaded or failed and no texture load is
+    // pending, so a capture now shows exactly what was asked for.
+    const settled = Object.values(partStatus).every((entry) => entry.state !== "loading" && entry.textures?.state !== "loading");
+    onVehicleModsStatusRef.current?.({
+      requestId,
+      settled,
+      parts: partStatus,
+      hiddenMeshCount,
+      boneDataAvailable,
+      parentTexturesAvailable: Boolean(root.userData?.parentTextures),
+    });
+  }, [vehicleMods, modelVersion, sceneReady, nativeMaterialsEnabled, nativeMaterialsReloadToken, vehicleModsRevision, applyGameLivery]);
+
+  useEffect(() => {
+    const model = modelRef.current;
+    return () => {
+      const state = model ? vehicleModStates.get(model) : null;
+      disposeLiveryState(model);
+      if (!state) return;
+      for (const controller of state.textureLoads) controller.abort();
+      for (const group of state.groups.values()) disposeModNative(group);
+      vehicleModStates.delete(model);
+    };
+  }, [modelVersion]);
+
+  useEffect(() => {
+    if (!modelRef.current) return;
+    if (applyFrontWheelSteering(modelRef.current, steeringAngle) > 0) requestRenderRef.current?.();
+  }, [steeringAngle, modelVersion]);
+
+  useEffect(() => {
+    const rig = vehicleRigRef.current;
+    if (!rig) return;
+    rig.setClip(roofClip);
+    emitVehicleParts();
+    requestRenderRef.current?.();
+    // emitVehicleParts reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roofClip, modelVersion]);
 
   useEffect(() => {
     if (!modelRef.current) return;
@@ -2026,7 +3263,7 @@ function ViewerComponent({
     requestRender();
   }, [
     resolvedBodyColor,
-    resolvedSlotColors,
+    resolvedPaint,
     textureTarget,
     windowTextureTarget,
     liveryExteriorOnly,
@@ -2040,11 +3277,37 @@ function ViewerComponent({
     materialClearcoat,
   ]);
 
+  const modelRotationKey = modelRotation === undefined ? "" : JSON.stringify(normalizeModelRotation(modelRotation));
+  useEffect(() => {
+    const model = modelRef.current;
+    if (!modelRotationKey || !model) return;
+    // A freshly loaded model already stands where the loader put it.
+    if ((model.userData.rotationKey ?? "null") === modelRotationKey) return;
+    model.userData.rotationKey = modelRotationKey;
+    withTurntableAtRest(turntableRef.current, () => orientModel(
+      model,
+      JSON.parse(modelRotationKey),
+      // The loader grounds on the full bounds (stabilizeObjectForWorld); so does a turn.
+      (target) => new THREE.Box3().setFromObject(target),
+    ));
+    if (materialStateRef.current.showCageWireframe && sceneRef.current) {
+      disposeCageOverlay(sceneRef.current);
+      attachCageOverlay(buildCageOverlay(model, sceneRef.current), turntableRef.current);
+    }
+    reframeModelRef.current?.();
+  }, [modelRotationKey, modelVersion]);
+
+  // A quarter turn can change the size without changing the counts.
+  useEffect(() => {
+    meshStatsKeyRef.current = null;
+    requestRenderRef.current?.();
+  }, [showSolidWireframe, modelVersion, modelRotationKey]);
+
   // Cage wireframe overlay — builds/disposes EdgesGeometry + bounding-box cubes
   useEffect(() => {
     if (!sceneReady || !modelRef.current || !sceneRef.current) return;
     if (showCageWireframe) {
-      buildCageOverlay(modelRef.current, sceneRef.current);
+      attachCageOverlay(buildCageOverlay(modelRef.current, sceneRef.current), turntableRef.current);
     } else {
       disposeCageOverlay(sceneRef.current);
     }
@@ -2056,6 +3319,8 @@ function ViewerComponent({
 
     const clearTexture = () => {
       const materialState = materialStateRef.current;
+      // A composite handed in through setCompositeTexture is owned by the caller.
+      if (textureRef.current && textureRef.current === compositeTextureRef.current) return;
       if (textureRef.current) {
         releaseTexture(textureRef.current);
         textureRef.current = null;
@@ -2128,10 +3393,13 @@ function ViewerComponent({
         return;
       }
 
-      const cacheKey = getTextureCacheKey(texturePath, flipTextureY, textureReloadToken);
-      const cached = getCachedTexture(cacheKey);
+      const cacheKey = getTextureCacheKey(texturePath, flipTextureY);
+      const cached = shouldReuseCachedTexture(loadedTextureTokensRef.current, cacheKey, textureReloadToken)
+        ? getCachedTexture(cacheKey)
+        : null;
       if (cached) {
         if (cancelled) return;
+        rememberLoadedTexture(loadedTextureTokensRef.current, cacheKey, textureReloadToken);
         const materialState = materialStateRef.current;
         if (textureRef.current !== cached) {
           releaseTexture(textureRef.current);
@@ -2157,15 +3425,38 @@ function ViewerComponent({
         onTextureReload?.();
         return;
       }
+      let sourcePath = texturePath;
+      if (isYtdTexturePath(texturePath)) {
+        try {
+          sourcePath = await resolveYtdTexturePath(texturePath);
+        } catch (error) {
+          if (cancelled) return;
+          if (textureRef.current?.userData?.cacheKey === cacheKey) {
+            console.warn("[Texture] Dictionary reload failed, keeping the current texture:", error);
+            return;
+          }
+          onTextureErrorRef.current?.(`${texturePath.split(/[\\/]/).pop()} couldn't be read: ${error?.message || error}`);
+          return;
+        }
+        if (cancelled) return;
+      }
       let bytes = null;
       try {
-        bytes = await readFile(texturePath);
-      } catch {
+        bytes = await readFile(sourcePath);
+      } catch (error) {
+        if (cancelled) return;
+        // A watched file can be locked for a moment while its editor saves
+        // it; the shown texture stays and the next save event reloads it.
+        if (textureRef.current?.userData?.cacheKey === cacheKey) {
+          console.warn("[Texture] Reload read failed, keeping the current texture:", error);
+          return;
+        }
+        onTextureErrorRef.current?.(`${texturePath.split(/[\\/]/).pop()} couldn't be read: ${error?.message || error}`);
         return;
       }
       if (cancelled) return;
 
-      const extension = getFileExtension(texturePath);
+      const extension = getFileExtension(sourcePath);
       const signature = sniffTextureSignature(bytes);
 
       const buffer = bytes.buffer.slice(
@@ -2176,7 +3467,7 @@ function ViewerComponent({
       const applyTextureSettings = (texture) => {
         const isLiveryMode = materialStateRef.current?.textureMode === "livery";
         texture.colorSpace = THREE.SRGBColorSpace;
-        if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded) {
+        if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded && !texture.userData?.flipBaked) {
           texture.flipY = flipTextureY;
         }
         texture.wrapS = isLiveryMode ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
@@ -2194,20 +3485,11 @@ function ViewerComponent({
 
       const loadNative = async () => {
         const mime = signature.mime || getTextureMimeType(extension) || "application/octet-stream";
-        const blob = new Blob([bytes], { type: mime });
-        const url = URL.createObjectURL(blob);
-        try {
-          const texture = await new Promise((resolve, reject) => {
-            textureLoader.load(url, resolve, undefined, reject);
-          });
-          return texture;
-        } finally {
-          URL.revokeObjectURL(url);
-        }
+        return loadBlobTexture(new Blob([bytes], { type: mime }), { flipY: flipTextureY, textureLoader });
       };
 
       const loadDdsCustom = async () => {
-        const tex = parseDDS(buffer);
+        const tex = await parseDDSAsync(buffer, { renderer: rendererRef.current });
         if (!tex) throw new Error("Custom DDS parser returned null");
         return tex;
       };
@@ -2272,15 +3554,20 @@ function ViewerComponent({
           import.meta.url
         ).href;
         const loadingTask = pdfjsLib.getDocument({ data: buffer });
-        const pdf = await loadingTask.promise;
-        const page = await pdf.getPage(1);
-        const viewport = page.getViewport({ scale: 2.0 });
-        const canvas = document.createElement("canvas");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const context = canvas.getContext("2d");
-        await page.render({ canvasContext: context, viewport }).promise;
-        return new THREE.CanvasTexture(canvas);
+        try {
+          const pdf = await loadingTask.promise;
+          const page = await pdf.getPage(1);
+          const viewport = page.getViewport({ scale: 2.0 });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext("2d");
+          await page.render({ canvasContext: context, viewport }).promise;
+          return new THREE.CanvasTexture(canvas);
+        } finally {
+          // Each getDocument call starts its own pdf.js worker; this ends it.
+          await loadingTask.destroy().catch(() => {});
+        }
       };
 
       const loadPdn = async () => loadPdnTexture(bytes, texturePath);
@@ -2314,7 +3601,7 @@ function ViewerComponent({
         } catch (error) {
           if (error?.type === "unsupported-bit-depth") {
             console.log("[Texture] Unsupported bit depth detected:", error.bitDepth);
-            onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth, path: texturePath, kind: "primary" });
+            if (!cancelled) onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth, path: texturePath, kind: "primary" });
             return;
           }
           if (!lastError || (error instanceof Error && error.message)) {
@@ -2324,6 +3611,7 @@ function ViewerComponent({
       }
 
       if (!texture) {
+        if (cancelled) return;
         console.error("[Texture] Load failed:", lastError);
         const errorMessage = isUnsupportedAiVariant
           ? "This .ai file is not PDF-compatible. Re-save/export it as PDF-compatible AI, or use PNG/JPG."
@@ -2340,6 +3628,7 @@ function ViewerComponent({
 
       applyTextureSettings(texture);
       cacheTexture(cacheKey, texture);
+      rememberLoadedTexture(loadedTextureTokensRef.current, cacheKey, textureReloadToken);
       releaseTexture(textureRef.current);
       textureRef.current = texture;
       retainTexture(texture);
@@ -2411,14 +3700,13 @@ function ViewerComponent({
     }
 
     const loadTexture = async () => {
-      const cacheKey = getTextureCacheKey(
-        windowTexturePath,
-        flipTextureY,
-        windowTextureReloadToken,
-      );
-      const cached = getCachedTexture(cacheKey);
+      const cacheKey = getTextureCacheKey(windowTexturePath, flipTextureY);
+      const cached = shouldReuseCachedTexture(loadedWindowTextureTokensRef.current, cacheKey, windowTextureReloadToken)
+        ? getCachedTexture(cacheKey)
+        : null;
       if (cached) {
         if (cancelled) return;
+        rememberLoadedTexture(loadedWindowTextureTokensRef.current, cacheKey, windowTextureReloadToken);
         const materialState = materialStateRef.current;
         if (windowTextureRef.current !== cached) {
           releaseTexture(windowTextureRef.current);
@@ -2447,7 +3735,14 @@ function ViewerComponent({
       let bytes = null;
       try {
         bytes = await readFile(windowTexturePath);
-      } catch {
+      } catch (error) {
+        if (cancelled) return;
+        // As for the livery: a watched reload keeps the shown texture.
+        if (windowTextureRef.current?.userData?.cacheKey === cacheKey) {
+          console.warn("[Window Texture] Reload read failed, keeping the current texture:", error);
+          return;
+        }
+        onWindowTextureErrorRef.current?.(`${windowTexturePath.split(/[\\/]/).pop()} couldn't be read: ${error?.message || error}`);
         return;
       }
       if (cancelled) return;
@@ -2463,7 +3758,7 @@ function ViewerComponent({
       const applyTextureSettings = (texture) => {
         const isLiveryMode = materialStateRef.current?.textureMode === "livery";
         texture.colorSpace = THREE.SRGBColorSpace;
-        if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded) {
+        if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded && !texture.userData?.flipBaked) {
           texture.flipY = flipTextureY;
         }
         texture.wrapS = isLiveryMode ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
@@ -2481,20 +3776,11 @@ function ViewerComponent({
 
       const loadNative = async () => {
         const mime = signature.mime || getTextureMimeType(extension) || "application/octet-stream";
-        const blob = new Blob([bytes], { type: mime });
-        const url = URL.createObjectURL(blob);
-        try {
-          const texture = await new Promise((resolve, reject) => {
-            textureLoader.load(url, resolve, undefined, reject);
-          });
-          return texture;
-        } finally {
-          URL.revokeObjectURL(url);
-        }
+        return loadBlobTexture(new Blob([bytes], { type: mime }), { flipY: flipTextureY, textureLoader });
       };
 
       const loadDdsCustom = async () => {
-        const tex = parseDDS(buffer);
+        const tex = await parseDDSAsync(buffer, { renderer: rendererRef.current });
         if (!tex) throw new Error("Custom DDS parser returned null");
         return tex;
       };
@@ -2559,15 +3845,20 @@ function ViewerComponent({
           import.meta.url
         ).href;
         const loadingTask = pdfjsLib.getDocument({ data: buffer });
-        const pdf = await loadingTask.promise;
-        const page = await pdf.getPage(1);
-        const viewport = page.getViewport({ scale: 2.0 });
-        const canvas = document.createElement("canvas");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const context = canvas.getContext("2d");
-        await page.render({ canvasContext: context, viewport }).promise;
-        return new THREE.CanvasTexture(canvas);
+        try {
+          const pdf = await loadingTask.promise;
+          const page = await pdf.getPage(1);
+          const viewport = page.getViewport({ scale: 2.0 });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext("2d");
+          await page.render({ canvasContext: context, viewport }).promise;
+          return new THREE.CanvasTexture(canvas);
+        } finally {
+          // Each getDocument call starts its own pdf.js worker; this ends it.
+          await loadingTask.destroy().catch(() => {});
+        }
       };
 
       const loadPdn = async () => loadPdnTexture(bytes, windowTexturePath);
@@ -2600,7 +3891,7 @@ function ViewerComponent({
           if (texture) break;
         } catch (error) {
           if (error?.type === "unsupported-bit-depth") {
-            onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth, path: windowTexturePath, kind: "window" });
+            if (!cancelled) onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth, path: windowTexturePath, kind: "window" });
             return;
           }
           lastError = error;
@@ -2608,6 +3899,7 @@ function ViewerComponent({
       }
 
       if (!texture) {
+        if (cancelled) return;
         console.error("[Window Texture] Load failed:", lastError);
         onWindowTextureErrorRef.current?.(
           isUnsupportedAiVariant
@@ -2624,6 +3916,7 @@ function ViewerComponent({
 
       applyTextureSettings(texture);
       cacheTexture(cacheKey, texture);
+      rememberLoadedTexture(loadedWindowTextureTokensRef.current, cacheKey, windowTextureReloadToken);
       releaseTexture(windowTextureRef.current);
       windowTextureRef.current = texture;
       retainTexture(texture);
@@ -2699,7 +3992,7 @@ function ViewerComponent({
     }
 
     const loadTexture = async () => {
-      const cacheKey = getTextureCacheKey(materialTexturePath, flipTextureY, 0);
+      const cacheKey = getTextureCacheKey(materialTexturePath, flipTextureY);
       const cached = getCachedTexture(cacheKey);
       if (cached) {
         if (cancelled) return;
@@ -2711,28 +4004,36 @@ function ViewerComponent({
       }
 
       let texture = null;
+      let failure = null;
       try {
         texture = await loadTextureFromPathShared(materialTexturePath, textureLoader, rendererRef.current);
       } catch (error) {
-        if (error?.type === "unsupported-bit-depth") {
+        failure = error;
+      }
+
+      if (cancelled) {
+        disposeTexture(texture);
+        return;
+      }
+      if (!texture) {
+        if (failure?.type === "unsupported-bit-depth") {
           onFormatWarningRef.current?.({
             type: "16bit-psd",
-            bitDepth: error.bitDepth,
+            bitDepth: failure.bitDepth,
             path: materialTexturePath,
             kind: "material",
           });
+        } else {
+          const name = materialTexturePath.split(/[\\/]/).pop();
+          onAssetErrorRef.current?.(`Texture map ${name} couldn't be read.${failure?.message ? ` ${failure.message}` : ""}`);
         }
         return;
       }
 
-      if (!texture) return;
-      if (cancelled) {
-        texture.dispose?.();
-        return;
-      }
-
       texture.colorSpace = THREE.SRGBColorSpace;
-      texture.flipY = flipTextureY;
+      if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded && !texture.userData?.flipBaked) {
+        texture.flipY = flipTextureY;
+      }
       texture.wrapS = THREE.RepeatWrapping;
       texture.wrapT = THREE.RepeatWrapping;
       texture.needsUpdate = true;
@@ -2755,6 +4056,105 @@ function ViewerComponent({
 
 export default memo(ViewerComponent);
 
+function summarizeModelLights(object) {
+  const natives = [];
+  let lightBones = [];
+  object?.traverse((child) => {
+    if (child.isMesh && child.userData?.nativeMaterial && child.userData.nativeLodActive !== false) natives.push(child.userData.nativeMaterial);
+    if (!lightBones.length && Array.isArray(child.userData?.lightBones)) lightBones = child.userData.lightBones;
+  });
+  return summarizeVehicleLights(natives, lightBones);
+}
+
+// Per-model mod kit state and per-part native texture state. Kept out of
+// userData because Object3D.clone JSON-copies userData.
+const vehicleModStates = new WeakMap();
+// When each model's extras may start animating: the extras it spawns with, and
+// the ULC or siren extras that switch while its resource is read, appear at once.
+const extrasSettledAt = new WeakMap();
+const EXTRAS_SETTLE_MS = 1500;
+const modNativeStates = new WeakMap();
+const LIVERY_MOD_SLOT = "VMT_LIVERY_MOD";
+// Per-model game livery: the override on its native materials, the texture
+// liveries it has (`list`), loaded sign textures by number, and mod kit
+// livery textures by part path.
+const liveryStates = new WeakMap();
+
+function getLiveryState(model) {
+  let state = liveryStates.get(model);
+  if (!state) {
+    state = { override: createLiveryOverride(setNativeOverlayTexture), path: "", list: null, signs: new Map(), signNumber: null, signRequest: 0, mods: new Map(), activeModPath: "", error: "" };
+    liveryStates.set(model, state);
+  }
+  return state;
+}
+
+function disposeLiveryState(model) {
+  const state = model ? liveryStates.get(model) : null;
+  if (!state) return;
+  state.signRequest += 1;
+  state.override.dispose();
+  for (const texture of state.signs.values()) texture.dispose();
+  for (const entry of state.mods.values()) entry.texture?.dispose();
+  liveryStates.delete(model);
+}
+
+function describeLiveryState(state) {
+  return {
+    path: state.path,
+    numbers: state.list ? state.list.numbers.slice() : [],
+    prefix: state.list?.prefix || "",
+    shown: state.signNumber,
+    error: state.error,
+  };
+}
+
+// The cage copies world matrices once; inside the turntable it turns with the vehicle.
+function attachCageOverlay(group, turntable) {
+  if (group && turntable) turntable.attach(group);
+}
+
+function isVehicleModMesh(mesh) {
+  return mesh?.userData?.vehicleModPart === true;
+}
+
+function getVehicleRoot(model) {
+  if (!model) return null;
+  return model.userData?.normalizedForWorld && model.children[0] ? model.children[0] : model;
+}
+
+function disposeModNative(group) {
+  const entry = modNativeStates.get(group);
+  if (!entry) return;
+  entry.controller.abort();
+  entry.resources?.dispose?.();
+  modNativeStates.delete(group);
+}
+
+function detachVehicleModGroup(group) {
+  disposeModNative(group);
+  group.parent?.remove(group);
+  disposeObject(group);
+}
+
+/** Plain view of the vehicle rig for React: part targets and the roof state. */
+function snapshotVehicleRig(rig) {
+  if (!rig) return null;
+  return {
+    parts: rig.parts.map((part) => ({
+      id: part.id,
+      label: part.label,
+      kind: part.kind,
+      min: part.min,
+      max: part.max,
+      rest: part.rest,
+      open: part.open,
+      value: rig.getTarget(part.id),
+    })),
+    roof: rig.hasRoof ? { value: rig.getTarget("roof"), duration: rig.roofDuration } : null,
+  };
+}
+
 function buildClmeshObject(meshes) {
   const root = new THREE.Group();
   root.name = "clmesh";
@@ -2776,8 +4176,13 @@ function buildClmeshObject(meshes) {
     if (gtaUvSets[2]) geometry.setAttribute("uv3", gtaUvSets[2]);
     if (gtaUvSets[3]) geometry.setAttribute("uv4", gtaUvSets[3]);
     geometry.userData.gtaUvSets = gtaUvSets;
+    geometry.userData.uvOrigin = UV_ORIGIN_TOP;
     if (mesh.indices) {
       geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    }
+    if (mesh.skinIndices && mesh.skinWeights) {
+      // Blended vertices (soft convertible roofs) for vehicle-rig.js.
+      geometry.userData.skin = { indices: mesh.skinIndices, weights: mesh.skinWeights };
     }
 
     const material = new THREE.MeshStandardMaterial({
@@ -2803,6 +4208,17 @@ function buildClmeshObject(meshes) {
   return root;
 }
 
+
+// Paint slots the model's meshes take; pearlescent rides on primary paint.
+function collectPaintSlots(object) {
+  const used = new Set();
+  for (const child of getMeshList(object)) {
+    const { slotRole } = getMeshMeta(child);
+    if (slotRole) used.add(slotRole);
+  }
+  if (used.has("primary")) used.add("pearlescent");
+  return VEHICLE_PAINT_KEYS.filter((key) => used.has(key));
+}
 
 function getMeshList(object) {
   if (!object) return [];
@@ -2902,10 +4318,41 @@ function buildActiveTextureSet(baseTexture) {
   return baseTexture ? { map: baseTexture } : null;
 }
 
+// Only these flip shader defines; every other profile value is a uniform.
+function getMaterialProgramSignature(material) {
+  return [
+    material.transparent ? 1 : 0,
+    material.side,
+    material.transmission > 0 ? 1 : 0,
+    material.clearcoat > 0 ? 1 : 0,
+    material.sheen > 0 ? 1 : 0,
+  ].join("|");
+}
+
+// Shapes a body paint material by its slot's carcols finish; the pearlescent
+// colour rides on primary paint as a grazing-angle sheen.
+function applyPaintFinish(material, finish, pearlColor, glossFactor) {
+  const previousSignature = getMaterialProgramSignature(material);
+  material.metalness = finish.metalness;
+  material.roughness = clamp(finish.roughness * glossFactor, 0.02, 1);
+  material.clearcoat = finish.clearcoat;
+  material.clearcoatRoughness = finish.clearcoatRoughness;
+  material.specularIntensity = finish.specularIntensity;
+  if (pearlColor) {
+    material.sheen = 1;
+    material.sheenColor.copy(pearlColor);
+    material.sheenRoughness = 0.35;
+  } else {
+    material.sheen = 0;
+  }
+  if (getMaterialProgramSignature(material) !== previousSignature) material.needsUpdate = true;
+}
+
 function applyMaterialProfile(material, color, materialConfig, showWireframe) {
   const resolvedConfig = materialConfig || DEFAULT_MATERIAL_CONFIG;
   const type = resolvedConfig.type || DEFAULT_MATERIAL_CONFIG.type;
   const preset = MATERIAL_TYPE_PRESETS[type] || MATERIAL_TYPE_PRESETS.paint;
+  const previousSignature = getMaterialProgramSignature(material);
 
   const tint = color.clone();
   const lightBoost = clamp(
@@ -2913,10 +4360,9 @@ function applyMaterialProfile(material, color, materialConfig, showWireframe) {
     0,
     3,
   );
+  // Not clamped to 1: on a light colour or texture, a response above 1x has
+  // to brighten the surface or the slider's upper range does nothing.
   tint.multiplyScalar(lightBoost);
-  tint.r = clamp(tint.r, 0, 1);
-  tint.g = clamp(tint.g, 0, 1);
-  tint.b = clamp(tint.b, 0, 1);
   material.color.copy(tint);
 
   const materialGlossiness = clamp(
@@ -2962,7 +4408,9 @@ function applyMaterialProfile(material, color, materialConfig, showWireframe) {
   }
 
   setMaterialWireframe(material, showWireframe);
-  material.needsUpdate = true;
+  if (getMaterialProgramSignature(material) !== previousSignature) {
+    material.needsUpdate = true;
+  }
 }
 
 function applyMaterials(
@@ -2979,13 +4427,13 @@ function applyMaterials(
 ) {
   if (!object) return;
 
-  const slotColors = normalizeVehicleSlotColors(object.userData?.slotColors, bodyColor || defaultBody);
-  const colorBySlot = {
-    primary: new THREE.Color(getVehicleSlotColor(slotColors, "primary")),
-    secondary: new THREE.Color(getVehicleSlotColor(slotColors, "secondary")),
-    accent: new THREE.Color(getVehicleSlotColor(slotColors, "accent")),
-    glass: new THREE.Color(getVehicleSlotColor(slotColors, "glass")),
-  };
+  const paint = normalizeVehiclePaint(object.userData?.vehiclePaint, bodyColor || defaultBody);
+  const colorBySlot = {};
+  for (const key of VEHICLE_PAINT_KEYS) colorBySlot[key] = new THREE.Color(paintDisplayColor(paint[key]));
+  const finishBySlot = {};
+  for (const key of FINISHED_PAINT_KEYS) finishBySlot[key] = paintFinishProfile(paint[key].finish);
+  // Pearlescent shows on glossy primary paint only, as in game.
+  const pearlColor = finishBySlot.primary.clearcoat > 0 ? colorBySlot.pearlescent : null;
   const vehicleTarget = textureTarget || ALL_TARGET;
   const windowTarget = windowTextureTarget || ALL_TARGET;
   const exteriorOnly = Boolean(liveryExteriorOnly);
@@ -3011,10 +4459,12 @@ function applyMaterials(
     const matchesVehicleRaw = matchesTextureTarget(child, vehicleTarget);
     const matchesVehicle = preferUv2 && isGlass ? false : matchesVehicleRaw;
     const matchesWindow = Boolean(windowTexture) && matchesTextureTarget(child, windowTarget);
-    const slotRole = getMeshMeta(child).slotRole;
+    const { slotRole, slotLocked } = getMeshMeta(child);
+    // A vehicle shader's paint layer is final; other meshes under the texture
+    // target take primary paint.
     const effectiveSlotRole = matchesWindow
-      ? "glass"
-      : (slotRole || (matchesVehicle ? "primary" : null));
+      ? null
+      : (slotRole || (matchesVehicle && !slotLocked ? "primary" : null));
     const meshColor = effectiveSlotRole ? colorBySlot[effectiveSlotRole] : AUTO_TEXTURE_NEUTRAL_COLOR;
     const shouldApplySlotColor =
       Boolean(slotRole) ||
@@ -3031,7 +4481,6 @@ function applyMaterials(
     const preferredUvSelection = matchesWindow
       ? false
       : (matchesVehicle && Boolean(vehicleTexture) ? preferUv2 : false);
-    child.userData.templateMarkerInteractive = Boolean(matchesVehicle && vehicleTexture);
 
     if (activeTextureSet && child.geometry) {
       if (!applyTextureUVSet(child.geometry, preferredUvSelection)) {
@@ -3041,12 +4490,14 @@ function applyMaterials(
       restoreBaseUVs(child.geometry);
     }
 
-    const nativeLodVisible = !nativeMaterialsEnabled || child.userData?.nativeLodActive !== false;
+    const nativeLodVisible = child.userData?.metaExtraVisible !== false &&
+      child.userData?.nativeLodActive !== false &&
+      child.userData?.modHidden !== true;
     if (exteriorOnly) {
       child.visible = nativeLodVisible && shouldShowExteriorDual(
         child,
         vehicleTarget,
-        matchesVehicle || (shouldApplySlotColor && slotRole !== "glass"),
+        matchesVehicle || EXTERIOR_PAINT_SLOTS.has(slotRole),
         windowTarget,
         matchesWindow,
       );
@@ -3057,11 +4508,20 @@ function applyMaterials(
     const nativeMaterial = nativeMaterialsEnabled ? child.userData?.nativeMaterialObject : null;
     if (nativeMaterial && !hasManualTextureOverride) {
       const profile = nativeMaterial.userData?.nativeProfile;
-      const nativeSlotRole = slotRole || (profile === "paint" ? "primary" : profile === "glass" ? "glass" : null);
-      nativeMaterial.color.copy(nativeSlotRole ? colorBySlot[nativeSlotRole] : AUTO_TEXTURE_NEUTRAL_COLOR);
-      const baseRoughness = nativeMaterial.userData?.baseRoughness;
-      if (typeof baseRoughness === "number") {
-        nativeMaterial.roughness = clamp(baseRoughness * baseGlossFactor, 0, 1);
+      const nativeSlotRole = slotLocked ? slotRole : slotRole || (profile === "paint" ? "primary" : null);
+      const fixedColor = nativeSlotRole ? null : child.userData?.nativeMaterial?.diffuseColor;
+      if (nativeSlotRole) nativeMaterial.color.copy(colorBySlot[nativeSlotRole]);
+      // A fixed matDiffuseColor multiplies the texture as a linear colour.
+      else if (fixedColor) nativeMaterial.color.setRGB(clamp(fixedColor[0], 0, 1), clamp(fixedColor[1], 0, 1), clamp(fixedColor[2], 0, 1));
+      else nativeMaterial.color.copy(AUTO_TEXTURE_NEUTRAL_COLOR);
+      const finish = profile === "paint" ? finishBySlot[nativeSlotRole] : null;
+      if (finish) {
+        applyPaintFinish(nativeMaterial, finish, nativeSlotRole === "primary" ? pearlColor : null, baseGlossFactor);
+      } else {
+        const baseRoughness = nativeMaterial.userData?.baseRoughness;
+        if (typeof baseRoughness === "number") {
+          nativeMaterial.roughness = clamp(baseRoughness * baseGlossFactor, 0, 1);
+        }
       }
       setMaterialWireframe(nativeMaterial, showWireframe);
       if (child.material !== nativeMaterial) child.material = nativeMaterial;
@@ -3071,11 +4531,18 @@ function applyMaterials(
     if (shouldApply && (activeTexture || matchesVehicle || shouldApplySlotColor)) {
       const appliedMaterial = getOrCreateAppliedMaterial(child, meshColor);
       updateAppliedMaterial(appliedMaterial, meshColor, activeTextureSet);
-      const effectiveMaterialConfig =
-        effectiveSlotRole === "glass" || isGlass
-          ? { ...materialConfig, type: "glass" }
-          : materialConfig;
+      const effectiveMaterialConfig = matchesWindow || isGlass
+        ? { ...materialConfig, type: "glass" }
+        : materialConfig;
       applyMaterialProfile(appliedMaterial, meshColor, effectiveMaterialConfig, showWireframe);
+      // EUP has no paint finishes: its Surface panel (materialConfig) is the finish.
+      const finish = isGlass || textureMode === "eup" ? null : finishBySlot[effectiveSlotRole];
+      if (finish) {
+        applyPaintFinish(appliedMaterial, finish, effectiveSlotRole === "primary" ? pearlColor : null, baseGlossFactor);
+      } else if (appliedMaterial.sheen > 0) {
+        appliedMaterial.sheen = 0;
+        appliedMaterial.needsUpdate = true;
+      }
       if (child.material !== appliedMaterial) {
         child.material = appliedMaterial;
       }
@@ -3235,7 +4702,7 @@ function chooseUVAttribute(geometry, preferUv2) {
 
 function applyTextureUVSet(geometry, preferUv2) {
   if (!geometry) return false;
-  const chosen = chooseUVAttribute(geometry, preferUv2);
+  const chosen = userTextureUvAttribute(geometry, chooseUVAttribute(geometry, preferUv2));
   if (!chosen) return false;
   if (geometry.attributes.uv !== chosen) {
     geometry.setAttribute("uv", chosen);
@@ -3373,8 +4840,10 @@ function getMeshMeta(child) {
     return lower.includes("glass") || lower.includes("window") || lower.includes("vehglass");
   }) || labelLower.includes("glass") || labelLower.includes("window");
 
-  const slotRole = detectVehicleColorSlot(searchNames, isGlass);
-  const meta = { baseMaterial, meshLabel, materialNames, searchNames, targetSet, isGlass, slotRole };
+  const layerSlot = resolvePaintLayerSlot(child.userData?.nativeMaterial || child.userData?.gtaShader);
+  const slotLocked = layerSlot !== undefined;
+  const slotRole = slotLocked ? layerSlot : detectVehicleColorSlot(searchNames, isGlass);
+  const meta = { baseMaterial, meshLabel, materialNames, searchNames, targetSet, isGlass, slotRole, slotLocked };
   child.userData.textureMeta = meta;
   return meta;
 }

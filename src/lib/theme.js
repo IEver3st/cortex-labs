@@ -1,6 +1,6 @@
 export const COLOR_SCHEMES = ["system", "light", "dark"];
 
-export const DEFAULT_THEME_PRESET = "roan";
+export const DEFAULT_THEME_PRESET = "cortex";
 
 function createMode(background, surface, foreground, muted, border, input, primary) {
   return Object.freeze({ background, surface, foreground, muted, border, input, primary });
@@ -16,6 +16,13 @@ function createPreset(id, name, description, light, dark) {
 }
 
 export const THEME_PRESETS = Object.freeze([
+  createPreset(
+    "cortex",
+    "Cortex",
+    "Paper and ink with the blue from the Cortex mark",
+    createMode("#f0f0e9", "#e5e5dc", "#0f1012", "#575b61", "#d2d2c7", "#fafaf6", "#3462bd"),
+    createMode("#121316", "#1b1d21", "#f0f0e9", "#a2a6ad", "#2c2f35", "#17191c", "#558bf6"),
+  ),
   createPreset(
     "roan",
     "Roan",
@@ -139,7 +146,7 @@ export function getSystemTheme() {
 
 function hexToRgbChannels(value) {
   const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(value);
-  if (!match) return "217, 121, 82";
+  if (!match) return "85, 139, 246";
   return `${Number.parseInt(match[1], 16)}, ${Number.parseInt(match[2], 16)}, ${Number.parseInt(match[3], 16)}`;
 }
 

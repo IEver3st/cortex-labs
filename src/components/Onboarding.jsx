@@ -1,255 +1,191 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import {
-  ArrowRight,
-  Car,
-  Check,
-  ChevronDown,
-  Layers,
-  Link2,
-  Palette,
-  RotateCcw,
-  Shirt,
-  Zap,
-} from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Check, Home, Minus, Square, X } from "lucide-react";
 import { emitPrefsUpdated, loadPrefs, savePrefs } from "../lib/prefs";
+import { DEFAULT_HOTKEYS, mergeHotkeys } from "../lib/hotkeys";
 import {
-  DEFAULT_HOTKEYS,
-  HOTKEY_ACTIONS,
-  formatHotkey,
-  mergeHotkeys,
-} from "../lib/hotkeys";
-import cortexLogo from "../../src-tauri/icons/cortex-logo.svg";
+  COLOR_SCHEMES,
+  THEME_PRESETS,
+  normalizeColorScheme,
+  normalizeThemePreset,
+  resolveColorScheme,
+} from "../lib/theme";
+import { WORKSPACE_MODES, WORKSPACE_MODE_GROUPS } from "../lib/workspace-modes";
+import { Keycaps } from "./ui/keycaps";
+import { Toggle } from "./ui/toggle";
+import appMeta from "../../package.json";
+import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
+import "./Onboarding.css";
 
-const RECOMMENDED_PREFS = {
-  showGrid: false,
-  showHints: true,
-  legacyLayersLayout: false,
-  liveryExteriorOnly: false,
-  showRecents: true,
-  uiScale: 1,
-};
+const HOME_ID = "home";
+const SCHEME_LABELS = { system: "System", light: "Light", dark: "Dark" };
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 1.4;
+const ENTER_KEY = { key: "Enter", ctrl: false, alt: false, shift: false };
+const ESCAPE_KEY = { key: "Esc", ctrl: false, alt: false, shift: false };
+const SCALE_COMMIT_KEYS = new Set(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Home", "PageDown", "PageUp"]);
 
-const UI_SCALE_KEYS = new Set([
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "End",
-  "Home",
-  "PageDown",
-  "PageUp",
-]);
-
-const START_OPTIONS = [
-  {
-    id: "livery",
-    label: "Livery",
-    desc: "Vehicle textures, liveries, and surface inspection",
-    actionLabel: "Open Livery",
-    icon: Car,
-    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_LIVERY,
-  },
-  {
-    id: "everything",
-    label: "All",
-    desc: "Every mesh and texture in one general viewer",
-    actionLabel: "Open All",
-    icon: Layers,
-    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_ALL,
-  },
-  {
-    id: "eup",
-    label: "EUP",
-    desc: "Uniform, clothing, and character texture work",
-    actionLabel: "Open EUP",
-    icon: Shirt,
-    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_EUP,
-  },
-  {
-    id: "multi",
-    label: "Multi",
-    desc: "Side-by-side model and material comparison",
-    actionLabel: "Open Multi",
-    icon: Link2,
-    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_MULTI,
-  },
-  {
-    id: "variants",
-    label: "Variant Builder",
-    desc: "Layered PSD and PDN recipes with grouped exports",
-    actionLabel: "Open Variant Builder",
-    icon: Palette,
-    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_VARIANTS,
-  },
-  {
-    id: "templategen",
-    label: "Template Generation",
-    desc: "Generate layered PSD templates from supported YFT assets",
-    actionLabel: "Open Template Generation",
-    icon: Zap,
-    hotkeyAction: HOTKEY_ACTIONS.NEW_TAB_TEMPLATE_GEN,
-  },
-];
-
-function getInitialPrefs() {
-  const storedDefaults = loadPrefs()?.defaults;
-  const defaults =
-    storedDefaults && typeof storedDefaults === "object" ? storedDefaults : {};
-  return Object.fromEntries(
-    Object.entries(RECOMMENDED_PREFS).map(([key, value]) => [key, defaults[key] ?? value]),
-  );
+function isTauriRuntime() {
+  return typeof window !== "undefined" && typeof window.__TAURI_INTERNALS__?.invoke === "function";
 }
 
-function getWorkspaceOptions() {
-  const prefs = loadPrefs();
-  const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
-  const hotkeys = mergeHotkeys(stored, DEFAULT_HOTKEYS);
-
-  return START_OPTIONS.map((option) => {
-    const formatted = formatHotkey(hotkeys[option.hotkeyAction]);
-    const shortcut = formatted === "Not set" ? null : formatted.replaceAll(" + ", "+");
-    return { ...option, shortcut };
-  });
+function readDefaults() {
+  const defaults = loadPrefs()?.defaults;
+  return defaults && typeof defaults === "object" ? defaults : {};
 }
 
-function saveOnboardingPrefs(nextPrefs) {
+function readLook() {
+  const defaults = readDefaults();
+  const scale = Number(defaults.uiScale);
+  return {
+    colorScheme: normalizeColorScheme(defaults.colorScheme, defaults.darkMode ?? true),
+    themePreset: normalizeThemePreset(defaults.themePreset),
+    uiScale: Number.isFinite(scale) ? Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale)) : 1,
+    showKeycaps: defaults.showKeycaps !== false,
+  };
+}
+
+// Choices apply as they are made: Shell re-reads prefs on this event and
+// restyles the whole app, so the user sees the look they picked.
+function saveDefaults(patch) {
   const stored = loadPrefs() ?? {};
-  const defaults =
-    stored.defaults && typeof stored.defaults === "object" ? stored.defaults : {};
-  savePrefs({ ...stored, defaults: { ...defaults, ...nextPrefs } });
+  const defaults = stored.defaults && typeof stored.defaults === "object" ? stored.defaults : {};
+  savePrefs({ ...stored, defaults: { ...defaults, ...patch } });
   emitPrefsUpdated();
 }
 
-function SettingToggle({ label, hint, checked, onChange }) {
+function readHotkeys() {
+  const stored = loadPrefs()?.hotkeys;
+  return mergeHotkeys(stored && typeof stored === "object" ? stored : {}, DEFAULT_HOTKEYS);
+}
+
+function buildStartOptions(hotkeys) {
+  const home = {
+    id: HOME_ID,
+    label: "Home",
+    desc: "Recent projects and every workspace",
+    icon: Home,
+    cat: "all",
+    group: null,
+    hotkey: null,
+  };
+  return [home, ...WORKSPACE_MODES.map((mode) => ({ ...mode, hotkey: hotkeys[mode.action] }))];
+}
+
+function WindowControls() {
+  if (!isTauriRuntime()) return null;
+  const win = () => getCurrentWindow();
   return (
-    <button
-      type="button"
-      className="onb-setting-row"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-    >
-      <span className="onb-setting-copy">
-        <span className="onb-setting-label">{label}</span>
-        <span className="onb-setting-hint">{hint}</span>
-      </span>
-      <span className={`onb-switch ${checked ? "is-on" : ""}`} aria-hidden="true">
-        <span className="onb-switch-thumb" />
-      </span>
-    </button>
+    <div className="shell-window-controls onb-window-controls">
+      <button type="button" className="shell-wc-btn shell-wc-min" onClick={() => win().minimize()} aria-label="Minimize">
+        <Minus className="shell-wc-icon" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="shell-wc-btn shell-wc-max"
+        onClick={async () => ((await win().isMaximized()) ? win().unmaximize() : win().maximize())}
+        aria-label="Maximize"
+      >
+        <Square className="shell-wc-icon" aria-hidden="true" />
+      </button>
+      <button type="button" className="shell-wc-btn shell-wc-close" onClick={() => win().close()} aria-label="Close">
+        <X className="shell-wc-icon" aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
+/**
+ * First-run setup: pick the look and where to start. Everything applies
+ * immediately and can be changed later in Settings or on Home. Completes with
+ * `{ type: "home" }` or `{ type: "launch", target }`.
+ */
 export default function Onboarding({ onComplete }) {
-  const [selectedStart, setSelectedStart] = useState(null);
-  const [customizeOpen, setCustomizeOpen] = useState(false);
-  const [prefs, setPrefs] = useState(getInitialPrefs);
-  const committedUiScaleRef = useRef(prefs.uiScale);
-  const rootRef = useRef(null);
-  const headingRef = useRef(null);
-  const workspaceRefs = useRef([]);
   const reduceMotion = useReducedMotion();
-  const workspaceOptions = useMemo(getWorkspaceOptions, []);
+  const [look, setLook] = useState(readLook);
+  const [selected, setSelected] = useState(HOME_ID);
+  const options = useMemo(() => buildStartOptions(readHotkeys()), []);
+  const rootRef = useRef(null);
+  const titleRef = useRef(null);
+  const optionRefs = useRef(new Map());
+  const committedScaleRef = useRef(look.uiScale);
 
-  const selectedMeta = useMemo(
-    () => workspaceOptions.find((option) => option.id === selectedStart) ?? null,
-    [selectedStart, workspaceOptions],
-  );
+  const selectedOption = options.find((option) => option.id === selected) || options[0];
+  const resolvedScheme = resolveColorScheme(look.colorScheme);
 
-  const isRecommended = useMemo(
-    () =>
-      Object.entries(RECOMMENDED_PREFS).every(([key, value]) => Object.is(prefs[key], value)),
-    [prefs],
-  );
-
-  const complete = useCallback(
-    (action = { type: "home" }) => onComplete?.(action),
-    [onComplete],
-  );
-
-  const togglePref = useCallback((key, value) => {
-    setPrefs((current) => ({ ...current, [key]: value }));
-    saveOnboardingPrefs({ [key]: value });
-  }, []);
-
-  const updateUiScaleDraft = useCallback((value) => {
-    setPrefs((current) => ({ ...current, uiScale: value }));
-  }, []);
-
-  const commitUiScale = useCallback((value) => {
-    const nextValue = Number.parseFloat(value);
-    if (!Number.isFinite(nextValue) || Object.is(nextValue, committedUiScaleRef.current)) {
-      return;
-    }
-
-    committedUiScaleRef.current = nextValue;
-    saveOnboardingPrefs({ uiScale: nextValue });
-  }, []);
-
-  const resetRecommended = useCallback(() => {
-    const next = { ...RECOMMENDED_PREFS };
-    committedUiScaleRef.current = next.uiScale;
-    setPrefs(next);
-    saveOnboardingPrefs(next);
-  }, []);
-
+  const complete = useCallback((action) => onComplete?.(action), [onComplete]);
   const launch = useCallback(() => {
-    if (!selectedStart) {
-      complete({ type: "home" });
+    if (selected === HOME_ID) complete({ type: "home" });
+    else complete({ type: "launch", target: selected });
+  }, [complete, selected]);
+  const skip = useCallback(() => complete({ type: "home" }), [complete]);
+
+  const updateLook = useCallback((patch) => {
+    setLook((current) => ({ ...current, ...patch }));
+    saveDefaults(patch);
+  }, []);
+
+  const commitScale = useCallback((value) => {
+    const next = Number.parseFloat(value);
+    if (!Number.isFinite(next) || Object.is(next, committedScaleRef.current)) return;
+    committedScaleRef.current = next;
+    saveDefaults({ uiScale: next });
+  }, []);
+
+  const moveSelection = useCallback((event, index) => {
+    const last = options.length - 1;
+    const next = {
+      ArrowDown: Math.min(last, index + 1),
+      ArrowUp: Math.max(0, index - 1),
+      Home: 0,
+      End: last,
+    }[event.key];
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (options[index].id === selected) launch();
+      else setSelected(options[index].id);
       return;
     }
-    complete({ type: "launch", target: selectedStart });
-  }, [complete, selectedStart]);
+    if (next === undefined) return;
+    event.preventDefault();
+    setSelected(options[next].id);
+    optionRefs.current.get(options[next].id)?.focus();
+  }, [launch, options, selected]);
 
-  const handleWorkspaceKeyDown = useCallback(
-    (event, index) => {
-      const key = event.key;
-      let nextIndex = index;
-      if (key === "ArrowDown" || key === "ArrowRight") {
-        nextIndex = (index + 1) % workspaceOptions.length;
-      } else if (key === "ArrowUp" || key === "ArrowLeft") {
-        nextIndex = (index - 1 + workspaceOptions.length) % workspaceOptions.length;
-      } else if (key === "Home") {
-        nextIndex = 0;
-      } else if (key === "End") {
-        nextIndex = workspaceOptions.length - 1;
-      } else {
-        return;
-      }
-
-      event.preventDefault();
-      const option = workspaceOptions[nextIndex];
-      setSelectedStart(option.id);
-      workspaceRefs.current[nextIndex]?.focus();
-    },
-    [workspaceOptions],
-  );
-
+  // Focus moves in on open and returns on close; it is set once, so changing
+  // the selection never pulls focus back to the title.
   useEffect(() => {
     const previousFocus = document.activeElement;
-    headingRef.current?.focus({ preventScroll: true });
-    const handleKeyDown = (event) => {
+    titleRef.current?.focus({ preventScroll: true });
+    return () => {
+      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+    };
+  }, []);
+
+  const actionsRef = useRef({ launch, skip });
+  actionsRef.current = { launch, skip };
+
+  // Escape skips, Enter starts, and Tab stays inside the dialog.
+  useEffect(() => {
+    const onKeyDown = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        complete({ type: "home" });
+        actionsRef.current.skip();
+        return;
+      }
+      if (event.key === "Enter" && !event.target.closest?.("button, input, [role='radio']")) {
+        event.preventDefault();
+        actionsRef.current.launch();
         return;
       }
       if (event.key !== "Tab" || !rootRef.current) return;
-
-      const focusable = Array.from(
-        rootRef.current.querySelectorAll(
-          'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((element) => !element.hasAttribute("aria-hidden"));
+      const focusable = [...rootRef.current.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex="0"]')];
       if (focusable.length === 0) return;
-
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (
-        event.shiftKey &&
-        (document.activeElement === first || document.activeElement === headingRef.current)
-      ) {
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === titleRef.current)) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -257,230 +193,190 @@ export default function Onboarding({ onComplete }) {
         first.focus();
       }
     };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      if (previousFocus instanceof HTMLElement) previousFocus.focus();
-    };
-  }, [complete]);
+  const renderOption = (option) => {
+    const index = options.indexOf(option);
+    const isSelected = option.id === selected;
+    const Icon = option.icon;
+    return (
+      <button
+        key={option.id}
+        ref={(node) => {
+          if (node) optionRefs.current.set(option.id, node);
+          else optionRefs.current.delete(option.id);
+        }}
+        type="button"
+        role="radio"
+        aria-checked={isSelected}
+        tabIndex={isSelected ? 0 : -1}
+        className={`onb-option ${isSelected ? "is-selected" : ""}`}
+        data-cat={option.cat}
+        onClick={() => setSelected(option.id)}
+        onDoubleClick={() => (option.id === HOME_ID ? skip() : complete({ type: "launch", target: option.id }))}
+        onKeyDown={(event) => moveSelection(event, index)}
+      >
+        <Icon className="onb-option-icon" aria-hidden="true" />
+        <span className="onb-option-copy">
+          <span className="onb-option-label">{option.label}</span>
+          <span className="onb-option-desc">{option.desc}</span>
+        </span>
+        <Keycaps hotkey={option.hotkey} />
+      </button>
+    );
+  };
 
   return (
-    <main
+    <motion.div
       ref={rootRef}
-      className="onb-overlay"
+      className="onb"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="onb-heading"
+      aria-labelledby="onb-title"
+      initial={reduceMotion ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
-      <div className="onb-container">
-        <header className="onb-header">
-          <div className="onb-brand-lockup">
-            <img src={cortexLogo} alt="" className="onb-brand-logo" draggable={false} />
-            <span className="onb-brand-name">Cortex Studio</span>
-            <span className="onb-brand-divider" aria-hidden="true" />
-            <span className="onb-brand-context">Getting started</span>
+      <div className="onb-frame" data-tauri-drag-region="">
+        <WindowControls />
+      </div>
+
+      <div className="onb-stage">
+        <section className="onb-sheet">
+          <header className="onb-head">
+            <div className="onb-brand">
+              <img src={cortexLogo} alt="" className="onb-brand-mark" draggable={false} />
+              <span className="cx-display onb-brand-name">Cortex Studio</span>
+              <span className="onb-brand-version">{appMeta.version}</span>
+            </div>
+            <h1 id="onb-title" ref={titleRef} tabIndex={-1} className="cx-display onb-title">
+              Get started
+            </h1>
+            <p className="onb-head-desc">Pick a look and where to begin. Both stay in reach: the look in Settings, every workspace on Home.</p>
+          </header>
+
+          <div className="onb-body custom-scrollbar">
+            <div className="onb-columns">
+              <section className="onb-start" aria-labelledby="onb-start-label">
+                <h2 id="onb-start-label" className="cx-label">Start in</h2>
+                <div className="onb-options" role="radiogroup" aria-labelledby="onb-start-label">
+                  {renderOption(options[0])}
+                  {WORKSPACE_MODE_GROUPS.map((group) => (
+                    <div key={group.id} className="onb-group" role="presentation">
+                      <span className="cx-label onb-group-label" aria-hidden="true">{group.label}</span>
+                      {options.filter((option) => option.group === group.id).map(renderOption)}
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="onb-look" aria-labelledby="onb-look-label">
+                <h2 id="onb-look-label" className="cx-label">Appearance</h2>
+
+                <div className="onb-field">
+                  <span className="onb-field-label" id="onb-scheme-label">Mode</span>
+                  <div className="onb-seg" role="radiogroup" aria-labelledby="onb-scheme-label">
+                    {COLOR_SCHEMES.map((scheme) => (
+                      <button
+                        key={scheme}
+                        type="button"
+                        role="radio"
+                        aria-checked={look.colorScheme === scheme}
+                        className={`onb-seg-btn ${look.colorScheme === scheme ? "is-on" : ""}`}
+                        onClick={() => updateLook({ colorScheme: scheme })}
+                      >
+                        {SCHEME_LABELS[scheme]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="onb-field">
+                  <span className="onb-field-label" id="onb-theme-label">Theme</span>
+                  <div className="onb-themes" role="radiogroup" aria-labelledby="onb-theme-label">
+                    {THEME_PRESETS.map((preset) => {
+                      const colors = preset.modes[resolvedScheme] || preset.modes.dark;
+                      const isOn = look.themePreset === preset.id;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={isOn}
+                          className={`onb-theme ${isOn ? "is-on" : ""}`}
+                          onClick={() => updateLook({ themePreset: preset.id })}
+                          title={preset.description}
+                        >
+                          <span
+                            className="onb-theme-swatch"
+                            style={{ "--sw-bg": colors.background, "--sw-surface": colors.surface, "--sw-ink": colors.foreground, "--sw-accent": colors.primary }}
+                            aria-hidden="true"
+                          >
+                            <span />
+                          </span>
+                          <span className="onb-theme-name">{preset.name}</span>
+                          {isOn ? <Check className="onb-theme-check" aria-hidden="true" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="onb-field">
+                  <label className="onb-field-label onb-scale-head" htmlFor="onb-scale">
+                    <span>Interface size</span>
+                    <output htmlFor="onb-scale">{Math.round(look.uiScale * 100)}%</output>
+                  </label>
+                  <input
+                    id="onb-scale"
+                    className="onb-slider"
+                    type="range"
+                    min={MIN_SCALE}
+                    max={MAX_SCALE}
+                    step="0.05"
+                    value={look.uiScale}
+                    style={{ "--fill": `${((look.uiScale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE)) * 100}%` }}
+                    aria-valuetext={`${Math.round(look.uiScale * 100)} percent`}
+                    onChange={(event) => setLook((current) => ({ ...current, uiScale: Number.parseFloat(event.currentTarget.value) }))}
+                    onPointerUp={(event) => commitScale(event.currentTarget.value)}
+                    onKeyUp={(event) => SCALE_COMMIT_KEYS.has(event.key) && commitScale(event.currentTarget.value)}
+                    onBlur={(event) => commitScale(event.currentTarget.value)}
+                  />
+                </div>
+
+                <div className="onb-toggle-row">
+                  <span>
+                    <span className="onb-field-label">Shortcut keycaps</span>
+                    <span className="onb-toggle-hint">Show keyboard shortcuts beside actions</span>
+                  </span>
+                  <Toggle
+                    checked={look.showKeycaps}
+                    onChange={(value) => updateLook({ showKeycaps: value })}
+                    ariaLabel="Show shortcut keycaps"
+                  />
+                </div>
+              </section>
+            </div>
           </div>
 
-          <button
-            type="button"
-            className="onb-skip-btn"
-            onClick={() => complete({ type: "home" })}
-          >
-            Skip to Studio
-            <ArrowRight aria-hidden="true" />
-          </button>
-        </header>
-
-        <div className="onb-scroll">
-          <section className="onb-content" aria-describedby="onb-supporting-copy">
-            <div className="onb-intro">
-              <div className="onb-eyebrow">First run</div>
-              <h1 id="onb-heading" ref={headingRef} tabIndex={-1}>
-                Choose where you want to start.
-              </h1>
-              <p id="onb-supporting-copy">
-                You can access every workspace later from Studio Home.
-              </p>
-            </div>
-
-            <div
-              className="onb-workspace-list"
-              role="radiogroup"
-              aria-label="Starting destination"
-            >
-              {workspaceOptions.map((option, index) => {
-                const Icon = option.icon;
-                const isSelected = selectedStart === option.id;
-                const isTabStop = selectedStart ? isSelected : index === 0;
-                return (
-                  <button
-                    key={option.id}
-                    ref={(node) => {
-                      workspaceRefs.current[index] = node;
-                    }}
-                    type="button"
-                    className={`onb-workspace-row ${isSelected ? "is-selected" : ""}`}
-                    role="radio"
-                    aria-checked={isSelected}
-                    aria-keyshortcuts={option.shortcut ?? undefined}
-                    tabIndex={isTabStop ? 0 : -1}
-                    onClick={() => setSelectedStart(option.id)}
-                    onKeyDown={(event) => handleWorkspaceKeyDown(event, index)}
-                  >
-                    <span className="onb-workspace-icon" aria-hidden="true">
-                      <Icon />
-                    </span>
-                    <span className="onb-workspace-copy">
-                      <span className="onb-workspace-label">{option.label}</span>
-                      <span className="onb-workspace-desc">{option.desc}</span>
-                    </span>
-                    {option.shortcut ? (
-                      <kbd className="onb-workspace-shortcut">{option.shortcut}</kbd>
-                    ) : null}
-                    <span className="onb-workspace-choice" aria-hidden="true">
-                      {isSelected ? <Check /> : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="onb-preferences">
-              <div className="onb-preferences-summary">
-                <span>
-                  {isRecommended
-                    ? "Recommended Studio settings will be used."
-                    : "Your saved Studio settings will be used."}
-                </span>
-                <button
-                  type="button"
-                  className="onb-customize-btn"
-                  aria-expanded={customizeOpen}
-                  aria-controls="onb-customize-panel"
-                  onClick={() => setCustomizeOpen((open) => !open)}
-                >
-                  {customizeOpen ? "Close" : "Customize"}
-                  <ChevronDown aria-hidden="true" />
-                </button>
-              </div>
-
-              <AnimatePresence initial={false}>
-                {customizeOpen ? (
-                  <motion.section
-                    id="onb-customize-panel"
-                    className="onb-customize-panel"
-                    aria-labelledby="onb-customize-heading"
-                    initial={reduceMotion ? false : { opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    transition={{ duration: reduceMotion ? 0 : 0.16 }}
-                  >
-                    <div className="onb-customize-heading-row">
-                      <div>
-                        <span className="onb-panel-kicker">Optional</span>
-                        <h2 id="onb-customize-heading">Customize your starting settings</h2>
-                      </div>
-                      <button
-                        type="button"
-                        className="onb-reset-btn"
-                        onClick={resetRecommended}
-                        disabled={isRecommended}
-                      >
-                        <RotateCcw aria-hidden="true" />
-                        Reset to recommended
-                      </button>
-                    </div>
-
-                    <div className="onb-customize-grid">
-                      <section className="onb-settings-group" aria-labelledby="onb-viewport-settings">
-                        <h3 id="onb-viewport-settings">Viewport</h3>
-                        <SettingToggle
-                          label="Show grid"
-                          hint="Display the ground grid in viewers."
-                          checked={prefs.showGrid}
-                          onChange={(value) => togglePref("showGrid", value)}
-                        />
-                        <SettingToggle
-                          label="Show hints"
-                          hint="Keep contextual guidance visible."
-                          checked={prefs.showHints}
-                          onChange={(value) => togglePref("showHints", value)}
-                        />
-                        <SettingToggle
-                          label="Exterior only"
-                          hint="Focus Livery on exterior surfaces."
-                          checked={prefs.liveryExteriorOnly}
-                          onChange={(value) => togglePref("liveryExteriorOnly", value)}
-                        />
-                      </section>
-
-                      <section className="onb-settings-group" aria-labelledby="onb-studio-settings">
-                        <h3 id="onb-studio-settings">Studio</h3>
-                        <SettingToggle
-                          label="Show recent projects"
-                          hint="Keep recent work available on Home."
-                          checked={prefs.showRecents}
-                          onChange={(value) => togglePref("showRecents", value)}
-                        />
-                        <SettingToggle
-                          label="Legacy layers"
-                          hint="Place layers below the viewer."
-                          checked={prefs.legacyLayersLayout}
-                          onChange={(value) => togglePref("legacyLayersLayout", value)}
-                        />
-                      </section>
-
-                      <section className="onb-settings-group onb-settings-group--interface" aria-labelledby="onb-interface-settings">
-                        <h3 id="onb-interface-settings">Interface</h3>
-                        <div className="onb-scale-row">
-                          <label htmlFor="onb-ui-scale">
-                            <span>Interface scale</span>
-                            <span>{Math.round(prefs.uiScale * 100)}%</span>
-                          </label>
-                          <input
-                            id="onb-ui-scale"
-                            type="range"
-                            min="0.5"
-                            max="1.4"
-                            step="0.05"
-                            value={prefs.uiScale}
-                            aria-valuetext={`${Math.round(prefs.uiScale * 100)} percent`}
-                            onChange={(event) =>
-                              updateUiScaleDraft(Number.parseFloat(event.currentTarget.value))
-                            }
-                            onPointerUp={(event) => commitUiScale(event.currentTarget.value)}
-                            onPointerCancel={(event) => commitUiScale(event.currentTarget.value)}
-                            onKeyUp={(event) => {
-                              if (UI_SCALE_KEYS.has(event.key)) {
-                                commitUiScale(event.currentTarget.value);
-                              }
-                            }}
-                            onBlur={(event) => commitUiScale(event.currentTarget.value)}
-                            className="onb-slider"
-                          />
-                        </div>
-                      </section>
-                    </div>
-                  </motion.section>
-                ) : null}
-              </AnimatePresence>
-            </div>
-
-            <div className="onb-launch-row">
-              <span className="onb-launch-context">
-                {selectedMeta
-                  ? `${selectedMeta.label} will open in a new Studio tab.`
-                  : "Start from Home to keep every workspace within reach."}
-              </span>
-              <button type="button" className="onb-launch-btn" onClick={launch}>
-                {selectedMeta?.actionLabel ?? "Start from Home"}
-                <ArrowRight aria-hidden="true" />
-              </button>
-            </div>
-          </section>
-        </div>
+          <footer className="onb-foot">
+            <span className="onb-foot-note">
+              {selected === HOME_ID ? "Home lists every workspace and your recent projects." : `${selectedOption.label} opens in a new tab.`}
+            </span>
+            <button type="button" className="cx-btn is-quiet onb-skip" onClick={skip}>
+              Skip
+              <Keycaps hotkey={ESCAPE_KEY} />
+            </button>
+            <button type="button" className="cx-btn is-primary onb-go" onClick={launch}>
+              {selected === HOME_ID ? "Go to Home" : `Open ${selectedOption.label}`}
+              <Keycaps hotkey={ENTER_KEY} />
+            </button>
+          </footer>
+        </section>
       </div>
-    </main>
+    </motion.div>
   );
 }

@@ -1,133 +1,103 @@
-# PolyForm Noncommercial License 1.0.0
+Cortex Studio Source-Available License 1.0
 
-<https://polyformproject.org/licenses/noncommercial/1.0.0>
+Copyright (c) 2026 Ever3st. All rights reserved.
 
-## Acceptance
+This license covers Cortex Studio 5.0.0 and later, in source and binary form
+(the "Software"). Ever3st (the "Licensor") makes the Software available free
+of charge on the terms below. Using, copying, building, or modifying the
+Software means you accept them.
 
-In order to get any license under these terms, you must agree
-to them as both strict obligations and conditions to all
-your licenses.
+The source code is published so people can use it, learn from it, and help
+improve it. It is not open source: you may not redistribute, resell, or
+rebrand the Software.
 
-## Copyright License
+1. What you may do
 
-The licensor grants you a copyright license for the
-software to do everything you might do with the software
-that would otherwise infringe the licensor's copyright
-in it for any permitted purpose.  However, you may
-only distribute the software according to [Distribution
-License](#distribution-license) and make changes or new works
-based on the software according to [Changes and New Works
-License](#changes-and-new-works-license).
+   a. Use. Download, install, and run the Software for any purpose, personal
+      or commercial.
 
-## Distribution License
+   b. Keep what you make. Everything you create with the Software, such as
+      liveries, textures, templates, previews, captures, and exports, belongs
+      to you or to the owner of the material you started from. This license
+      places no restriction on it.
 
-The licensor grants you an additional copyright license
-to distribute copies of the software.  Your license
-to distribute covers distributing the software with
-changes and new works permitted by [Changes and New Works
-License](#changes-and-new-works-license).
+   c. Study and modify. Read the source code, build it, and modify it. You,
+      and members of your own team or organisation, may use a modified version
+      for any purpose, including commercial work, as long as it is not
+      distributed to anyone else.
 
-## Notices
+   d. Contribute. Fork the official repository on GitHub, as GitHub's Terms of
+      Service allow, solely to prepare changes and submit them to the official
+      repository. A fork must keep this license and all notices, and must not
+      be used to publish builds, releases, or packages of the Software.
 
-You must ensure that anyone who gets a copy of any part of
-the software from you also gets a copy of these terms or the
-URL for them above, as well as copies of any plain-text lines
-beginning with `Required Notice:` that the licensor provided
-with the software.  For example:
+2. What you may not do
 
-> Required Notice: Copyright Yoyodyne, Inc. (http://example.com)
+   Except as section 1 allows, and unless the Licensor gives you prior written
+   permission, you may not:
 
-## Changes and New Works License
+   a. Redistribute. Distribute, publish, upload, mirror, or otherwise make
+      available the Software, a modified version of it, or a substantial
+      portion of its source code, in source or binary form, whether or not you
+      charge for it. Linking to the official repository or its releases is
+      always allowed.
 
-The licensor grants you an additional copyright license to
-make changes and new works based on the software for any
-permitted purpose.
+   b. Resell. Sell, rent, lease, license, or sublicense the Software or a
+      modified version of it; bundle it with another product or service; place
+      it behind a paywall, subscription, donation gate, or access fee; or offer
+      it as a hosted service.
 
-## Patent License
+   c. Rebrand. Remove or alter copyright notices, attribution, or this
+      license; present the Software or a modified version of it as your own
+      work or as another person's product; or release it under another name.
 
-The licensor grants you a patent license for the software that
-covers patent claims the licensor can license, or becomes able
-to license, that you would infringe by using the software.
+   d. Use the names. Use "Cortex Studio", "Cortex Labs", or the Licensor's
+      logos to name, promote, or imply endorsement of anything else.
 
-## Noncommercial Purposes
+3. Contributions
 
-Any noncommercial purpose is a permitted purpose.
+   By submitting a contribution to the official repository, such as a pull
+   request or patch, you grant the Licensor a perpetual, worldwide,
+   non-exclusive, royalty-free, irrevocable license to use, copy, modify,
+   distribute, sublicense, and relicense that contribution as part of the
+   Software or otherwise, and you confirm that you have the right to grant it.
 
-## Personal Uses
+4. Third-party components
 
-Personal use for research, experiment, and testing for
-the benefit of public knowledge, personal study, private
-entertainment, hobby projects, amateur pursuits, or religious
-observance, without any anticipated commercial application,
-is use for a permitted purpose.
+   Components listed in THIRD_PARTY_NOTICES.md are licensed under their own
+   terms. Nothing in this license limits the rights those terms give you for
+   those components.
 
-## Noncommercial Organizations
+5. Game and creator content
 
-Use by any charitable organization, educational institution,
-public research organization, public safety or health
-organization, environmental protection organization,
-or government institution is use for a permitted purpose
-regardless of the source of funding or obligations resulting
-from the funding.
+   This license covers Cortex Studio only. It grants no rights in Grand Theft
+   Auto V, FiveM, game files, or third-party assets you open with the
+   Software. You are responsible for following the terms that apply to them,
+   including the Cfx.re Platform License Agreement, Rockstar Games' policies,
+   and the licenses of the creators whose work you edit.
 
-## Fair Use
+6. Termination
 
-You may have "fair use" rights for the software under the
-law. These terms do not limit them.
+   If you break these terms, your rights under this license end
+   automatically. If it is your first breach and you correct it, including
+   removing anything you distributed, within 30 days of being notified, your
+   rights are restored.
 
-## No Other Rights
+7. No warranty
 
-These terms do not allow you to sublicense or transfer any of
-your licenses to anyone else, or prevent the licensor from
-granting licenses to anyone else.  These terms do not imply
-any other licenses.
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
 
-## Patent Defense
+8. Limitation of liability
 
-If you make any written claim that the software infringes or
-contributes to infringement of any patent, your patent license
-for the software granted under these terms ends immediately. If
-your company makes such a claim, your patent license ends
-immediately for work on behalf of your company.
+   IN NO EVENT SHALL THE LICENSOR OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM,
+   DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+   OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE
+   USE OF OR OTHER DEALINGS IN THE SOFTWARE.
 
-## Violations
+9. Earlier versions
 
-The first time you are notified in writing that you have
-violated any of these terms, or done anything with the software
-not covered by your licenses, your licenses can nonetheless
-continue if you come into full compliance with these terms,
-and take practical steps to correct past violations, within
-32 days of receiving notice.  Otherwise, all your licenses
-end immediately.
-
-## No Liability
-
-***As far as the law allows, the software comes as is, without
-any warranty or condition, and the licensor will not be liable
-to you for any damages arising out of these terms or the use
-or nature of the software, under any kind of legal claim.***
-
-## Definitions
-
-The **licensor** is the individual or entity offering these
-terms, and the **software** is the software the licensor makes
-available under these terms.
-
-**You** refers to the individual or entity agreeing to these
-terms.
-
-**Your company** is any legal entity, sole proprietorship,
-or other kind of organization that you work for, plus all
-organizations that have control over, are under the control of,
-or are under common control with that organization.  **Control**
-means ownership of substantially all the assets of an entity,
-or the power to direct its management and policies by vote,
-contract, or otherwise.  Control can be direct or indirect.
-
-**Your licenses** are all the licenses granted to you for the
-software under these terms.
-
-**Use** means anything you do with the software requiring one
-of your licenses.
-
-Required Notice: Copyright (c) 2026 Ever3st. Commercial use requires a separate written license from the licensor.
+   Cortex Studio 4.1.0 and earlier remain under the licenses they were
+   published with at https://github.com/IEver3st/cortex-labs. This license
+   does not change those terms for those versions.

@@ -210,21 +210,20 @@ export default function GlobalContextMenu({
       >
         {showEditActions ? (
           <>
-            <Ctx.Label>Edit</Ctx.Label>
             <Ctx.Item disabled={!context.editable || !hasSelection} onSelect={handleCut}>
               <Scissors aria-hidden="true" />
               <span>Cut</span>
-              <Ctx.Shortcut>Ctrl+X</Ctx.Shortcut>
+              <Ctx.Shortcut keys="Ctrl+X" />
             </Ctx.Item>
             <Ctx.Item disabled={!hasSelection} onSelect={handleCopy}>
               <Copy aria-hidden="true" />
               <span>Copy</span>
-              <Ctx.Shortcut>Ctrl+C</Ctx.Shortcut>
+              <Ctx.Shortcut keys="Ctrl+C" />
             </Ctx.Item>
             <Ctx.Item disabled={!canPaste} onSelect={handlePaste}>
               <ClipboardPaste aria-hidden="true" />
               <span>Paste</span>
-              <Ctx.Shortcut>Ctrl+V</Ctx.Shortcut>
+              <Ctx.Shortcut keys="Ctrl+V" />
             </Ctx.Item>
             {context.control ? (
               <>
@@ -232,30 +231,34 @@ export default function GlobalContextMenu({
                 <Ctx.Item onSelect={() => selectAll(context)}>
                   <TextSelect aria-hidden="true" />
                   <span>Select all</span>
-                  <Ctx.Shortcut>Ctrl+A</Ctx.Shortcut>
+                  <Ctx.Shortcut keys="Ctrl+A" />
                 </Ctx.Item>
               </>
             ) : null}
           </>
         ) : (
           <>
-            <Ctx.Label>Workspace</Ctx.Label>
             <Ctx.Item onSelect={onOpenHome}>
               <Home aria-hidden="true" />
               <span>Home</span>
             </Ctx.Item>
-            {workspaceItems.map(({ icon: Icon, id, label, onSelect, shortcut }) => (
-              <Ctx.Item key={id} onSelect={onSelect}>
-                {Icon ? <Icon aria-hidden="true" /> : null}
-                <span>{label}</span>
-                {shortcut ? <Ctx.Shortcut>{shortcut}</Ctx.Shortcut> : null}
-              </Ctx.Item>
-            ))}
-            <Ctx.Separator />
             <Ctx.Item onSelect={onOpenSettings}>
               <Settings aria-hidden="true" />
               <span>Settings</span>
             </Ctx.Item>
+            {workspaceItems.length > 0 ? (
+              <>
+                <Ctx.Separator />
+                <Ctx.Label>New tab</Ctx.Label>
+                {workspaceItems.map(({ icon: Icon, id, label, onSelect, hotkey }) => (
+                  <Ctx.Item key={id} onSelect={onSelect}>
+                    {Icon ? <Icon aria-hidden="true" /> : null}
+                    <span>{label}</span>
+                    <Ctx.Shortcut hotkey={hotkey} />
+                  </Ctx.Item>
+                ))}
+              </>
+            ) : null}
           </>
         )}
       </Ctx.Content>

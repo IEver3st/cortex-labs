@@ -92,8 +92,15 @@ export function buildCameraFraming({
   fov = DEFAULT_CAMERA_FOV,
   presetKey = DEFAULT_CAMERA_PRESET,
   zoomFactor = 1,
+  // A custom view direction (target to camera) replaces the preset's, and a
+  // smaller minimum lets close-ups such as interior shots sit inside the body.
+  direction = null,
+  minDistance = MIN_CAMERA_DISTANCE,
 }) {
   const preset = getCameraPreset(presetKey);
+  const viewDirection = direction?.isVector3 && direction.lengthSq() > 0
+    ? direction.clone().normalize()
+    : preset.direction;
   const target = bounds.getCenter(new THREE.Vector3());
   const sphere = bounds.getBoundingSphere(new THREE.Sphere());
   const radius = Math.max(Number.isFinite(sphere.radius) ? sphere.radius : 0, 0.5);
@@ -105,10 +112,10 @@ export function buildCameraFraming({
   const limitingFov = Math.max(Math.min(verticalFov, horizontalFov), THREE.MathUtils.degToRad(10));
   const baseDistance = Math.max(
     (radius * DEFAULT_FIT_PADDING) / Math.sin(limitingFov / 2),
-    MIN_CAMERA_DISTANCE,
+    Number.isFinite(minDistance) && minDistance > 0 ? minDistance : MIN_CAMERA_DISTANCE,
   );
   const distance = baseDistance / Math.max(zoomFactor || 1, 0.01);
-  const position = target.clone().addScaledVector(preset.direction, distance);
+  const position = target.clone().addScaledVector(viewDirection, distance);
 
   return {
     target,

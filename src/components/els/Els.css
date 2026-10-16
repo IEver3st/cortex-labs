@@ -1,0 +1,512 @@
+/* ELS in the Sirens workspace. The editor is a siren sheet (.se-sheet) whose
+   body is the VCF's sections split by rules; it reuses the sequencer's bar,
+   chips, fields and swatches. Lens colours are the file's data; selection is
+   opposite ink; the accent marks only the playing step and focus. */
+
+/* ── Dock ── */
+.els-system {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.els-fact-line {
+  margin: 0;
+  font-size: 12px;
+}
+
+.els-fact-path {
+  overflow: hidden;
+  margin: 0;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.els-folders {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.els-folders li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.els-folder-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.els-folder-kind {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.els-folders li.is-error .els-folder-kind {
+  color: var(--mg-destructive);
+}
+
+.els-folder-path {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+/* ── Bar ── */
+.els-stage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.els-stage .cx-label {
+  margin: 0;
+}
+
+.els-strip {
+  max-width: 360px;
+}
+
+/* The sequencer drops its strip below 1000px; the ELS bar is shorter and the
+   strip is its live readout, so it stays until the sheet is narrow. */
+@container se-sheet (max-width: 1000px) {
+  .els-sheet .els-strip {
+    display: flex;
+  }
+}
+
+@container se-sheet (max-width: 520px) {
+  .els-sheet .els-strip {
+    display: none;
+  }
+}
+
+.els-strip-cell {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-width: 14px;
+  border-radius: 2px;
+  background: var(--se-cell-off);
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 9.5px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.els-strip-cell[data-on] {
+  background: var(--els-color);
+  color: rgb(0 0 0 / 0.72);
+}
+
+.els-notes {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--cx-caution);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ── Body ── */
+.els-body {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 12px 16px;
+}
+
+.els-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.els-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 28px;
+}
+
+.els-card-head .cx-label {
+  margin: 0;
+}
+
+.els-card-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-left: auto;
+}
+
+.els-card-tools .se-seg {
+  margin: 0;
+}
+
+.els-add {
+  width: 150px;
+  height: 28px;
+}
+
+/* Settings run inline, each label beside its control, and wrap as the sheet
+   narrows. */
+.els-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 24px;
+}
+
+.els-fields .se-field,
+.els-group-row .se-field {
+  grid-template-columns: max-content max-content;
+  gap: 8px;
+}
+
+.els-fields .se-seg {
+  margin: 0;
+}
+
+.els-select {
+  width: 92px;
+  height: 28px;
+}
+
+.els-select.is-wide {
+  width: 104px;
+}
+
+.els-arrowboard {
+  flex: 0 0 120px;
+  width: 120px;
+}
+
+/* ── Lights table ── */
+.els-lights {
+  display: grid;
+  gap: 2px;
+}
+
+.els-light {
+  display: grid;
+  grid-template-columns: 96px minmax(64px, 1fr) 44px 44px 112px 196px;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.els-light-head {
+  min-height: 22px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+}
+
+.els-light-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.els-light-name .se-swatch {
+  flex: 0 0 auto;
+}
+
+.els-light.is-off .els-light-name,
+.els-light.is-off .els-col-role {
+  opacity: 0.5;
+}
+
+.els-col-role {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.els-swatches {
+  display: flex;
+  gap: 3px;
+}
+
+.els-offset {
+  display: flex;
+  gap: 4px;
+}
+
+.els-offset .se-num {
+  flex: 0 0 60px;
+  width: 60px;
+}
+
+@container se-sheet (max-width: 640px) {
+  .els-light {
+    grid-template-columns: 96px 44px 44px 112px minmax(0, 1fr);
+  }
+
+  .els-light .els-col-role {
+    display: none;
+  }
+
+  .els-offset .se-num {
+    flex: 1 1 0;
+    width: auto;
+  }
+}
+
+/* ── ELS V8 groups ── */
+/* One line per group: the format and the group's own switch, then the three
+   stage presets. The fixed slot keeps the presets in one column from group to
+   group; on a narrow sheet they wrap below as a block. */
+.els-group-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 24px;
+}
+
+.els-group-slot {
+  flex: 0 0 200px;
+}
+
+.els-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 20px;
+}
+
+.els-preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.els-preset-stage {
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.els-preset .se-num {
+  flex-basis: 52px;
+  width: 52px;
+}
+
+.els-preset-scan {
+  flex: 0 0 52px;
+  text-align: right;
+}
+
+.els-playback {
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.els-playback-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.els-playback-head .cx-label {
+  margin: 0;
+}
+
+.els-pattern-step {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.els-pattern-number {
+  min-width: 44px;
+  font-size: 20px;
+  line-height: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.els-source {
+  min-width: 0;
+  white-space: normal;
+}
+
+.els-source.is-approximate {
+  color: var(--cx-caution);
+}
+
+/* One lane per extra over the pattern's whole loop; the playhead runs across
+   the lanes, past the labels. */
+.els-lanes {
+  --els-label: 26px;
+  position: relative;
+  display: grid;
+  gap: 3px;
+}
+
+.els-lane-row {
+  display: grid;
+  grid-template-columns: var(--els-label) minmax(0, 1fr);
+  align-items: center;
+}
+
+.els-lane-label {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.els-lane {
+  display: block;
+  width: 100%;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--se-cell-off);
+  shape-rendering: crispEdges;
+}
+
+.els-playhead {
+  position: absolute;
+  z-index: 1;
+  top: -2px;
+  bottom: -2px;
+  left: calc(var(--els-label) + (100% - var(--els-label)) * var(--els-at, 0));
+  display: none;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--mg-primary);
+  pointer-events: none;
+}
+
+.els-playhead[data-live] {
+  display: block;
+}
+
+/* ── MISS-ELS flashes ── */
+.els-flash-tools {
+  padding: 0;
+}
+
+.els-timeline {
+  display: grid;
+  gap: 2px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  user-select: none;
+}
+
+.els-tl-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: max-content;
+}
+
+.els-tl-head {
+  position: sticky;
+  z-index: 1;
+  left: 0;
+  flex: 0 0 76px;
+  overflow: hidden;
+  padding-right: 6px;
+  background: var(--mg-bg);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.els-tl-col,
+.els-tl-cell {
+  flex: 0 0 var(--els-w);
+  width: var(--els-w);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.els-tl-col {
+  height: 20px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.els-tl-col:hover {
+  color: var(--mg-fg);
+}
+
+.els-tl-col.is-selected {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.els-tl-col[data-now] {
+  box-shadow: inset 0 -2px 0 var(--mg-primary);
+}
+
+.els-tl-cell {
+  height: 22px;
+  background: var(--se-cell-off);
+}
+
+.els-tl-cell[data-on] {
+  background: var(--els-color);
+}
+
+.els-tl-cell.is-selected {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 45%, transparent);
+}
+
+.els-tl-col:focus-visible,
+.els-tl-cell:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.els-statics {
+  display: grid;
+  gap: 4px;
+}
+
+.els-static {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 260px) auto auto;
+  align-items: center;
+  gap: 10px;
+}

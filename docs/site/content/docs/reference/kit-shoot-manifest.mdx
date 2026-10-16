@@ -1,0 +1,102 @@
+---
+title: Kit Shoot Manifest
+description: The kit-shoot.json file a Kit Shoot run writes, for tools that import its images.
+---
+
+Every [Kit shoot](/docs/user-guide/viewer-modes#kit-shoot) run writes `kit-shoot.json` next to its images. Importers should read this file rather than guess from folder or file names.
+
+## Compatibility
+
+- `schema` is always `"cortex.kitShoot"`. `version` is `1`.
+- New fields may be added within version 1. A change that renames, removes, or reinterprets a field increases `version`.
+- Every path is relative to the manifest and uses `/`.
+- A `file` of `null` means the image wasn't written; `report.html` and `issues` say why.
+- `complete` is `false` when the run was cancelled, stopped on an error, or failed to write a file.
+
+## Top level
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema`, `version` | string, number | Format identity. |
+| `generator` | string | `Cortex Studio <version>`. |
+| `createdAt` | string | ISO 8601 start time. |
+| `complete` | boolean | Whether every planned file was written. |
+| `vehicle.modelName` | string | Vehicle model name, without `_hi`. |
+| `vehicle.kit` | object | `name`, `id` (number or `null`), `linked` (whether carvariations lists it). |
+| `settings` | object | `mode` (`parts` or `builds`), `camera` (`auto`, `view`, or `null` for builds), `base` (`stock`, `build`, or `null`), `format`, `width`, `height`, `beforeAfter` (`side`, `wipe`, or `null`), `zoomToChange`. |
+| `base` | array | Parts the vehicle wore under every shot (Every part on Current build only), as mod references. |
+| `slots` | array | Every part mode results; empty for builds. |
+| `builds` | array | Builds mode results; empty for every part. |
+| `sheets`, `videos` | array of paths | Builds-mode sheet and cycle video. Every part mode lists these per slot. |
+| `issues` | array | Checks from the run. |
+
+A **mod reference** is `{ slotType, modType, modIndex }`. `modType` is the number `SetVehicleMod` takes for the carcols slot type (`VMT_SPOILER` is `0`, `VMT_LIVERY_MOD` is `48`), or `null` for an unknown type. `modIndex` is the part's index within its type in carcols order, as the game counts it.
+
+## Slots
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `slotType` | string | Carcols type, such as `VMT_SPOILER`. |
+| `modType` | number or `null` | Numeric mod type. |
+| `label` | string | Generic slot name, such as `Spoiler`. |
+| `name` | string | The kit's name for the slot (carcols `slotNames`), else `label`. |
+| `folder` | string | Folder holding the slot's shots. |
+| `sheet`, `video` | path or `null` | The slot's sheet and cycle video. |
+| `camera` | object or `null` | `{ "type": "view" }`, or `{ "type": "auto", "angle", "crop" }` where `angle` names the probe direction that won (such as `front-right-low`, `top`, `cabin`, or `fallback`) and `crop` is the framed area as fractions of the whole-vehicle frame. |
+| `parts` | array | One entry per shot, base first. |
+
+Each part:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `modIndex` | number | Mod index, or `-1` for stock. |
+| `isBase` | boolean | The slot's base shot, used as every pair's before image. |
+| `name` | string | Text registered for the part's label, else the label or model name. |
+| `label`, `modelName` | string or `null` | Carcols `modShopLabel` and `modelName`. |
+| `linkedModels` | array of strings | Carcols `linkedModels`. |
+| `file` | path or `null` | The shot. |
+| `thumb` | path or `null` | A 480 pixel wide JPEG of the shot under `thumbs/`. Runs from before thumbnails were added omit it. |
+| `beforeAfter` | path or `null` | The pair with the slot's base. |
+| `changed` | number or `null` | Share of the frame that differs from the base, from `0` to `1`. |
+
+## Builds
+
+Each build has `name`, `mods` (mod references) and `shots`. When before and after is on, the first entry is named `Stock` with no mods and holds the stock shots used as before images. Each shot has `angle` (`view`, `front34`, `rear34`, `front`, `side`, `back` or `top`), `paint` (`null` for the vehicle's paint, else `{ index, name, hex }` for a GTA colour), `file`, `thumb`, and `beforeAfter`.
+
+## Issues
+
+Each issue has `code`, `severity` (`error`, `warning` or `info`) and `message`. Issues about one part also carry `slotType`, `modType` and `modIndex`. The codes are listed in [Kit shoot](/docs/user-guide/viewer-modes#kit-shoot); `UNTEXTURED` notes a run made with the model's own textures off.
+
+## Example
+
+```json
+{
+  "schema": "cortex.kitShoot",
+  "version": 1,
+  "generator": "Cortex Studio 5.0.0",
+  "createdAt": "2026-10-07T12:00:00.000Z",
+  "complete": true,
+  "vehicle": { "modelName": "mycar", "kit": { "name": "1337_mycar_modkit", "id": 1337, "linked": true } },
+  "settings": { "mode": "parts", "camera": "auto", "base": "stock", "format": "landscape", "width": 1920, "height": 1080, "beforeAfter": "side", "zoomToChange": false },
+  "base": [],
+  "slots": [
+    {
+      "slotType": "VMT_SPOILER",
+      "modType": 0,
+      "label": "Spoiler",
+      "name": "Wings",
+      "folder": "00-spoiler",
+      "sheet": "sheets/00-spoiler.png",
+      "video": null,
+      "parts": [
+        { "modIndex": -1, "isBase": true, "name": "Stock", "label": null, "modelName": null, "linkedModels": [], "file": "00-spoiler/stock.png", "beforeAfter": null, "changed": null },
+        { "modIndex": 0, "isBase": false, "name": "Ducktail", "label": "MC_SPOIL_0", "modelName": "mycar_spoiler_a", "linkedModels": [], "file": "00-spoiler/00-ducktail.png", "beforeAfter": "00-spoiler/before-after/00-ducktail.png", "changed": 0.0412 }
+      ]
+    }
+  ],
+  "builds": [],
+  "sheets": [],
+  "videos": [],
+  "issues": []
+}
+```

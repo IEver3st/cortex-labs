@@ -3,6 +3,11 @@
   "pages": [
     "index",
     "viewer-modes",
+    "eup-studio",
+    "prop-studio",
+    "photo-mode",
+    "meta-simulation",
+    "sirens",
     "viewer-controls",
     "targeting",
     "variant-builder",

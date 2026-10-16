@@ -4,10 +4,14 @@
  * Each workspace stores its page, viewer state, variant config, and metadata.
  */
 
+import { normalizeTextureMode } from "./workspace-state.js";
+
 const WORKSPACES_KEY = "cortex-studio:workspaces.v1";
 const ACTIVE_WORKSPACE_KEY = "cortex-studio:active-workspace.v1";
 const RECENT_KEY = "cortex-studio:recent.v1";
-const MAX_RECENT = 12;
+const OPEN_TABS_KEY = "cortex-studio:open-tabs.v1";
+// Recents only order projects; Home lists every saved workspace.
+const MAX_RECENT = 200;
 export const WORKSPACE_STORAGE_EVENT = "cortex-studio:workspace-storage-updated";
 export const WORKSPACE_SAVE_FAILED_EVENT = "cortex-studio:workspace-save-failed";
 
@@ -72,7 +76,7 @@ export function saveWorkspaces(workspaces) {
 /**
  * Create a new workspace.
  * @param {string} name
- * @param {"viewer"|"variants"|"templategen"} page
+ * @param {"viewer"|"variants"|"templategen"|"eupstudio"|"propstudio"|"photo"} page
 
  * @param {Object} state — serializable state snapshot
  * @returns {string} The new workspace ID
@@ -110,14 +114,25 @@ export function updateWorkspace(id, patch) {
  * Delete a workspace.
  */
 export function deleteWorkspace(id) {
+  return deleteWorkspaces([id]);
+}
+
+/**
+ * Delete several workspaces with one write to each store.
+ * @returns {boolean} false when the workspace map could not be saved; recents
+ *   and the active id are then left alone so nothing points at a half-deleted set.
+ */
+export function deleteWorkspaces(ids) {
+  const doomed = new Set((Array.isArray(ids) ? ids : []).filter(Boolean));
+  if (doomed.size === 0) return true;
   const all = loadWorkspaces();
-  delete all[id];
-  saveWorkspaces(all);
-  removeRecentByWorkspaceId(id);
-  const active = getActiveWorkspaceId();
-  if (active === id) {
+  for (const id of doomed) delete all[id];
+  if (!saveWorkspaces(all)) return false;
+  removeRecentByWorkspaceIds(doomed);
+  if (doomed.has(getActiveWorkspaceId())) {
     clearActiveWorkspaceId();
   }
+  return true;
 }
 
 /**
@@ -187,14 +202,18 @@ export function loadRecent() {
   }
 }
 
-function removeRecentByWorkspaceId(workspaceId) {
+function removeRecentByWorkspaceIds(workspaceIds) {
   try {
     const current = loadRecent();
-    const next = current.filter((entry) => entry.workspaceId !== workspaceId);
+    const next = current.filter((entry) => !workspaceIds.has(entry.workspaceId));
     if (next.length === current.length) return;
     localStorage.setItem(RECENT_KEY, JSON.stringify(next));
-    emitWorkspaceStorageEvent("recent-remove", workspaceId);
+    emitWorkspaceStorageEvent("recent-remove", workspaceIds.size === 1 ? [...workspaceIds][0] : null);
   } catch {}
+}
+
+function normalizePage(page) {
+  return page === "eupstudio" || page === "propstudio" || page === "photo" || page === "variants" || page === "templategen" ? page : "viewer";
 }
 
 export function addRecent(workspaceId, name, page) {
@@ -206,18 +225,57 @@ export function addRecent(workspaceId, name, page) {
     recent.unshift({
       workspaceId,
       name: typeof name === "string" && name.trim() ? name.trim() : "Untitled",
-      page:
-        page === "variants"
-          ? "variants"
-          : page === "templategen"
-            ? "templategen"
-            : "viewer",
+      page: normalizePage(page),
       openedAt: Date.now(),
     });
     if (recent.length > MAX_RECENT) recent = recent.slice(0, MAX_RECENT);
     localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
     emitWorkspaceStorageEvent("recent-add", workspaceId);
   } catch {}
+}
+
+/**
+ * Record that a saved workspace was opened or brought to the front, so Home
+ * orders it first. Covers tabs that were already open as well as new ones.
+ */
+export function markWorkspaceOpened(workspaceId) {
+  if (typeof workspaceId !== "string" || !workspaceId) return;
+  const ws = loadWorkspaces()[workspaceId];
+  if (!ws) return;
+  addRecent(workspaceId, ws.name, ws.page);
+}
+
+function finiteTime(value) {
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Every saved workspace as a Home project entry, most recently opened first.
+ * Workspaces with no open record (older data, or trimmed recents) fall back to
+ * their last save time so they still appear instead of silently vanishing.
+ */
+export function listProjects(workspaces, recent) {
+  const all = workspaces && typeof workspaces === "object" ? workspaces : {};
+  const openedById = new Map();
+  for (const entry of Array.isArray(recent) ? recent : []) {
+    if (!entry || typeof entry.workspaceId !== "string") continue;
+    if (!openedById.has(entry.workspaceId)) openedById.set(entry.workspaceId, entry);
+  }
+  const projects = [];
+  for (const [key, ws] of Object.entries(all)) {
+    if (!ws || typeof ws !== "object") continue;
+    const workspaceId = typeof ws.id === "string" && ws.id ? ws.id : key;
+    const entry = openedById.get(workspaceId);
+    projects.push({
+      workspaceId,
+      name: typeof ws.name === "string" && ws.name.trim() ? ws.name : "Untitled",
+      page: normalizePage(ws.page || entry?.page),
+      openedAt:
+        finiteTime(entry?.openedAt) || finiteTime(ws.updatedAt) || finiteTime(ws.createdAt),
+    });
+  }
+  projects.sort((a, b) => b.openedAt - a.openedAt || a.name.localeCompare(b.name));
+  return projects;
 }
 
 /**
@@ -241,4 +299,65 @@ export function clearRecent() {
     localStorage.removeItem(RECENT_KEY);
     emitWorkspaceStorageEvent("recent-clear");
   } catch {}
+}
+
+// ── Open tabs ──
+// The project tabs open when the app last ran, in tab order, and the one in
+// front (null for Home). Tabs without a saved workspace are not kept.
+
+function uniqueIds(ids) {
+  const out = [];
+  for (const id of Array.isArray(ids) ? ids : []) {
+    if (typeof id === "string" && id && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+export function loadOpenTabs() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return { ids: [], active: null };
+    const ids = uniqueIds(parsed.ids);
+    return { ids, active: ids.includes(parsed.active) ? parsed.active : null };
+  } catch {
+    return { ids: [], active: null };
+  }
+}
+
+/** Remembers the open project tabs. Skips the write when nothing changed. */
+export function saveOpenTabs(workspaceIds, activeWorkspaceId) {
+  const ids = uniqueIds(workspaceIds);
+  const active = ids.includes(activeWorkspaceId) ? activeWorkspaceId : null;
+  try {
+    const serialized = JSON.stringify({ ids, active });
+    if (localStorage.getItem(OPEN_TABS_KEY) === serialized) return true;
+    localStorage.setItem(OPEN_TABS_KEY, serialized);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Tabs to reopen from `saved` ({ ids, active }): only workspaces that still
+ * exist, in their saved order. Each entry carries what Shell needs to open it.
+ */
+export function planOpenTabs(saved, workspaces) {
+  const all = workspaces && typeof workspaces === "object" ? workspaces : {};
+  const tabs = [];
+  for (const workspaceId of uniqueIds(saved?.ids)) {
+    const ws = all[workspaceId];
+    if (!ws || typeof ws !== "object") continue;
+    const type = normalizePage(ws.page);
+    const state = ws.state && typeof ws.state === "object" ? ws.state : null;
+    tabs.push({
+      workspaceId,
+      type,
+      name: typeof ws.name === "string" && ws.name.trim() ? ws.name : "Untitled",
+      defaultMode: type === "viewer" ? normalizeTextureMode(state?.textureMode) || "livery" : null,
+      state,
+    });
+  }
+  const active = tabs.some((tab) => tab.workspaceId === saved?.active) ? saved.active : null;
+  return { tabs, activeWorkspaceId: active };
 }

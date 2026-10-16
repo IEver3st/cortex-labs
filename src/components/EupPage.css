@@ -1,0 +1,2015 @@
+/* EUP Studio.
+   The page is a viewer workspace: it composes the shared lv-* frame, dock
+   pipeline, viewfinder slips, deck and inspector from workspace.css. This
+   sheet only adds what EUP needs on top: source rows, the outfit list, pose
+   and skin controls, the clothing component list, base slots, issues, and
+   the thumbnail dialog. */
+
+/* ── Viewport canvas ── */
+.eup-viewport-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.eup-viewport-canvas canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.eup-stage-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+  color: var(--mg-muted);
+}
+
+.eup-stage-empty > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.eup-mono {
+  font-family: var(--font-hud) !important;
+}
+
+.eup-code {
+  margin-left: 7px;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--mg-muted);
+}
+
+.eup-spin {
+  animation: eup-spin 0.8s linear infinite;
+}
+
+@keyframes eup-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.eup-error-icon {
+  color: var(--mg-destructive);
+}
+
+/* ── Dock: clothing sources ── */
+.eup-alt-link {
+  justify-self: start;
+  align-self: flex-start;
+}
+
+.eup-sources,
+.eup-files-list,
+.eup-outfits,
+.eup-body-list,
+.eup-issues,
+.eup-warnings {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eup-sources {
+  gap: 6px;
+}
+
+.eup-source {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 6px 9px 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--mg-input-bg);
+}
+
+.eup-source-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--mg-muted);
+}
+
+.eup-source-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.eup-source-name,
+.eup-source-folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-source-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.eup-source-folder {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+/* ── Dock: addon pieces ── */
+.eup-step-count {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
+.eup-pieces {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eup-piece {
+  display: grid;
+  gap: 8px;
+  padding: 9px 6px 10px 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--mg-input-bg);
+}
+
+.eup-piece-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.eup-piece-head .eup-error-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.eup-piece-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-piece:not(.is-worn) .eup-piece-name {
+  color: var(--mg-muted);
+}
+
+.eup-piece-body {
+  display: grid;
+  gap: 7px;
+  padding-right: 4px;
+}
+
+.eup-piece-texture {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--font-hud);
+  font-size: 11px;
+}
+
+.eup-piece-texture svg {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  color: var(--mg-muted);
+}
+
+.eup-piece-texture > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-piece-texture > span.is-empty {
+  color: var(--mg-muted);
+}
+
+.eup-piece-texture .lv-link {
+  flex-shrink: 0;
+  font-family: var(--font-main);
+}
+
+.eup-piece .lv-slot-note {
+  margin: 0;
+}
+
+.eup-comp-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.eup-comp-note b {
+  font-weight: 600;
+  color: var(--mg-fg);
+}
+
+.eup-files {
+  display: grid;
+  gap: 4px;
+}
+
+.eup-files-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  height: 26px;
+  padding: 0 6px 0 2px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.eup-files-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.eup-files-toggle:hover {
+  background: var(--cx-wash);
+  color: var(--mg-fg);
+}
+
+.eup-files-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding-left: 22px;
+  border-radius: 6px;
+}
+
+.eup-files-list li:hover {
+  background: var(--cx-wash);
+}
+
+.eup-files-list li > span {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-files-list .cx-icon-btn,
+.eup-outfit .cx-icon-btn {
+  opacity: 0;
+}
+
+.eup-files-list li:hover .cx-icon-btn,
+.eup-files-list li:focus-within .cx-icon-btn,
+.eup-outfit:hover .cx-icon-btn,
+.eup-outfit:focus-within .cx-icon-btn {
+  opacity: 1;
+}
+
+.eup-note-action {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* A long message (often a path) keeps the line beside its dot and the
+   actions drop under it, instead of squeezing it into a narrow column. */
+.lv-slot-note:has(> .eup-note-action) {
+  flex-wrap: wrap;
+}
+
+.lv-slot-note:has(> .eup-note-action) > span:not(.lv-dot) {
+  max-width: calc(100% - 15px);
+}
+
+.eup-note-action + .eup-note-action {
+  margin-left: 0;
+}
+
+/* ── Dock: ped ── */
+.eup-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eup-field-value {
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.eup-tones {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.eup-tone {
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 18%, transparent);
+  cursor: pointer;
+  transition: box-shadow 140ms var(--cx-ease);
+}
+
+.eup-tone:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 45%, transparent);
+}
+
+/* Chosen tone: an opposite-ink ring with a paper gap. */
+.eup-tone.is-on {
+  box-shadow:
+    0 0 0 2px var(--mg-bg),
+    0 0 0 4px var(--cx-invert-bg);
+}
+
+.eup-tone:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* ── Dock: outfits ── */
+.eup-outfit-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.eup-input {
+  height: 28px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.eup-input::placeholder {
+  color: var(--mg-muted);
+}
+
+.eup-input:focus {
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.eup-outfits {
+  gap: 2px;
+}
+
+.eup-outfit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px 28px;
+  align-items: center;
+  gap: 2px;
+  padding-right: 2px;
+  border-radius: 6px;
+  transition: background-color 140ms var(--cx-ease);
+}
+
+.eup-outfit:hover {
+  background: var(--cx-wash);
+}
+
+.eup-outfit-apply {
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.eup-outfit-apply:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+/* ── Viewfinder: mode slip ── */
+/* Sits under the Workbench / Showroom switch. */
+.eup-modes {
+  position: absolute;
+  top: calc(var(--lv-inset) + 50px);
+  left: var(--lv-inset);
+  display: grid;
+  gap: 6px;
+  max-width: min(280px, 40%);
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+
+.eup-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.eup-mode > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-mode b {
+  font-weight: 650;
+}
+
+.eup-mode .lv-link {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.eup-mode svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.eup-mode.is-error {
+  color: var(--mg-destructive);
+}
+
+/* ── Inspector ── */
+.eup-tab-count {
+  margin-left: 6px;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--mg-muted);
+}
+
+.eup-tab-count.is-error {
+  color: var(--mg-destructive);
+}
+
+.eup-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  flex-shrink: 0;
+  padding: 11px 16px 12px;
+  border-top: 1px solid var(--mg-border);
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.eup-keys > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.eup-keys > span .cx-keycap:last-of-type {
+  margin-right: 4px;
+}
+
+/* Clothing: one section per component. */
+.eup-comp-list {
+  display: grid;
+  margin: 0 -16px;
+}
+
+.eup-comp {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+/* The component the arrow keys act on. */
+.eup-comp::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--mg-primary);
+  transform: scaleY(0);
+  transition: transform 180ms var(--cx-ease);
+}
+
+.eup-comp.is-focused::before {
+  transform: scaleY(1);
+}
+
+.eup-comp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.eup-comp-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-comp-state {
+  display: inline-grid;
+  place-items: center;
+}
+
+.eup-comp-state svg {
+  width: 14px;
+  height: 14px;
+}
+
+.eup-comp-count {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.eup-comp-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.eup-comp-actions .cx-icon-btn.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.eup-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.eup-chip {
+  min-width: 44px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), border-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.eup-chip:hover:not(:disabled) {
+  background: var(--cx-wash);
+}
+
+.eup-chip.is-selected {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.eup-chip:disabled {
+  border-style: dashed;
+  color: var(--mg-muted);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.eup-chip.is-variant {
+  min-width: 30px;
+  text-transform: uppercase;
+}
+
+.eup-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.eup-variants {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.eup-variants .cx-label {
+  margin-right: 6px;
+}
+
+.eup-variants-empty {
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.eup-inspect {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.eup-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px 14px;
+  margin: 0;
+}
+
+.eup-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-warnings {
+  gap: 4px;
+}
+
+/* Body: one card per game slot. Pick with the arrows or by number; the pack
+   the number comes from and its texture letters sit right under it. */
+.eup-body-list {
+  gap: 6px;
+}
+
+.eup-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px 10px 12px 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--mg-input-bg);
+}
+
+.eup-body.is-off,
+.eup-body.is-replaced {
+  padding-bottom: 10px;
+  background: transparent;
+}
+
+.eup-body-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.eup-body-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-body.is-off .eup-body-name,
+.eup-body.is-replaced .eup-body-name {
+  color: var(--mg-muted);
+}
+
+.eup-body-head .cx-icon-btn.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.eup-body-state {
+  display: inline-grid;
+  place-items: center;
+}
+
+.eup-body-state svg {
+  width: 14px;
+  height: 14px;
+}
+
+.eup-body-note {
+  margin: -2px 0 0;
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.eup-body-pick {
+  display: grid;
+  grid-template-columns: 28px 64px 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+}
+
+.eup-body-number {
+  width: 64px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.eup-body-number:focus {
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.eup-body-meta {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding-left: 6px;
+}
+
+.eup-body-pack,
+.eup-body-count {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-body-pack {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.eup-body-count {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+.eup-body-meta.is-missing .eup-body-pack {
+  color: var(--mg-destructive);
+}
+
+.eup-body .eup-variants {
+  padding-top: 2px;
+}
+
+/* Hair colour */
+.eup-hair-swatches {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.eup-hair-swatch {
+  height: 22px;
+}
+
+/* Custom colour: a dashed plus until a colour outside the presets is chosen. */
+.eup-hair-custom {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-muted) 60%, transparent);
+  cursor: pointer;
+}
+
+.eup-hair-custom::after {
+  content: "+";
+  font-size: 14px;
+  line-height: 1;
+  color: var(--mg-muted);
+  pointer-events: none;
+}
+
+.eup-hair-custom.is-on {
+  background: var(--chip);
+}
+
+.eup-hair-custom.is-on::after {
+  content: none;
+}
+
+.eup-hair-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.eup-hair-custom:focus-within {
+  box-shadow: var(--cx-focus);
+}
+
+/* Issues */
+.eup-issues-count {
+  display: inline-flex;
+  gap: 10px;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.eup-issues-count .is-error {
+  color: var(--mg-destructive);
+}
+
+.eup-issues {
+  gap: 2px;
+}
+
+.eup-issue {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: 6px;
+}
+
+.eup-issue:hover {
+  background: var(--cx-wash);
+}
+
+.eup-issue-icon {
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  color: var(--cx-caution);
+}
+
+.eup-issue.is-error .eup-issue-icon {
+  color: var(--mg-destructive);
+}
+
+.eup-issue-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.eup-issue-message {
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.eup-issue-path {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Empty states */
+.eup-empty {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.eup-empty-icon {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 4px;
+  color: var(--mg-muted);
+}
+
+.eup-empty-icon.is-ok {
+  color: var(--cx-confirm);
+}
+
+.eup-empty-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--mg-fg);
+}
+
+.eup-empty-desc {
+  max-width: 300px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+}
+
+/* ── Thumbnail dialog ── */
+.eup-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 9, 11, 0.6);
+}
+
+.eup-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(460px, 100%);
+  max-height: 100%;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+  color: var(--mg-fg);
+  animation: eup-dialog-in 160ms var(--cx-ease);
+}
+
+@keyframes eup-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.eup-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 16px 6px 22px;
+}
+
+.eup-dialog-title {
+  margin: 0;
+  font-size: 28px;
+}
+
+.eup-dialog-body {
+  display: grid;
+  gap: 14px;
+  padding: 12px 22px 20px;
+  overflow-y: auto;
+}
+
+.eup-dialog-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.eup-dialog-label {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.eup-dialog-note,
+.eup-dialog-status,
+.eup-dialog-error,
+.eup-dialog-dest {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.eup-dialog-note code,
+.eup-dialog-failures code {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-fg);
+}
+
+.eup-dialog-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mg-fg);
+}
+
+.eup-dialog-status svg {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+}
+
+.eup-dialog-status.is-done svg {
+  color: var(--cx-confirm);
+}
+
+.eup-dialog-status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-dialog-dest {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-dialog-error {
+  color: var(--mg-destructive);
+}
+
+.eup-dialog-failures ul {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.eup-dialog-failures li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.eup-dialog-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+.eup-import-entry {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+
+.eup-import-entry .cx-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Character import dialog ── */
+.eup-dialog.eup-import {
+  width: min(540px, 100%);
+}
+
+.eup-import .lv-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.eup-import-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eup-import-list {
+  display: grid;
+  max-height: 232px;
+  margin: 0;
+  padding: 3px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+}
+
+.eup-import-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-fg);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.eup-import-row:hover {
+  background: var(--cx-wash);
+}
+
+.eup-import-row.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.eup-import-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.eup-import-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-import-meta {
+  flex-shrink: 0;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+.eup-import-row.is-on .eup-import-meta {
+  color: var(--cx-invert-muted);
+}
+
+.eup-import-paste {
+  display: grid;
+  gap: 6px;
+}
+
+.eup-import-text {
+  width: 100%;
+  min-height: 84px;
+  padding: 8px 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  line-height: 1.45;
+  resize: vertical;
+  word-break: break-all;
+}
+
+.eup-import-text:focus {
+  outline: none;
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.eup-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.eup-import-plan {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.eup-import-plan .is-warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mg-fg);
+}
+
+.eup-import-plan .is-warn svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--cx-caution);
+}
+
+.eup-import-skipped ul {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0 0 20px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.eup-import-slot {
+  font-weight: 600;
+  color: var(--mg-fg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eup-import-row {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .eup-import-row.is-on {
+    outline: 2px solid Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eup-spin {
+    animation-duration: 1.6s;
+  }
+  .eup-dialog {
+    animation: none;
+  }
+  .eup-comp::before,
+  .eup-tone,
+  .eup-chip,
+  .eup-outfit,
+  .eup-files-toggle,
+  .eup-input,
+  .eup-body-number {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .eup-chip.is-selected,
+  .eup-tone.is-on,
+  .eup-comp-actions .cx-icon-btn.is-on {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* Body presets: two swatches (skin, hair) and a label; the chosen one is opposite ink. */
+.eup-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eup-preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--mg-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), border-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.eup-preset:hover {
+  background: var(--cx-wash);
+}
+
+.eup-preset:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.eup-preset.is-on {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.eup-preset-swatches {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.eup-preset-swatches span {
+  width: 14px;
+  height: 20px;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 18%, transparent);
+}
+
+.eup-preset-swatches span:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.eup-preset-swatches span:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.eup-preset-label {
+  min-width: 0;
+}
+
+.eup-preset:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.eup-preset:disabled:hover {
+  background: transparent;
+}
+
+/* Outfit generator: style choices in the preset grid, denser. */
+.eup-preset.is-compact {
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.eup-gen-group + .eup-gen-group {
+  margin-top: 10px;
+}
+
+.eup-gen-kind {
+  margin: 0 0 6px;
+  color: var(--mg-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.eup-gen-icon {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  color: var(--cx-invert-muted);
+}
+
+.eup-preset:not(.is-on) .eup-gen-icon {
+  color: var(--mg-muted);
+}
+
+.eup-gen-result {
+  display: grid;
+  gap: 2px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.eup-gen-name {
+  color: var(--mg-fg);
+  font-weight: 600;
+}
+
+.eup-gen-extras {
+  color: var(--mg-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eup-preset {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .eup-preset.is-on {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* ── Inspector: five tabs share the 294px column ── */
+.eup-inspector .lv-tabs {
+  gap: 0;
+  padding: 8px 8px 0;
+}
+
+.eup-inspector .lv-tab {
+  flex: 1 1 auto;
+  padding: 0 6px;
+}
+
+.eup-inspector .lv-tab::after {
+  right: 6px;
+  left: 6px;
+}
+
+/* ── Export: frame guide on the viewfinder ──
+   The capture is the largest output-shaped area inside the viewfinder
+   (shotFov / guideRect in lib/eup-export.js); container units draw the same
+   rectangle without measuring the canvas. */
+.eup-guide {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  container-type: size;
+}
+
+.eup-guide-frame {
+  position: relative;
+  width: min(100cqw, 100cqh * var(--eup-guide-ratio));
+  height: min(100cqh, 100cqw / var(--eup-guide-ratio));
+  outline: 1px solid rgb(255 255 255 / 0.55);
+  outline-offset: -1px;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.5);
+}
+
+.eup-guide-label {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.62);
+  color: #ffffff;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+/* ── Export panel ── */
+.eup-export-size {
+  margin: -6px 0 0;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+}
+
+.eup-export-secondary {
+  justify-self: start;
+}
+
+.eup-run {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: 9px;
+}
+
+.eup-run.is-confirm {
+  border-color: color-mix(in srgb, var(--cx-caution) 45%, transparent);
+}
+
+.eup-run.is-error {
+  border-color: color-mix(in srgb, var(--mg-destructive) 45%, transparent);
+}
+
+.eup-run p {
+  margin: 0;
+  color: var(--mg-fg);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.eup-run code,
+.eup-run-error {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.eup-run .eup-run-error {
+  color: var(--mg-destructive);
+}
+
+.eup-run-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eup-run-line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-run-line svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.eup-run > .cx-btn {
+  justify-self: start;
+}
+
+@media (forced-colors: active) {
+  .eup-guide-frame {
+    outline-color: CanvasText;
+  }
+}
+
+/* ── Dock: pose, custom animation and held props ── */
+.eup-anim {
+  gap: 8px;
+}
+
+.eup-anim-current {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eup-anim-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eup-search-field {
+  position: relative;
+  display: flex;
+}
+
+.eup-search-field svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  color: var(--mg-muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.eup-search-field .eup-input {
+  flex: 1;
+  padding-left: 29px;
+}
+
+.eup-anim-results {
+  display: flex;
+  flex-direction: column;
+  max-height: 188px;
+  margin: 0;
+  padding: 2px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+}
+
+.eup-anim-result {
+  display: block;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-size: 11.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease);
+}
+
+.eup-anim-result:hover {
+  background: var(--cx-wash);
+}
+
+.eup-anim-result:active {
+  background: var(--cx-wash-strong);
+}
+
+.eup-anim-result:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.eup-clip-duration {
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 11px;
+}
+
+.eup-emote-toggle {
+  align-self: flex-start;
+}
+
+.eup-emote {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.eup-emote-text {
+  width: 100%;
+  height: auto;
+  min-height: 76px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.eup-held-field {
+  gap: 8px;
+}
+
+.eup-held-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eup-held {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--mg-input-bg);
+}
+
+.eup-held-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.eup-held-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-held-source {
+  flex-shrink: 0;
+  color: var(--mg-muted);
+  font-size: 11px;
+}
+
+.eup-held-bone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eup-held-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.eup-num {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.eup-num-label {
+  color: var(--mg-muted);
+  font-size: 10.5px;
+}
+
+.eup-num .eup-input {
+  width: 100%;
+  padding: 0 6px;
+  font-size: 11.5px;
+}
+
+/* ── Pose: selected held prop (the gizmo is on it) ── */
+.eup-held.is-selected {
+  border-color: var(--cx-invert-bg);
+  box-shadow: inset 0 0 0 1px var(--cx-invert-bg);
+}
+
+/* ── Pose: clip timeline ── */
+.eup-timeline {
+  gap: 9px;
+}
+
+.eup-timeline-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.eup-timeline-scrub {
+  flex: 1;
+  min-width: 0;
+}
+
+.eup-timeline-scrub .lv-slider-label {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
+/* On a narrow dock the time drops under the frame, and only then breaks
+   between its two figures (each keeps its unit). */
+.eup-timeline-scrub .lv-slider-head {
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+}
+
+.eup-timeline-scrub .lv-slider-value {
+  margin-left: auto;
+  text-align: right;
+}
+
+/* Speed keeps room for its four figures; Loop moves under it when the dock
+   is too narrow for both. */
+.eup-timeline-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.eup-timeline-opts .lv-seg {
+  flex: 1 1 calc(4 * 40px);
+}
+
+.eup-timeline-loop {
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Four characters in two rows: the dock is too narrow for four labels side by side. */
+.eup-character-seg {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* ── Scene: props on set ── */
+.eup-set-count {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
+.eup-set-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eup-set-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: 6px;
+  transition: background-color 140ms var(--cx-ease);
+}
+
+.eup-set-row:hover {
+  background: var(--cx-wash);
+}
+
+.eup-set-row.is-selected {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.eup-set-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 5px 4px 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.eup-set-main:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.eup-set-icon {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  color: var(--mg-muted);
+}
+
+.eup-set-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.eup-set-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-set-meta {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eup-set-meta.is-error {
+  color: var(--mg-destructive);
+}
+
+.eup-set-row.is-selected .eup-set-icon,
+.eup-set-row.is-selected .eup-set-meta:not(.is-error) {
+  color: var(--cx-invert-muted);
+}
+
+.eup-set-row.is-hidden .eup-set-name,
+.eup-set-row.is-hidden .eup-set-icon {
+  opacity: 0.5;
+}
+
+.eup-set-state {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  color: var(--mg-muted);
+}
+
+.eup-set-state.is-error {
+  color: var(--mg-destructive);
+}
+
+.eup-set-actions {
+  display: flex;
+  padding-right: 4px;
+  opacity: 0;
+  transition: opacity 140ms var(--cx-ease);
+}
+
+.eup-set-row:hover .eup-set-actions,
+.eup-set-row:focus-within .eup-set-actions,
+.eup-set-row.is-selected .eup-set-actions,
+.eup-set-row.is-hidden .eup-set-actions {
+  opacity: 1;
+}
+
+.eup-set-row.is-selected .cx-icon-btn {
+  color: var(--cx-invert-muted);
+}
+
+.eup-set-row.is-selected .cx-icon-btn:hover {
+  background: color-mix(in srgb, var(--cx-invert-fg) 10%, transparent);
+  color: var(--cx-invert-fg);
+}
+
+.eup-set-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0 10px 8px 35px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-destructive);
+  overflow-wrap: anywhere;
+}
+
+.eup-set-note.is-warn {
+  color: var(--cx-caution);
+}
+
+.eup-set-row.is-selected .eup-set-note {
+  color: color-mix(in srgb, var(--mg-destructive) 70%, var(--cx-invert-fg));
+}
+
+.eup-set-row.is-selected .eup-set-note .lv-link {
+  color: var(--cx-invert-fg);
+}
+
+.eup-set-selected {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Each field keeps room for a signed four-decimal value; the four wrap to
+   two or three columns in a narrow inspector. */
+.eup-set-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 6px;
+}
+
+.eup-set-foot {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.eup-undo-note {
+  align-items: center;
+}
+
+.eup-undo-note .lv-link {
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eup-set-row,
+  .eup-set-actions {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .eup-set-row.is-selected,
+  .eup-held.is-selected {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}

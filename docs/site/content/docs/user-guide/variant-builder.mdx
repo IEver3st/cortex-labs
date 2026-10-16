@@ -15,29 +15,52 @@ A PSD is treated as the source-of-truth. Cortex Studio parses its layer tree and
 
 A **variant** is a saved set of layer visibilities.
 
-- Base variant exists by default.
-- Variants can be duplicated and renamed.
-- Each variant can be locked to prevent accidental edits.
+- A Base variant exists by default and cannot be deleted.
+- Variants can be added, duplicated, renamed (double-click), and deleted from the list or its right-click menu. Delete asks nothing; **Undo** under the list brings the variant back.
+- **Undo** and **Redo** beside the variant count (Ctrl + Z, Ctrl + Shift + Z or Ctrl + Y) step back and forward through variant and layer changes: layer visibility, renames, adds, duplicates and deletes. The last 100 steps are kept until you open or reload a file.
+- A dot next to a variant means its layers differ from Base.
+
+## Layout
+
+- **Pipeline (left):** the layered file (`.psd`, `.pdn`, or `.ai`), an optional vehicle model, and the variant list. Export sits at the bottom.
+- **Stage (centre):** the current variant on the vehicle and as a flat texture. With both loaded, switch between Vehicle, Split, and Texture at the top left.
+- **Layers (right):** the layers of the selected variant. Turn on **Legacy Layers Layout** in Settings to dock this panel under the stage instead.
 
 ## Typical workflow
 
-1. Load a `.psd`.
-2. Load a model for 3D preview (optional but recommended).
-3. Create variants like “Base”, “Night”, “HiVis”, “Stealth”.
-4. Toggle layer visibility per variant.
+1. Open a layered file.
+2. Add a vehicle model for 3D preview (optional but recommended).
+3. Create variants like “Night”, “HiVis”, “Stealth”.
+4. Click layers to show or hide them in the selected variant.
 5. Export all variants to PNG.
 
 ## Layer controls
 
-- Toggle layers on/off.
-- Collapse/expand groups.
-- Solo workflows exist for quickly isolating one layer while you inspect.
+- Click a layer to show or hide it.
+- Use the group checkbox to show or hide every layer in a group, and the arrow to collapse it.
+- Double-click a layer inside a group to show only that layer in the group.
+- Search by name, or filter to Visible layers or layers Changed from the source file.
+- In a `.pdn`, the shown layers combine exactly as Paint.NET flattens them, with each layer's opacity and blend mode. A shown layer with a blend mode Paint.NET doesn't have stops the preview, and the error names it: hide that layer, or set it to Normal in Paint.NET.
 
 ## Export
 
-- Configure export size (up to 4096).
-- Pick an output folder.
-- Export all variants in one pass.
+- Choose a size from 512 to 4096. A non-square source keeps its proportions, with the long side at that size; pick **Square** under Shape to stretch it to a square instead. The line under the size shows the exact output size.
+- Pick an output folder. Each variant is saved as `<variant name>.png`. If any of those files already exist, export asks before replacing them.
+- With a vehicle loaded, **Save vehicle renders** also saves `<variant name>_render.png`: the variant on the vehicle from the vehicle pane's current view, with your watermark when one is set. The vehicle must be showing (Vehicle or Split) and loaded. Variants export as PNG only; open the source file to edit layers.
+- Export every variant at once, or only the selected one.
+- If two variants would save to the same file name, export stays disabled until you rename one.
+- The result line says how many files were written, or where it stopped and why.
+
+## Shortcuts
+
+| Action | Shortcut |
+| --- | --- |
+| Export the selected variant | Ctrl + E |
+| Export every variant | Ctrl + Shift + E |
+| Show or hide the pipeline | Ctrl + B |
+| Show or hide layers | \\ (Toggle Control Panel), or Ctrl + \\ |
+| Fit the texture | F |
+| Undo / redo a variant or layer change | Ctrl + Z / Ctrl + Shift + Z (or Ctrl + Y) |
 
 If you want consistent output locations, set a default folder in Settings.
 

@@ -46,7 +46,7 @@ test("resolves system, light, and dark schemes deterministically", () => {
 
 test("ships unique, complete theme presets and normalizes unknown values", () => {
   const ids = THEME_PRESETS.map((preset) => preset.id);
-  assert.equal(ids.length, 12);
+  assert.equal(ids.length, 13);
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(normalizeThemePreset("ocean"), "ocean");
   assert.equal(normalizeThemePreset("unknown"), DEFAULT_THEME_PRESET);

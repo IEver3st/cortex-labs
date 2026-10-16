@@ -49,3 +49,14 @@ test("rotated model bounds produce a new centered frame", () => {
   geometry.dispose();
   mesh.material.dispose();
 });
+
+test("camera framing accepts a custom direction and a closer minimum distance", () => {
+  const bounds = new THREE.Box3(new THREE.Vector3(-0.05, -0.05, -0.05), new THREE.Vector3(0.05, 0.05, 0.05));
+  const framing = buildCameraFraming({ bounds, direction: new THREE.Vector3(0, 0, 3), minDistance: 0.3 });
+  assert.ok(framing.distance < 2.4, "a small minimum lets the camera come closer than the default");
+  assert.ok(framing.distance >= 0.3);
+  assertVectorClose(framing.position.clone().sub(framing.target).normalize(), new THREE.Vector3(0, 0, 1));
+  const fallback = buildCameraFraming({ bounds, direction: new THREE.Vector3(0, 0, 0) });
+  assert.equal(fallback.presetKey, DEFAULT_CAMERA_PRESET);
+  assert.ok(fallback.distance >= 2.4, "the default minimum still applies");
+});

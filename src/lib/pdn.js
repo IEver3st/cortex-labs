@@ -1,1200 +1,832 @@
 /**
- * Paint.NET (.pdn) File Parser — Full Layer Support
+ * Paint.NET (.pdn) reader.
  *
- * PDN3 file structure:
- *   1. "PDN3" magic (4 bytes)
- *   2. Header size (3 bytes LE, zero-padded to 4)
- *   3. XML header (width, height, version, thumbnail)
- *   4. 0x00 0x01 indicator bytes
- *   5. NRBF serialized .NET Document object (layer metadata)
- *   6. Per-layer chunked bitmap data (BGRA 32bpp, optionally gzip-compressed)
+ * A PDN3 file is "PDN3", a 24-bit little-endian header length, an XML header
+ * (`<pdnImage width height layers ...>`), the bytes 0x00 0x01, a .NET
+ * BinaryFormatter (NRBF) document that describes the layers, and then each
+ * layer's pixels as "deferred" chunks after the document.
  *
- * This parser uses a hybrid approach:
- *   - XML header parsing for reliable canvas dimensions
- *   - Targeted NRBF field extraction for layer metadata
- *   - Structured chunk reading for per-layer bitmap data
+ * The layer list is read from the document (Document -> LayerList ->
+ * BitmapLayer -> LayerProperties / BitmapLayerProperties / Surface ->
+ * MemoryBlock), the same way the native decoder in `src-tauri/src/pdn.rs`
+ * reads it. Damaged, truncated or unsupported files throw an error that says
+ * why; nothing is guessed from the compressed data.
  */
 
 import pako from "pako";
 
-/* ═══════════════════════════════════════════════════════════
-   Constants
-   ═══════════════════════════════════════════════════════════ */
-
 const PDN_MAGIC = [0x50, 0x44, 0x4e, 0x33]; // "PDN3"
-const GZIP_MAGIC = [0x1f, 0x8b, 0x08];
-const MAX_CHUNK_START_SCAN_SIZE = 16 * 1024 * 1024;
-const MAX_PDN_CHUNK_SIZE = 64 * 1024 * 1024;
-const MAX_PDN_REASONABLE_CHUNK_COUNT = 262_144;
+const MAX_PDN_DIMENSION = 16_384;
+const MAX_PDN_OUTPUT_BYTES = 384 * 1024 * 1024;
+const MAX_PDN_CHUNK_BYTES = 64 * 1024 * 1024;
+const MAX_PDN_TOTAL_INFLATED_BYTES = 768 * 1024 * 1024;
+const MAX_HEADER_BYTES = 1024 * 1024;
+const MAX_NRBF_DEPTH = 64;
+const MAX_NRBF_MEMBERS = 4096;
 
-/** Paint.NET blend mode enum values */
-const PDN_BLEND_TYPES = {
-  0: "Normal",
-  1: "Multiply",
-  2: "Additive",
-  3: "ColorBurn",
-  4: "ColorDodge",
-  5: "Reflect",
-  6: "Glow",
-  7: "Overlay",
-  8: "Difference",
-  9: "Negation",
-  10: "Lighten",
-  11: "Darken",
-  12: "Screen",
-  13: "XOR",
-};
-
-/** Map Paint.NET blend mode class names to blend type IDs */
-const BLEND_CLASS_NAME_MAP = {
-  NormalBlendOp: 0,
-  MultiplyBlendOp: 1,
-  AdditiveBlendOp: 2,
-  ColorBurnBlendOp: 3,
-  ColorDodgeBlendOp: 4,
-  ReflectBlendOp: 5,
-  GlowBlendOp: 6,
-  OverlayBlendOp: 7,
-  DifferenceBlendOp: 8,
-  NegationBlendOp: 9,
-  LightenBlendOp: 10,
-  DarkenBlendOp: 11,
-  ScreenBlendOp: 12,
-  XorBlendOp: 13,
-};
-
-/** Map PDN blend names → Canvas2D globalCompositeOperation */
-const PDN_BLEND_TO_CANVAS = {
-  Normal: "source-over",
-  Multiply: "multiply",
-  Additive: "lighter",
-  ColorBurn: "color-burn",
-  ColorDodge: "color-dodge",
-  Reflect: "source-over",
-  Glow: "source-over",
-  Overlay: "overlay",
-  Difference: "difference",
-  Negation: "source-over",
-  Lighten: "lighten",
-  Darken: "darken",
-  Screen: "screen",
-  XOR: "xor",
-};
-
-function pdnDebug(message, details) {
-  if (details && typeof details === "object") {
-    console.debug(`[PDN Parser] ${message}`, details);
-    return;
-  }
-  console.debug(`[PDN Parser] ${message}`);
-}
-
-function pdnWarn(message, details) {
-  if (details && typeof details === "object") {
-    console.warn(`[PDN Parser] ${message}`, details);
-    return;
-  }
-  console.warn(`[PDN Parser] ${message}`);
-}
-
-/* ═══════════════════════════════════════════════════════════
-   Low-level binary helpers
-   ═══════════════════════════════════════════════════════════ */
-
-function readU8(bytes, offset) {
-  if (offset < 0 || offset >= bytes.length) return 0;
-  return bytes[offset];
-}
-
-function readU16LE(bytes, offset) {
-  if (offset < 0 || offset + 2 > bytes.length) return 0;
-  return bytes[offset] | (bytes[offset + 1] << 8);
-}
-
-function readU32LE(bytes, offset) {
-  if (offset < 0 || offset + 4 > bytes.length) return 0;
-  return (
-    bytes[offset] |
-    (bytes[offset + 1] << 8) |
-    (bytes[offset + 2] << 16) |
-    (bytes[offset + 3] << 24)
-  ) >>> 0;
-}
-
-function readU32BE(bytes, offset) {
-  if (offset < 0 || offset + 4 > bytes.length) return 0;
-  return (
-    (bytes[offset] << 24) |
-    (bytes[offset + 1] << 16) |
-    (bytes[offset + 2] << 8) |
-    bytes[offset + 3]
-  ) >>> 0;
-}
-
-function readI32LE(bytes, offset) {
-  return readU32LE(bytes, offset) | 0;
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-/* ═══════════════════════════════════════════════════════════
-   String reading helpers
-   ═══════════════════════════════════════════════════════════ */
-
-function readUtf8String(bytes, offset, length) {
-  if (offset < 0 || offset + length > bytes.length) return "";
-  const slice = bytes.subarray(offset, offset + length);
-  try {
-    return new TextDecoder("utf-8").decode(slice);
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Read a .NET BinaryFormatter length-prefixed string.
- * The length is encoded as a 7-bit variable-length integer (same as LEB128 unsigned).
- * Returns { value, bytesRead } or null on failure.
- */
-function readLengthPrefixedString(bytes, offset) {
-  let length = 0;
-  let shift = 0;
-  let pos = offset;
-  for (let i = 0; i < 5; i++) {
-    if (pos >= bytes.length) return null;
-    const b = bytes[pos++];
-    length |= (b & 0x7f) << shift;
-    shift += 7;
-    if ((b & 0x80) === 0) break;
-  }
-  if (length <= 0) return { value: "", bytesRead: pos - offset };
-  if (pos + length > bytes.length) return null;
-  const value = readUtf8String(bytes, pos, length);
-  return { value, bytesRead: pos - offset + length };
-}
-
-/* ═══════════════════════════════════════════════════════════
-   Magic & header parsing
-   ═══════════════════════════════════════════════════════════ */
+/** Paint.NET's blend modes in `LayerBlendMode` order: the enum value is the index. */
+const PDN_BLEND_MODES = [
+  "Normal", "Multiply", "Additive", "ColorBurn", "ColorDodge", "Reflect", "Glow",
+  "Overlay", "Difference", "Negation", "Lighten", "Darken", "Screen", "Xor",
+];
 
 export function isPdnFile(bytes) {
   if (!bytes || bytes.length < 4) return false;
-  return (
-    bytes[0] === PDN_MAGIC[0] &&
-    bytes[1] === PDN_MAGIC[1] &&
-    bytes[2] === PDN_MAGIC[2] &&
-    bytes[3] === PDN_MAGIC[3]
-  );
+  return PDN_MAGIC.every((value, index) => bytes[index] === value);
 }
 
-/**
- * Parse the PDN3 XML header to extract canvas dimensions.
- * Returns { width, height, headerEnd } or null.
- */
-function parseXmlHeader(bytes) {
-  if (bytes.length < 11) return null;
+/* ── Header ── */
 
-  // Header size: 3 bytes LE (24-bit), padded to 32-bit
-  const headerSize =
-    bytes[4] | (bytes[5] << 8) | (bytes[6] << 16);
-
-  if (headerSize <= 0 || headerSize > 1024 * 1024) return null;
-
-  const headerStart = 7;
-  const headerEnd = headerStart + headerSize;
-  if (headerEnd > bytes.length) return null;
-
-  const xml = readUtf8String(bytes, headerStart, headerSize);
-
-  let width = 0;
-  let height = 0;
-
-  // Extract width
-  const wMatch = xml.match(/<pdnImage[^>]*\bwidth="(\d+)"/i) ||
-    xml.match(/<width>(\d+)<\/width>/i) ||
-    xml.match(/width="(\d+)"/i);
-  if (wMatch) width = parseInt(wMatch[1], 10);
-
-  // Extract height
-  const hMatch = xml.match(/<pdnImage[^>]*\bheight="(\d+)"/i) ||
-    xml.match(/<height>(\d+)<\/height>/i) ||
-    xml.match(/height="(\d+)"/i);
-  if (hMatch) height = parseInt(hMatch[1], 10);
-
-  if (width <= 0 || height <= 0) return null;
-
-  return { width, height, headerEnd };
+function xmlAttribute(tag, name) {
+  const needle = ` ${name}="`;
+  const start = tag.indexOf(needle);
+  if (start < 0) return null;
+  const valueStart = start + needle.length;
+  const end = tag.indexOf('"', valueStart);
+  return end < 0 ? null : tag.slice(valueStart, end);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   NRBF Layer Metadata Extraction
-   
-   Rather than fully deserializing the NRBF object graph,
-   we scan for known .NET field patterns to extract layer
-   metadata (names, visibility, opacity, blend modes).
-   ═══════════════════════════════════════════════════════════ */
+function parseUnsigned(value) {
+  return value != null && /^\d+$/.test(value) ? Number(value) : null;
+}
 
-/**
- * Find all occurrences of a UTF-8 string in the byte array.
- */
-function findAllOccurrences(bytes, searchStr, maxOffset) {
-  const offsets = [];
-  const encoded = new TextEncoder().encode(searchStr);
-  const limit = Math.min(bytes.length - encoded.length, maxOffset || bytes.length);
-  for (let i = 0; i <= limit; i++) {
-    let match = true;
-    for (let j = 0; j < encoded.length; j++) {
-      if (bytes[i + j] !== encoded[j]) { match = false; break; }
-    }
-    if (match) offsets.push(i);
+function parseHeader(bytes) {
+  if (!isPdnFile(bytes) || bytes.length < 7) {
+    throw new Error("Not a Paint.NET file (missing PDN3 signature).");
   }
-  return offsets;
+  const length = bytes[4] | (bytes[5] << 8) | (bytes[6] << 16);
+  const xmlEnd = 7 + length;
+  if (length === 0 || length > MAX_HEADER_BYTES || xmlEnd + 2 > bytes.length) {
+    throw new Error("The .pdn header is damaged or the file is truncated.");
+  }
+  const xml = new TextDecoder("utf-8").decode(bytes.subarray(7, xmlEnd));
+  const tagStart = xml.indexOf("<pdnImage");
+  const tagEnd = tagStart < 0 ? -1 : xml.indexOf(">", tagStart);
+  if (tagEnd < 0) throw new Error("The .pdn header has no image description.");
+  const tag = xml.slice(tagStart, tagEnd);
+  const dimension = (name) => {
+    const value = parseUnsigned(xmlAttribute(tag, name));
+    if (value == null) throw new Error(`The .pdn header has no valid image ${name}.`);
+    return value;
+  };
+  const width = dimension("width");
+  const height = dimension("height");
+  const layers = parseUnsigned(xmlAttribute(tag, "layers"));
+  const marker0 = bytes[xmlEnd];
+  const marker1 = bytes[xmlEnd + 1];
+  if (marker0 === 0x1f && marker1 === 0x8b) {
+    throw new Error(
+      "This .pdn uses an older compressed layout that can't be read. Open and save it in a current Paint.NET, or save a PNG copy.",
+    );
+  }
+  if (marker0 !== 0x00 || marker1 !== 0x01) {
+    throw new Error("The .pdn document layout is not recognised.");
+  }
+  return { width, height, layers, bodyStart: xmlEnd + 2 };
 }
 
-/**
- * Extract layer names from the NRBF serialized data.
- * Layer names appear as length-prefixed strings associated with the
- * `Layer+properties.name` field or near `BitmapLayer` class references.
- */
-function extractLayerMetadata(bytes, startOffset, layerCount) {
-  const metadata = [];
-  const searchRegion = bytes.subarray(startOffset);
-  const regionLen = searchRegion.length;
+/* ── NRBF ([MS-NRBF]) document ──
+   Only the records BinaryFormatter writes for object graphs: class, string,
+   array, reference and null records. Member values are kept as
+   { kind: "bool" | "int" | "str" | "ref" | "obj" | "null" | "other", ... }. */
 
-  // Strategy: find "name" field references near layer property blocks
-  // In NRBF, property values follow their field definitions
-  // We look for patterns characteristic of Paint.NET's serialization
+const NULL_VALUE = Object.freeze({ kind: "null" });
+const OTHER_VALUE = Object.freeze({ kind: "other" });
 
-  // Find all length-prefixed strings that look like layer names
-  // They appear near known field markers
-  const nameFieldOffsets = findAllOccurrences(
-    searchRegion, "name", regionLen,
-  );
+const PRIMITIVE_SIZES = {
+  1: 1, 2: 1, 10: 1,
+  7: 2, 14: 2,
+  8: 4, 11: 4, 15: 4,
+  6: 8, 9: 8, 12: 8, 13: 8, 16: 8,
+  17: 0,
+};
 
-  // Find blend op class name references
-  const blendOpOffsets = findAllOccurrences(
-    searchRegion, "BlendOp", regionLen,
-  );
-
-  // Find "visible" field references
-  const visibleOffsets = findAllOccurrences(
-    searchRegion, "visible", regionLen,
-  );
-
-  // Find "opacity" field references
-  const opacityOffsets = findAllOccurrences(
-    searchRegion, "opacity", regionLen,
-  );
-
-  // Find "isBackground" field references
-  const bgOffsets = findAllOccurrences(
-    searchRegion, "isBackground", regionLen,
-  );
-
-  // Try to extract structured layer info by scanning for property blocks
-  // Each BitmapLayer has a Layer_properties object with name, visible, opacity, etc.
-  // We look for sequential fields
-
-  // First, try to find layer property class instances
-  // The NRBF format stores class info with member names, then instances with values
-  const layerPropBlocks = findLayerPropertyBlocks(searchRegion);
-
-  if (layerPropBlocks.length > 0) {
-    return layerPropBlocks;
+class NrbfReader {
+  constructor(bytes, pos) {
+    this.bytes = bytes;
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.pos = pos;
+    this.classes = new Map();
+    /** Objects in the order their records finished, as the native reader keeps them. */
+    this.objects = [];
+    this.strings = new Map();
+    /** Non-null elements of object and string arrays: id -> [[index, value]]. */
+    this.arrays = new Map();
+    this.decoder = new TextDecoder("utf-8");
   }
 
-  // Fallback: scan for string values that look like layer names
-  // near known field markers
-  return extractLayerMetadataByScanning(searchRegion, layerCount);
-}
-
-/**
- * Scan the NRBF data for layer property value blocks.
- * In BinaryFormatter output, after class member definitions,
- * instance values appear in member order.
- *
- * For Paint.NET Layer+properties, the typical members are:
- *   name (string), visible (bool), isBackground (bool), opacity (byte/int)
- *   plus a blendOp reference
- */
-function findLayerPropertyBlocks(data) {
-  const layers = [];
-
-  // Look for the Layer properties class definition which lists field names
-  // The field names "name", "visible", "isBackground", "opacity" appear
-  // consecutively in the class metadata record
-
-  // Scan for "visible" as a length-prefixed string in NRBF
-  // It would appear as: 0x07 "visible" (7 bytes)
-  const visibleMarker = [0x07, 0x76, 0x69, 0x73, 0x69, 0x62, 0x6c, 0x65];
-
-  for (let i = 0; i < data.length - 64; i++) {
-    // Check for the "visible" field name
-    let isVisibleField = true;
-    for (let j = 0; j < visibleMarker.length; j++) {
-      if (data[i + j] !== visibleMarker[j]) { isVisibleField = false; break; }
-    }
-    if (!isVisibleField) continue;
-
-    // Look backward for "name" field (4 bytes: 0x04 "name")
-    const nameMarker = [0x04, 0x6e, 0x61, 0x6d, 0x65];
-    let nameFieldPos = -1;
-    for (let back = 1; back < 64; back++) {
-      const pos = i - back;
-      if (pos < 0) break;
-      let found = true;
-      for (let j = 0; j < nameMarker.length; j++) {
-        if (data[pos + j] !== nameMarker[j]) { found = false; break; }
-      }
-      if (found) { nameFieldPos = pos; break; }
-    }
-
-    if (nameFieldPos >= 0) {
-      // We found the class member definition area.
-      // Now we need to find the instance value records that follow.
-      // Store this class definition location for later value extraction.
-      // The actual values appear after ALL member definitions are listed.
-      return extractValuesFromClassDef(data, nameFieldPos, i);
-    }
+  error(message) {
+    return new Error(`The .pdn layer document could not be read (${message} at byte ${this.pos}).`);
   }
 
-  return layers;
-}
+  take(count) {
+    const end = this.pos + count;
+    if (!Number.isSafeInteger(end) || count < 0 || end > this.bytes.length) {
+      throw this.error("unexpected end of file");
+    }
+    const start = this.pos;
+    this.pos = end;
+    return start;
+  }
 
-/**
- * Given the location of the class member definitions for Layer properties,
- * find and extract the instance values.
- */
-function extractValuesFromClassDef(data, nameFieldPos, visibleFieldPos) {
-  // This is complex NRBF parsing. For robustness, let's use the scanning approach
-  // and correlate found values.
-  return [];
-}
+  u8() {
+    return this.bytes[this.take(1)];
+  }
 
-/**
- * Fallback metadata extraction: scan for string values and nearby boolean/integer values
- * that look like layer properties.
- */
-function extractLayerMetadataByScanning(data, expectedCount) {
-  const layers = [];
+  i32() {
+    return this.view.getInt32(this.take(4), true);
+  }
 
-  // Strategy: Find all length-prefixed strings in the NRBF data,
-  // then look for ones that are plausible layer names
-  // (near boolean values for visibility and byte values for opacity)
+  count() {
+    const value = this.i32();
+    if (value < 0) throw this.error("negative length");
+    return value;
+  }
 
-  // Known non-layer strings to skip
-  const skipStrings = new Set([
-    "name", "visible", "isBackground", "opacity", "blendMode",
-    "width", "height", "stride", "length64", "scan0",
-    "layers", "items", "savedWith", "userBlendOps",
-    "Major", "Minor", "Build", "Revision",
-    "PaintDotNet.Document", "PaintDotNet.BitmapLayer",
-    "PaintDotNet.Layer", "PaintDotNet.Surface",
-    "System.Version", "System.Drawing.Size",
-    "_items", "_size", "_version",
-    "ArrayList+items", "ArrayList+size",
-    "", "surface", "properties",
-  ]);
-
-  // Scan for candidate layer names by finding length-prefixed strings
-  // that appear near Layer property value blocks
-  const candidates = [];
-
-  for (let i = 0; i < data.length - 2; i++) {
-    const str = readLengthPrefixedString(data, i);
-    if (!str || !str.value || str.value.length < 1 || str.value.length > 256) continue;
-
-    const val = str.value;
-
-    // Skip known field/class names
-    if (skipStrings.has(val)) continue;
-    if (val.includes("PaintDotNet") || val.includes("System.")) continue;
-    if (val.includes("BlendOp")) continue;
-
-    // Check if this looks like a valid printable string (layer name)
-    let printable = true;
-    for (let c = 0; c < val.length; c++) {
-      const code = val.charCodeAt(c);
-      if (code < 0x20 || code > 0x7e) {
-        // Allow common unicode but reject control chars
-        if (code < 0x80 && code !== 0x09) { printable = false; break; }
+  string() {
+    let length = 0;
+    for (let shift = 0; shift < 35; shift += 7) {
+      const byte = this.u8();
+      length += (byte & 0x7f) * 2 ** shift;
+      if ((byte & 0x80) === 0) {
+        const start = this.take(length);
+        return this.decoder.decode(this.bytes.subarray(start, start + length));
       }
     }
-    if (!printable) continue;
+    throw this.error("bad string length");
+  }
 
-    candidates.push({
-      offset: i,
-      endOffset: i + str.bytesRead,
-      name: val,
+  primitive(kind) {
+    switch (kind) {
+      case 1: return { kind: "bool", value: this.u8() !== 0 };
+      case 2: return { kind: "int", value: this.u8() };
+      case 10: return { kind: "int", value: this.view.getInt8(this.take(1)) };
+      case 7: return { kind: "int", value: this.view.getInt16(this.take(2), true) };
+      case 14: return { kind: "int", value: this.view.getUint16(this.take(2), true) };
+      case 8: return { kind: "int", value: this.i32() };
+      case 15: return { kind: "int", value: this.view.getUint32(this.take(4), true) };
+      case 9: return { kind: "int", value: Number(this.view.getBigInt64(this.take(8), true)) };
+      case 3: {
+        // A UTF-8 encoded char: the lead byte gives its length.
+        const lead = this.u8();
+        const extra = lead <= 0x7f ? 0 : lead >= 0xc0 && lead <= 0xdf ? 1 : lead >= 0xe0 && lead <= 0xef ? 2
+          : lead >= 0xf0 && lead <= 0xf7 ? 3 : -1;
+        if (extra < 0) throw this.error("bad char value");
+        this.take(extra);
+        return OTHER_VALUE;
+      }
+      case 5:
+      case 18:
+        return { kind: "str", value: this.string() };
+      case 17:
+        return NULL_VALUE;
+      default: {
+        const size = PRIMITIVE_SIZES[kind];
+        if (size === undefined) throw this.error(`unknown primitive type ${kind}`);
+        this.take(size);
+        return OTHER_VALUE;
+      }
+    }
+  }
+
+  classInfo() {
+    const id = this.i32();
+    const name = this.string();
+    const count = this.count();
+    if (count > MAX_NRBF_MEMBERS) throw this.error("too many class members");
+    const names = [];
+    for (let index = 0; index < count; index += 1) names.push(this.string());
+    return { id, name, names };
+  }
+
+  /** A BinaryTypeEnumeration's additional info: the primitive type when values are inline. */
+  additionalTypeInfo(binaryType) {
+    switch (binaryType) {
+      case 0: return this.u8();
+      case 7: this.u8(); return null;
+      case 3: this.string(); return null;
+      case 4: this.string(); this.i32(); return null;
+      case 1: case 2: case 5: case 6: return null;
+      default: throw this.error(`unknown member type ${binaryType}`);
+    }
+  }
+
+  typedMembers(names) {
+    const start = this.take(names.length);
+    const binaryTypes = this.bytes.slice(start, start + names.length);
+    return names.map((name, index) => ({ name, primitive: this.additionalTypeInfo(binaryTypes[index]) }));
+  }
+
+  defineClass(id, name, members) {
+    const meta = { name, members };
+    this.classes.set(id, meta);
+    return meta;
+  }
+
+  members(id, meta, depth) {
+    const members = new Map();
+    for (const member of meta.members) {
+      members.set(member.name, member.primitive == null ? this.value(depth + 1) : this.primitive(member.primitive));
+    }
+    this.objects.push({ id, className: meta.name, members });
+    return { type: "value", value: { kind: "obj", id } };
+  }
+
+  value(depth) {
+    for (;;) {
+      const record = this.record(depth);
+      if (record.type === "value") return record.value;
+      if (record.type !== "library") throw this.error("unexpected record in a member");
+    }
+  }
+
+  elements(id, count, depth) {
+    let read = 0;
+    const values = [];
+    while (read < count) {
+      const record = this.record(depth + 1);
+      if (record.type === "value") {
+        if (record.value.kind !== "null") values.push([read, record.value]);
+        read += 1;
+      } else if (record.type === "nulls" && record.count > 0) {
+        read += record.count;
+      } else if (record.type !== "library") {
+        throw this.error("unexpected record in an array");
+      }
+    }
+    if (read > count) throw this.error("array overrun");
+    this.arrays.set(id, values);
+  }
+
+  primitiveElements(kind, count) {
+    const size = PRIMITIVE_SIZES[kind];
+    if (size !== undefined) {
+      this.take(count * size);
+      return;
+    }
+    for (let index = 0; index < count; index += 1) this.primitive(kind);
+  }
+
+  record(depth) {
+    if (depth > MAX_NRBF_DEPTH) throw this.error("objects nest too deeply");
+    const type = this.u8();
+    switch (type) {
+      case 0:
+        this.take(16);
+        return { type: "header" };
+      case 1: {
+        const id = this.i32();
+        const metadata = this.i32();
+        const meta = this.classes.get(metadata);
+        if (!meta) throw this.error("reference to an unknown class");
+        return this.members(id, meta, depth);
+      }
+      case 2:
+      case 3: {
+        const { id, name, names } = this.classInfo();
+        if (type === 3) this.i32();
+        const meta = this.defineClass(id, name, names.map((member) => ({ name: member, primitive: null })));
+        return this.members(id, meta, depth);
+      }
+      case 4:
+      case 5: {
+        const { id, name, names } = this.classInfo();
+        const members = this.typedMembers(names);
+        if (type === 5) this.i32();
+        const meta = this.defineClass(id, name, members);
+        return this.members(id, meta, depth);
+      }
+      case 6: {
+        const id = this.i32();
+        const value = this.string();
+        this.strings.set(id, value);
+        return { type: "value", value: { kind: "str", value } };
+      }
+      case 7: {
+        const id = this.i32();
+        const arrayType = this.u8();
+        const rank = this.count();
+        if (rank === 0 || rank > 32) throw this.error("bad array rank");
+        let count = 1;
+        for (let index = 0; index < rank; index += 1) {
+          count *= this.count();
+          if (!Number.isSafeInteger(count)) throw this.error("array too large");
+        }
+        if (arrayType >= 3 && arrayType <= 5) this.take(4 * rank);
+        const primitive = this.additionalTypeInfo(this.u8());
+        if (primitive == null) this.elements(id, count, depth);
+        else this.primitiveElements(primitive, count);
+        return { type: "value", value: { kind: "obj", id } };
+      }
+      case 8:
+        return { type: "value", value: this.primitive(this.u8()) };
+      case 9:
+        return { type: "value", value: { kind: "ref", id: this.i32() } };
+      case 10:
+        return { type: "value", value: NULL_VALUE };
+      case 11:
+        return { type: "end" };
+      case 12:
+        this.i32();
+        this.string();
+        return { type: "library" };
+      case 13:
+        return { type: "nulls", count: this.u8() };
+      case 14:
+        return { type: "nulls", count: this.count() };
+      case 15: {
+        const id = this.i32();
+        const count = this.count();
+        this.primitiveElements(this.u8(), count);
+        return { type: "value", value: { kind: "obj", id } };
+      }
+      case 16:
+      case 17: {
+        const id = this.i32();
+        const count = this.count();
+        this.elements(id, count, depth);
+        return { type: "value", value: { kind: "obj", id } };
+      }
+      default:
+        throw this.error(`unsupported record type ${type}`);
+    }
+  }
+
+  /** Reads records up to MessageEnd; the deferred pixel data starts after it. */
+  readDocument() {
+    while (this.record(0).type !== "end") { /* keep reading */ }
+  }
+}
+
+/* ── Layer list ── */
+
+/** The class name after its namespace and declaring type. */
+function shortName(className) {
+  const parts = String(className).split(/[.+]/);
+  return parts[parts.length - 1];
+}
+
+function referenceId(value) {
+  return value && (value.kind === "ref" || value.kind === "obj") ? value.id : null;
+}
+
+function intMember(object, name) {
+  const value = object?.members.get(name);
+  return value?.kind === "int" ? value.value : null;
+}
+
+function boolMember(object, name) {
+  const value = object?.members.get(name);
+  return value?.kind === "bool" ? value.value : null;
+}
+
+/**
+ * Reads the layer list and the order of the pixel blocks after the document.
+ * Every layer is checked against the canvas, whether it is visible or not.
+ */
+function readLayout(doc, header) {
+  const objects = new Map(doc.objects.map((object) => [object.id, object]));
+  const resolve = (value) => {
+    const id = referenceId(value);
+    return id == null ? null : objects.get(id) || null;
+  };
+  const unreadable = () => new Error("The .pdn layer list could not be read.");
+  const field = (object, suffix) => {
+    for (const [name, value] of object.members) if (name.endsWith(suffix)) return value;
+    return null;
+  };
+
+  // Document.layers is a LayerList (an ArrayList); index 0 is the bottom layer.
+  const document = doc.objects.find((object) => shortName(object.className) === "Document");
+  if (!document) throw unreadable();
+  const list = resolve(document.members.get("layers"));
+  if (!list) throw unreadable();
+  const size = field(list, "_size");
+  const count = size?.kind === "int" && size.value >= 0 ? size.value : null;
+  const items = doc.arrays.get(referenceId(field(list, "_items")));
+  if (count == null || !items) throw unreadable();
+  if (count === 0 || (header.layers != null && header.layers !== count)) {
+    const expected = header.layers != null ? `, ${header.layers} in the header` : "";
+    throw new Error(`The .pdn layer list does not match its header (${count} layers${expected}).`);
+  }
+
+  // Deferred pixel data follows the document in the order the blocks were written.
+  const memoryBlocks = doc.objects.filter((object) => shortName(object.className) === "MemoryBlock");
+  const expectedLength = header.width * header.height * 4;
+  const blocks = memoryBlocks.map((block) => {
+    if (boolMember(block, "deferred") !== true || boolMember(block, "hasParent") === true) {
+      throw new Error("This .pdn stores layer pixels inline (an older layout) that can't be read. Open and save it in a current Paint.NET, or save a PNG copy.");
+    }
+    const length = intMember(block, "length64") ?? intMember(block, "length");
+    if (!Number.isSafeInteger(length) || length < 0) throw new Error("A .pdn pixel block has no valid length.");
+    return { length, layer: null };
+  });
+
+  const layers = [];
+  for (let index = 0; index < count; index += 1) {
+    const item = items.find(([at]) => at === index);
+    const layer = item ? resolve(item[1]) : null;
+    if (!layer) throw unreadable();
+    if (shortName(layer.className) !== "BitmapLayer") {
+      throw new Error(`Layer ${index + 1} is not a bitmap layer, which can't be read.`);
+    }
+    let props = null;
+    let bitmap = null;
+    let surface = null;
+    for (const value of layer.members.values()) {
+      const object = resolve(value);
+      if (!object) continue;
+      const kind = shortName(object.className);
+      if (kind === "LayerProperties") props = object;
+      else if (kind === "BitmapLayerProperties") bitmap = object;
+      else if (kind === "Surface") surface = object;
+    }
+    if (!props || !surface) throw unreadable();
+
+    const nameValue = props.members.get("name");
+    const rawName = nameValue?.kind === "str" ? nameValue.value
+      : nameValue?.kind === "ref" ? doc.strings.get(nameValue.id) || "" : "";
+    const name = rawName.trim() ? rawName : `Layer ${index + 1}`;
+    const visible = boolMember(props, "visible");
+    if (visible == null) throw new Error(`Layer “${name}” has no visibility setting.`);
+    const opacity = intMember(props, "opacity");
+    if (!Number.isInteger(opacity) || opacity < 0 || opacity > 255) {
+      throw new Error(`Layer “${name}” has no valid opacity.`);
+    }
+
+    const width = intMember(surface, "width");
+    const height = intMember(surface, "height");
+    const stride = intMember(surface, "stride");
+    if (width !== header.width || height !== header.height || (stride != null && stride !== header.width * 4)) {
+      throw new Error(`Layer “${name}” does not match the ${header.width}x${header.height} canvas.`);
+    }
+    const scan0 = referenceId(surface.members.get("scan0"));
+    const block = scan0 == null ? -1 : memoryBlocks.findIndex((candidate) => candidate.id === scan0);
+    if (block < 0) throw new Error(`Layer “${name}” has no pixel data.`);
+    if (blocks[block].length !== expectedLength || blocks[block].layer != null) {
+      throw new Error(`Layer “${name}” pixel data does not match the canvas size.`);
+    }
+    blocks[block].layer = index;
+
+    // Paint.NET takes the blend from the layer's BlendOp class when it has one
+    // and from the LayerBlendMode enum otherwise (BitmapLayer's deserialization
+    // callback). A blend that isn't one of its 14 is "Unknown", which
+    // flattening refuses.
+    const blendOp = bitmap?.members.get("blendOp");
+    let blendMode = "Normal";
+    let blendDetail = "";
+    if (blendOp && blendOp.kind !== "null") {
+      const op = resolve(blendOp);
+      const opName = op ? shortName(op.className) : "";
+      blendMode = PDN_BLEND_MODES.find((mode) => `${mode}BlendOp` === opName) || "Unknown";
+      blendDetail = opName;
+    } else {
+      const modeValue = intMember(resolve(props.members.get("blendMode")), "value__");
+      if (modeValue != null) {
+        blendMode = PDN_BLEND_MODES[modeValue] || "Unknown";
+        blendDetail = `value ${modeValue}`;
+      }
+    }
+
+    layers.push({
+      name,
+      visible,
+      opacity,
+      isBackground: boolMember(props, "isBackground") ?? index === 0,
+      blendMode,
+      blendDetail,
     });
   }
 
-  // Now try to identify which candidates are actual layer names
-  // by looking at the surrounding bytes for visibility/opacity patterns
-  for (const candidate of candidates) {
-    const afterStr = candidate.endOffset;
-    if (afterStr + 8 > data.length) continue;
-
-    // After a layer name, we might see:
-    // - A boolean value (0x00 or 0x01) for visible
-    // - Another boolean for isBackground
-    // - A byte (0-255) for opacity
-    // Or there might be some NRBF record type bytes in between
-
-    const visibleByte = data[afterStr];
-    const isBackgroundByte = data[afterStr + 1];
-    const opacityByte = data[afterStr + 2];
-
-    // Check if this pattern looks like layer properties
-    const isVisiblePlausible = visibleByte === 0 || visibleByte === 1;
-    const isBgPlausible = isBackgroundByte === 0 || isBackgroundByte === 1;
-
-    if (isVisiblePlausible && isBgPlausible) {
-      layers.push({
-        name: candidate.name,
-        visible: visibleByte === 1,
-        isBackground: isBackgroundByte === 1,
-        opacity: opacityByte,
-        blendMode: 0, // Normal, will be refined later
-      });
+  // BinaryFormatter writes the pixel data in layer-list order; flattening
+  // relies on it, so anything else is refused rather than reordered.
+  let previous = -1;
+  for (const block of blocks) {
+    if (block.layer == null) continue;
+    if (block.layer < previous) {
+      throw new Error("The .pdn pixel data is not in layer order, so it can't be flattened.");
     }
+    previous = block.layer;
   }
+  return { layers, blocks };
+}
 
-  // If we didn't find any with the tight pattern, try looser matching
-  if (layers.length === 0 && expectedCount > 0) {
-    // Just use any plausible candidate names
-    const used = new Set();
-    for (const c of candidates) {
-      if (used.has(c.name)) continue;
-      // Skip very short or very long names as likely not layer names
-      if (c.name.length < 2 || c.name.length > 64) continue;
-      // Skip names that look like numbers, versions, etc
-      if (/^\d+(\.\d+)*$/.test(c.name)) continue;
-      used.add(c.name);
-      layers.push({
-        name: c.name,
-        visible: true,
-        isBackground: layers.length === 0,
-        opacity: 255,
-        blendMode: 0,
-      });
-      if (layers.length >= expectedCount) break;
-    }
+function readDocument(bytes) {
+  const header = parseHeader(bytes);
+  if (header.width === 0 || header.height === 0 || header.width > MAX_PDN_DIMENSION || header.height > MAX_PDN_DIMENSION) {
+    throw new Error(`Invalid PDN dimensions: ${header.width}x${header.height}`);
   }
+  const canvasBytes = header.width * header.height * 4;
+  if (canvasBytes > MAX_PDN_OUTPUT_BYTES) {
+    throw new Error(`PDN image dimensions exceed the safety output limit (${canvasBytes} bytes > ${MAX_PDN_OUTPUT_BYTES} bytes).`);
+  }
+  const doc = new NrbfReader(bytes, header.bodyStart);
+  doc.readDocument();
+  const { layers, blocks } = readLayout(doc, header);
+  return { header, layers, blocks, dataStart: doc.pos, canvasBytes };
+}
 
-  // Try to extract blend mode info
-  enrichBlendModes(data, layers);
+/* ── Pixel data ── */
 
-  return layers;
+function readU32BE(bytes, pos, what) {
+  if (pos + 4 > bytes.length) throw new Error(`The .pdn file is truncated in ${what}.`);
+  return ((bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3]) >>> 0;
+}
+
+function inflateExact(payload, target, what) {
+  let inflated;
+  try {
+    // pako checks the gzip CRC and length trailer.
+    inflated = pako.ungzip(payload);
+  } catch (error) {
+    throw new Error(`The pixel data of ${what} is damaged and could not be decompressed: ${error?.message || error}`);
+  }
+  if (inflated.length !== target.length) {
+    throw new Error(`The pixel data of ${what} is damaged and could not be decompressed: the chunk has the wrong size.`);
+  }
+  target.set(inflated);
 }
 
 /**
- * Scan for blend mode class name references and try to assign them to layers.
+ * Walks the pixel blocks after the document. `wants(layer)` decides which
+ * layers are decompressed; `onLayer(layer, bgra)` receives each one, in layer
+ * order, before the shared buffer is reused.
  */
-function enrichBlendModes(data, layers) {
-  const str = readUtf8String(data, 0, Math.min(data.length, 1024 * 1024));
+function readPixelBlocks(bytes, documentInfo, wants, onLayer) {
+  const { layers, blocks, canvasBytes } = documentInfo;
+  const pixels = new Uint8Array(canvasBytes);
+  let inflatedTotal = 0;
+  let pos = documentInfo.dataStart;
+  for (const block of blocks) {
+    const layer = block.layer == null ? null : layers[block.layer];
+    const what = layer ? `layer “${layer.name}”` : "a pixel block";
+    const wanted = Boolean(layer && wants(layer));
 
-  for (const [className, modeId] of Object.entries(BLEND_CLASS_NAME_MAP)) {
-    const idx = str.indexOf(className);
-    if (idx < 0) continue;
-    // Try to associate with the nearest layer
-    // This is approximate — works well for files with uniform blend modes
-    // For mixed modes, the order in the file typically matches layer order
-    // TODO: improve association accuracy
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   Chunked Bitmap Data Reading
-   
-   After the NRBF serialized metadata, PDN files store
-   per-layer bitmap data in a chunked format:
-     - 1 byte: format version (0=gzip, 1=raw)
-     - 4 bytes BE: chunk size (destination buffer chunk size)
-     - For each chunk:
-       - 4 bytes BE: chunk number
-       - 4 bytes BE: data size (compressed size)
-       - N bytes: chunk data (gzip or raw)
-   ═══════════════════════════════════════════════════════════ */
-
-/**
- * Find the start of chunked bitmap data after the NRBF section.
- * The NRBF section ends with a MessageEnd record (type 0x0B).
- * After that, the chunked layer data begins.
- */
-function probeChunkedLayerStart(bytes, offset, expectedLength) {
-  if (!bytes || !Number.isFinite(expectedLength) || expectedLength <= 0) {
-    return { ok: false, reason: "invalid expected length" };
-  }
-
-  if (offset < 0 || offset + 13 > bytes.length) {
-    return { ok: false, reason: "candidate truncated before first chunk header" };
-  }
-
-  const formatVersion = bytes[offset];
-  if (formatVersion !== 0 && formatVersion !== 1) {
-    return { ok: false, reason: `unsupported format version ${formatVersion}` };
-  }
-
-  const maxProbeChunkSize = Math.min(expectedLength, MAX_CHUNK_START_SCAN_SIZE);
-  const chunkSize = readU32BE(bytes, offset + 1);
-  if (chunkSize <= 0 || chunkSize > maxProbeChunkSize) {
-    return { ok: false, reason: `invalid chunk size ${chunkSize}` };
-  }
-
-  const chunkCount = Math.ceil(expectedLength / chunkSize);
-  if (
-    !Number.isFinite(chunkCount) ||
-    chunkCount <= 0 ||
-    chunkCount > MAX_PDN_REASONABLE_CHUNK_COUNT
-  ) {
-    return { ok: false, reason: `invalid chunk count ${chunkCount}` };
-  }
-
-  const probeCount = Math.min(3, chunkCount);
-  let pos = offset + 5;
-
-  for (let expectedChunkNumber = 0; expectedChunkNumber < probeCount; expectedChunkNumber += 1) {
-    if (pos + 8 > bytes.length) {
-      return { ok: false, reason: `candidate truncated while probing chunk ${expectedChunkNumber}` };
-    }
-
-    const chunkNumber = readU32BE(bytes, pos);
+    if (pos >= bytes.length) throw new Error(`The .pdn file is truncated in ${what}.`);
+    const format = bytes[pos];
+    pos += 1;
+    if (format > 1) throw new Error(`The pixel data of ${what} uses an unknown format.`);
+    const chunkSize = readU32BE(bytes, pos, what);
     pos += 4;
-
-    const dataSize = readU32BE(bytes, pos);
-    pos += 4;
-
-    if (chunkNumber !== expectedChunkNumber) {
-      return {
-        ok: false,
-        reason: `chunk ${expectedChunkNumber} had unexpected index ${chunkNumber}`,
-      };
+    if (chunkSize === 0 || chunkSize > MAX_PDN_CHUNK_BYTES) {
+      throw new Error(`The pixel data of ${what} has an invalid chunk size.`);
     }
-
-    if (dataSize <= 0 || pos + dataSize > bytes.length) {
-      return {
-        ok: false,
-        reason: `chunk ${expectedChunkNumber} had invalid size ${dataSize}`,
-      };
-    }
-
-    if (
-      formatVersion === 0 &&
-      (
-        dataSize < GZIP_MAGIC.length ||
-        bytes[pos] !== GZIP_MAGIC[0] ||
-        bytes[pos + 1] !== GZIP_MAGIC[1] ||
-        bytes[pos + 2] !== GZIP_MAGIC[2]
-      )
-    ) {
-      return {
-        ok: false,
-        reason: `chunk ${expectedChunkNumber} did not start with gzip magic`,
-      };
-    }
-
-    pos += dataSize;
-  }
-
-  return {
-    ok: true,
-    formatVersion,
-    chunkSize,
-    chunkCount,
-    probeCount,
-  };
-}
-
-function findChunkedDataStart(bytes, searchStart, expectedLength) {
-  // The NRBF data ends with record type 0x0B (MessageEnd).
-  // After the 0x00 0x01 indicator, we have NRBF data.
-  // We need to find where the NRBF ends and chunked data begins.
-
-  // Look for the 0x00 0x01 indicator first
-  let nrbfStart = searchStart;
-  for (let i = searchStart; i < bytes.length - 1; i++) {
-    if (bytes[i] === 0x00 && bytes[i + 1] === 0x01) {
-      nrbfStart = i + 2;
-      break;
-    }
-  }
-
-  // Now scan for the NRBF MessageEnd record (0x0B)
-  // It's a single byte record type with no payload
-  for (let i = nrbfStart; i < bytes.length - 5; i++) {
-    if (bytes[i] === 0x0b) {
-      const candidateOffset = i + 1;
-      const probe = probeChunkedLayerStart(bytes, candidateOffset, expectedLength);
-      if (probe.ok) {
-        pdnDebug("Accepted chunked data start candidate", {
-          offset: candidateOffset,
-          chunkSize: probe.chunkSize,
-          probeCount: probe.probeCount,
-        });
-        return candidateOffset;
+    const chunks = Math.ceil(block.length / chunkSize);
+    const seen = new Uint8Array(chunks);
+    for (let index = 0; index < chunks; index += 1) {
+      const number = readU32BE(bytes, pos, what);
+      const size = readU32BE(bytes, pos + 4, what);
+      pos += 8;
+      if (number >= chunks || seen[number]) {
+        throw new Error(`The pixel data of ${what} is damaged (bad chunk number).`);
       }
-
-      pdnDebug("Rejected chunked data start candidate", {
-        offset: candidateOffset,
-        reason: probe.reason,
-      });
-    }
-  }
-
-  return -1;
-}
-
-/**
- * Read one layer's chunked bitmap data from the byte stream.
- * Returns { data: Uint8Array, nextOffset: number } or null.
- */
-function readLayerChunkedData(bytes, offset, expectedLength) {
-  if (
-    offset < 0 ||
-    offset >= bytes.length - 5 ||
-    !Number.isFinite(expectedLength) ||
-    expectedLength <= 0
-  ) {
-    return null;
-  }
-
-  const probe = probeChunkedLayerStart(bytes, offset, expectedLength);
-  if (!probe.ok) return null;
-
-  const { formatVersion, chunkSize, chunkCount } = probe;
-  if (chunkSize > MAX_PDN_CHUNK_SIZE || chunkCount > MAX_PDN_REASONABLE_CHUNK_COUNT) {
-    return null;
-  }
-
-  const data = new Uint8Array(expectedLength);
-  let decodedChunkCount = 0;
-
-  let pos = offset + 5;
-
-  for (let i = 0; i < chunkCount; i++) {
-    if (pos + 8 > bytes.length) break;
-
-    // Chunk number (BE)
-    const chunkNumber = readU32BE(bytes, pos);
-    pos += 4;
-
-    // Data size (BE) - compressed or raw size
-    const dataSize = readU32BE(bytes, pos);
-    pos += 4;
-
-    if (chunkNumber >= chunkCount) break;
-    if (dataSize <= 0 || pos + dataSize > bytes.length) break;
-
-    const chunkOffset = chunkNumber * chunkSize;
-    const actualChunkSize = Math.min(chunkSize, expectedLength - chunkOffset);
-    if (actualChunkSize <= 0) break;
-
-    const rawData = bytes.subarray(pos, pos + dataSize);
-    pos += dataSize;
-
-    try {
-      if (formatVersion === 0) {
-        if (
-          dataSize < GZIP_MAGIC.length ||
-          rawData[0] !== GZIP_MAGIC[0] ||
-          rawData[1] !== GZIP_MAGIC[1] ||
-          rawData[2] !== GZIP_MAGIC[2]
-        ) {
-          break;
-        }
-
-        // Gzip compressed
-        const decompressed = pako.ungzip(rawData);
-        if (decompressed.length < actualChunkSize) {
-          pdnWarn(`Chunk ${chunkNumber} decompressed short; remainder left as zeros`, {
-            got: decompressed.length,
-            expected: actualChunkSize,
-          });
-        }
-        data.set(
-          decompressed.subarray(0, Math.min(decompressed.length, actualChunkSize)),
-          chunkOffset,
-        );
+      seen[number] = 1;
+      if (pos + size > bytes.length) throw new Error(`The .pdn file is truncated in ${what}.`);
+      const payload = bytes.subarray(pos, pos + size);
+      pos += size;
+      if (!wanted) continue;
+      const start = number * chunkSize;
+      const end = Math.min(start + chunkSize, block.length);
+      inflatedTotal += end - start;
+      if (inflatedTotal > MAX_PDN_TOTAL_INFLATED_BYTES) {
+        throw new Error(`PDN decode exceeded the total inflate safety limit (${MAX_PDN_TOTAL_INFLATED_BYTES} bytes).`);
+      }
+      const target = pixels.subarray(start, end);
+      if (format === 0) {
+        inflateExact(payload, target, what);
+      } else if (payload.length === target.length) {
+        target.set(payload);
       } else {
-        // Uncompressed
-        if (rawData.length < actualChunkSize) {
-          pdnWarn(`Chunk ${chunkNumber} raw data short; remainder left as zeros`, {
-            got: rawData.length,
-            expected: actualChunkSize,
-          });
-        }
-        data.set(
-          rawData.subarray(0, Math.min(rawData.length, actualChunkSize)),
-          chunkOffset,
-        );
+        throw new Error(`The pixel data of ${what} has the wrong size.`);
       }
-      decodedChunkCount += 1;
-    } catch {
-      // Decompression failed for this chunk, leave zeros
     }
+    if (wanted) onLayer(block.layer, pixels);
   }
+}
 
-  if (decodedChunkCount === 0) return null;
-
-  return { data, nextOffset: pos };
+/** a*b/255 rounded, for bytes, the way Paint.NET scales colours and alpha. */
+function mulDiv255(a, b) {
+  const r = a * b + 128;
+  return ((r >> 8) + r) >> 8;
 }
 
 /**
- * Convert BGRA byte array to RGBA.
+ * Paint.NET's per-channel blend of a bottom colour `d` and a layer colour `s`
+ * (0-255) for each mode other than Normal (whose blend is `s`). Integer
+ * division truncates, as Paint.NET's does; the results were measured equal to
+ * Paint.NET 5's for every input (docs/fixes/p9-pdn-blend.md).
  */
-function bgraToRgba(bgra, width, height) {
-  const pixelCount = width * height * 4;
-  const rgba = new Uint8Array(pixelCount);
-  const len = Math.min(bgra.length, pixelCount);
+const PDN_BLEND_CHANNEL = {
+  Multiply: (d, s) => mulDiv255(d, s),
+  Additive: (d, s) => Math.min(255, d + s),
+  ColorBurn: (d, s) => (s === 0 ? 0 : Math.max(0, 255 - Math.floor(((255 - d) * 255) / s))),
+  ColorDodge: (d, s) => (s === 255 ? 255 : Math.min(255, Math.floor((d * 255) / (255 - s)))),
+  Reflect: (d, s) => (s === 255 ? 255 : Math.min(255, Math.floor((d * d) / (255 - s)))),
+  Glow: (d, s) => (d === 255 ? 255 : Math.min(255, Math.floor((s * s) / (255 - d)))),
+  Overlay: (d, s) => (d < 128 ? mulDiv255(2 * d, s) : 255 - mulDiv255(2 * (255 - d), 255 - s)),
+  Difference: (d, s) => Math.abs(s - d),
+  Negation: (d, s) => 255 - Math.abs(255 - d - s),
+  Lighten: (d, s) => Math.max(d, s),
+  Darken: (d, s) => Math.min(d, s),
+  Screen: (d, s) => d + s - mulDiv255(d, s),
+  Xor: (d, s) => d ^ s,
+};
 
-  for (let i = 0; i + 3 < len; i += 4) {
-    rgba[i] = bgra[i + 2];     // R ← B
-    rgba[i + 1] = bgra[i + 1]; // G ← G
-    rgba[i + 2] = bgra[i];     // B ← R
-    rgba[i + 3] = bgra[i + 3]; // A ← A
+/** 256x256 lookup tables of PDN_BLEND_CHANNEL, built on first use. */
+const blendTables = new Map();
+
+function blendTable(blendMode) {
+  let table = blendTables.get(blendMode);
+  if (!table) {
+    const channel = PDN_BLEND_CHANNEL[blendMode];
+    table = new Uint8Array(256 * 256);
+    for (let d = 0; d < 256; d += 1) {
+      for (let s = 0; s < 256; s += 1) table[(d << 8) | s] = channel(d, s);
+    }
+    blendTables.set(blendMode, table);
   }
+  return table;
+}
 
+function unknownBlendError(layer) {
+  const detail = layer.blendDetail ? ` (${layer.blendDetail})` : "";
+  return new Error(
+    `Layer “${layer.name}” uses an unrecognised blend mode${detail}, which can't be flattened here. Set the layer's blend mode to Normal in Paint.NET, or save a flattened PNG copy.`,
+  );
+}
+
+/**
+ * Composites one layer over a straight-alpha RGBA `canvas` the way Paint.NET
+ * flattens: the layer's alpha is scaled by `opacity` (0-255), then where layer
+ * and canvas overlap the mode's blended colour shows, and where only one
+ * covers the pixel its own colour shows, in proportion to alpha. `layer` holds
+ * straight-alpha pixels in BGRA order (as stored in a .pdn) when `bgra` is
+ * true, else RGBA. All integer arithmetic: byte-identical to the native
+ * decoder and to Paint.NET for every mode, Normal included.
+ */
+export function compositePdnLayer(canvas, layer, opacity, blendMode, bgra = false) {
+  const normal = blendMode === "Normal";
+  if (!normal && !PDN_BLEND_CHANNEL[blendMode]) throw new Error(`“${blendMode}” is not a Paint.NET blend mode.`);
+  const table = normal ? null : blendTable(blendMode);
+  const alpha = new Uint8Array(256);
+  for (let a = 0; a < 256; a += 1) alpha[a] = mulDiv255(a, opacity);
+  const rAt = bgra ? 2 : 0;
+  const bAt = bgra ? 0 : 2;
+  const length = Math.min(canvas.length, layer.length) & ~3;
+  for (let i = 0; i < length; i += 4) {
+    const sa = alpha[layer[i + 3]];
+    if (sa === 0) continue;
+    const r = layer[i + rAt];
+    const g = layer[i + 1];
+    const b = layer[i + bAt];
+    const da = canvas[i + 3];
+    // Exact shortcuts of the general case below: over a transparent pixel
+    // every mode shows the layer, and an opaque Normal layer replaces it.
+    if (da === 0 || (normal && sa === 255)) {
+      canvas[i] = r;
+      canvas[i + 1] = g;
+      canvas[i + 2] = b;
+      canvas[i + 3] = sa;
+      continue;
+    }
+    const bottomOnly = mulDiv255(da, 255 - sa);
+    const total = bottomOnly + sa;
+    const dr = canvas[i];
+    const dg = canvas[i + 1];
+    const db = canvas[i + 2];
+    if (normal) {
+      canvas[i] = ((dr * bottomOnly + r * sa) / total) | 0;
+      canvas[i + 1] = ((dg * bottomOnly + g * sa) / total) | 0;
+      canvas[i + 2] = ((db * bottomOnly + b * sa) / total) | 0;
+    } else {
+      const both = mulDiv255(da, sa);
+      const layerOnly = sa - both;
+      canvas[i] = ((dr * bottomOnly + r * layerOnly + table[(dr << 8) | r] * both) / total) | 0;
+      canvas[i + 1] = ((dg * bottomOnly + g * layerOnly + table[(dg << 8) | g] * both) / total) | 0;
+      canvas[i + 2] = ((db * bottomOnly + b * layerOnly + table[(db << 8) | b] * both) / total) | 0;
+    }
+    canvas[i + 3] = total;
+  }
+}
+
+/**
+ * Throws the refusal for the first layer picked by `isVisible(layer, index)`
+ * whose blend mode Paint.NET doesn't have, so a caller can check before any
+ * work starts.
+ */
+export function assertPdnLayersFlattenable(layers, isVisible = (layer) => layer.visible) {
+  layers.forEach((layer, index) => {
+    if (layer.blendMode === "Unknown" && isVisible(layer, index)) throw unknownBlendError(layer);
+  });
+}
+
+/**
+ * Flattens the layers `decodePdnLayers` returned, bottom to top, with each
+ * layer's opacity and blend mode, exactly as Paint.NET would.
+ * `isVisible(layer, index)` picks the layers drawn (default: the file's own
+ * visibility). Throws, before drawing, for a picked layer whose blend mode
+ * Paint.NET doesn't have. Writes into `out` (RGBA, cleared first) when it
+ * has the right size, otherwise into a new Uint8ClampedArray, and returns it.
+ */
+export function flattenPdnLayers({ width, height, layers }, isVisible = (layer) => layer.visible, out = null) {
+  assertPdnLayersFlattenable(layers, isVisible);
+  const size = width * height * 4;
+  let canvas = out;
+  if (canvas?.length === size) canvas.fill(0);
+  else canvas = new Uint8ClampedArray(size);
+  layers.forEach((layer, index) => {
+    if (!(layer.opacity > 0) || !isVisible(layer, index)) return;
+    compositePdnLayer(canvas, layer.image, layer.opacity, layer.blendMode);
+  });
+  return canvas;
+}
+
+function bgraToRgba(bgra) {
+  const rgba = new Uint8Array(bgra.length);
+  for (let i = 0; i + 3 < bgra.length; i += 4) {
+    rgba[i] = bgra[i + 2];
+    rgba[i + 1] = bgra[i + 1];
+    rgba[i + 2] = bgra[i];
+    rgba[i + 3] = bgra[i + 3];
+  }
   return rgba;
 }
 
-function hasVisiblePixels(data) {
-  if (!data || data.length < 4) return false;
-  for (let i = 3; i < data.length; i += 4) {
-    if (data[i] !== 0) return true;
-  }
-  return false;
-}
-
-function blendBgraLayerIntoOutput(output, bgra, opacity) {
-  if (!output || !bgra || output.length === 0 || bgra.length === 0) return;
-  const alphaMultiplier = clamp(opacity ?? 1, 0, 1);
-  if (alphaMultiplier <= 0) return;
-
-  const len = Math.min(output.length, bgra.length);
-  for (let i = 0; i + 3 < len; i += 4) {
-    const srcB = bgra[i];
-    const srcG = bgra[i + 1];
-    const srcR = bgra[i + 2];
-    const srcA = bgra[i + 3];
-
-    if (srcA === 0) continue;
-
-    const effectiveA = srcA * alphaMultiplier;
-    if (effectiveA <= 0) continue;
-
-    const dstA = output[i + 3];
-    if (dstA === 0 || effectiveA >= 254.5) {
-      output[i] = srcR;
-      output[i + 1] = srcG;
-      output[i + 2] = srcB;
-      output[i + 3] = clamp(Math.round(effectiveA), 0, 255);
-      continue;
-    }
-
-    const sa = effectiveA / 255;
-    const da = dstA / 255;
-    const outA = sa + da * (1 - sa);
-    if (outA <= 0) continue;
-
-    output[i] = clamp(Math.round((srcR * sa + output[i] * da * (1 - sa)) / outA), 0, 255);
-    output[i + 1] = clamp(Math.round((srcG * sa + output[i + 1] * da * (1 - sa)) / outA), 0, 255);
-    output[i + 2] = clamp(Math.round((srcB * sa + output[i + 2] * da * (1 - sa)) / outA), 0, 255);
-    output[i + 3] = clamp(Math.round(outA * 255), 0, 255);
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   Main API — Layer-aware parsing
-   ═══════════════════════════════════════════════════════════ */
+/* ── Public API ── */
 
 /**
- * Decode a .pdn file into individual layers with full metadata.
+ * Decodes a .pdn into its layers, bottom first. Returns null for bytes that
+ * are not a Paint.NET file and throws for a damaged or unsupported one.
  *
  * Returns: {
- *   width: number,
- *   height: number,
- *   layers: [{
- *     name: string,
- *     visible: boolean,
- *     opacity: number (0-255),
- *     blendMode: string (PDN_BLEND_TYPES value),
- *     blendModeCanvas: string (Canvas2D composite operation),
- *     isBackground: boolean,
- *     image: Uint8Array (RGBA pixel data, width*height*4),
- *   }]
+ *   width, height,
+ *   layers: [{ name, visible, opacity (0-255), blendMode (Paint.NET name, or
+ *              "Unknown"), blendDetail, isBackground,
+ *              image (RGBA, width*height*4) }]
  * }
  */
 export function decodePdnLayers(bytes) {
-  if (!isPdnFile(bytes)) {
-    pdnWarn("Not a PDN file (missing PDN3 magic)");
-    return null;
-  }
-
-  // 1. Parse XML header for dimensions
-  const header = parseXmlHeader(bytes);
-  if (!header) {
-    pdnWarn("Failed to parse PDN XML header for dimensions");
-    return null;
-  }
-
-  const { width, height, headerEnd } = header;
-  const expectedLayerSize = width * height * 4;
-  pdnDebug("Parsed header", { width, height, headerEnd, expectedLayerSize });
-
-  // 2. Find where chunked bitmap data starts
-  const chunkedStart = findChunkedDataStart(bytes, headerEnd, expectedLayerSize);
-  if (chunkedStart < 0) {
-    pdnWarn("Chunked data start not found; using fallback gzip scan", { width, height });
-    // Fallback: try the old heuristic approach
-    return decodePdnLayersFallback(bytes, width, height);
-  }
-  pdnDebug("Chunked data start detected", { chunkedStart });
-
-  // 3. Extract layer metadata from NRBF region
-  const nrbfEnd = chunkedStart;
-  const layerMeta = extractLayerMetadata(bytes, headerEnd, 0);
-  pdnDebug("Extracted layer metadata", { metadataCount: layerMeta.length, nrbfEnd });
-
-  // 4. Read chunked bitmap data for each layer
-  const layerImages = [];
-  let offset = chunkedStart;
-
-  while (offset < bytes.length - 5) {
-    const result = readLayerChunkedData(bytes, offset, expectedLayerSize);
-    if (!result) break;
-    layerImages.push(result.data);
-    pdnDebug("Decoded chunked layer payload", {
-      layerIndex: layerImages.length - 1,
-      payloadLength: result.data?.length || 0,
-      nextOffset: result.nextOffset,
-    });
-    offset = result.nextOffset;
-  }
-
-  if (layerImages.length === 0) {
-    pdnWarn("No layer payloads decoded from chunked path; falling back", { width, height });
-    return decodePdnLayersFallback(bytes, width, height);
-  }
-
-  // 5. Pair metadata with image data
-  const layers = [];
-  for (let i = 0; i < layerImages.length; i++) {
-    const rgba = bgraToRgba(layerImages[i], width, height);
-    const meta = layerMeta[i] || {};
-    const blendId = meta.blendMode ?? 0;
-    const blendName = PDN_BLEND_TYPES[blendId] || "Normal";
-
-    layers.push({
-      name: meta.name || `Layer ${i + 1}`,
-      visible: meta.visible !== undefined ? meta.visible : true,
-      opacity: meta.opacity !== undefined ? meta.opacity : 255,
-      blendMode: blendName,
-      blendModeCanvas: PDN_BLEND_TO_CANVAS[blendName] || "source-over",
-      isBackground: meta.isBackground || i === 0,
-      image: rgba,
-    });
-  }
-
-  pdnDebug("Layered decode completed", { layerCount: layers.length, width, height });
-
-  return { width, height, layers };
-}
-
-/**
- * Fallback layer extraction using the original heuristic approach.
- * Finds gzip-compressed pixel payloads and tries to assemble layers.
- */
-function decodePdnLayersFallback(bytes, width, height) {
-  const expectedSize = width * height * 4;
-  if (expectedSize <= 0) {
-    pdnWarn("Fallback decode aborted due to invalid expected size", { width, height, expectedSize });
-    return null;
-  }
-
-  pdnDebug("Fallback decode started", { width, height, expectedSize });
-
-  // Find all gzip streams
-  const payloads = [];
-  for (let i = 24; i + 3 <= bytes.length; i++) {
-    if (bytes[i] !== 0x1f || bytes[i + 1] !== 0x8b || bytes[i + 2] !== 0x08) continue;
-    try {
-      const inflated = pako.ungzip(bytes.subarray(i));
-      if (inflated && inflated.length > 0 && inflated.length % 4 === 0) {
-        payloads.push(inflated);
-      }
-    } catch { /* skip */ }
-  }
-
-  if (payloads.length === 0) {
-    pdnWarn("Fallback found no gzip payloads");
-    return null;
-  }
-
-  pdnDebug("Fallback found gzip payloads", { payloadCount: payloads.length });
-
-  // Try to assemble layers from payloads
-  const rowBytes = width * 4;
-  const layers = [];
-  const queue = { data: new Uint8Array(0), offset: 0 };
-
-  const appendToQueue = (payload) => {
-    const newData = new Uint8Array(queue.data.length - queue.offset + payload.length);
-    newData.set(queue.data.subarray(queue.offset));
-    newData.set(payload, queue.data.length - queue.offset);
-    queue.data = newData;
-    queue.offset = 0;
-  };
-
-  for (const payload of payloads) {
-    // Check alignment
-    if (payload.length >= expectedSize && payload.length % rowBytes === 0) {
-      // Full layer
-      const rgba = bgraToRgba(payload.subarray(0, expectedSize), width, height);
-      layers.push({
-        name: `Layer ${layers.length + 1}`,
-        visible: true,
-        opacity: 255,
-        blendMode: "Normal",
-        blendModeCanvas: "source-over",
-        isBackground: layers.length === 0,
-        image: rgba,
-      });
-    } else {
-      // Accumulate partial chunks
-      appendToQueue(payload);
-      const available = queue.data.length - queue.offset;
-      while (available >= expectedSize) {
-        const chunk = queue.data.subarray(queue.offset, queue.offset + expectedSize);
-        queue.offset += expectedSize;
-        const rgba = bgraToRgba(chunk, width, height);
-        layers.push({
-          name: `Layer ${layers.length + 1}`,
-          visible: true,
-          opacity: 255,
-          blendMode: "Normal",
-          blendModeCanvas: "source-over",
-          isBackground: layers.length === 0,
-          image: rgba,
-        });
-        break;
-      }
-    }
-  }
-
-  if (layers.length === 0) {
-    pdnWarn("Fallback could not assemble any layers", { payloadCount: payloads.length });
-    return null;
-  }
-
-  // Try to extract metadata and match
-  const meta = extractLayerMetadata(bytes, 0, layers.length);
-  for (let i = 0; i < layers.length && i < meta.length; i++) {
-    if (meta[i].name) layers[i].name = meta[i].name;
-    if (meta[i].visible !== undefined) layers[i].visible = meta[i].visible;
-    if (meta[i].opacity !== undefined) layers[i].opacity = meta[i].opacity;
-    if (meta[i].blendMode !== undefined) {
-      const bn = PDN_BLEND_TYPES[meta[i].blendMode] || "Normal";
-      layers[i].blendMode = bn;
-      layers[i].blendModeCanvas = PDN_BLEND_TO_CANVAS[bn] || "source-over";
-    }
-  }
-
-  pdnDebug("Fallback decode completed", { layerCount: layers.length, width, height });
-
-  return { width, height, layers };
-}
-
-/**
- * Fast flatten decode for texture preview workflows.
- * Skips NRBF metadata extraction and composites layers directly while reading chunks.
- */
-function decodePdnFastFlat(bytes) {
   if (!isPdnFile(bytes)) return null;
-
-  const header = parseXmlHeader(bytes);
-  if (!header) return null;
-
-  const { width, height, headerEnd } = header;
-  const expectedLayerSize = width * height * 4;
-  if (!Number.isFinite(expectedLayerSize) || expectedLayerSize <= 0) return null;
-
-  const chunkedStart = findChunkedDataStart(bytes, headerEnd, expectedLayerSize);
-  if (chunkedStart < 0) return null;
-
-  const output = new Uint8Array(expectedLayerSize);
-  let offset = chunkedStart;
-  let layerCount = 0;
-
-  while (offset < bytes.length - 5) {
-    const result = readLayerChunkedData(bytes, offset, expectedLayerSize);
-    if (!result) break;
-    blendBgraLayerIntoOutput(output, result.data, 1);
-    layerCount += 1;
-    offset = result.nextOffset;
-  }
-
-  if (layerCount === 0) return null;
-
+  const documentInfo = readDocument(bytes);
+  const images = new Array(documentInfo.layers.length).fill(null);
+  readPixelBlocks(bytes, documentInfo, () => true, (index, bgra) => {
+    images[index] = bgraToRgba(bgra);
+  });
+  const { width, height } = documentInfo.header;
   return {
     width,
     height,
-    data: output,
-    layerCount,
+    layers: documentInfo.layers.map((layer, index) => ({
+      name: layer.name,
+      visible: layer.visible,
+      opacity: layer.opacity,
+      blendMode: layer.blendMode,
+      blendDetail: layer.blendDetail,
+      isBackground: layer.isBackground,
+      image: images[index] || new Uint8Array(documentInfo.canvasBytes),
+    })),
   };
 }
 
-/* ═══════════════════════════════════════════════════════════
-   Legacy API — backward compatible composite-only decode
-   ═══════════════════════════════════════════════════════════ */
-
 /**
- * Composite all PDN layers into a single RGBA buffer.
- * This is the backward-compatible API used by the texture loader.
+ * Flattens a .pdn the way Paint.NET shows it: visible layers bottom to top
+ * with their opacity and blend mode. Hidden layers are skipped without
+ * decompressing them. Returns null for bytes that are not a Paint.NET file
+ * and throws for a damaged or unsupported one, including a visible layer
+ * whose blend mode isn't one of Paint.NET's.
+ *
+ * Returns { width, height, data (RGBA), layerCount, headerLayerCount,
+ * layerNames }; the last three let a caller check what was read.
  */
-function compositePdnLayers(result) {
-  if (!result || !result.layers || result.layers.length === 0) return null;
-
-  const { width, height, layers } = result;
-  const pixelCount = width * height * 4;
-  const output = new Uint8Array(pixelCount);
-
-  const compose = (ignoreVisibility, recoverOpacity) => {
-    let paintedPixels = 0;
-
-    for (const layer of layers) {
-      if (!ignoreVisibility && layer.visible === false) continue;
-      if (!layer.image || layer.image.length === 0) continue;
-
-      let opacityByte = Number(layer.opacity ?? 255);
-      if (!Number.isFinite(opacityByte)) opacityByte = 255;
-      if (recoverOpacity && opacityByte <= 0) opacityByte = 255;
-      const opacity = clamp(opacityByte, 0, 255) / 255;
-      if (opacity <= 0) continue;
-
-      const src = layer.image;
-      const len = Math.min(src.length, pixelCount);
-
-      for (let i = 0; i + 3 < len; i += 4) {
-        const srcR = src[i];
-        const srcG = src[i + 1];
-        const srcB = src[i + 2];
-        const srcA = src[i + 3];
-
-        if (srcA === 0) continue;
-
-        const effectiveA = srcA * opacity;
-        if (effectiveA <= 0) continue;
-
-        const dstR = output[i];
-        const dstG = output[i + 1];
-        const dstB = output[i + 2];
-        const dstA = output[i + 3];
-
-        if (dstA === 0 || effectiveA >= 254.5) {
-          output[i] = srcR;
-          output[i + 1] = srcG;
-          output[i + 2] = srcB;
-          output[i + 3] = clamp(Math.round(effectiveA), 0, 255);
-          paintedPixels += 1;
-          continue;
-        }
-
-        const sa = effectiveA / 255;
-        const da = dstA / 255;
-        const outA = sa + da * (1 - sa);
-        if (outA <= 0) continue;
-
-        output[i] = clamp(Math.round((srcR * sa + dstR * da * (1 - sa)) / outA), 0, 255);
-        output[i + 1] = clamp(Math.round((srcG * sa + dstG * da * (1 - sa)) / outA), 0, 255);
-        output[i + 2] = clamp(Math.round((srcB * sa + dstB * da * (1 - sa)) / outA), 0, 255);
-        output[i + 3] = clamp(Math.round(outA * 255), 0, 255);
-        paintedPixels += 1;
-      }
-    }
-
-    return paintedPixels;
+export function decodePdn(bytes) {
+  if (!isPdnFile(bytes)) return null;
+  const documentInfo = readDocument(bytes);
+  assertPdnLayersFlattenable(documentInfo.layers);
+  const canvas = new Uint8Array(documentInfo.canvasBytes);
+  readPixelBlocks(
+    bytes,
+    documentInfo,
+    (layer) => layer.visible && layer.opacity > 0,
+    (index, bgra) => {
+      const { opacity, blendMode } = documentInfo.layers[index];
+      compositePdnLayer(canvas, bgra, opacity, blendMode, true);
+    },
+  );
+  const { width, height, layers: headerLayerCount } = documentInfo.header;
+  return {
+    width,
+    height,
+    data: canvas,
+    layerCount: documentInfo.layers.length,
+    headerLayerCount,
+    layerNames: documentInfo.layers.map((layer) => layer.name),
   };
-
-  let paintedPixels = compose(false, false);
-  if (paintedPixels > 0) return output;
-
-  // Metadata extraction can be unreliable on some PDN files; retry as a safety fallback.
-  output.fill(0);
-  paintedPixels = compose(true, true);
-  if (paintedPixels > 0) {
-    pdnWarn("Layer metadata produced empty composite; recovered by ignoring visibility/zero opacity.");
-    return output;
-  }
-
-  return null;
-}
-
-/**
- * Backward-compatible API: decode a PDN file to a single composite RGBA buffer.
- */
-export function decodePdn(bytes, options = {}) {
-  if (!isPdnFile(bytes)) {
-    pdnWarn("decodePdn called with non-PDN bytes");
-    return null;
-  }
-
-  pdnDebug("decodePdn started", { byteLength: bytes?.length || 0 });
-
-  if (options?.fast === true) {
-    const fast = decodePdnFastFlat(bytes);
-    if (fast && hasVisiblePixels(fast.data)) {
-      pdnDebug("decodePdn fast path succeeded", {
-        width: fast.width,
-        height: fast.height,
-        layerCount: fast.layerCount,
-        dataLength: fast.data.length,
-      });
-      return { width: fast.width, height: fast.height, data: fast.data };
-    }
-    pdnWarn("decodePdn fast path unavailable; falling back to full decode");
-  }
-
-  // Try layer-aware decoding first
-  const layered = decodePdnLayers(bytes);
-  if (layered && layered.layers.length > 0) {
-    const data = compositePdnLayers(layered);
-    if (data) {
-      pdnDebug("decodePdn succeeded", {
-        width: layered.width,
-        height: layered.height,
-        layerCount: layered.layers.length,
-        dataLength: data.length,
-      });
-      return { width: layered.width, height: layered.height, data };
-    }
-    pdnWarn("Layered decode returned layers but compositing produced no output", {
-      width: layered.width,
-      height: layered.height,
-      layerCount: layered.layers.length,
-    });
-  }
-
-  pdnWarn("decodePdn failed to produce output");
-
-  return null;
 }
 
 export function parsePdn(bytes) {
   return decodePdn(bytes);
 }
 
-/**
- * Get the Canvas2D composite operation for a PDN blend mode name.
- */
-export function getPdnBlendCanvasOp(blendModeName) {
-  return PDN_BLEND_TO_CANVAS[blendModeName] || "source-over";
-}
-
 export const __pdnTest = {
-  findChunkedDataStart,
-  probeChunkedLayerStart,
-  readLayerChunkedData,
+  readDocument,
 };

@@ -4,10 +4,16 @@ import appMeta from "../../package.json";
 import { getConsoleLogEntries } from "./console-log-buffer.js";
 import {
   BUG_REPORT_SCHEMA_VERSION,
+  FEEDBACK_DRAFT_VERSION,
   buildBugReportIssue,
   deriveBugReportLabels,
   formatBugReportIssueBody,
   formatBugReportIssueTitle,
+  formatBugReportMarkdown,
+  hasFeedbackDraftContent,
+  hasFeedbackDraftText,
+  normalizeFeedbackDraftStore,
+  sanitizeBugReportDraft,
   validateBugReportDraft as validateBugReportDraftCore,
 } from "./bug-report-core.js";
 export {
@@ -17,10 +23,17 @@ export {
   BUG_REPORT_SUMMARY_MAX,
   BUG_REPORT_DETAILS_MIN,
   BUG_REPORT_DETAILS_MAX,
+  BUG_REPORT_AREAS,
+  BUG_REPORT_FREQUENCIES,
   buildBugReportIssue,
   deriveBugReportLabels,
   formatBugReportIssueBody,
   formatBugReportIssueTitle,
+  formatBugReportMarkdown,
+  hasFeedbackDraftContent,
+  hasFeedbackDraftText,
+  normalizeFeedbackDraftStore,
+  sanitizeBugReportDraft,
 } from "./bug-report-core.js";
 
 export const BUG_REPORT_ENDPOINT = (import.meta.env?.VITE_BUG_REPORT_ENDPOINT || "").trim();
@@ -129,15 +142,36 @@ export async function collectBugReportEnvironment() {
   };
 }
 
+/** The desktop app sends through the native side, never from the renderer. */
+export const NATIVE_BUG_REPORT_ENDPOINT = "tauri://native";
+
 export function getBugReportEndpoint() {
-  if (BUG_REPORT_ENDPOINT) return BUG_REPORT_ENDPOINT;
-  if (isTauriRuntime()) return "tauri://native";
-  return "";
+  if (isTauriRuntime()) return NATIVE_BUG_REPORT_ENDPOINT;
+  return BUG_REPORT_ENDPOINT;
 }
 
+/**
+ * The endpoint once the desktop app has said whether this build can send
+ * (an endpoint baked in at build time, or a GitHub token in development).
+ * Resolves "" when sending is unavailable.
+ */
+export async function resolveBugReportEndpoint() {
+  if (!isTauriRuntime()) return BUG_REPORT_ENDPOINT;
+  try {
+    const status = await invoke("bug_report_status");
+    return status?.available ? NATIVE_BUG_REPORT_ENDPOINT : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Every environment field the payload carries, in the order the user reads
+ * them. The issue body's Raw Metadata block holds the same values.
+ */
 export function formatEnvironmentSummary(environment) {
   if (!environment) return [];
-  return [
+  const rows = [
     { label: "App version", value: environment.appVersion || "Unknown" },
     { label: "Runtime", value: environment.runtime || "Unknown" },
     {
@@ -150,7 +184,61 @@ export function formatEnvironmentSummary(environment) {
         .filter(Boolean)
         .join(" "),
     },
+    { label: "Locale", value: environment.locale || "n/a" },
+    { label: "User agent", value: environment.userAgent || "n/a", mono: true },
   ];
+  if (environment.currentUrl) {
+    rows.push({ label: "Page URL", value: environment.currentUrl, mono: true });
+  }
+  return rows;
+}
+
+export const FEEDBACK_DRAFT_STORAGE_KEY = "cortex-studio:feedback-draft.v1";
+
+export function loadFeedbackDrafts() {
+  try {
+    const raw = localStorage.getItem(FEEDBACK_DRAFT_STORAGE_KEY);
+    return normalizeFeedbackDraftStore(raw ? JSON.parse(raw) : null);
+  } catch {
+    return normalizeFeedbackDraftStore(null);
+  }
+}
+
+/**
+ * Persists both per-type drafts, removing the key once neither holds content.
+ * Returns false when storage refused the write.
+ */
+export function saveFeedbackDrafts(drafts) {
+  try {
+    const store = normalizeFeedbackDraftStore({ version: FEEDBACK_DRAFT_VERSION, drafts });
+    if (!hasFeedbackDraftContent("bug", store.drafts.bug) && !hasFeedbackDraftContent("feature", store.drafts.feature)) {
+      localStorage.removeItem(FEEDBACK_DRAFT_STORAGE_KEY);
+      return true;
+    }
+    localStorage.setItem(FEEDBACK_DRAFT_STORAGE_KEY, JSON.stringify({ ...store, savedAt: Date.now() }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds the Markdown copy of a draft without requiring a submission
+ * endpoint. Field errors are returned so the form can point at them.
+ */
+export async function buildBugReportMarkdown(draft, options = {}) {
+  const { fieldErrors, sanitizedDraft } = sanitizeBugReportDraft(draft);
+  if (Object.keys(fieldErrors).length > 0) return { fieldErrors, markdown: "" };
+  const environment = options.environment || (await collectBugReportEnvironment());
+  const markdown = formatBugReportMarkdown({
+    issue: buildBugReportIssue(sanitizedDraft),
+    environment,
+    consoleLogs: {
+      included: sanitizedDraft.includeConsoleLogs,
+      entries: sanitizedDraft.includeConsoleLogs ? getConsoleLogEntries() : [],
+    },
+  });
+  return { fieldErrors, markdown };
 }
 
 export function validateBugReportDraft(draft, options = {}) {
@@ -192,12 +280,15 @@ export async function buildBugReportPayload(draft, options = {}) {
 }
 
 export async function submitBugReport(payload, endpoint = BUG_REPORT_ENDPOINT) {
-  if (isTauriRuntime() && (!endpoint || endpoint === "tauri://native")) {
+  // The desktop CSP blocks renderer requests to other origins, so the native
+  // side posts the report: to the build's endpoint (`report`), or as a GitHub
+  // issue (`title`, `body`, `labels`) when only a development token exists.
+  if (isTauriRuntime()) {
     const title = formatBugReportIssueTitle(payload.issue);
     const body = formatBugReportIssueBody(payload);
     const labels = deriveBugReportLabels(payload);
     const result = await invoke("submit_bug_report", {
-      payload: { title, body, labels },
+      payload: { title, body, labels, report: payload },
     });
     return {
       ok: true,

@@ -1,57 +1,65 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { exists, stat, writeFile } from "@tauri-apps/plugin-fs";
 import {
   AlertTriangle,
   Box,
-  Car,
-  ChevronDown,
   Check,
+  Crosshair,
   Download,
+  FolderInput,
   FolderOpen,
-  Image,
-  Layers,
   MousePointer2,
-  PanelTop,
+  PanelLeft,
+  Redo2,
   RefreshCw,
-  RotateCw,
-  Scan,
-  Shirt,
-  Trash2,
+  SquareDashedMousePointer,
+  Undo2,
   X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import Viewer from "./Viewer";
-import { Button } from "./ui/button";
 import { Toggle } from "./ui/toggle";
-import { buildAutoTemplatePsd } from "../lib/template-psd";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { buildAutoTemplatePsd, resolveAutoTemplateColors } from "../lib/template-psd";
 import {
   getTemplateModelPolicy,
   normalizeTemplateViewMode,
 } from "../lib/template-model";
+import {
+  DEFAULT_VEHICLE_OVERLAY_COLOR,
+  normalizeOpaqueHexColor,
+  normalizeVehicleOverlayColor,
+} from "../lib/template-overlay";
+import {
+  DEFAULT_TEMPLATE_MARKER_COLOR,
+  getContainedTemplateViewport,
+  markerFromDrag,
+  moveTemplateMarker,
+  normalizeTemplateMarkers,
+  resizeTemplateMarker,
+} from "../lib/template-markers";
+import { editHistoryKey } from "../lib/edit-history";
+import useEditHistory from "./useEditHistory";
 import { loadPrefs } from "../lib/prefs";
 import { openFolderPath } from "../lib/open-folder";
-import {
-  buildMarkerSelectionDraft,
-  countSelectedMarkers,
-  getContainedTemplateViewport,
-  getMarkerTextureRect,
-  isMarkerPlacementDecisionRequired,
-  isTemplateMarkerModifierPressed,
-  normalizeTemplateMarkerPickModifier,
-  pickMarkerAtTexturePoint,
-  toggleMarkerSelection,
-  uvToTemplateTexturePoint,
-} from "../lib/template-marker-utils";
+import { isFsScopeError } from "../lib/capture-output";
+import { AssetSlot, DeckButton } from "./workspace/parts";
+import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
+import "./TemplateGenerationPage.css";
+// Corner handle size on a selected marker box, in CSS px.
+const MARKER_HANDLE_PX = 9;
+const MARKER_HANDLES = ["nw", "ne", "sw", "se"];
 
 const SIZE_OPTIONS = [4096, 2048, 1024, 512];
 const NOOP = () => {};
-const DEFAULT_AUTO_TEMPLATE_COLOR = "#c9d8ee";
 const DEFAULT_AUTO_TEMPLATE_EXPORT_FORMAT = "psd";
+const MAX_AUTO_SAVE_STAMPS = 48;
 const TEMPLATE_PREVIEW_ZOOM_MIN = 0.25;
-const TEMPLATE_PREVIEW_ZOOM_MAX = 4;
-const TEMPLATE_PREVIEW_ZOOM_STEP = 0.25;
+const TEMPLATE_PREVIEW_ZOOM_MAX = 8;
+const TEMPLATE_PREVIEW_ZOOM_FACTOR = 1.25;
 
 function clampTemplatePreviewZoom(value) {
   const numericValue = Number(value);
@@ -92,7 +100,14 @@ function pngDataUrlToBytes(dataUrl) {
   return decodeBase64(dataUrl.slice(prefix.length));
 }
 
-function buildTemplateExportOutputs({ format, psdBytes, psdFileName, previewDataUrl }) {
+function buildTemplateExportOutputs({
+  format,
+  psdBytes,
+  psdFileName,
+  previewDataUrl,
+  overlayPngBytes,
+  overlayFileName,
+}) {
   const normalizedFormat = normalizeAutoTemplateExportFormat(format);
   const outputs = [];
   const psdPayload = psdBytes instanceof Uint8Array ? psdBytes : new Uint8Array(psdBytes || []);
@@ -114,6 +129,16 @@ function buildTemplateExportOutputs({ format, psdBytes, psdFileName, previewData
     });
   }
 
+  // The overlay is its own deliverable: a transparent PNG painters stack
+  // over a livery, saved whatever the template format is.
+  if (overlayPngBytes instanceof Uint8Array && overlayPngBytes.length > 0) {
+    outputs.push({
+      fileName: overlayFileName || replaceFileExtension(psdFileName || "auto_template.psd", "overlay.png"),
+      bytes: overlayPngBytes,
+      mimeType: "image/png",
+    });
+  }
+
   return outputs;
 }
 
@@ -124,6 +149,8 @@ function buildTemplateExportOutputsForArtifacts(format, artifacts) {
       psdBytes: artifact?.bytes,
       psdFileName: artifact?.fileName,
       previewDataUrl: artifact?.previewDataUrl,
+      overlayPngBytes: artifact?.overlayPngBytes,
+      overlayFileName: artifact?.overlayFileName,
     }),
   );
 }
@@ -195,7 +222,7 @@ function createTemplateBuildJob(templateMap, options) {
       cleanup();
       settled = true;
       worker.terminate();
-      resolve({ ...result, bytes });
+      resolve({ ...result, bytes, overlayPngBytes: normalizeWorkerBytes(result.overlayPngBytes) });
     };
 
     worker.onerror = (event) => {
@@ -234,42 +261,43 @@ function getDefaultOutputFolder() {
   return prefs?.defaults?.variantExportFolder || "";
 }
 
-function normalizeAutoTemplateColor(value) {
-  if (typeof value !== "string") return DEFAULT_AUTO_TEMPLATE_COLOR;
-  const trimmed = value.trim();
-  if (/^#(?:[0-9a-fA-F]{3}){1,2}$/.test(trimmed)) return trimmed;
-  return DEFAULT_AUTO_TEMPLATE_COLOR;
+function normalizeExportSize(value) {
+  const numeric = Number(value);
+  return SIZE_OPTIONS.includes(numeric) ? numeric : SIZE_OPTIONS[0];
 }
 
-function normalizeColorInputValue(value) {
-  const normalized = normalizeAutoTemplateColor(value);
-  if (/^#[0-9a-fA-F]{3}$/.test(normalized)) {
-    return `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}`.toLowerCase();
+function normalizeAutoSaveStamps(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.entries(value).filter(
+    ([path, stamp]) => typeof path === "string" && path && Number.isFinite(stamp),
+  );
+  return Object.fromEntries(entries.slice(-MAX_AUTO_SAVE_STAMPS));
+}
+
+async function readModifiedTime(path) {
+  try {
+    const info = await stat(path);
+    const time = info?.mtime instanceof Date ? info.mtime.getTime() : Number(info?.mtime);
+    return Number.isFinite(time) ? time : null;
+  } catch {
+    return null;
   }
-  return normalized.toLowerCase();
 }
 
-function shallowEqualObject(a, b) {
-  if (a === b) return true;
-  const aObj = a && typeof a === "object" ? a : {};
-  const bObj = b && typeof b === "object" ? b : {};
-  const aKeys = Object.keys(aObj);
-  const bKeys = Object.keys(bObj);
-  if (aKeys.length !== bKeys.length) return false;
-  for (const key of aKeys) {
-    if (aObj[key] !== bObj[key]) return false;
-  }
-  return true;
+/**
+ * Auto-save may only replace a file it wrote itself and that nobody has
+ * touched since: a template PSD is where the painter works, so an edited
+ * or foreign file at the same name is left alone.
+ */
+async function canAutoSaveReplace(path, stamps) {
+  if (!(await exists(path))) return true;
+  const recorded = stamps[path];
+  if (!Number.isFinite(recorded)) return false;
+  return (await readModifiedTime(path)) === recorded;
 }
 
-function hasTrueEntries(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return Object.values(value).some((entry) => entry === true);
-}
-
-function getDefaultAutoTemplateColor() {
-  const prefs = loadPrefs() || {};
-  return normalizeAutoTemplateColor(prefs?.defaults?.autoTemplateColor);
+function getDefaultAutoTemplateColors() {
+  return resolveAutoTemplateColors(loadPrefs()?.defaults);
 }
 
 function getDefaultAutoTemplateExportFormat() {
@@ -277,9 +305,20 @@ function getDefaultAutoTemplateExportFormat() {
   return normalizeAutoTemplateExportFormat(prefs?.defaults?.autoTemplateExportFormat);
 }
 
-function getDefaultTemplateMarkerPickModifier() {
-  const prefs = loadPrefs() || {};
-  return normalizeTemplateMarkerPickModifier(prefs?.defaults?.templateMarkerPickModifier);
+// Colour pickers fire on every drag step and each committed colour rebuilds
+// the template, so the draft drives the swatch and only the settled value
+// is committed.
+function useSettledDraft(value, commit, delay = 220) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+  useEffect(() => {
+    if (draft === value) return undefined;
+    const timer = setTimeout(() => commit(draft), delay);
+    return () => clearTimeout(timer);
+  }, [commit, delay, draft, value]);
+  return [draft, setDraft];
 }
 
 function getFileLabel(path, fallback = "") {
@@ -310,6 +349,7 @@ function joinPath(folder, fileName) {
 }
 
 function toErrorMessage(error, fallback) {
+  if (typeof error === "string" && error.trim()) return error.trim();
   if (error && typeof error === "object" && "message" in error) {
     const value = error.message;
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -356,6 +396,7 @@ export default function TemplateGenerationPage({
   onRenameTab,
   settingsVersion,
   isActive,
+  contextBarTarget,
 }) {
   const isTauriRuntime =
     typeof window !== "undefined" &&
@@ -365,12 +406,12 @@ export default function TemplateGenerationPage({
   const [outputFolder, setOutputFolder] = useState(
     workspaceState?.outputFolder || getDefaultOutputFolder(),
   );
-  const [autoTemplateColor, setAutoTemplateColor] = useState(() => getDefaultAutoTemplateColor());
+  const [autoTemplateColor, setAutoTemplateColor] = useState(() => getDefaultAutoTemplateColors().fillColor);
+  const [autoTemplateBackgroundColor, setAutoTemplateBackgroundColor] = useState(
+    () => getDefaultAutoTemplateColors().backgroundColor,
+  );
   const [autoTemplateExportFormat, setAutoTemplateExportFormat] = useState(
     () => getDefaultAutoTemplateExportFormat(),
-  );
-  const [templateMarkerPickModifier, setTemplateMarkerPickModifier] = useState(
-    () => getDefaultTemplateMarkerPickModifier(),
   );
   const [templatePurpose, setTemplatePurpose] = useState(() =>
     workspaceState?.templatePurpose === "windows" ? "windows" : "body",
@@ -379,18 +420,6 @@ export default function TemplateGenerationPage({
     normalizeMeshNameList(workspaceState?.selectedTemplatePartNames),
   );
   const [hoveredTemplatePartName, setHoveredTemplatePartName] = useState("");
-  const [markerSelectionConfirmed, setMarkerSelectionConfirmed] = useState(() => {
-    const explicitValue = workspaceState?.markerSelectionConfirmed;
-    if (typeof explicitValue === "boolean") return explicitValue;
-    return hasTrueEntries(workspaceState?.detectedIslandVisibility);
-  });
-  const [pendingMarkerSelection, setPendingMarkerSelection] = useState(() => {
-    const markers = Array.isArray(workspaceState?.detectedIslands)
-      ? workspaceState.detectedIslands
-      : [];
-    return buildMarkerSelectionDraft(markers, workspaceState?.detectedIslandVisibility);
-  });
-  const [isMarkerEditMode, setIsMarkerEditMode] = useState(false);
   const [useWorldSpaceNormalsAsBase, setUseWorldSpaceNormalsAsBase] = useState(() =>
     Boolean(
       (workspaceState?.useWorldSpaceNormalsAsBase ??
@@ -398,7 +427,7 @@ export default function TemplateGenerationPage({
         true,
     ),
   );
-  const [exportSize, setExportSize] = useState(workspaceState?.exportSize ?? 4096);
+  const [exportSize, setExportSize] = useState(() => normalizeExportSize(workspaceState?.exportSize));
   const [exteriorOnly, setExteriorOnly] = useState(Boolean(workspaceState?.exteriorOnly));
   const [includeTemplateWireframe, setIncludeTemplateWireframe] = useState(() =>
     Boolean(
@@ -408,6 +437,23 @@ export default function TemplateGenerationPage({
     ),
   );
 
+  const [includeVehicleOverlay, setIncludeVehicleOverlay] = useState(
+    () => workspaceState?.includeVehicleOverlay === true,
+  );
+  const [vehicleOverlayColor, setVehicleOverlayColor] = useState(() =>
+    normalizeVehicleOverlayColor(workspaceState?.vehicleOverlayColor ?? DEFAULT_VEHICLE_OVERLAY_COLOR),
+  );
+  const [vehicleOverlayColorDraft, setVehicleOverlayColorDraft] = useSettledDraft(
+    vehicleOverlayColor,
+    setVehicleOverlayColor,
+  );
+  const [includeTemplateLogo, setIncludeTemplateLogo] = useState(
+    () => workspaceState?.includeTemplateLogo !== false,
+  );
+  const [logoNotice, setLogoNotice] = useState("");
+  const autoSaveStampsRef = useRef(normalizeAutoSaveStamps(workspaceState?.autoSaveStamps));
+  const [autoSaveStampsVersion, setAutoSaveStampsVersion] = useState(0);
+
   const [templateMap, setTemplateMap] = useState(null);
   const [templateMapError, setTemplateMapError] = useState("");
   const [templatePsdSource, setTemplatePsdSource] = useState(null);
@@ -416,17 +462,33 @@ export default function TemplateGenerationPage({
   const [windowTemplateSets, setWindowTemplateSets] = useState([]);
   const [windowTemplateError, setWindowTemplateError] = useState("");
   const [templateSetWarning, setTemplateSetWarning] = useState("");
-  const [detectedIslands, setDetectedIslands] = useState(() =>
-    Array.isArray(workspaceState?.detectedIslands) ? workspaceState.detectedIslands : [],
+  // Painter-drawn marker boxes, in normalized texture space (see template-markers.js).
+  const [templateMarkers, setTemplateMarkers] = useState(() =>
+    normalizeTemplateMarkers(workspaceState?.templateMarkers),
   );
-  const [detectedIslandColors, setDetectedIslandColors] = useState(() => {
-    const map = workspaceState?.detectedIslandColors;
-    return map && typeof map === "object" && !Array.isArray(map) ? map : {};
-  });
-  const [detectedIslandVisibility, setDetectedIslandVisibility] = useState(() => {
-    const map = workspaceState?.detectedIslandVisibility;
-    return map && typeof map === "object" && !Array.isArray(map) ? map : {};
-  });
+  const [templateMarkerColor, setTemplateMarkerColor] = useState(() =>
+    normalizeOpaqueHexColor(workspaceState?.templateMarkerColor, DEFAULT_TEMPLATE_MARKER_COLOR),
+  );
+  const [templateMarkerColorDraft, setTemplateMarkerColorDraft] = useSettledDraft(
+    templateMarkerColor,
+    setTemplateMarkerColor,
+  );
+  const [markerToolActive, setMarkerToolActive] = useState(false);
+  const [selectedMarkerId, setSelectedMarkerId] = useState("");
+  // The box being drawn, moved or resized; committed on pointer up.
+  const [markerDraft, setMarkerDraft] = useState(null);
+  const [markerPixelCounts, setMarkerPixelCounts] = useState({});
+  // Marker add, move, resize, fill and delete undo as whole-list snapshots.
+  const {
+    record: recordMarkerEdit,
+    undo: undoMarkerEdit,
+    redo: redoMarkerEdit,
+    clear: clearMarkerHistory,
+    canUndo: canUndoMarkers,
+    canRedo: canRedoMarkers,
+  } = useEditHistory();
+  const templateMarkersRef = useRef(templateMarkers);
+  templateMarkersRef.current = templateMarkers;
   const [previewUrl, setPreviewUrl] = useState("");
   const [psdBytes, setPsdBytes] = useState(null);
   const [psdFileName, setPsdFileName] = useState("auto_template.psd");
@@ -440,14 +502,14 @@ export default function TemplateGenerationPage({
   const [autoSavedPath, setAutoSavedPath] = useState("");
   const [lastGeneratedAt, setLastGeneratedAt] = useState(null);
   const [regenerationToken, setRegenerationToken] = useState(0);
-  const [isMarkerPickModifierPressed, setIsMarkerPickModifierPressed] = useState(false);
-  const [hoveredMarkerKey, setHoveredMarkerKey] = useState("");
   const [previewViewport, setPreviewViewport] = useState(() => ({
     size: 0,
     offsetX: 0,
     offsetY: 0,
   }));
   const [templatePreviewZoom, setTemplatePreviewZoom] = useState(1);
+  const [sheetPan, setSheetPan] = useState({ x: 0, y: 0 });
+  const [sheetPanning, setSheetPanning] = useState(false);
   const [viewMode, setViewMode] = useState(() =>
     normalizeTemplateViewMode(workspaceState?.viewMode),
   );
@@ -458,6 +520,8 @@ export default function TemplateGenerationPage({
   const regenerateTimerRef = useRef(null);
   const saveNoticeTimerRef = useRef(null);
   const previewShellRef = useRef(null);
+  const sheetCanvasRef = useRef(null);
+  const markerDragRef = useRef(null);
   const modelViewerApiRef = useRef(null);
   const templatePolicy = getTemplateModelPolicy(modelPath);
   const isWindowTemplate = templatePurpose === "windows" && !templatePolicy.isEup;
@@ -475,14 +539,107 @@ export default function TemplateGenerationPage({
     modelViewerApiRef.current?.rotateModel?.(axis);
   }, []);
 
-  const adjustTemplatePreviewZoom = useCallback((direction) => {
-    setTemplatePreviewZoom((current) =>
-      clampTemplatePreviewZoom(current + direction * TEMPLATE_PREVIEW_ZOOM_STEP),
-    );
+  // The sheet is a pan/zoom viewer: wheel zooms about the cursor and
+  // dragging pans (middle button always; left button when zoomed in and not
+  // drawing markers). The view is mirrored in a ref so rapid wheel events
+  // compose without stale state.
+  const sheetViewRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
+  const sheetDragRef = useRef(null);
+
+  const clampSheetPan = useCallback((pan, zoom) => {
+    const node = previewShellRef.current;
+    if (!node || zoom <= 1) return { x: 0, y: 0 };
+    const base = Math.max(0, Math.min(node.clientWidth, node.clientHeight) - 24);
+    const half = (base * zoom) / 2;
+    // Keep at least a margin of the sheet on screen.
+    const maxX = Math.max(0, half + node.clientWidth / 2 - 64);
+    const maxY = Math.max(0, half + node.clientHeight / 2 - 64);
+    return {
+      x: Math.min(maxX, Math.max(-maxX, pan.x)),
+      y: Math.min(maxY, Math.max(-maxY, pan.y)),
+    };
   }, []);
 
+  const applySheetView = useCallback((zoom, pan) => {
+    const nextPan = clampSheetPan(pan, zoom);
+    sheetViewRef.current = { zoom, pan: nextPan };
+    setTemplatePreviewZoom(zoom);
+    setSheetPan(nextPan);
+  }, [clampSheetPan]);
+
+  const zoomSheet = useCallback((factor, clientX, clientY) => {
+    const { zoom, pan } = sheetViewRef.current;
+    let next = clampTemplatePreviewZoom(zoom * factor);
+    // Land exactly on fit when passing through it.
+    if (Math.abs(next - 1) < 0.04) next = 1;
+    if (next === zoom) return;
+    let anchorX = 0;
+    let anchorY = 0;
+    const node = previewShellRef.current;
+    if (node && Number.isFinite(clientX) && Number.isFinite(clientY)) {
+      const rect = node.getBoundingClientRect();
+      anchorX = clientX - (rect.left + rect.width / 2);
+      anchorY = clientY - (rect.top + rect.height / 2);
+    }
+    const ratio = next / zoom;
+    applySheetView(next, {
+      x: anchorX - (anchorX - pan.x) * ratio,
+      y: anchorY - (anchorY - pan.y) * ratio,
+    });
+  }, [applySheetView]);
+
+  const adjustTemplatePreviewZoom = useCallback((direction) => {
+    zoomSheet(direction > 0 ? TEMPLATE_PREVIEW_ZOOM_FACTOR : 1 / TEMPLATE_PREVIEW_ZOOM_FACTOR);
+  }, [zoomSheet]);
+
   const fitTemplatePreview = useCallback(() => {
-    setTemplatePreviewZoom(1);
+    applySheetView(1, { x: 0, y: 0 });
+  }, [applySheetView]);
+
+  useEffect(() => {
+    const node = previewShellRef.current;
+    if (!node) return undefined;
+    const handleWheel = (event) => {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      zoomSheet(event.deltaY < 0 ? 1.15 : 1 / 1.15, event.clientX, event.clientY);
+    };
+    node.addEventListener("wheel", handleWheel, { passive: false });
+    return () => node.removeEventListener("wheel", handleWheel);
+  }, [zoomSheet, modelPath]);
+
+  const handleSheetPointerDown = useCallback((event) => {
+    if (event.button !== 0 && event.button !== 1) return;
+    if (sheetViewRef.current.zoom <= 1 && event.button === 0) return;
+    sheetDragRef.current = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      pan: sheetViewRef.current.pan,
+      moved: false,
+    };
+    if (event.button === 1) event.preventDefault();
+  }, []);
+
+  const handleSheetPointerMove = useCallback((event) => {
+    const drag = sheetDragRef.current;
+    if (!drag || drag.id !== event.pointerId) return;
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      setSheetPanning(true);
+    }
+    applySheetView(sheetViewRef.current.zoom, { x: drag.pan.x + dx, y: drag.pan.y + dy });
+  }, [applySheetView]);
+
+  const handleSheetPointerUp = useCallback((event) => {
+    const drag = sheetDragRef.current;
+    if (!drag || drag.id !== event.pointerId) return;
+    sheetDragRef.current = null;
+    if (drag.moved) setSheetPanning(false);
   }, []);
 
   const handleTemplatePreviewKeyDown = useCallback(
@@ -515,16 +672,22 @@ export default function TemplateGenerationPage({
   useEffect(() => {
     if (!settingsVersion) return;
     setOutputFolder((prev) => prev || getDefaultOutputFolder());
-    setAutoTemplateColor(getDefaultAutoTemplateColor());
+    const colors = getDefaultAutoTemplateColors();
+    setAutoTemplateColor(colors.fillColor);
+    setAutoTemplateBackgroundColor(colors.backgroundColor);
     setAutoTemplateExportFormat(getDefaultAutoTemplateExportFormat());
-    setTemplateMarkerPickModifier(getDefaultTemplateMarkerPickModifier());
   }, [settingsVersion]);
 
+  // onStateChange lives in a ref and is deliberately NOT an effect dep: the
+  // parent re-renders after every persisted change, and listing the callback
+  // here would re-arm the persist timer on each render and loop indefinitely.
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
   useEffect(() => {
-    if (!onStateChange) return;
+    if (!onStateChangeRef.current) return;
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
-      onStateChange({
+      onStateChangeRef.current?.({
         modelPath,
         outputFolder,
         templatePurpose,
@@ -533,10 +696,12 @@ export default function TemplateGenerationPage({
         exteriorOnly,
         includeTemplateWireframe,
         useWorldSpaceNormalsAsBase,
-        detectedIslands,
-        detectedIslandColors,
-        detectedIslandVisibility,
-        markerSelectionConfirmed,
+        includeVehicleOverlay,
+        vehicleOverlayColor,
+        includeTemplateLogo,
+        autoSaveStamps: autoSaveStampsRef.current,
+        templateMarkers,
+        templateMarkerColor,
         viewMode,
       });
     }, 140);
@@ -553,12 +718,13 @@ export default function TemplateGenerationPage({
     exteriorOnly,
     includeTemplateWireframe,
     useWorldSpaceNormalsAsBase,
-    detectedIslands,
-    detectedIslandColors,
-    detectedIslandVisibility,
-    markerSelectionConfirmed,
+    includeVehicleOverlay,
+    vehicleOverlayColor,
+    includeTemplateLogo,
+    autoSaveStampsVersion,
+    templateMarkers,
+    templateMarkerColor,
     viewMode,
-    onStateChange,
   ]);
 
   useEffect(() => {
@@ -575,43 +741,27 @@ export default function TemplateGenerationPage({
     };
   }, []);
 
-  const showSaveNotice = useCallback((tone, message) => {
+  const showSaveNotice = useCallback((tone, message, label = "") => {
     if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current);
-    setSaveNotice({ tone, message });
+    setSaveNotice({ tone, message, label });
+    // Failures stay until dismissed or replaced; only confirmations time out.
+    if (tone !== "success") return;
     saveNoticeTimerRef.current = setTimeout(() => {
       setSaveNotice({ tone: "", message: "" });
       saveNoticeTimerRef.current = null;
     }, 4000);
   }, []);
 
-  useEffect(() => {
-    setIsMarkerPickModifierPressed(false);
-    setHoveredMarkerKey("");
-
-    const updateModifierState = (event) => {
-      const nextPressed = isTemplateMarkerModifierPressed(
-        event,
-        templateMarkerPickModifier,
-      );
-      setIsMarkerPickModifierPressed(nextPressed);
-      if (!nextPressed) setHoveredMarkerKey("");
-    };
-
-    const handleWindowBlur = () => {
-      setIsMarkerPickModifierPressed(false);
-      setHoveredMarkerKey("");
-    };
-
-    window.addEventListener("keydown", updateModifierState);
-    window.addEventListener("keyup", updateModifierState);
-    window.addEventListener("blur", handleWindowBlur);
-
-    return () => {
-      window.removeEventListener("keydown", updateModifierState);
-      window.removeEventListener("keyup", updateModifierState);
-      window.removeEventListener("blur", handleWindowBlur);
-    };
-  }, [templateMarkerPickModifier]);
+  // Stamps are the modified time of each file this generator wrote, so a
+  // later auto-save can tell its own untouched output from the painter's work.
+  const recordAutoSaveStamp = useCallback(async (path) => {
+    const time = await readModifiedTime(path);
+    const stamps = { ...autoSaveStampsRef.current };
+    delete stamps[path];
+    if (time !== null) stamps[path] = time;
+    autoSaveStampsRef.current = normalizeAutoSaveStamps(stamps);
+    setAutoSaveStampsVersion((version) => version + 1);
+  }, []);
 
   useEffect(() => {
     if (!previewShellRef.current || typeof ResizeObserver === "undefined") return;
@@ -644,13 +794,14 @@ export default function TemplateGenerationPage({
     setTemplateSetWarning("");
     setSelectedTemplatePartNames([]);
     setHoveredTemplatePartName("");
-    setDetectedIslands([]);
-    setDetectedIslandColors({});
-    setDetectedIslandVisibility({});
-    setMarkerSelectionConfirmed(false);
-    setPendingMarkerSelection({});
-    setIsMarkerEditMode(false);
-    setHoveredMarker("");
+    // Marker boxes belong to one model's UV layout.
+    setTemplateMarkers([]);
+    setSelectedMarkerId("");
+    setMarkerDraft(null);
+    setMarkerPixelCounts({});
+    setMarkerToolActive(false);
+    markerDragRef.current = null;
+    clearMarkerHistory();
     setPreviewUrl("");
     setPsdBytes(null);
     setPsdFileName("auto_template.psd");
@@ -680,20 +831,20 @@ export default function TemplateGenerationPage({
       clearGeneratedState();
       const fileName = getFileLabel(selected, "Template Generator");
       if (fileName && onRenameTab) onRenameTab(`${fileName} // TEMPLATE`);
-    } catch {
-      // no-op
+    } catch (error) {
+      showSaveNotice("error", `The file picker couldn't open. ${toErrorMessage(error, "")}`.trim(), "Model not opened");
     }
-  }, [clearGeneratedState, isTauriRuntime, onRenameTab]);
+  }, [clearGeneratedState, isTauriRuntime, onRenameTab, showSaveNotice]);
 
   const handleSelectOutputFolder = useCallback(async () => {
     if (!isTauriRuntime) return;
     try {
       const selected = await open({ directory: true });
       if (typeof selected === "string") setOutputFolder(selected);
-    } catch {
-      // no-op
+    } catch (error) {
+      showSaveNotice("error", `The folder picker couldn't open. ${toErrorMessage(error, "")}`.trim(), "Folder not chosen");
     }
-  }, [isTauriRuntime]);
+  }, [isTauriRuntime, showSaveNotice]);
 
   const handleUnloadModel = useCallback(() => {
     setModelPath("");
@@ -716,170 +867,170 @@ export default function TemplateGenerationPage({
     setTemplatePsdSourceError(info?.templatePsdSourceError || "");
   }, []);
 
-  const resolveMarkerFromUv = useCallback(
-    (uv) => {
-      const point = uvToTemplateTexturePoint(uv, exportSize);
-      return pickMarkerAtTexturePoint(detectedIslands, point);
-    },
-    [detectedIslands, exportSize],
-  );
+  // `historyKey` joins rapid repeats (arrow nudges of one marker) into one undo step.
+  const updateTemplateMarkers = useCallback((updater, historyKey = null) => {
+    const before = templateMarkersRef.current;
+    const next = normalizeTemplateMarkers(updater(before));
+    if (JSON.stringify(next) === JSON.stringify(before)) return;
+    recordMarkerEdit(before, historyKey);
+    templateMarkersRef.current = next;
+    setTemplateMarkers(next);
+    setAutoSavedPath("");
+  }, [recordMarkerEdit]);
 
-  const setHoveredMarker = useCallback((markerKey = "") => {
-    setHoveredMarkerKey((prev) => (prev === markerKey ? prev : markerKey));
+  const applyMarkerSnapshot = useCallback((snapshot) => {
+    if (!snapshot) return;
+    markerDragRef.current = null;
+    setMarkerDraft(null);
+    templateMarkersRef.current = snapshot;
+    setTemplateMarkers(snapshot);
+    setSelectedMarkerId((current) => (snapshot.some((marker) => marker.id === current) ? current : ""));
+    setAutoSavedPath("");
   }, []);
 
-  const clearHoveredMarker = useCallback(() => {
-    setHoveredMarker("");
-  }, [setHoveredMarker]);
+  const handleUndoMarkers = useCallback(() => {
+    applyMarkerSnapshot(undoMarkerEdit(templateMarkersRef.current));
+  }, [applyMarkerSnapshot, undoMarkerEdit]);
 
-  useEffect(() => {
-    if (!detectedIslands.length) {
-      setPendingMarkerSelection((prev) => (shallowEqualObject(prev, {}) ? prev : {}));
-      setIsMarkerEditMode(false);
-      return;
+  const handleRedoMarkers = useCallback(() => {
+    applyMarkerSnapshot(redoMarkerEdit(templateMarkersRef.current));
+  }, [applyMarkerSnapshot, redoMarkerEdit]);
+
+  const handleDeleteMarker = useCallback((markerId) => {
+    updateTemplateMarkers((current) => current.filter((marker) => marker.id !== markerId));
+    setSelectedMarkerId((current) => (current === markerId ? "" : current));
+  }, [updateTemplateMarkers]);
+
+  const handleSetMarkerFill = useCallback((markerId, fill) => {
+    updateTemplateMarkers((current) =>
+      current.map((marker) => (marker.id === markerId ? { ...marker, fill } : marker)),
+    );
+  }, [updateTemplateMarkers]);
+
+  const handleClearMarkers = useCallback(() => {
+    updateTemplateMarkers(() => []);
+    setSelectedMarkerId("");
+  }, [updateTemplateMarkers]);
+
+  // Pointer position in normalized texture space. The canvas rect already
+  // includes zoom and pan, so the point matches the export at any view.
+  const getSheetPoint = useCallback((event) => {
+    const rect = sheetCanvasRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width || !rect.height) return null;
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    };
+  }, []);
+
+  const handleMarkerPointerDown = useCallback((event) => {
+    if (!markerToolActive || event.button !== 0) return;
+    const point = getSheetPoint(event);
+    if (!point) return;
+    // Drawing owns the left button; the sheet must not start a pan.
+    event.preventDefault();
+    event.stopPropagation();
+    const target = event.target instanceof Element ? event.target : null;
+    const markerId = target?.closest("[data-marker-id]")?.getAttribute("data-marker-id") || "";
+    const handle = target?.getAttribute("data-handle") || "";
+    const origin = markerId ? templateMarkers.find((marker) => marker.id === markerId) : null;
+    markerDragRef.current = {
+      pointerId: event.pointerId,
+      mode: origin ? (handle ? "resize" : "move") : "draw",
+      handle,
+      origin,
+      start: point,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      moved: false,
+    };
+    setSelectedMarkerId(origin ? origin.id : "");
+    // preventDefault above also stops focus; keep keyboard edits working.
+    previewShellRef.current?.focus({ preventScroll: true });
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }, [getSheetPoint, markerToolActive, templateMarkers]);
+
+  const handleMarkerPointerMove = useCallback((event) => {
+    const drag = markerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    if (!drag.moved && Math.hypot(event.clientX - drag.clientX, event.clientY - drag.clientY) < 3) return;
+    drag.moved = true;
+    const point = getSheetPoint(event);
+    if (!point) return;
+    if (drag.mode === "draw") {
+      setMarkerDraft(markerFromDrag(drag.start, point, "__draft__"));
+    } else if (drag.mode === "move") {
+      setMarkerDraft(moveTemplateMarker(drag.origin, point.x - drag.start.x, point.y - drag.start.y));
+    } else {
+      setMarkerDraft(resizeTemplateMarker(drag.origin, drag.handle, point));
     }
+  }, [getSheetPoint]);
 
-    setPendingMarkerSelection((prev) => {
-      const sourceSelection = isMarkerEditMode ? prev : detectedIslandVisibility;
-      const next = buildMarkerSelectionDraft(detectedIslands, sourceSelection);
-      return shallowEqualObject(prev, next) ? prev : next;
-    });
-  }, [detectedIslandVisibility, detectedIslands, isMarkerEditMode]);
-
-  useEffect(() => {
-    if (isWindowTemplate) {
-      setIsMarkerEditMode(false);
-      return;
+  const handleMarkerPointerUp = useCallback((event) => {
+    const drag = markerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    markerDragRef.current = null;
+    const draft = markerDraft;
+    setMarkerDraft(null);
+    if (!drag.moved || !draft || event.type === "pointercancel") return;
+    if (drag.mode === "draw") {
+      const created = markerFromDrag({ x: draft.x, y: draft.y }, { x: draft.x + draft.w, y: draft.y + draft.h });
+      if (!created) return;
+      updateTemplateMarkers((current) => [...current, created]);
+      setSelectedMarkerId(created.id);
+    } else {
+      updateTemplateMarkers((current) =>
+        current.map((marker) => (marker.id === drag.origin.id ? { ...draft, id: marker.id } : marker)),
+      );
     }
-    if (!detectedIslands.length || markerSelectionConfirmed || isMarkerEditMode) return;
-    setPendingMarkerSelection((prev) => {
-      const next = buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility);
-      return shallowEqualObject(prev, next) ? prev : next;
-    });
-    setIsMarkerEditMode(true);
-  }, [
-    detectedIslandVisibility,
-    detectedIslands,
-    isMarkerEditMode,
-    isWindowTemplate,
-    markerSelectionConfirmed,
-  ]);
+  }, [markerDraft, updateTemplateMarkers]);
 
-  const handleTogglePendingMarkerSelection = useCallback(
-    (markerKey) => {
-      if (!markerKey) return;
-      setPendingMarkerSelection((prev) => {
-        const next = toggleMarkerSelection(prev, markerKey);
-        return shallowEqualObject(prev, next) ? prev : next;
-      });
-      setHoveredMarker(markerKey);
-    },
-    [setHoveredMarker],
-  );
-
-  const handleBeginMarkerEdit = useCallback(() => {
-    setPendingMarkerSelection((prev) => {
-      const next = buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility);
-      return shallowEqualObject(prev, next) ? prev : next;
-    });
-    setHoveredMarker("");
-    setIsMarkerEditMode(true);
-  }, [detectedIslandVisibility, detectedIslands, setHoveredMarker]);
-
-  const handleCancelMarkerEdit = useCallback(() => {
-    setPendingMarkerSelection((prev) => {
-      const next = buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility);
-      return shallowEqualObject(prev, next) ? prev : next;
-    });
-    setHoveredMarker("");
-    setIsMarkerEditMode(false);
-  }, [detectedIslandVisibility, detectedIslands, setHoveredMarker]);
-
-  const handleClearPendingMarkerSelection = useCallback(() => {
-    setPendingMarkerSelection((prev) => (shallowEqualObject(prev, {}) ? prev : {}));
-    setHoveredMarker("");
-  }, [setHoveredMarker]);
-
-  const handleConfirmMarkerSelection = useCallback(() => {
-    const nextSelection = buildMarkerSelectionDraft(detectedIslands, pendingMarkerSelection);
-    if (!shallowEqualObject(detectedIslandVisibility, nextSelection)) {
-      setDetectedIslandVisibility(nextSelection);
-      setAutoSavedPath("");
-      setGenerationError("");
-    }
-    setPendingMarkerSelection(nextSelection);
-    setMarkerSelectionConfirmed(true);
-    setHoveredMarker("");
-    setIsMarkerEditMode(false);
-  }, [
-    detectedIslandVisibility,
-    detectedIslands,
-    pendingMarkerSelection,
-    setHoveredMarker,
-  ]);
-
-  const handleConfirmNoMarkers = useCallback(() => {
-    const nextSelection = buildMarkerSelectionDraft(detectedIslands, {});
-    if (!shallowEqualObject(detectedIslandVisibility, nextSelection)) {
-      setDetectedIslandVisibility(nextSelection);
-      setAutoSavedPath("");
-      setGenerationError("");
-    }
-    setPendingMarkerSelection(nextSelection);
-    setMarkerSelectionConfirmed(true);
-    setHoveredMarker("");
-    setIsMarkerEditMode(false);
-  }, [detectedIslandVisibility, detectedIslands, setHoveredMarker]);
-
-  const handleResetMarkerSelection = useCallback(() => {
-    if (!shallowEqualObject(detectedIslandVisibility, {})) {
-      setDetectedIslandVisibility({});
-      setAutoSavedPath("");
-      setGenerationError("");
-    }
-    setPendingMarkerSelection({});
-    setMarkerSelectionConfirmed(false);
-    setHoveredMarker("");
-    setIsMarkerEditMode(true);
-  }, [detectedIslandVisibility, setHoveredMarker]);
-
-  const handleIslandColorChange = useCallback((color) => {
-    if (!detectedIslands.length || typeof color !== "string") return;
-    const normalized = normalizeColorInputValue(color);
-    setDetectedIslandColors((prev) => {
-      const next = {};
-      for (const marker of detectedIslands) {
-        if (marker?.key) next[marker.key] = normalized;
+  const handleSheetKeyDown = useCallback((event) => {
+    if (markerToolActive && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const selected = templateMarkers.find((marker) => marker.id === selectedMarkerId);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (selected) setSelectedMarkerId("");
+        else setMarkerToolActive(false);
+        return;
       }
-      return shallowEqualObject(prev, next) ? prev : next;
-    });
-    setAutoSavedPath("");
-  }, [detectedIslands]);
-
-  const handleModelMarkerHover = useCallback(
-    (hit) => {
-      if (!isMarkerEditMode) return;
-      const marker = resolveMarkerFromUv(hit?.uv);
-      setHoveredMarker(marker?.key || "");
-    },
-    [isMarkerEditMode, resolveMarkerFromUv, setHoveredMarker],
-  );
-
-  const handleModelMarkerPick = useCallback(
-    (hit) => {
-      if (!isMarkerEditMode) return;
-      const marker = resolveMarkerFromUv(hit?.uv);
-      if (!marker?.key) return;
-      handleTogglePendingMarkerSelection(marker.key);
-    },
-    [handleTogglePendingMarkerSelection, isMarkerEditMode, resolveMarkerFromUv],
-  );
+      if (selected && (event.key === "Delete" || event.key === "Backspace")) {
+        event.preventDefault();
+        handleDeleteMarker(selected.id);
+        return;
+      }
+      const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+      if (selected && nudge) {
+        event.preventDefault();
+        // One texture pixel per press, ten with Shift.
+        const step = (event.shiftKey ? 10 : 1) / exportSize;
+        updateTemplateMarkers((current) =>
+          current.map((marker) =>
+            marker.id === selected.id ? moveTemplateMarker(marker, nudge[0] * step, nudge[1] * step) : marker,
+          ),
+          `nudge:${selected.id}`,
+        );
+        return;
+      }
+    }
+    handleTemplatePreviewKeyDown(event);
+  }, [
+    exportSize,
+    handleDeleteMarker,
+    handleTemplatePreviewKeyDown,
+    markerToolActive,
+    selectedMarkerId,
+    templateMarkers,
+    updateTemplateMarkers,
+  ]);
 
   const handleTemplatePurposeChange = useCallback((nextPurpose) => {
     const normalized = nextPurpose === "windows" ? "windows" : "body";
     setTemplatePurpose(normalized);
     setHoveredTemplatePartName("");
-    setIsMarkerEditMode(false);
+    setMarkerToolActive(false);
     setGenerationError("");
     setAutoSavedPath("");
   }, []);
@@ -964,7 +1115,7 @@ export default function TemplateGenerationPage({
       setGenerationError(upstreamError);
       setLayerCount(0);
       setTargetCount(0);
-      setDetectedIslands([]);
+      setMarkerPixelCounts({});
       setAutoSavedPath("");
       setGenerating(false);
       return;
@@ -995,15 +1146,18 @@ export default function TemplateGenerationPage({
             meshSelectionMode: isWindowTemplate ? "selected" : setPolicy.meshSelectionMode,
             selectedMeshNames: isWindowTemplate ? selectedTemplatePartNames : undefined,
             fillColor: autoTemplateColor,
+            backgroundColor: autoTemplateBackgroundColor,
             preferredTarget: isWindowTemplate ? "" : setPolicy.preferredTarget,
             includeVehicleLayers: !isWindowTemplate && setPolicy.includeVehicleLayers,
             includeWireframe: includeTemplateWireframe,
             includeWorldSpaceNormals: useWorldSpaceNormalsAsBase,
             useWorldSpaceNormalsAsBase,
-            detectedIslandColors:
-              isPrimaryTemplate && !isWindowTemplate ? detectedIslandColors : {},
-            detectedIslandVisibility:
-              isPrimaryTemplate && !isWindowTemplate ? detectedIslandVisibility : {},
+            includeVehicleOverlay: includeVehicleOverlay && setPolicy.includeVehicleLayers,
+            vehicleOverlayColor,
+            includeLogo: includeTemplateLogo,
+            // Boxes are drawn on the primary body sheet, so only it carries them.
+            templateMarkers: isPrimaryTemplate && !isWindowTemplate ? templateMarkers : [],
+            templateMarkerColor,
           };
 
           const buildJob = createTemplateBuildJob(templateSet.templateMap, buildOptions);
@@ -1028,52 +1182,57 @@ export default function TemplateGenerationPage({
         setPsdFileName(primaryResult.fileName);
         setLayerCount(artifacts.reduce((sum, artifact) => sum + (artifact.layerCount || 0), 0));
         setTargetCount(artifacts.reduce((sum, artifact) => sum + (artifact.targetCount || 0), 0));
-        const nextMarkers = Array.isArray(primaryResult.detectedIslands)
-          ? primaryResult.detectedIslands
-          : [];
-        setDetectedIslands(nextMarkers);
-        setDetectedIslandColors((prev) => {
-          const next = {};
-          for (const marker of nextMarkers) {
-            if (!marker?.key || typeof prev[marker.key] !== "string") continue;
-            next[marker.key] = normalizeColorInputValue(prev[marker.key]);
-          }
-          return shallowEqualObject(prev, next) ? prev : next;
-        });
+        setMarkerPixelCounts(primaryResult.markerPixelCounts || {});
         setLastGeneratedAt(new Date());
         setGenerationError("");
+        setLogoNotice(
+          primaryResult.logoStatus === "placed" || primaryResult.logoStatus === "off"
+            ? ""
+            : primaryResult.logoMessage || "The Cortex logo could not be added.",
+        );
 
         const exportOutputs = buildTemplateExportOutputsForArtifacts(
           autoTemplateExportFormat,
           artifacts,
         );
 
-        const markerPlacementRequired =
-          !isWindowTemplate &&
-          isMarkerPlacementDecisionRequired(nextMarkers, markerSelectionConfirmed);
-
-        if (
-          isTauriRuntime &&
-          outputFolder &&
-          exportOutputs.length > 0 &&
-          !markerPlacementRequired
-        ) {
-          try {
-            const savedPaths = [];
-            for (const output of exportOutputs) {
-              const autoPath = joinPath(outputFolder, output.fileName);
+        if (isTauriRuntime && outputFolder && exportOutputs.length > 0) {
+          const savedPaths = [];
+          const keptNames = [];
+          let failure = null;
+          for (const output of exportOutputs) {
+            // A newer build owns the folder once this one is superseded.
+            if (cancelled) return;
+            const autoPath = joinPath(outputFolder, output.fileName);
+            try {
+              if (!(await canAutoSaveReplace(autoPath, autoSaveStampsRef.current))) {
+                keptNames.push(output.fileName);
+                continue;
+              }
               await writeFile(autoPath, ensureWritableBytes(output.bytes));
               savedPaths.push(autoPath);
+              await recordAutoSaveStamp(autoPath);
+            } catch (error) {
+              failure = { fileName: output.fileName, message: toErrorMessage(error, "") };
+              break;
             }
-            if (cancelled) return;
-            setAutoSavedPath(savedPaths.join(" | "));
-            const count = savedPaths.length;
-            showSaveNotice("success", `${count} template file${count === 1 ? "" : "s"} auto-saved successfully.`);
-          } catch (error) {
-            if (!cancelled) {
-              setAutoSavedPath("");
-              showSaveNotice("error", `Auto-save failed: ${toErrorMessage(error, "Unable to write the template files.")}`);
-            }
+          }
+          if (cancelled) return;
+          setAutoSavedPath(savedPaths.join(" | "));
+          const count = savedPaths.length;
+          const savedText = count > 0 ? `Saved ${count} template file${count === 1 ? "" : "s"}. ` : "";
+          if (failure) {
+            showSaveNotice(
+              "error",
+              `${savedText}Auto-save could not write ${failure.fileName}. ${failure.message}`.trim(),
+            );
+          } else if (keptNames.length > 0) {
+            showSaveNotice(
+              "error",
+              `${savedText}Left ${keptNames.join(", ")} untouched because it changed outside this build. Export to replace it.`,
+            );
+          } else if (count > 0) {
+            showSaveNotice("success", `Saved ${count} template file${count === 1 ? "" : "s"}`);
           }
         } else {
           setAutoSavedPath("");
@@ -1090,7 +1249,7 @@ export default function TemplateGenerationPage({
         setGeneratedTemplates([]);
         setLayerCount(0);
         setTargetCount(0);
-        setDetectedIslands([]);
+        setMarkerPixelCounts({});
         setAutoSavedPath("");
       } finally {
         if (!cancelled) {
@@ -1119,12 +1278,16 @@ export default function TemplateGenerationPage({
     modelPath,
     outputFolder,
     autoTemplateColor,
+    autoTemplateBackgroundColor,
     autoTemplateExportFormat,
     includeTemplateWireframe,
     useWorldSpaceNormalsAsBase,
-    detectedIslandColors,
-    detectedIslandVisibility,
-    markerSelectionConfirmed,
+    includeVehicleOverlay,
+    vehicleOverlayColor,
+    includeTemplateLogo,
+    recordAutoSaveStamp,
+    templateMarkers,
+    templateMarkerColor,
     regenerationToken,
     isTauriRuntime,
     showSaveNotice,
@@ -1133,15 +1296,6 @@ export default function TemplateGenerationPage({
 
   const handleSaveTemplate = useCallback(async () => {
     if (isSaving) return;
-    if (
-      !isWindowTemplate &&
-      isMarkerPlacementDecisionRequired(detectedIslands, markerSelectionConfirmed)
-    ) {
-      const message = "Choose marker locations or continue with no markers before saving.";
-      setGenerationError(message);
-      showSaveNotice("error", message);
-      return;
-    }
 
     let exportOutputs;
     try {
@@ -1156,13 +1310,11 @@ export default function TemplateGenerationPage({
             });
     } catch (error) {
       const message = toErrorMessage(error, "Template export failed.");
-      setGenerationError(message);
-      showSaveNotice("error", `Save failed: ${message}`);
+      showSaveNotice("error", message);
       return;
     }
     if (exportOutputs.length === 0) {
       const message = "Nothing to save yet. Generate a template first.";
-      setGenerationError(message);
       showSaveNotice("error", message);
       return;
     }
@@ -1170,22 +1322,36 @@ export default function TemplateGenerationPage({
     const confirmSave = (savedPaths) => {
       setAutoSavedPath(savedPaths.join(" | "));
       const count = savedPaths.length;
-      showSaveNotice("success", `${count} template file${count === 1 ? "" : "s"} saved successfully.`);
+      showSaveNotice("success", `Saved ${count} template file${count === 1 ? "" : "s"}`);
     };
 
     const writeOutputsToFolder = async (folder) => {
       const savedPaths = [];
       for (const output of exportOutputs) {
         const filePath = joinPath(folder, output.fileName);
-        await writeFile(filePath, ensureWritableBytes(output.bytes));
+        try {
+          await writeFile(filePath, ensureWritableBytes(output.bytes));
+        } catch (error) {
+          if (savedPaths.length > 0) {
+            // Partial export: say what landed instead of hiding it behind a dialog.
+            const partial = new Error(
+              `Saved ${savedPaths.length} of ${exportOutputs.length} files, then could not write ${output.fileName}. ${toErrorMessage(error, "")}`.trim(),
+            );
+            partial.partial = true;
+            throw partial;
+          }
+          const failed = new Error(`Could not write ${filePath}. ${toErrorMessage(error, "")}`.trim());
+          failed.scope = isFsScopeError(error);
+          throw failed;
+        }
         savedPaths.push(filePath);
+        await recordAutoSaveStamp(filePath);
       }
       return savedPaths;
     };
 
     setIsSaving(true);
     setAutoSavedPath("");
-    setGenerationError("");
     try {
       if (isTauriRuntime) {
         if (outputFolder) {
@@ -1193,8 +1359,11 @@ export default function TemplateGenerationPage({
             const savedPaths = await writeOutputsToFolder(outputFolder);
             confirmSave(savedPaths);
             return;
-          } catch {
-            // Folder may be out of FS scope after restart — fall through to dialogs.
+          } catch (error) {
+            // Only a folder outside the granted fs scope (picked in an earlier
+            // session) is fixed by choosing it again in a dialog. Disk, lock and
+            // permission failures are reported with the path instead.
+            if (!error?.scope) throw error;
           }
         }
 
@@ -1208,6 +1377,7 @@ export default function TemplateGenerationPage({
           });
           if (!filePath) return;
           await writeFile(filePath, ensureWritableBytes(output.bytes));
+          await recordAutoSaveStamp(filePath);
           confirmSave([filePath]);
           return;
         }
@@ -1232,30 +1402,33 @@ export default function TemplateGenerationPage({
       confirmSave(exportOutputs.map((output) => output.fileName));
     } catch (error) {
       const message = toErrorMessage(error, "Failed to save template.");
-      setGenerationError(message);
-      showSaveNotice("error", `Save failed: ${message}`);
+      showSaveNotice("error", message);
     } finally {
       setIsSaving(false);
     }
   }, [
     autoTemplateExportFormat,
-    detectedIslands.length,
     generatedTemplates,
     isSaving,
     isTauriRuntime,
-    isWindowTemplate,
-    markerSelectionConfirmed,
     outputFolder,
     previewUrl,
     psdBytes,
     psdFileName,
+    recordAutoSaveStamp,
     showSaveNotice,
   ]);
 
   const handleOpenOutputFolder = useCallback(async () => {
     if (!isTauriRuntime || !outputFolder) return;
-    await openFolderPath(outputFolder);
-  }, [isTauriRuntime, outputFolder]);
+    if (await openFolderPath(outputFolder)) return;
+    showSaveNotice("error", `Windows couldn't open ${outputFolder}.`, "Folder not opened");
+  }, [isTauriRuntime, outputFolder, showSaveNotice]);
+
+  const [dockOpen, setDockOpen] = useState(true);
+  const panes = usePaneWidths("cortex.template.panes");
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
+  useEffect(() => setNoticeDismissed(false), [saveNotice]);
 
   const modelFileName = getFileLabel(modelPath, "");
   const activeTemplateSets = isWindowTemplate ? windowTemplateSets : templateSets;
@@ -1271,7 +1444,6 @@ export default function TemplateGenerationPage({
   const baseSaveButtonLabel = getTemplateSaveButtonLabel(autoTemplateExportFormat);
   const saveButtonLabel =
     templateBatchCount > 1 ? `${baseSaveButtonLabel} (${templateBatchCount})` : baseSaveButtonLabel;
-  const worldSpaceNormalsBaseEnabled = useWorldSpaceNormalsAsBase;
   const activeWindowTemplateSet = windowTemplateSets[0] || null;
   const windowTemplateMap = activeWindowTemplateSet?.templateMap || null;
   const inferredWindowTarget = windowTemplateMap?.inference?.windowTarget || "";
@@ -1280,52 +1452,37 @@ export default function TemplateGenerationPage({
   );
   const availableWindowPartNames = normalizeMeshNameList(
     (activeWindowTemplateSet?.templatePsdSource?.meshes || []).map((mesh) => mesh?.meshName),
-  ).sort((a, b) => a.localeCompare(b));
+  )
+    .filter((meshName) => !selectedTemplatePartNames.includes(meshName))
+    .sort((a, b) => a.localeCompare(b));
   const selectedTextureTargets = selectedTemplatePartNames.map((name) => `mesh:${name}`);
-  const selectedPartCountLabel = `${selectedTemplatePartNames.length} part${
-    selectedTemplatePartNames.length === 1 ? "" : "s"
-  } selected`;
-  const hasDetectedIslands = detectedIslands.length > 0;
-  const markerPlacementRequired =
-    !isWindowTemplate &&
-    isMarkerPlacementDecisionRequired(detectedIslands, markerSelectionConfirmed);
-  const confirmedSelectedCount = countSelectedMarkers(
-    buildMarkerSelectionDraft(detectedIslands, detectedIslandVisibility),
-  );
-  const pendingSelectedCount = countSelectedMarkers(pendingMarkerSelection);
-  const markerSelectionCountLabel = isMarkerEditMode
-    ? `${pendingSelectedCount} of ${detectedIslands.length || 0} chosen`
-    : `${confirmedSelectedCount} of ${detectedIslands.length || 0} placed`;
-  const markerPickModifierLabel =
-    templateMarkerPickModifier === "ctrl"
-      ? "Ctrl"
-      : templateMarkerPickModifier === "shift"
-        ? "Shift"
-        : "Alt";
-  const markerPickHint = isMarkerPickModifierPressed
-    ? `${markerPickModifierLabel} held — click the matching part on the model.`
-    : `Click a UV chunk here, or hold ${markerPickModifierLabel} and click the matching model part.`;
-  const markerSelectionHint = isMarkerEditMode
-    ? "Markers start off. Choose only the locations where a marker belongs before saving."
-    : "Only these confirmed locations will be included in the saved template.";
   const templatePreviewDisplaySize = previewViewport.size * templatePreviewZoom;
-  const showMarkerSelectionOverlay =
-    previewUrl && hasDetectedIslands && templatePreviewDisplaySize > 0 && isMarkerEditMode;
-  const markerSelectionPickingActive = isMarkerEditMode;
-  const globalMarkerColor = (() => {
-    const first = detectedIslands[0];
-    const key = first?.key;
-    return key && detectedIslandColors[key]
-      ? normalizeColorInputValue(detectedIslandColors[key])
-      : (first?.defaultColor || "#00ff00");
-  })();
-  const markerOverlayMarkers = detectedIslands
-    .slice()
-    .sort((a, b) => {
-      const aRect = getMarkerTextureRect(a);
-      const bRect = getMarkerTextureRect(b);
-      return (bRect?.area || 0) - (aRect?.area || 0);
-    });
+  const sheetPxToUnit = templatePreviewDisplaySize > 0 ? 1 / templatePreviewDisplaySize : 0;
+  const markersAvailable = !isWindowTemplate && Boolean(previewUrl);
+  const markerDrawing = markersAvailable && markerToolActive;
+
+  // Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo and redo marker edits anywhere on
+  // the page while markers can be edited; text fields keep their own undo.
+  useEffect(() => {
+    if (!isActive || !markersAvailable) return undefined;
+    const onKeyDown = (event) => {
+      const target = event.target;
+      if (event.defaultPrevented || target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName)) return;
+      const action = editHistoryKey(event);
+      if (!action) return;
+      event.preventDefault();
+      if (action === "undo") handleUndoMarkers();
+      else handleRedoMarkers();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isActive, markersAvailable, handleUndoMarkers, handleRedoMarkers]);
+  // Show the box being dragged in place of the committed one.
+  const displayedMarkers = markerDraft
+    ? markerDraft.id === "__draft__"
+      ? [...templateMarkers, markerDraft]
+      : templateMarkers.map((marker) => (marker.id === markerDraft.id ? markerDraft : marker))
+    : templateMarkers;
 
   const outputFormatLabel =
     autoTemplateExportFormat === "png"
@@ -1333,855 +1490,948 @@ export default function TemplateGenerationPage({
       : autoTemplateExportFormat === "psd_png"
         ? "PSD + PNG"
         : "PSD";
-  const exportDisabled = Boolean(
-    !psdBytes || generating || isSaving || markerPlacementRequired,
-  );
-  const exportDisabledReason = markerPlacementRequired
-    ? "Choose marker locations or continue with no markers before exporting."
-    : isWindowTemplate && selectedTemplatePartNames.length === 0
-      ? "Select at least one window part to generate a template."
-      : generationError
-        ? generationError
-        : generating
-          ? "The template is being rebuilt."
-          : !psdBytes
-            ? "A generated template is required before export."
-            : "";
-  const buildStatusLabel = modelLoadError || generationError
-    ? "Needs attention"
-    : generating || modelLoading
-      ? "Building"
-      : previewUrl
-        ? "Ready"
-        : "Preparing";
-  const statusSummary = previewUrl
+  const exportDisabled = Boolean(!psdBytes || generating || isSaving);
+  const exportDisabledReason = !modelPath
+    ? "Open a model to build its template."
+    : modelLoadError
+      ? "Export needs a model that loads."
+      : isWindowTemplate && selectedTemplatePartNames.length === 0
+        ? "Pick at least one window part on the model."
+        : generationError
+          ? "The last build failed. See the template pane."
+          : generating
+            ? "Building the template…"
+            : !psdBytes
+              ? "Waiting for the first build."
+              : "";
+  const viewerBlocked = !modelViewerReady || modelLoading || Boolean(modelLoadError);
+  const modelDone = Boolean(modelPath && modelViewerReady && !modelLoadError && !modelLoading);
+  const targetDone = modelDone && (isWindowTemplate ? selectedTemplatePartNames.length > 0 : Boolean(previewUrl));
+  const markersDone = templateMarkers.length > 0;
+  const showModelPane = viewMode !== "template";
+  const showSheetPane = viewMode !== "model";
+  const savedPaths = autoSavedPath ? autoSavedPath.split(" | ") : [];
+  const savedSummary = savedPaths.length
+    ? savedPaths.length === 1
+      ? getFileLabel(savedPaths[0], savedPaths[0])
+      : `${savedPaths.length} files`
+    : "";
+  const buildSummary = previewUrl
     ? `${layerCount} layer${layerCount === 1 ? "" : "s"} · ${targetCount} target${targetCount === 1 ? "" : "s"}`
-    : isWindowTemplate && selectedTemplatePartNames.length === 0
-      ? "Select model geometry to continue"
-      : "Waiting for generated output";
-  const markerProgressLabel = isMarkerEditMode
-    ? `${pendingSelectedCount} of ${detectedIslands.length} selected`
-    : `${confirmedSelectedCount} of ${detectedIslands.length} placed`;
-  const saveLocationLabel = outputFolder
-    ? getFileLabel(outputFolder, outputFolder)
-    : isTauriRuntime
-      ? "Choose folder"
-      : "Browser downloads";
+    : "";
+  const updatedLabel = lastGeneratedAt
+    ? lastGeneratedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+  const showNotice = Boolean(saveNotice.message) && !noticeDismissed;
+
+  const contextBar =
+    isActive && contextBarTarget
+      ? createPortal(
+          <div className="ctx-bar-inner lv-ctx">
+            <button
+              type="button"
+              className={`lv-ctx-btn ${dockOpen ? "is-on" : ""}`}
+              onClick={() => setDockOpen((open) => !open)}
+              title={dockOpen ? "Hide the template steps" : "Show the template steps"}
+              aria-label={dockOpen ? "Hide the template steps" : "Show the template steps"}
+              aria-pressed={dockOpen}
+            >
+              <PanelLeft aria-hidden="true" />
+            </button>
+            <div className="ctx-bar-drag-pad" aria-hidden="true" />
+          </div>,
+          contextBarTarget,
+        )
+      : null;
 
   return (
-    <main className={`tg-root tg-view-${viewMode}`} aria-label="Template Generator">
-      {!modelPath ? (
-        <section className="tg-empty" aria-labelledby="tg-empty-title">
-          <div className="tg-empty-content">
-            <span className="tg-empty-kicker">// TEMPLATE GENERATOR</span>
-            <h1 id="tg-empty-title">Build a template from a model.</h1>
-            <p>
-              Import a supported vehicle or clothing model, choose the geometry to paint,
-              and export the generated template.
-            </p>
-            <Button
-              type="button"
-              className="tg-empty-btn"
-              onClick={handleSelectModel}
-              disabled={!isTauriRuntime}
-              title={!isTauriRuntime ? "Model import is available in the desktop app." : undefined}
-            >
-              <Box aria-hidden />
-              Import model
-            </Button>
-            <span className="tg-empty-formats">
-              .yft · .ydd{!isTauriRuntime ? " · Desktop app required" : ""}
-            </span>
-          </div>
-        </section>
-      ) : (
-        <div className="tg-workbench">
-          <header className="tg-workbench-toolbar">
-            <div className="tg-workbench-title">
-              <span>// TEMPLATE GENERATOR</span>
-              <strong title={modelPath}>{modelFileName}</strong>
-            </div>
-            <div className="tg-view-switch" role="group" aria-label="Viewport layout">
-              {["model", "template", "split"].map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={viewMode === mode ? "is-active" : ""}
-                  onClick={() => setViewMode(mode)}
-                  aria-pressed={viewMode === mode}
-                >
-                  {mode[0].toUpperCase() + mode.slice(1)}
-                </button>
-              ))}
-            </div>
-          </header>
+    <main
+      className={`lv-root tm-root ${dockOpen ? "" : "is-dock-closed"}`}
+      style={panes.style}
+      aria-label="Template Generator"
+    >
+      {contextBar}
 
-          <div className="tg-workbench-body">
-            <aside
-              className={`tg-inspector${generationError || modelLoadError ? " has-error" : ""}`}
-              aria-label="Template controls"
-            >
-              <div className="tg-inspector-scroll">
-                <section className="tg-inspector-section" aria-labelledby="tg-source-title">
-                  <div className="tg-section-heading">
-                    <h2 id="tg-source-title">Source</h2>
-                  </div>
-                  <div className="tg-source-row" title={modelPath}>
-                    <span className="tg-icon-slot" aria-hidden>
-                      {templatePolicy.isEup ? <Shirt /> : <Car />}
-                    </span>
-                    <span className="tg-source-copy">
-                      <strong>{modelFileName}</strong>
-                      <small>{templatePolicy.label} · .{templatePolicy.format}</small>
-                    </span>
-                    <button
-                      type="button"
-                      className="tg-text-action"
-                      onClick={handleSelectModel}
-                      disabled={!isTauriRuntime}
-                      title={!isTauriRuntime ? "Model replacement is available in the desktop app." : undefined}
+      {/* ──── Steps ──── */}
+      <aside className="lv-dock" aria-label="Template steps" inert={!dockOpen}>
+        <div className="lv-dock-scroll custom-scrollbar">
+          <AssetSlot
+            id="tm-model"
+            step={1}
+            title="Model"
+            path={modelPath}
+            done={modelDone}
+            emptyTitle="Open a model"
+            emptyHint=".yft vehicle or .ydd clothing model."
+            onPick={handleSelectModel}
+            onUnload={handleUnloadModel}
+          >
+            {!modelPath && !isTauriRuntime ? (
+              <p className="lv-slot-note is-warn">
+                <span className="lv-dot" aria-hidden="true" />
+                Opening models needs the desktop app.
+              </p>
+            ) : null}
+            {modelPath ? (
+              modelLoading ? (
+                <p className="lv-slot-note is-idle">
+                  <span className="lv-dot" aria-hidden="true" />
+                  Loading model…
+                </p>
+              ) : modelLoadError ? (
+                <p className="lv-slot-note is-error">
+                  <span className="lv-dot" aria-hidden="true" />
+                  {modelLoadError}
+                </p>
+              ) : (
+                <p className="lv-slot-note is-ok">
+                  <span className="lv-dot" aria-hidden="true" />
+                  {templatePolicy.label} · .{templatePolicy.format}
+                  {templateBatchCount > 1 ? ` · ${templateBatchCount} templates` : ""}
+                </p>
+              )
+            ) : null}
+            {templateSetWarning ? (
+              <p className="lv-slot-note is-warn">
+                <AlertTriangle className="tm-note-icon" aria-hidden="true" />
+                {templateSetWarning}
+              </p>
+            ) : null}
+          </AssetSlot>
+
+          <Step
+            id="tm-target"
+            step={2}
+            title="Paint area"
+            done={modelPath ? targetDone : false}
+            disabled={!modelPath}
+            note="Choose what the template covers once a model is open."
+          >
+            <div className="lv-seg" role="radiogroup" aria-label="Paint area">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!isWindowTemplate}
+                className={`lv-seg-btn ${!isWindowTemplate ? "is-on" : ""}`}
+                onClick={() => handleTemplatePurposeChange("body")}
+              >
+                {templatePolicy.isEup ? "Garment" : "Body"}
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={isWindowTemplate}
+                className={`lv-seg-btn ${isWindowTemplate ? "is-on" : ""}`}
+                onClick={() => handleTemplatePurposeChange("windows")}
+                disabled={templatePolicy.isEup}
+                title={templatePolicy.isEup ? "Window templates are for vehicle models." : undefined}
+              >
+                Windows
+              </button>
+            </div>
+
+            {isWindowTemplate ? (
+              <>
+                <p className="lv-slot-note">
+                  Click glass on the model to add or remove it. Every pane you pick shares one texture.
+                </p>
+                {selectedTemplatePartNames.length > 0 ? (
+                  <ul className="tm-parts" aria-label="Selected window parts">
+                    {selectedTemplatePartNames.map((meshName) => (
+                      <li
+                        key={meshName}
+                        className={`tm-part ${hoveredTemplatePartName === meshName ? "is-hovered" : ""}`}
+                      >
+                        <span className="tm-part-name" title={meshName}>{meshName}</span>
+                        <button
+                          type="button"
+                          className="cx-icon-btn"
+                          onClick={() => handleRemoveTemplatePart(meshName)}
+                          aria-label={`Remove ${meshName}`}
+                          title={`Remove ${meshName}`}
+                        >
+                          <X aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="tm-part-tools">
+                  {availableWindowPartNames.length > 0 ? (
+                    <Select
+                      value=""
+                      onValueChange={(meshName) => {
+                        if (!meshName) return;
+                        setSelectedTemplatePartNames((current) =>
+                          current.includes(meshName) ? current : [...current, meshName],
+                        );
+                        setGenerationError("");
+                        setAutoSavedPath("");
+                      }}
                     >
-                      Replace
-                    </button>
-                    <button
-                      type="button"
-                      className="tg-icon-action"
-                      onClick={handleUnloadModel}
-                      aria-label="Unload model"
-                      title="Unload model"
-                    >
-                      <X aria-hidden />
-                    </button>
-                  </div>
-                  {templateSetWarning ? (
-                    <p className="tg-inline-message is-warning" role="status">
-                      <AlertTriangle aria-hidden />
-                      {templateSetWarning}
-                    </p>
+                      <SelectTrigger className="tm-part-add" aria-label="Add a model part">
+                        <SelectValue placeholder="Add a part by name…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableWindowPartNames.map((meshName) => (
+                          <SelectItem key={meshName} value={meshName}>
+                            {meshName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : null}
-                </section>
-
-                <section className="tg-inspector-section" aria-labelledby="tg-focus-title">
-                  <div className="tg-section-heading">
-                    <h2 id="tg-focus-title">Focus</h2>
-                  </div>
-                  <div className="tg-choice-list" role="group" aria-label="Template focus">
+                  {suggestedWindowPartNames.length > 0 && selectedTemplatePartNames.length === 0 ? (
                     <button
                       type="button"
-                      className={`tg-choice-row${!isWindowTemplate ? " is-active" : ""}`}
-                      onClick={() => handleTemplatePurposeChange("body")}
-                      aria-pressed={!isWindowTemplate}
+                      className="cx-btn lv-btn-sm"
+                      onClick={() => setSelectedTemplatePartNames(suggestedWindowPartNames)}
                     >
-                      <span className="tg-choice-indicator" aria-hidden />
-                      <span>
-                        <strong>{templatePolicy.isEup ? "Garment texture" : "Body livery"}</strong>
-                        <small>Automatic UV target</small>
-                      </span>
+                      <Check aria-hidden="true" />
+                      Use detected glass
                     </button>
+                  ) : null}
+                  {selectedTemplatePartNames.length > 0 ? (
                     <button
                       type="button"
-                      className={`tg-choice-row${isWindowTemplate ? " is-active" : ""}`}
-                      onClick={() => handleTemplatePurposeChange("windows")}
-                      aria-pressed={isWindowTemplate}
-                      disabled={templatePolicy.isEup}
-                      title={
-                        templatePolicy.isEup
-                          ? "Window templates are available for vehicle models."
-                          : "Select window geometry directly on the model."
-                      }
+                      className="cx-btn is-quiet lv-btn-sm"
+                      onClick={() => setSelectedTemplatePartNames([])}
                     >
-                      <span className="tg-choice-indicator" aria-hidden />
-                      <span>
-                        <strong>Window graphics</strong>
-                        <small>Pick geometry manually</small>
-                      </span>
+                      Clear
                     </button>
-                  </div>
-                </section>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <p className={`lv-slot-note ${targetDone ? "is-ok" : "is-idle"}`}>
+                <span className="lv-dot" aria-hidden="true" />
+                {templatePolicy.isEup
+                  ? "All garment geometry, detected from the model."
+                  : "Primary paint geometry, detected from the model."}
+              </p>
+            )}
+          </Step>
 
-                <section className="tg-inspector-section" aria-labelledby="tg-target-title">
-                  <div className="tg-section-heading">
-                    <h2 id="tg-target-title">Target</h2>
-                    <span>{isWindowTemplate ? selectedPartCountLabel : "Automatic"}</span>
-                  </div>
-                  {isWindowTemplate ? (
-                    <>
-                      <div className="tg-info-row">
-                        <MousePointer2 aria-hidden />
-                        <span>
-                          <strong>Select window geometry</strong>
-                          <small>Click the model to add or remove regions.</small>
-                        </span>
-                      </div>
-                      {suggestedWindowPartNames.length > 0 &&
-                      selectedTemplatePartNames.length === 0 ? (
+          {!isWindowTemplate ? (
+            <Step
+              id="tm-markers"
+              step={3}
+              title="Markers"
+              done={markersDone}
+              disabled={!markersAvailable}
+              note={
+                modelPath
+                  ? "Draw markers once the template is built."
+                  : "Box small pieces so they show up on the texture."
+              }
+              trailing={
+                templateMarkers.length > 0 ? (
+                  <button type="button" className="lv-link" onClick={handleClearMarkers}>
+                    Clear
+                  </button>
+                ) : null
+              }
+            >
+              <p className="lv-slot-note">
+                Optional. Drag a box over pieces on the template. The paint inside the box takes the marker
+                colour, exactly where you drew it.
+              </p>
+              <button
+                type="button"
+                className={`cx-btn lv-btn-sm tm-draw-btn ${markerToolActive ? "is-on" : ""}`}
+                aria-pressed={markerToolActive}
+                onClick={() => setMarkerToolActive((active) => !active)}
+              >
+                <SquareDashedMousePointer aria-hidden="true" />
+                {markerToolActive ? "Stop drawing" : "Draw markers"}
+              </button>
+              {templateMarkers.length > 0 ? (
+                <ol className="tm-marker-list" aria-label="Markers">
+                  {templateMarkers.map((marker, index) => {
+                    const empty = markerPixelCounts[marker.id] === 0;
+                    const widthPx = Math.max(1, Math.round(marker.w * exportSize));
+                    const heightPx = Math.max(1, Math.round(marker.h * exportSize));
+                    return (
+                      <li
+                        key={marker.id}
+                        className={`tm-marker-row ${selectedMarkerId === marker.id ? "is-selected" : ""}`}
+                      >
                         <button
                           type="button"
-                          className="tg-secondary-action"
-                          onClick={() => setSelectedTemplatePartNames(suggestedWindowPartNames)}
-                        >
-                          <Check aria-hidden />
-                          Use likely window match
-                        </button>
-                      ) : null}
-                      <label className="tg-part-select-label">
-                        <span>Keyboard selection</span>
-                        <select
-                          value=""
-                          onChange={(event) => {
-                            const meshName = event.target.value;
-                            if (!meshName) return;
-                            setSelectedTemplatePartNames((current) =>
-                              current.includes(meshName)
-                                ? current
-                                : [...current, meshName],
-                            );
+                          className="tm-marker-pick"
+                          onClick={() => {
+                            setSelectedMarkerId(marker.id);
+                            setMarkerToolActive(true);
                           }}
+                          aria-label={`Select marker ${index + 1}`}
                         >
-                          <option value="">Add a model part…</option>
-                          {availableWindowPartNames.map((meshName) => (
-                            <option key={meshName} value={meshName}>
-                              {meshName}
-                            </option>
+                          <span className="cx-display">{index + 1}</span>
+                          <span className="tm-marker-size">
+                            {widthPx} × {heightPx}
+                          </span>
+                          {empty ? <span className="tm-marker-warn">No paint inside</span> : null}
+                        </button>
+                        <div className="lv-seg tm-marker-fill" role="radiogroup" aria-label={`Marker ${index + 1} fill`}>
+                          {[
+                            ["pieces", "Pieces"],
+                            ["box", "Box"],
+                          ].map(([fill, label]) => (
+                            <button
+                              key={fill}
+                              type="button"
+                              role="radio"
+                              aria-checked={marker.fill === fill}
+                              className={`lv-seg-btn ${marker.fill === fill ? "is-on" : ""}`}
+                              onClick={() => handleSetMarkerFill(marker.id, fill)}
+                              title={
+                                fill === "pieces"
+                                  ? "Colour only the paint geometry inside the box"
+                                  : "Colour the whole box"
+                              }
+                            >
+                              {label}
+                            </button>
                           ))}
-                        </select>
-                      </label>
-                      {selectedTemplatePartNames.length > 0 ? (
-                        <div className="tg-selected-parts" aria-label="Selected window parts">
-                          {selectedTemplatePartNames.map((meshName) => (
-                            <div className="tg-selected-part" key={meshName}>
-                              <span title={meshName}>{meshName}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveTemplatePart(meshName)}
-                                aria-label={`Remove ${meshName}`}
-                              >
-                                <X aria-hidden />
-                              </button>
-                            </div>
-                          ))}
-                          <button
-                            type="button"
-                            className="tg-clear-parts"
-                            onClick={() => setSelectedTemplatePartNames([])}
-                          >
-                            <Trash2 aria-hidden />
-                            Clear selection
-                          </button>
                         </div>
-                      ) : null}
-                    </>
-                  ) : (
-                    <div className="tg-info-row is-confirmed">
-                      <Check aria-hidden />
-                      <span>
-                        <strong>
-                          {templatePolicy.isEup
-                            ? "All garment geometry"
-                            : "Primary paint geometry"}
-                        </strong>
-                        <small>Detected automatically from the loaded model.</small>
-                      </span>
-                    </div>
-                  )}
-                </section>
-
-                {!isWindowTemplate ? (
-                  <section className="tg-inspector-section" aria-labelledby="tg-markers-title">
-                    <div className="tg-section-heading">
-                      <h2 id="tg-markers-title">Markers</h2>
-                      <span>{hasDetectedIslands ? markerProgressLabel : "Detecting"}</span>
-                    </div>
-                    <div className="tg-marker-summary">
-                      <span className="tg-icon-slot" aria-hidden>
-                        <MousePointer2 />
-                      </span>
-                      <span>
-                        <strong>
-                          {hasDetectedIslands
-                            ? markerSelectionConfirmed
-                              ? markerProgressLabel
-                              : "Placement decision required"
-                            : "Analyzing UV regions"}
-                        </strong>
-                        <small>
-                          {hasDetectedIslands
-                            ? isMarkerEditMode
-                              ? "Choose only locations that need a paint marker."
-                              : "Confirmed markers are included in the template."
-                            : "Marker candidates appear after the first preview."}
-                        </small>
-                      </span>
-                      {hasDetectedIslands && !isMarkerEditMode ? (
                         <button
                           type="button"
-                          className="tg-text-action"
-                          onClick={handleBeginMarkerEdit}
+                          className="cx-icon-btn"
+                          onClick={() => handleDeleteMarker(marker.id)}
+                          aria-label={`Delete marker ${index + 1}`}
+                          title="Delete marker"
                         >
-                          Edit
+                          <X aria-hidden="true" />
                         </button>
-                      ) : null}
-                    </div>
-                    {hasDetectedIslands ? (
-                      <label className="tg-color-row">
-                        <span>
-                          <strong>Marker colour</strong>
-                          <small>Functional template overlay</small>
-                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              ) : null}
+              <label className="tm-color-row">
+                <span className="tm-color-chip" style={{ "--chip": templateMarkerColorDraft }}>
+                  <input
+                    type="color"
+                    value={templateMarkerColorDraft}
+                    onChange={(event) =>
+                      setTemplateMarkerColorDraft(
+                        normalizeOpaqueHexColor(event.target.value, DEFAULT_TEMPLATE_MARKER_COLOR),
+                      )
+                    }
+                    aria-label="Marker colour"
+                  />
+                </span>
+                <span className="tm-color-label">Marker colour</span>
+                <span className="tm-color-hex">{templateMarkerColorDraft.toUpperCase()}</span>
+              </label>
+            </Step>
+          ) : null}
+
+          <Step
+            id="tm-output"
+            step={isWindowTemplate ? 3 : 4}
+            title="Output"
+            done={Boolean(autoSavedPath)}
+            disabled={!modelPath}
+            note="Resolution and layers for the generated file."
+          >
+            <div className="lv-field">
+              <span className="cx-label">Resolution</span>
+              <div className="lv-seg" role="radiogroup" aria-label="Template resolution">
+                {SIZE_OPTIONS.map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    role="radio"
+                    aria-checked={exportSize === size}
+                    aria-label={`${size} by ${size} pixels`}
+                    className={`lv-seg-btn ${exportSize === size ? "is-on" : ""}`}
+                    onClick={() => setExportSize(size)}
+                  >
+                    {size >= 1024 ? `${size / 1024}K` : size}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="tm-options">
+              <div className="tm-option">
+                <span>
+                  <strong>Wireframe layer</strong>
+                  <small>UV edges on their own layer</small>
+                </span>
+                <Toggle
+                  checked={includeTemplateWireframe}
+                  onChange={setIncludeTemplateWireframe}
+                  ariaLabel="Include wireframe layer"
+                />
+              </div>
+              <div className="tm-option">
+                <span>
+                  <strong>Shaded base</strong>
+                  <small>World-space normals under the fill</small>
+                </span>
+                <Toggle
+                  checked={useWorldSpaceNormalsAsBase}
+                  onChange={setUseWorldSpaceNormalsAsBase}
+                  ariaLabel="Use world-space normals as the base"
+                />
+              </div>
+              {templatePolicy.includeVehicleLayers ? (
+                <div className="tm-option-block">
+                  <div className="tm-option">
+                    <span>
+                      <strong>Vehicle overlay</strong>
+                      <small>Solid panel shapes, at least 5 px past every edge. Also saved as its own PNG.</small>
+                    </span>
+                    <Toggle
+                      checked={includeVehicleOverlay}
+                      onChange={setIncludeVehicleOverlay}
+                      ariaLabel="Include vehicle overlay"
+                    />
+                  </div>
+                  {includeVehicleOverlay ? (
+                    <label className="tm-color-row">
+                      <span className="tm-color-chip" style={{ "--chip": vehicleOverlayColorDraft }}>
                         <input
                           type="color"
-                          value={globalMarkerColor}
-                          onChange={(event) => handleIslandColorChange(event.target.value)}
-                          aria-label="Marker colour"
+                          value={vehicleOverlayColorDraft}
+                          onChange={(event) =>
+                            setVehicleOverlayColorDraft(normalizeVehicleOverlayColor(event.target.value))
+                          }
+                          aria-label="Overlay colour"
                         />
-                      </label>
-                    ) : null}
-                  </section>
-                ) : null}
-
-                <section className="tg-inspector-section" aria-labelledby="tg-output-title">
-                  <div className="tg-section-heading">
-                    <h2 id="tg-output-title">Output</h2>
-                    <span>{outputFormatLabel}</span>
-                  </div>
-                  <div className="tg-output-meta">
-                    <span>Format</span>
-                    <strong>{outputFormatLabel}</strong>
-                  </div>
-                  <div className="tg-field-label">Resolution</div>
-                  <div className="tg-size-grid" role="group" aria-label="Template resolution">
-                    {SIZE_OPTIONS.map((size) => (
-                      <button
-                        key={size}
-                        type="button"
-                        className={exportSize === size ? "is-active" : ""}
-                        onClick={() => setExportSize(size)}
-                        aria-pressed={exportSize === size}
-                        aria-label={`${size} by ${size} pixels`}
-                      >
-                        {size >= 1024 ? `${size / 1024}K` : size}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="tg-setting-list">
-                    <div className="tg-setting-row">
-                      <Box aria-hidden />
-                      <span>
-                        <strong>Wireframe layer</strong>
-                        <small>Trace UV boundaries</small>
                       </span>
-                      <Toggle
-                        checked={includeTemplateWireframe}
-                        onChange={setIncludeTemplateWireframe}
-                        ariaLabel="Include wireframe layer"
-                      />
-                    </div>
-                  </div>
-
-                  <details className="tg-advanced">
-                    <summary>
-                      <span>Advanced</span>
-                      <ChevronDown aria-hidden />
-                    </summary>
-                    <div className="tg-setting-list">
-                      {templatePolicy.supportsExteriorOnly ? (
-                        <div className="tg-setting-row">
-                          <Layers aria-hidden />
-                          <span>
-                            <strong>Exterior only</strong>
-                            <small>Exclude interior geometry</small>
-                          </span>
-                          <Toggle
-                            checked={exteriorOnly}
-                            onChange={setExteriorOnly}
-                            ariaLabel="Generate exterior geometry only"
-                          />
-                        </div>
-                      ) : null}
-                      <div className="tg-setting-row">
-                        <Image aria-hidden />
-                        <span>
-                          <strong>Normal-map base</strong>
-                          <small>Use world-space shading</small>
-                        </span>
-                        <Toggle
-                          checked={worldSpaceNormalsBaseEnabled}
-                          onChange={setUseWorldSpaceNormalsAsBase}
-                          ariaLabel="Use world-space normals as the base"
-                        />
-                      </div>
-                    </div>
-                  </details>
-                </section>
-              </div>
-
-              <footer className="tg-inspector-footer">
-                <div className="tg-save-destination">
-                  <span className="tg-field-label">Save to</span>
-                  <div>
-                    <button
-                      type="button"
-                      className="tg-location-action"
-                      onClick={handleSelectOutputFolder}
-                      title={outputFolder || saveLocationLabel}
-                      disabled={!isTauriRuntime}
-                    >
-                      <FolderOpen aria-hidden />
-                      <span>{saveLocationLabel}</span>
-                      <small>{outputFolder ? "Change" : isTauriRuntime ? "Choose" : ""}</small>
-                    </button>
-                    {outputFolder && isTauriRuntime ? (
-                      <button
-                        type="button"
-                        className="tg-icon-action"
-                        onClick={handleOpenOutputFolder}
-                        aria-label="Open output folder"
-                        title="Open output folder"
-                      >
-                        <FolderOpen aria-hidden />
-                      </button>
-                    ) : null}
-                  </div>
+                      <span className="tm-color-label">Overlay colour</span>
+                      <span className="tm-color-hex">{vehicleOverlayColorDraft.toUpperCase()}</span>
+                    </label>
+                  ) : null}
                 </div>
-                <div className="tg-export-actions">
+              ) : null}
+              <div className="tm-option">
+                <span>
+                  <strong>Cortex logo</strong>
+                  <small>
+                    {includeTemplateLogo && logoNotice
+                      ? logoNotice
+                      : "Placed in clear space on its own layer"}
+                  </small>
+                </span>
+                <Toggle
+                  checked={includeTemplateLogo}
+                  onChange={setIncludeTemplateLogo}
+                  ariaLabel="Include the Cortex logo"
+                />
+              </div>
+              {templatePolicy.supportsExteriorOnly ? (
+                <div className="tm-option">
+                  <span>
+                    <strong>Exterior only</strong>
+                    <small>Leave out interior geometry</small>
+                  </span>
+                  <Toggle
+                    checked={exteriorOnly}
+                    onChange={setExteriorOnly}
+                    ariaLabel="Generate exterior geometry only"
+                  />
+                </div>
+              ) : null}
+            </div>
+            <p className="tm-format">
+              Saves as <strong>{outputFormatLabel}</strong>. Change the format in Settings.
+            </p>
+          </Step>
+        </div>
+
+        {/* Export is the dock's exit, pinned under the steps. */}
+        <footer className="lv-dock-foot tm-export">
+          <div className="tm-dest">
+            <span className="cx-label">Save to</span>
+            {outputFolder ? (
+              <div className="tm-dest-row">
+                <span className="tm-dest-name" title={outputFolder}>{getFileLabel(outputFolder, outputFolder)}</span>
+                <button
+                  type="button"
+                  className="cx-icon-btn"
+                  onClick={handleSelectOutputFolder}
+                  disabled={!isTauriRuntime}
+                  aria-label="Change output folder"
+                  title="Change output folder"
+                >
+                  <FolderInput aria-hidden="true" />
+                </button>
+                {isTauriRuntime ? (
                   <button
                     type="button"
-                    className="tg-icon-action tg-regenerate-btn"
-                    onClick={handleRegenerateTemplate}
-                    disabled={!canRegenerate}
-                    aria-label="Regenerate template"
-                    title="Regenerate template"
+                    className="cx-icon-btn"
+                    onClick={handleOpenOutputFolder}
+                    aria-label="Open output folder"
+                    title="Open output folder"
                   >
-                    <RefreshCw className={generating ? "is-spinning" : ""} aria-hidden />
+                    <FolderOpen aria-hidden="true" />
                   </button>
-                  <Button
-                    type="button"
-                    className="tg-export-primary"
-                    onClick={handleSaveTemplate}
-                    disabled={exportDisabled}
-                    aria-describedby={exportDisabledReason ? "tg-export-reason" : undefined}
-                  >
-                    <Download aria-hidden />
-                    {isSaving ? "Exporting…" : saveButtonLabel}
-                  </Button>
-                </div>
-                {exportDisabledReason ? (
-                  <p id="tg-export-reason" className="tg-export-reason" aria-live="polite">
-                    {exportDisabledReason}
-                  </p>
-                ) : autoSavedPath ? (
-                  <p className="tg-export-reason is-success" title={autoSavedPath}>
-                    Latest template saved.
-                  </p>
-                ) : (
-                  <p className="tg-export-reason">Ready to export {outputFormatLabel}.</p>
-                )}
-              </footer>
-            </aside>
-
-            <section className="tg-stage" aria-label="Template work area">
-              <div className="tg-canvases">
-                <section className="tg-pane tg-pane--model" aria-label="Model viewport">
-                  <header className="tg-pane-header">
-                    <div>
-                      <Box aria-hidden />
-                      <span>
-                        <strong>Model</strong>
-                        <small>{isWindowTemplate ? "Select geometry" : modelFileName}</small>
-                      </span>
-                    </div>
-                    <div className="tg-pane-header-actions">
-                      <div className="tg-viewport-tools" role="toolbar" aria-label="Model view controls">
-                        <button
-                          type="button"
-                          className="tg-viewport-tool is-frame"
-                          onClick={handleFrameModel}
-                          disabled={!modelViewerReady || modelLoading || Boolean(modelLoadError)}
-                          aria-label="Frame model in default view"
-                          title="Frame model in default view"
-                        >
-                          <Scan aria-hidden />
-                        </button>
-                        <span className="tg-viewport-tool-separator" aria-hidden />
-                        {["x", "y", "z"].map((axis) => (
-                          <button
-                            key={axis}
-                            type="button"
-                            className="tg-viewport-tool is-rotate"
-                            onClick={() => handleRotateModel(axis)}
-                            disabled={!modelViewerReady || modelLoading || Boolean(modelLoadError)}
-                            aria-label={`Rotate model 90 degrees around ${axis.toUpperCase()} axis`}
-                            title={`Rotate model 90° around ${axis.toUpperCase()} axis`}
-                          >
-                            <RotateCw aria-hidden />
-                            <span>{axis.toUpperCase()}</span>
-                          </button>
-                        ))}
-                      </div>
-                      <span className="tg-pane-meta">
-                        {isWindowTemplate ? selectedPartCountLabel : templatePolicy.label}
-                      </span>
-                    </div>
-                  </header>
-                  <div className="tg-pane-content tg-model-shell">
-                    <Viewer
-                      modelPath={modelPath}
-                      texturePath={previewUrl || ""}
-                      textureReloadToken={lastGeneratedAt?.getTime() || 0}
-                      textureTarget={
-                        isWindowTemplate
-                          ? selectedTextureTargets
-                          : templatePolicy.textureTarget
-                      }
-                      textureMode={isWindowTemplate ? "everything" : templatePolicy.textureMode}
-                      windowTexturePath=""
-                      windowTextureTarget="none"
-                      windowTextureReloadToken={0}
-                      bodyColor={autoTemplateColor}
-                      backgroundColor="#111214"
-                      lightIntensity={1}
-                      lightAzimuth={54}
-                      lightElevation={46}
-                      glossiness={0.5}
-                      showGrid={false}
-                      showWireframe={false}
-                      liveryExteriorOnly={
-                        templatePolicy.supportsExteriorOnly && exteriorOnly
-                      }
-                      wasdEnabled={false}
-                      isActive={isActive && viewMode !== "template"}
-                      includeTemplateGeometry
-                      templateMarkerPickModifier={templateMarkerPickModifier}
-                      onTemplateMarkerUvHover={
-                        !isWindowTemplate && isMarkerEditMode
-                          ? handleModelMarkerHover
-                          : undefined
-                      }
-                      onTemplateMarkerUvLeave={
-                        !isWindowTemplate && isMarkerEditMode
-                          ? clearHoveredMarker
-                          : undefined
-                      }
-                      onTemplateMarkerUvPick={
-                        !isWindowTemplate && isMarkerEditMode
-                          ? handleModelMarkerPick
-                          : undefined
-                      }
-                      templatePartPickEnabled={isWindowTemplate}
-                      selectedTemplatePartNames={selectedTemplatePartNames}
-                      hoveredTemplatePartName={hoveredTemplatePartName}
-                      onTemplatePartHover={
-                        isWindowTemplate ? handleTemplatePartHover : undefined
-                      }
-                      onTemplatePartLeave={
-                        isWindowTemplate
-                          ? () => setHoveredTemplatePartName("")
-                          : undefined
-                      }
-                      onTemplatePartPick={
-                        isWindowTemplate ? handleTemplatePartPick : undefined
-                      }
-                      onModelInfo={handleModelInfo}
-                      onReady={handleModelViewerReady}
-                      onTextureReload={NOOP}
-                      onTextureError={NOOP}
-                      onWindowTextureError={NOOP}
-                      onModelError={(message) => {
-                        setModelLoadError(message || "Unable to load the model.");
-                        setModelLoading(false);
-                      }}
-                      onModelLoading={(loading) => {
-                        setModelLoading(Boolean(loading));
-                        if (loading) setModelLoadError("");
-                      }}
-                      onFormatWarning={NOOP}
-                    />
-                    {modelLoading ? (
-                      <div className="tg-canvas-state is-compact" role="status">
-                        <span className="tg-spinner" aria-hidden />
-                        Loading model…
-                      </div>
-                    ) : modelLoadError ? (
-                      <div className="tg-canvas-state is-error" role="alert">
-                        <AlertTriangle aria-hidden />
-                        <span>
-                          <strong>Model could not be loaded</strong>
-                          <small>{modelLoadError}</small>
-                        </span>
-                      </div>
-                    ) : null}
-                    {isWindowTemplate ? (
-                      <div
-                        className={`tg-canvas-coach${selectedTemplatePartNames.length ? " has-selection" : ""}`}
-                        role="status"
-                      >
-                        <MousePointer2 aria-hidden />
-                        <span>
-                          <strong>
-                            {selectedTemplatePartNames.length
-                              ? "Selection updates live"
-                              : "Click the window geometry"}
-                          </strong>
-                          <small>
-                            {selectedTemplatePartNames.length
-                              ? "Add any other panes that share the artwork."
-                              : "Drag anywhere else to rotate the model."}
-                          </small>
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-                </section>
-
-                <section className="tg-pane tg-pane--template" aria-label="Template preview">
-                  <header className="tg-pane-header">
-                    <div>
-                      <Image aria-hidden />
-                      <span>
-                        <strong>Template</strong>
-                        <small>
-                          {isWindowTemplate ? "Selected geometry" : "Flattened UV preview"}
-                        </small>
-                      </span>
-                    </div>
-                    <div className="tg-pane-header-actions">
-                      <div className="tg-viewport-tools" role="toolbar" aria-label="Template zoom controls">
-                        <button
-                          type="button"
-                          className="tg-viewport-tool is-template-zoom"
-                          onClick={() => adjustTemplatePreviewZoom(-1)}
-                          disabled={!previewUrl || templatePreviewZoom <= TEMPLATE_PREVIEW_ZOOM_MIN}
-                          aria-label="Zoom template out"
-                          aria-keyshortcuts="-"
-                          title="Zoom out (-)"
-                        >
-                          <ZoomOut aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          className="tg-viewport-tool is-template-fit"
-                          onClick={fitTemplatePreview}
-                          disabled={!previewUrl}
-                          aria-label={`Fit template to view. Current zoom ${Math.round(templatePreviewZoom * 100)} percent`}
-                          aria-keyshortcuts="0"
-                          title="Fit template to view (0)"
-                        >
-                          {templatePreviewZoom === 1
-                            ? "Fit"
-                            : `${Math.round(templatePreviewZoom * 100)}%`}
-                        </button>
-                        <button
-                          type="button"
-                          className="tg-viewport-tool is-template-zoom"
-                          onClick={() => adjustTemplatePreviewZoom(1)}
-                          disabled={!previewUrl || templatePreviewZoom >= TEMPLATE_PREVIEW_ZOOM_MAX}
-                          aria-label="Zoom template in"
-                          aria-keyshortcuts="+"
-                          title="Zoom in (+)"
-                        >
-                          <ZoomIn aria-hidden />
-                        </button>
-                      </div>
-                      <span className="tg-pane-meta">
-                        {previewUrl ? `${exportSize} × ${exportSize}` : "Waiting"}
-                      </span>
-                    </div>
-                  </header>
-                  <div
-                    ref={previewShellRef}
-                    className={`tg-preview-shell${isMarkerEditMode ? " is-edit-mode" : ""}`}
-                    tabIndex={previewUrl ? 0 : undefined}
-                    onKeyDown={handleTemplatePreviewKeyDown}
-                    aria-label={
-                      previewUrl
-                        ? "Template preview. Use minus and plus to zoom, or zero to fit."
-                        : undefined
-                    }
-                  >
-                    {generationError ? (
-                      <div className="tg-preview-state is-error" role="alert">
-                        <AlertTriangle aria-hidden />
-                        <span>
-                          <strong>Template generation failed</strong>
-                          <small>{generationError}</small>
-                        </span>
-                      </div>
-                    ) : isWindowTemplate && selectedTemplatePartNames.length === 0 ? (
-                      <div className="tg-preview-state">
-                        <PanelTop aria-hidden />
-                        <span>
-                          <strong>Select window geometry</strong>
-                          <small>
-                            The UV preview appears after you select a model region.
-                          </small>
-                        </span>
-                      </div>
-                    ) : previewUrl ? (
-                      <div className="tg-preview-scroll-region">
-                        <div
-                          className="tg-preview-canvas"
-                          style={{
-                            width: `${templatePreviewDisplaySize}px`,
-                            height: `${templatePreviewDisplaySize}px`,
-                          }}
-                        >
-                          <img
-                            src={previewUrl}
-                            alt="Generated template preview"
-                            className="tg-preview-image"
-                            draggable="false"
-                          />
-
-                          {showMarkerSelectionOverlay ? (
-                            <div className="tg-preview-marker-overlay is-pick-mode">
-                              {markerOverlayMarkers.map((marker, index) => {
-                                const markerKey = marker?.key || `overlay-${index}`;
-                                const markerRect = getMarkerTextureRect(marker);
-                                if (!markerRect) return null;
-                                const markerSelected =
-                                  pendingMarkerSelection[markerKey] === true;
-                                const markerLabel = marker?.label || `Marker ${index + 1}`;
-                                return (
-                                  <button
-                                    key={markerKey}
-                                    type="button"
-                                    className={`tg-preview-marker-hitbox${markerSelected ? " is-selected" : ""}${
-                                      hoveredMarkerKey === markerKey ? " is-hovered" : ""
-                                    }`}
-                                    style={{
-                                      left: `${(markerRect.x / exportSize) * 100}%`,
-                                      top: `${(markerRect.y / exportSize) * 100}%`,
-                                      width: `${(markerRect.width / exportSize) * 100}%`,
-                                      height: `${(markerRect.height / exportSize) * 100}%`,
-                                    }}
-                                    onMouseEnter={() => setHoveredMarker(markerKey)}
-                                    onMouseLeave={clearHoveredMarker}
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      handleTogglePendingMarkerSelection(markerKey);
-                                    }}
-                                    aria-pressed={markerSelected}
-                                    aria-label={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
-                                    title={`${markerSelected ? "Deselect" : "Select"} ${markerLabel}`}
-                                  />
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="tg-preview-state" role="status">
-                        {generating ? (
-                          <span className="tg-spinner" aria-hidden />
-                        ) : (
-                          <Box aria-hidden />
-                        )}
-                        <span>
-                          <strong>{generating ? "Generating template" : "Preparing preview"}</strong>
-                          <small>
-                            {generating
-                              ? "Flattening UV geometry and building layers."
-                              : "The preview will appear when the model is ready."}
-                          </small>
-                        </span>
-                      </div>
-                    )}
-
-                    {generating && previewUrl ? (
-                      <div className="tg-preview-busy" role="status">
-                        <span className="tg-spinner" aria-hidden />
-                        Refreshing template…
-                      </div>
-                    ) : null}
-                  </div>
-                </section>
+                ) : null}
               </div>
-
-              <footer
-                className={`tg-stage-status${isMarkerEditMode && hasDetectedIslands ? " is-contextual" : ""}`}
-                aria-live="polite"
-              >
-                {isMarkerEditMode && hasDetectedIslands ? (
-                  <>
-                    <div className="tg-status-copy">
-                      <span>Markers</span>
-                      <strong>{pendingSelectedCount} / {detectedIslands.length}</strong>
-                      <small>{markerPickHint}</small>
-                    </div>
-                    <div className="tg-status-actions">
-                      <button
-                        type="button"
-                        className="tg-status-action"
-                        onClick={handleClearPendingMarkerSelection}
-                        disabled={!pendingSelectedCount}
-                      >
-                        Clear
-                      </button>
-                      {!pendingSelectedCount && !markerSelectionConfirmed ? (
-                        <button
-                          type="button"
-                          className="tg-status-action"
-                          onClick={handleConfirmNoMarkers}
-                        >
-                          Use no markers
-                        </button>
-                      ) : null}
-                      {markerSelectionConfirmed ? (
-                        <button
-                          type="button"
-                          className="tg-status-action"
-                          onClick={handleCancelMarkerEdit}
-                        >
-                          Cancel
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="tg-status-action is-primary"
-                        onClick={handleConfirmMarkerSelection}
-                        disabled={!pendingSelectedCount && !markerSelectionConfirmed}
-                      >
-                        Apply markers
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="tg-status-copy">
-                      <span className={generationError || modelLoadError ? "is-error" : ""}>
-                        {buildStatusLabel}
-                      </span>
-                      <small>{statusSummary}</small>
-                    </div>
-                    <div className="tg-status-meta">
-                      {lastGeneratedAt
-                        ? `Updated ${lastGeneratedAt.toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}`
-                        : templatePolicy.label}
-                    </div>
-                  </>
-                )}
-              </footer>
-            </section>
+            ) : isTauriRuntime ? (
+              <button type="button" className="cx-btn lv-btn-sm tm-dest-pick" onClick={handleSelectOutputFolder}>
+                <FolderInput aria-hidden="true" />
+                Choose a folder
+              </button>
+            ) : (
+              <span className="tm-dest-note">Browser downloads</span>
+            )}
           </div>
-        </div>
-      )}
+          {!outputFolder && isTauriRuntime ? (
+            <p className="tm-dest-note">With a folder set, every build saves itself.</p>
+          ) : null}
 
-      {saveNotice.message ? (
-        <div className={`tg-save-notice is-${saveNotice.tone}`} role="status">
-          {saveNotice.tone === "success" ? (
-            <Check aria-hidden />
-          ) : (
-            <AlertTriangle aria-hidden />
-          )}
-          <span>{saveNotice.message}</span>
+          <div className="tm-export-actions">
+            <button
+              type="button"
+              className="cx-btn is-primary tm-export-btn"
+              onClick={handleSaveTemplate}
+              disabled={exportDisabled}
+              aria-describedby="tm-export-status"
+            >
+              <Download aria-hidden="true" />
+              {isSaving ? "Exporting…" : saveButtonLabel}
+            </button>
+            <button
+              type="button"
+              className="cx-btn tm-rebuild-btn"
+              onClick={handleRegenerateTemplate}
+              disabled={!canRegenerate}
+              aria-label="Rebuild template"
+              title="Rebuild template"
+            >
+              <RefreshCw className={generating ? "is-spinning" : ""} aria-hidden="true" />
+            </button>
+          </div>
+
+          <p
+            id="tm-export-status"
+            className={`tm-export-status ${savedSummary && !exportDisabledReason ? "is-saved" : ""}`}
+            aria-live="polite"
+            title={autoSavedPath || undefined}
+          >
+            {exportDisabledReason ||
+              (savedSummary
+                ? `Saved ${savedSummary}${updatedLabel ? ` at ${updatedLabel}` : ""}`
+                : `${buildSummary}${updatedLabel ? ` · built ${updatedLabel}` : ""}`)}
+          </p>
+        </footer>
+        <PaneResizer side="dock" label="Resize the template steps panel" setWidth={panes.setWidth} />
+      </aside>
+
+      {/* ──── Stage ──── */}
+      <section className={`tm-stage is-${viewMode}`} aria-label="Template work area">
+        {!modelPath ? (
+          <div className="tm-empty">
+            <p className="tm-empty-title">No model open</p>
+            <p className="tm-empty-copy">
+              Open a vehicle or clothing model. Cortex flattens its UVs into a layered template you can paint on.
+            </p>
+            <button
+              type="button"
+              className="cx-btn is-primary"
+              onClick={handleSelectModel}
+              disabled={!isTauriRuntime}
+              title={!isTauriRuntime ? "Opening models needs the desktop app." : undefined}
+            >
+              <Box aria-hidden="true" />
+              Open model
+            </button>
+          </div>
+        ) : null}
+
+        <div className="tm-panes" hidden={!modelPath}>
+          {/* Model */}
+          <section className="tm-pane tm-pane--model" aria-label="Model" hidden={!showModelPane}>
+            <div className="tm-pane-canvas">
+              <Viewer
+                modelPath={modelPath}
+                texturePath={previewUrl || ""}
+                textureReloadToken={lastGeneratedAt?.getTime() || 0}
+                textureTarget={isWindowTemplate ? selectedTextureTargets : templatePolicy.textureTarget}
+                textureMode={isWindowTemplate ? "everything" : templatePolicy.textureMode}
+                windowTexturePath=""
+                windowTextureTarget="none"
+                windowTextureReloadToken={0}
+                bodyColor={autoTemplateColor}
+                backgroundColor="#111214"
+                lightIntensity={1}
+                lightAzimuth={54}
+                lightElevation={46}
+                glossiness={0.5}
+                showGrid={false}
+                showWireframe={false}
+                liveryExteriorOnly={templatePolicy.supportsExteriorOnly && exteriorOnly}
+                wasdEnabled={false}
+                isActive={isActive && showModelPane}
+                includeTemplateGeometry
+                templatePartPickEnabled={isWindowTemplate}
+                selectedTemplatePartNames={selectedTemplatePartNames}
+                hoveredTemplatePartName={hoveredTemplatePartName}
+                onTemplatePartHover={isWindowTemplate ? handleTemplatePartHover : undefined}
+                onTemplatePartLeave={isWindowTemplate ? () => setHoveredTemplatePartName("") : undefined}
+                onTemplatePartPick={isWindowTemplate ? handleTemplatePartPick : undefined}
+                onModelInfo={handleModelInfo}
+                onReady={handleModelViewerReady}
+                onTextureReload={NOOP}
+                onTextureError={NOOP}
+                onWindowTextureError={NOOP}
+                onModelError={(message) => {
+                  setModelLoadError(message || "Unable to load the model.");
+                  setModelLoading(false);
+                }}
+                onModelLoading={(loading) => {
+                  setModelLoading(Boolean(loading));
+                  if (loading) setModelLoadError("");
+                }}
+                onFormatWarning={NOOP}
+              />
+            </div>
+            {modelLoading ? (
+              <div className="tm-pane-state lv-slip" role="status">
+                <span className="tm-spinner" aria-hidden="true" />
+                Loading model…
+              </div>
+            ) : modelLoadError ? (
+              <div className="tm-pane-state lv-slip is-error" role="alert">
+                <AlertTriangle aria-hidden="true" />
+                <span>
+                  <strong>The model could not be loaded</strong>
+                  <small>{modelLoadError}</small>
+                </span>
+                {isTauriRuntime ? (
+                  <button type="button" className="cx-btn lv-btn-sm" onClick={handleSelectModel}>
+                    Replace
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {isWindowTemplate && !modelLoading && !modelLoadError ? (
+              <p className="tm-coach lv-slip" role="status">
+                <MousePointer2 aria-hidden="true" />
+                {selectedTemplatePartNames.length
+                  ? `${selectedTemplatePartNames.length} part${selectedTemplatePartNames.length === 1 ? "" : "s"} picked. Click more glass, or drag to orbit.`
+                  : "Click the window glass. Drag anywhere else to orbit."}
+              </p>
+            ) : null}
+            {modelLoadError ? null : (
+            <div className="lv-deck tm-deck" role="toolbar" aria-label="Model view">
+              <div className="lv-deck-group">
+                <DeckButton onClick={handleFrameModel} title="Frame the model" disabled={viewerBlocked} className="is-icon">
+                  <Crosshair aria-hidden="true" />
+                </DeckButton>
+              </div>
+              <div className="lv-deck-group" role="group" aria-label="Rotate model 90 degrees">
+                {["x", "y", "z"].map((axis) => (
+                  <DeckButton
+                    key={axis}
+                    onClick={() => handleRotateModel(axis)}
+                    title={`Rotate 90° on ${axis.toUpperCase()}`}
+                    disabled={viewerBlocked}
+                    className={`is-axis is-${axis}`}
+                  >
+                    {axis.toUpperCase()}
+                  </DeckButton>
+                ))}
+              </div>
+            </div>
+            )}
+          </section>
+
+          {/* Template */}
+          <section className="tm-pane tm-pane--sheet" aria-label="Template preview" hidden={!showSheetPane}>
+            <div
+              ref={previewShellRef}
+              className={`tm-sheet ${markerDrawing ? "is-drawing" : ""} ${
+                templatePreviewZoom > 1 ? "can-pan" : ""
+              } ${sheetPanning ? "is-panning" : ""}`}
+              tabIndex={previewUrl ? 0 : undefined}
+              onKeyDown={handleSheetKeyDown}
+              onPointerDown={handleSheetPointerDown}
+              onPointerMove={handleSheetPointerMove}
+              onPointerUp={handleSheetPointerUp}
+              onPointerCancel={handleSheetPointerUp}
+              aria-label={
+                previewUrl
+                  ? markerDrawing
+                    ? "Template preview, drawing markers. Drag to draw a box. Arrow keys nudge the selected box, Delete removes it, Escape stops drawing."
+                    : "Template preview. Scroll or minus and plus to zoom, drag to pan, zero fits."
+                  : undefined
+              }
+            >
+              {modelLoadError ? (
+                <div className="tm-sheet-state">
+                  <p className="tm-sheet-copy">The template builds once the model loads.</p>
+                </div>
+              ) : generationError ? (
+                <div className="tm-sheet-state is-error" role="alert">
+                  <AlertTriangle aria-hidden="true" />
+                  <p className="tm-sheet-title">The template could not be built</p>
+                  <p className="tm-sheet-copy">{generationError}</p>
+                  {canRegenerate ? (
+                    <button type="button" className="cx-btn lv-btn-sm" onClick={handleRegenerateTemplate}>
+                      <RefreshCw aria-hidden="true" />
+                      Try again
+                    </button>
+                  ) : null}
+                </div>
+              ) : isWindowTemplate && selectedTemplatePartNames.length === 0 ? (
+                <div className="tm-sheet-state">
+                  <p className="tm-sheet-title">No glass picked yet</p>
+                  <p className="tm-sheet-copy">The window template appears once you pick a pane on the model.</p>
+                </div>
+              ) : previewUrl ? (
+                <div className="tm-sheet-view">
+                  <div
+                    ref={sheetCanvasRef}
+                    className="tm-sheet-canvas"
+                    style={{
+                      width: `${templatePreviewDisplaySize}px`,
+                      height: `${templatePreviewDisplaySize}px`,
+                      transform: `translate(calc(-50% + ${sheetPan.x}px), calc(-50% + ${sheetPan.y}px))`,
+                    }}
+                  >
+                    <img src={previewUrl} alt="Generated template" className="tm-sheet-image" draggable="false" />
+                    {markersAvailable && (displayedMarkers.length > 0 || markerDrawing) ? (
+                      <>
+                        <svg
+                          className={`tm-boxes ${markerDrawing ? "is-active" : ""}`}
+                          viewBox="0 0 1 1"
+                          preserveAspectRatio="none"
+                          style={{ "--marker": templateMarkerColorDraft }}
+                          onPointerDown={handleMarkerPointerDown}
+                          onPointerMove={handleMarkerPointerMove}
+                          onPointerUp={handleMarkerPointerUp}
+                          onPointerCancel={handleMarkerPointerUp}
+                          aria-hidden="true"
+                        >
+                          {displayedMarkers.map((marker) => {
+                            const selected = markerDrawing && marker.id === selectedMarkerId;
+                            const handle = MARKER_HANDLE_PX * sheetPxToUnit;
+                            return (
+                              <g
+                                key={marker.id}
+                                data-marker-id={marker.id === "__draft__" ? undefined : marker.id}
+                                className={`tm-box ${selected ? "is-selected" : ""} ${marker.fill === "box" ? "is-box" : ""}`}
+                              >
+                                <rect
+                                  className="tm-box-rect"
+                                  x={marker.x}
+                                  y={marker.y}
+                                  width={marker.w}
+                                  height={marker.h}
+                                  vectorEffect="non-scaling-stroke"
+                                />
+                                {selected
+                                  ? MARKER_HANDLES.map((corner) => (
+                                      <rect
+                                        key={corner}
+                                        data-handle={corner}
+                                        className={`tm-box-handle is-${corner}`}
+                                        x={(corner.endsWith("w") ? marker.x : marker.x + marker.w) - handle / 2}
+                                        y={(corner.startsWith("n") ? marker.y : marker.y + marker.h) - handle / 2}
+                                        width={handle}
+                                        height={handle}
+                                        vectorEffect="non-scaling-stroke"
+                                      />
+                                    ))
+                                  : null}
+                              </g>
+                            );
+                          })}
+                        </svg>
+                        {templateMarkers.map((marker, index) => (
+                          <span
+                            key={marker.id}
+                            className="tm-box-label"
+                            style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
+                            aria-hidden="true"
+                          >
+                            {index + 1}
+                          </span>
+                        ))}
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="tm-sheet-state" role="status">
+                  <span className="tm-spinner" aria-hidden="true" />
+                  <p className="tm-sheet-title">{generating ? "Building the template" : "Reading the model"}</p>
+                  <p className="tm-sheet-copy">
+                    {generating ? "Flattening UVs and assembling layers." : "The template builds as soon as the model is ready."}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {previewUrl ? (
+              <span className="tm-sheet-size lv-slip">
+                {exportSize} × {exportSize}
+                {buildSummary ? <span> · {buildSummary}</span> : null}
+              </span>
+            ) : null}
+            {generating && previewUrl ? (
+              <span className="tm-sheet-busy lv-slip" role="status">
+                <span className="tm-spinner" aria-hidden="true" />
+                Rebuilding…
+              </span>
+            ) : null}
+
+            {previewUrl ? (
+              <div className={`lv-deck tm-deck ${markerDrawing ? "is-raised" : ""}`} role="toolbar" aria-label="Template view">
+                {markersAvailable ? (
+                  <div className="lv-deck-group">
+                    <DeckButton
+                      active={markerToolActive}
+                      onClick={() => setMarkerToolActive((active) => !active)}
+                      title={markerToolActive ? "Stop drawing markers" : "Draw markers"}
+                      className="is-icon"
+                    >
+                      <SquareDashedMousePointer aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton
+                      onClick={handleUndoMarkers}
+                      disabled={!canUndoMarkers}
+                      title="Undo marker change (Ctrl+Z)"
+                      className="is-icon"
+                    >
+                      <Undo2 aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton
+                      onClick={handleRedoMarkers}
+                      disabled={!canRedoMarkers}
+                      title="Redo marker change (Ctrl+Shift+Z)"
+                      className="is-icon"
+                    >
+                      <Redo2 aria-hidden="true" />
+                    </DeckButton>
+                  </div>
+                ) : null}
+                <div className="lv-deck-group">
+                  <DeckButton
+                    onClick={() => adjustTemplatePreviewZoom(-1)}
+                    disabled={!previewUrl || templatePreviewZoom <= TEMPLATE_PREVIEW_ZOOM_MIN}
+                    title="Zoom out (-)"
+                    className="is-icon"
+                  >
+                    <ZoomOut aria-hidden="true" />
+                  </DeckButton>
+                  <DeckButton
+                    onClick={fitTemplatePreview}
+                    disabled={!previewUrl}
+                    title={`Fit to view (0). Now ${Math.round(templatePreviewZoom * 100)}%`}
+                    className="tm-zoom-value"
+                  >
+                    {templatePreviewZoom === 1 ? "Fit" : `${Math.round(templatePreviewZoom * 100)}%`}
+                  </DeckButton>
+                  <DeckButton
+                    onClick={() => adjustTemplatePreviewZoom(1)}
+                    disabled={!previewUrl || templatePreviewZoom >= TEMPLATE_PREVIEW_ZOOM_MAX}
+                    title="Zoom in (+)"
+                    className="is-icon"
+                  >
+                    <ZoomIn aria-hidden="true" />
+                  </DeckButton>
+                </div>
+              </div>
+            ) : null}
+          </section>
         </div>
-      ) : null}
+
+        {/* While drawing, the marker bar owns the bottom of the stage. */}
+        {markerDrawing && modelPath ? (
+          <div className="tm-markerbar lv-slip" role="group" aria-label="Marker drawing">
+            <span className="tm-markerbar-count">
+              <span className="cx-display">{templateMarkers.length}</span>
+              <span>{templateMarkers.length === 1 ? "marker" : "markers"}</span>
+            </span>
+            <span className="tm-markerbar-hint">
+              Drag to box pieces. Drag a box to move it, or a corner to resize. Delete removes the selected box.
+            </span>
+            <div className="tm-markerbar-actions">
+              <button
+                type="button"
+                className="cx-btn is-primary lv-btn-sm"
+                onClick={() => setMarkerToolActive(false)}
+              >
+                <Check aria-hidden="true" />
+                Done
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* View switch, top left, as on the Livery stage. */}
+        {modelPath ? (
+          <div className="lv-stage-switch tm-view-switch" role="radiogroup" aria-label="Layout">
+            {[
+              { id: "model", label: "Model" },
+              { id: "split", label: "Split" },
+              { id: "template", label: "Template" },
+            ].map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                role="radio"
+                aria-checked={viewMode === mode.id}
+                className={viewMode === mode.id ? "is-on" : ""}
+                onClick={() => setViewMode(mode.id)}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="lv-alerts tm-alerts" aria-live="polite">
+          {showNotice && saveNotice.tone === "error" ? (
+            <div className="lv-alert" role="alert">
+              <AlertTriangle className="lv-alert-icon" aria-hidden="true" />
+              <div className="lv-alert-copy">
+                <strong>{saveNotice.label || "Export failed"}</strong>
+                <span>{saveNotice.message}</span>
+              </div>
+              <button
+                type="button"
+                className="cx-icon-btn"
+                onClick={() => setNoticeDismissed(true)}
+                aria-label="Dismiss"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <div className="lv-toasts tm-toasts" aria-live="polite">
+          {showNotice && saveNotice.tone === "success" ? (
+            <div className="lv-toast" role="status" title={autoSavedPath || undefined}>
+              <Check aria-hidden="true" />
+              <span>{saveNotice.message}</span>
+            </div>
+          ) : null}
+        </div>
+      </section>
     </main>
+  );
+}
+
+/* A pipeline step without a file: same disc, line and title as AssetSlot. */
+function Step({ id, step, title, done, disabled, note, trailing, children }) {
+  return (
+    <section id={id} className={`lv-slot ${disabled ? "is-disabled" : ""}`}>
+      <header className="lv-slot-head">
+        <span className={`lv-step ${done ? "is-done" : ""}`} aria-hidden="true">
+          {done ? <Check /> : step}
+        </span>
+        <h3 className="lv-slot-title">{title}</h3>
+        {disabled ? null : trailing}
+      </header>
+      <div className="lv-slot-body">
+        {disabled ? <p className="lv-slot-note">{note}</p> : children}
+      </div>
+    </section>
   );
 }

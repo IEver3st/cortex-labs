@@ -85,6 +85,42 @@ test("accepts schema v2 feature requests and formats feature-specific issues", (
   assert.doesNotMatch(body, /## Console Logs/);
 });
 
+test("keeps allowlisted area and frequency and drops unknown values", () => {
+  const current = basePayload();
+  const payload = validateBugReportPayload({
+    ...current,
+    issue: { ...current.issue, area: "livery", frequency: "sometimes" },
+  });
+  assert.equal(payload.issue.area, "livery");
+  assert.equal(
+    payload.issue.reportType === "bug" && payload.issue.frequency,
+    "sometimes",
+  );
+  const body = formatBugReportIssueBody(payload);
+  assert.match(
+    body,
+    /## Area\nLivery\n\n## Frequency\nSometimes\n\n## Priority/,
+  );
+
+  const unknown = validateBugReportPayload({
+    ...current,
+    issue: { ...current.issue, area: "garage", frequency: "daily" },
+  });
+  assert.equal("area" in unknown.issue, false);
+  assert.equal("frequency" in unknown.issue, false);
+  assert.doesNotMatch(
+    formatBugReportIssueBody(unknown),
+    /## Area|## Frequency/,
+  );
+});
+
+test("payloads from older app builds without area still format as before", () => {
+  const payload = validateBugReportPayload(basePayload());
+  const body = formatBugReportIssueBody(payload);
+  assert.doesNotMatch(body, /## Area|## Frequency/);
+  assert.match(body, /## Priority\nNormal/);
+});
+
 test("keeps schema v1 bug reports compatible while normalizing them to v2", () => {
   const current = basePayload();
   const { reportType: _reportType, ...legacyIssue } = current.issue;

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vcfroot Description="Test patrol" Author="Cortex" Version="1.1.0">
+    <EOVERRIDE>
+        <Extra01 AllowEnvLight="true" Color="red" />
+        <Extra02 AllowEnvLight="true" Color="blue" OffsetX="0.50" OffsetY="0.00" OffsetZ="0.20" />
+        <Extra05 AllowEnvLight="false" Color="white" />
+        <Extra07 AllowEnvLight="true" Color="red" />
+        <Extra11 />
+        <MiscA AllowEnvLight="false" Color="amber" />
+    </EOVERRIDE>
+    <STATIC>
+        <Extra11 Name="Push bar" />
+    </STATIC>
+    <SOUNDS>
+        <MainHorn AllowUse="false" />
+        <SrnTone1 AllowUse="true" AudioString="VEHICLES_HORNS_SIREN_1" />
+    </SOUNDS>
+    <PATTERN>
+        <PRIMARY IsEmergency="true" FlashHighBeam="false">
+            <!-- left then right -->
+            <Flash Duration="100" Extras="1" />
+            <Flash Duration="50" />
+            <Flash Duration="100" Extras="2" Miscs="a" />
+            <Flash Duration="50" />
+        </PRIMARY>
+        <SECONDARY>
+            <Flash Duration="300" Extras="5" />
+            <Flash Duration="300" />
+        </SECONDARY>
+        <REARREDS IsEmergency="false">
+            <Flash Duration="500" Extras="7" />
+            <Flash Duration="500" />
+        </REARREDS>
+    </PATTERN>
+</vcfroot>

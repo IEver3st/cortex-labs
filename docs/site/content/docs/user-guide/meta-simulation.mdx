@@ -1,0 +1,81 @@
+---
+title: Meta Simulation
+description: Inspect vehicle metadata, preview liveries, paint presets and extras, and run siren patterns and vehicle lights.
+---
+
+Open the **Meta** tab in a vehicle's control panel. Cortex searches the nearest FiveM resource for vehicle meta files, including its `data/` folder, and reports the settings and common conflicts for the loaded model. Without a resource manifest, discovery stays near the model directory.
+
+The resource can be on a different drive from Cortex Studio. Opening its model enables the metadata scan to read that resource's folders.
+
+Files are matched by their root element, not their filename, so `police_carcols.meta` and `carcols.meta` both work.
+
+## What the panel shows
+
+- **Source files.** Every meta file that was read, with its kind. Click a file to open it in its default application. XML parse errors include their line and column.
+- **Livery system.** Whether the model uses texture liveries (`FLAG_HAS_LIVERY`), mod kit liveries (`VMT_LIVERY_MOD` entries in carcols), both, or none. Expected texture names use the model's shader sampler prefix, with the model name as a fallback. Enabled slots retain their original indexes. Textures are marked found or missing against the nearby YTD, and the stepper applies the selected texture to the viewer.
+- **Colour presets.** Each `<colors>` row from carvariations with the primary, secondary, pearlescent and wheel swatches resolved from the GTA V colour table. Click a row to apply the primary and secondary paint to the viewer. A carcols `<Colors>` list in the resource overrides the table.
+- **Extras.** Toggle extras on the model and read the `FLAG_EXTRAS_*` behaviour in plain words.
+- **Steering.** Turn the front wheels left or right, limited to the `fSteeringLock` from the `handling.meta` entry named by the model's `handlingId`. The angle carries into captures and resets when you open another model. Models without separate wheel parts, or without a handling entry in the resource, show why steering is unavailable.
+- **IDs.** Kit, siren and light ids the model references. Ids defined more than once in the resource are highlighted.
+- **Warnings.** Each finding has a code, a one-line explanation and a suggested fix.
+
+## Lights
+
+The **Lights** section at the top of the Meta tab lights the loaded YFT the way its metadata says the game will.
+
+- **Sirens** runs the carcols `<Sirens>` entry that carvariations `sirenSettings` points at. Each siren drives the emissive geometry rigged to its `sirenN` bone, `siren1` through `siren32`, so 32-siren setups work. The pattern grid shows every siren's 32-step sequencer in its light colour with a playhead. Click a row to mute that siren; struck-through numbers have settings but no siren mesh on the model. Play at full, half or quarter speed, or pause on a step.
+- **Lighting** appears when the vehicle has an ELS VCF (found beside the model, in its resource or in your ELS folders, or opened in [Sirens](/docs/user-guide/sirens#els)). **Carcols** runs the carcols sirens as above; **ELS** hands the lights to the VCF, as in Sirens, and the choice is shared with Sirens for that vehicle. With ELS, the Sirens switch gives way to **Stage** (Off, 1, 2 or 3) and **Cruise**, **Takedowns** and **Scene** for ELS V8, or **Primary**, **Secondary** and **Rear reds** for MISS-ELS. A switch the VCF does not allow, or whose extra ELS does not control, is greyed out with the reason. The VCF itself is edited in Sirens.
+- **Headlights**, **Indicators**, **Brakes**, **Reverse** and **Extra lights** switch the regular lamps. Lamps are matched by the light id the game reads from vertex colour alpha, so a taillight lens rigged to a brake light bone still behaves as a taillight. While sirens run, the carcols `leftHeadLight`/`rightHeadLight`/`leftTailLight`/`rightTailLight` sequencers flash those lamps (wig-wag).
+- **Night** dims the studio lights and darkens the workbench backdrop so emissives and light spill read as after dark.
+- **Glow** sets how much the lit lamps bloom; only the lights bloom, never the paint.
+- **Light spill** throws each lit light head's colour across the ground in its own direction: from where the head sits (after `scale`), along the siren's `delta`, as a 3D spot light with the setting's inner and outer cone (Rage half-angles) and `lightFalloffMax`/`lightFalloffExponent` falloff, lit by the ground's angle to the light and shadowed by the body, and lights the body panels with one merged light per corner of the vehicle. Every siren contributes, and the cost stays the same whether 2 or 32 sirens are lit. Where many sirens light the same ground their colours blend instead of clipping to one flat colour, and the showroom floor does not reflect this light a second time.
+- **Fog** draws the lit spot lights as beams of haze along their aim, in each siren's colour, so you can see where they point. It reads best with **Night** on; 0 turns it off. Up to 12 of the brightest heads get a beam at once.
+
+Sirens with `scale` grow every mesh on their siren bone by `scaleFactor` about the bone while they are on and return to the stored size while off, as the game does. Emitters modelled at 1/`scaleFactor` (vanilla 0.5 with factor 2, most packs 0.1 with 10) land in their light heads only while lit, including emitters packed onto one siren bone for lights elsewhere on the car. Rotators (`rotate`) spin the meshes on their siren bone about the bone's up axis. Every siren bone also turns to its siren's `delta` (the `flashiness` delta, or the `rotation` delta for a rotator), as the game does. Meshes on a bone that already faces its delta stay as modelled. Emitters modelled facing forward on an unturned bone, a common way to build rear and side heads, turn to the rear or side. Coronas use the carcols `corona` size, intensity and `faceCamera`. A lit emissive mesh glows in its texture's colour, as in game: siren textures are colour atlases (red, blue, amber and white blocks) and each mesh's UVs pick its colour, so a siren's carcols colour tints its corona, light spill and fog but not the mesh. Flasher reflectors with near-transparent textures (flashbacks, hideaways) light across the whole reflector.
+
+What follows the game exactly: which sirens and lamps light on each beat, the most-significant-bit-first sequencer order, `sequencerBpm` x `timeMultiplier` timing, colours, `scale` emitter growth, and which geometry belongs to which light. What is approximated: how `multiples` splits a beat, rotation speed, unsynced `speed` timing, the indicator blink rate, and brightness, which keeps the order of the game's `visualsettings.dat` values but not its exposure. The game's coronas, volumetrics and light shafts are not reproduced.
+
+To build or change a siren setting while it runs on the model, open the vehicle in [Sirens](/docs/user-guide/sirens).
+
+The light preview needs YFT models opened in the desktop app. Siren patterns also need the resource's carcols.meta; the regular lamps work without it.
+
+## Extras and lighting controllers
+
+A vehicle opens with every extra off, as it spawns in game, and extras then follow what the vehicle is doing:
+
+- With a ULC (Ultimate Lighting Controller) `ulc.lua` in the resource that lists the model, its rules apply: sirens switch on the drive extras (`dExtras`) while **Driving** and the park extras (`pExtras`) while **Parked**; brakes, reverse and horn switch their extras; and each ULC button (Cruise, Takedown, Scene and so on, with its ULC key) turns on its extra and linked extras and turns off its opposite and off extras, in the order you press them.
+- Without a ULC config, extras that carry siren lights come on with the sirens. The panel lists which sirens each extra carries.
+- Toggling an extra in the Extras grid overrides the rules for that extra. The panel lists every extra that is on and why.
+
+Emissive geometry with light id 0 on an extra is a steady-burn light (cruise, takedown, scene or interior lights) and glows while its extra is on, in its own texture colour. Light id 0 elsewhere (outside sirens and extras) is the game's default light, used for daytime running lights, side markers and lit screens: it glows whenever any vehicle light is on, as it does with the engine running in game. `ulc.lua` is read as data and never run.
+
+## Plate
+
+The **Plate** section sets the license plate drawn on YFT vehicles, the way the game draws it:
+
+- **Style** lists the game's 13 plate styles in `SetVehicleNumberPlateTextIndex` order: Blue on White 1, Yellow on Black, Yellow on Blue, Blue on White 2, Blue on White 3 (SA Exempt), Yankton, eCola, Las Venturas, Liberty City, LS Car Meet, LS Panic, LS Pounders and Sprunk.
+- **Text** takes up to 8 characters, A-Z, 0-9 and spaces, the same limit as `SetVehicleNumberPlateText`. Shorter text is centred. The shuffle button makes a plate in the game's format (two digits, three letters, three digits).
+- **Image** imports your own plate design (PNG, JPG, WebP or DDS) in place of the style's background, for example a server's custom plate. The style still sets the text colour, outline and position; clear the text for an image-only plate. Images larger than 1024 px are scaled down for the preview. Cortex only reads the file. **Replace** after editing it redraws the plate, and **Remove** goes back to the game background. The image is saved with the plate; if it can't be read later (moved, or on a drive Cortex was not given access to after a restart), the plate says so and you can import it again.
+
+Backgrounds, the plate font and each style's font colour, outline and text box come from your GTA V installation (every `vehshare.ytd` and the game's `carcols.ymt`), exported once and cached. The plate needs the desktop app and a detected GTA V installation; models without a `vehicle_licenseplate` mesh have no plate to draw.
+
+## Warnings
+
+| Code | Meaning |
+| --- | --- |
+| `NO_VEHICLES_ENTRY` | No entry in the scanned resource. Addon models need registered metadata; replacements can inherit it. |
+| `NO_VARIATION_ENTRY` | No carvariations entry in the resource. External or default variations may apply. |
+| `LIVERY_FLAG_MISSING` | carvariations lists liveries but vehicles.meta lacks `FLAG_HAS_LIVERY`. `SetVehicleLivery` does nothing. |
+| `LIVERY_TEXTURES_MISSING` | A `<model>_sign_N` texture the liveries list expects is not in the YTD. |
+| `MODKIT_NOT_LINKED` | A kit with livery mods exists but no carvariations `<kits>` entry references it. |
+| `MODKIT_ID_CONFLICT`, `SIREN_ID_CONFLICT`, `LIGHT_ID_CONFLICT` | The same id is defined twice in the resource. |
+| `COLOR_INDEX_INVALID` | A colour index is outside 0 to 160 and not defined in carcols. |
+| `DUPLICATE_MODEL` | The model is defined more than once across the resource. |
+| `SIREN_SEQUENCER_INVALID` | A flashing or rotating siren has a missing or out-of-range sequencer (0 to 4294967295). |
+| `SIREN_BONE_MISSING` | A siren entry has settings but the model has no matching `sirenN` bone, so it lights nothing. |
+| `SIREN_SETTINGS_MISSING` | The model has a `sirenN` bone beyond the number of sirens in its siren setting, so that light never flashes. |
+| `TXD_PARENT_UNRESOLVED` | A txdRelationships parent is not defined in the resource and does not look like a base game dictionary. |
+
+Cortex reads these files; it never writes them. Fix the file in your editor and use Rescan to re-read it.
+
+This is a static preview and validation aid. Mod kit entries and siren/light IDs are inspected here; mod kit parts can be previewed on the model from the Mods tab in All mode. Siren playback is previewed in the Lights section; handling physics (beyond the steering lock) and script-driven behavior are not simulated. Final game behavior can also depend on metadata outside the resource.

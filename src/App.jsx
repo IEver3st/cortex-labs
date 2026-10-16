@@ -1,22 +1,54 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { writeFile, exists as fsExists } from "@tauri-apps/plugin-fs";
+import { writeFile, exists as fsExists, readDir, readTextFile } from "@tauri-apps/plugin-fs";
+import { normalizeModelRotation, quarterTurn } from "./lib/model-orientation.js";
+import { isYtdTexturePath } from "./lib/ytd-texture.js";
+import { pieceTextureCandidates } from "./lib/eup.js";
 // Window controls handled by Shell
-import { AlertTriangle, ArrowUpRight, Box, Boxes, Car, Camera, ChevronRight, Eye, EyeOff, Layers, Link2, PanelLeft, RotateCcw, Shirt, X, Aperture, Disc, Zap, FolderOpen, Check, Copy, Info, Palette, Gem, Droplets, Sun, FlaskConical, RefreshCw } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Zap, Check, Copy, Droplets } from "lucide-react";
 import AppLoader, { LoadingGlyph } from "./components/AppLoader";
-import Onboarding from "./components/Onboarding";
+import FormatWarningDialog from "./components/FormatWarningDialog";
+import SingleWorkspace from "./components/workspace/SingleWorkspace";
+import SirenWorkspace from "./components/workspace/SirenWorkspace";
+import MultiWorkspace from "./components/workspace/MultiWorkspace";
 // SettingsMenu now rendered by Shell
 import Viewer from "./components/Viewer";
-import DualModelViewer from "./components/DualModelViewer";
-import { emitPrefsUpdated, loadOnboarded, loadPrefs, savePrefs, setOnboarded, saveSession } from "./lib/prefs";
+import MultiModelViewer from "./components/MultiModelViewer";
+import { useMultiLineup } from "./components/workspace/useMultiLineup";
+import { MAX_LINEUP_SLOTS, VEHICLE_MODEL_EXTENSIONS, isVehicleModelPath, lineupWatchPaths, pathKey as lineupPathKey } from "./lib/multi-lineup";
+import useVehicleModkits from "./components/workspace/useVehicleModkits";
+import useKitShoot from "./components/workspace/useKitShoot";
+import { emitRenderEffectChanged, loadPrefs, RENDER_EFFECT_EVENT, sanitizeStoredDefaults, savePrefs } from "./lib/prefs";
 import { openFolderPath } from "./lib/open-folder";
-import { captureTemporaryViewerFrame } from "./lib/preview-capture";
+import { captureTemporaryViewerFrame, captureViewerFrameBytes } from "./lib/preview-capture";
+import { countExistingFiles, downloadBytes } from "./lib/capture-output";
+import { DEFAULT_WATERMARK, hasDrawableWatermark } from "./lib/watermark";
+
 import { ensurePreviewExportFolder, resolveExistingPreviewFolderPath } from "./lib/preview-folder";
 import { updateWorkspace, WORKSPACE_SAVE_FAILED_EVENT } from "./lib/workspace";
+import { SHOWROOM_FLOORS, SHOWROOM_LIGHT_KEYS } from "./lib/viewer-stage";
+import { TURNTABLE_DEFAULT_SPEED, normalizeTurntableSpeed } from "./lib/turntable.js";
+import { DEFAULT_HAZE, DEFAULT_LIGHT_SWITCHES } from "./lib/emergency-lights";
+import { DEFAULT_EXTRAS_STATE, normalizeExtrasState, planExtras } from "./lib/vehicle-extras";
+import { captureSavedVehicle, generateSavedVehicleId, loadSavedVehicles, MAX_SAVED_VEHICLES, moveSavedVehicleModel, upsertSavedVehicle, writeSavedVehicles } from "./lib/saved-vehicles";
+import { normalizeSavedLightPreview, normalizeSavedMaterials, normalizeSavedSteering, normalizeTextureMode } from "./lib/workspace-state";
+import { setUnsavedChanges } from "./lib/unsaved-changes";
+import { normalizeLightDefaults, normalizePlateDefault, normalizeShowroomSubject, normalizeSteeringDefault, resolveDefaultSteering } from "./lib/studio-defaults";
+import { readModelResourceMeta } from "./lib/resource-meta-files";
+import { simulateVehicle } from "./lib/vehicle-meta";
+import {
+  VEHICLE_PAINT_KEYS,
+  buildVehiclePaint,
+  normalizeVehiclePaint,
+  paintDisplayColor,
+  paintFromMetaColor,
+} from "./lib/vehicle-paint.js";
+import useSirenEditor from "./components/siren-editor/useSirenEditor";
+import useEls from "./components/els/useEls";
+import { elsRunning } from "./lib/els-lights.js";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_ACTIONS,
@@ -26,16 +58,10 @@ import {
 import { Button } from "./components/ui/button";
 import { Label } from "./components/ui/label";
 import { Input } from "./components/ui/input";
-import { Toggle } from "./components/ui/toggle";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./components/ui/select";
-import { CyberPanel, CyberSection, CyberButton, CyberCard, CyberLabel, MaterialTypeSelector, MaterialSlider, TextureUploadGrid, CyberTabPanel, ColorRow } from "./components/CyberUI";
-import LightDome from "./components/LightDome";
+import { CyberButton } from "./components/CyberUI";
+
+// Workspaces whose vehicle lights an ELS VCF can drive.
+const ELS_MODES = new Set(["sirens", "livery", "everything"]);
 
 const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
@@ -95,35 +121,22 @@ const BUILT_IN_DEFAULTS = {
   liveryExteriorOnly: false,
   windowTemplateEnabled: false,
   windowTextureTarget: "auto",
-  cameraWASD: false,
   bodyColor: DEFAULT_BODY,
   backgroundColor: DEFAULT_BG,
-  experimentalSettings: false,
-  showHints: true,
-  hideRotText: false,
   showGrid: false,
   showShadows: false,
+  ambientOcclusion: false,
   showRecents: true,
   lightIntensity: 1.0,
   lightAzimuth: 54,
   lightElevation: 46,
-  glossiness: 0.5,
   windowControlsStyle: "windows",
-  toolbarInTitlebar: false,
   variantExportFolder: "",
   cameraControlsInPanel: false,
-  watermark: { enabled: false, text: "© Cortex Labs", font: "Inter", fontSize: 32, color: "#ffffff", opacity: 0.5, position: "bottom-right", rotation: 0 },
+  eupAutoTextures: true,
+  warnStandardModel: true,
+  watermark: { ...DEFAULT_WATERMARK },
 };
-
-function sanitizeStoredDefaults(stored) {
-  if (!stored || typeof stored !== "object") return {};
-  const {
-    showAmbientOcclusion: _removedAmbientOcclusion,
-    autoModelTexturesEnabled: _removedAutoModelTexturesEnabled,
-    ...rest
-  } = stored;
-  return rest;
-}
 
 const BUILT_IN_UI = {
 
@@ -153,25 +166,6 @@ function getFileLabel(path, emptyLabel) {
 return path.split(/[\\/]/).pop();
 }
 
-function buildVehicleSlotColors(baseColor = DEFAULT_BODY) {
-  const resolved = baseColor || DEFAULT_BODY;
-  return {
-    primary: resolved,
-    secondary: resolved,
-    accent: resolved,
-    glass: resolved,
-  };
-}
-
-function normalizeVehicleSlotColors(slotColors, baseColor = DEFAULT_BODY) {
-  const fallback = buildVehicleSlotColors(baseColor);
-  if (!slotColors || typeof slotColors !== "object") return fallback;
-  return {
-    ...fallback,
-    ...slotColors,
-  };
-}
-
 function UnloadButton({ onClick, title, className }) {
   return (
     <CyberButton variant="danger" className={className} onClick={onClick} title={title}>
@@ -183,15 +177,16 @@ function UnloadButton({ onClick, title, className }) {
 function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null, contextBarTarget = null }) {
 
   const viewerApiRef = useRef(null);
-  const reloadTimerRef = useRef({ primary: null, window: null, dualA: null, dualB: null });
+  const reloadTimerRef = useRef({ primary: null, window: null });
   const isTauriRuntime =
     typeof window !== "undefined" &&
     typeof window.__TAURI_INTERNALS__ !== "undefined" &&
     typeof window.__TAURI_INTERNALS__?.invoke === "function";
 
   const [defaults, setDefaults] = useState(() => getInitialDefaults());
+  const defaultsRef = useRef(defaults);
+  defaultsRef.current = defaults;
   const [hotkeys, setHotkeys] = useState(() => getInitialHotkeys());
-  const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
   // Toast notification system
@@ -237,19 +232,38 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [windowTemplateEnabled, setWindowTemplateEnabled] = useState(() => Boolean(getInitialDefaults().windowTemplateEnabled));
   const [windowTexturePath, setWindowTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
-  const [vehicleSlotColors, setVehicleSlotColors] = useState(() => buildVehicleSlotColors(getInitialDefaults().bodyColor));
+  const [vehiclePaint, setVehiclePaint] = useState(() => buildVehiclePaint(getInitialDefaults().bodyColor));
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
   const [backgroundImagePath, setBackgroundImagePath] = useState("");
   const [backgroundImageBlur, setBackgroundImageBlur] = useState(0);
   const [backgroundImageReloadToken, setBackgroundImageReloadToken] = useState(0);
   const [showWireframe, setShowWireframe] = useState(false);
   const [showCageWireframe, setShowCageWireframe] = useState(false);
-  const [lightIntensity, setLightIntensity] = useState(() => getInitialDefaults().lightIntensity ?? 1.0);
-  const [lightAzimuth, setLightAzimuth] = useState(() => getInitialDefaults().lightAzimuth ?? 54);
-  const [lightElevation, setLightElevation] = useState(() => getInitialDefaults().lightElevation ?? 46);
+  const [showSolidWireframe, setShowSolidWireframe] = useState(false);
+  // What the viewer draws while the solid wireframe is on; null when off.
+  const [meshStats, setMeshStats] = useState(null);
+  const [lightIntensity, setLightIntensity] = useState(() => normalizeLightDefaults(getInitialDefaults()).intensity);
+  const [lightAzimuth, setLightAzimuth] = useState(() => normalizeLightDefaults(getInitialDefaults()).azimuth);
+  const [lightElevation, setLightElevation] = useState(() => normalizeLightDefaults(getInitialDefaults()).elevation);
+  // Viewer stage: "workbench" (the user's backdrop) or "showroom" (photo studio).
+  // A new tab starts from Settings > Studio; a restored workspace keeps its own.
+  // EUP starts from the EUP scene (the one EUP Studio uses), everything else from Vehicles.
+  const [initialShowroom] = useState(() => {
+    const subject = normalizeTextureMode(defaultTextureMode) === "eup" ? "ped" : "vehicle";
+    return normalizeShowroomSubject(getInitialDefaults().showroom?.[subject], subject);
+  });
+  const [stage, setStage] = useState(initialShowroom.stage);
+  const [stageSpot, setStageSpot] = useState(initialShowroom.spot);
+  const [stageReflect, setStageReflect] = useState(initialShowroom.reflect);
+  const [stageBeam, setStageBeam] = useState(initialShowroom.beam);
+  const [stageLight, setStageLight] = useState(initialShowroom.light);
+  const [stageFloor, setStageFloor] = useState(initialShowroom.floor);
+  // Vehicle turntable (Scene tab), kept with the tab's workspace.
+  const [turntable, setTurntable] = useState(false);
+  const [turntableSpeed, setTurntableSpeed] = useState(TURNTABLE_DEFAULT_SPEED);
+  const [photoError, setPhotoError] = useState("");
   const [lightingOpen, setLightingOpen] = useState(true);
-  const [glossiness, setGlossiness] = useState(() => getInitialDefaults().glossiness ?? 0.5);
-  const [experimentalSettings, setExperimentalSettings] = useState(() => Boolean(getInitialDefaults().experimentalSettings));
+  const [glossiness, setGlossiness] = useState(0.5);
 
   // Vehicle Materials state
   const [materialType, setMaterialType] = useState("paint");
@@ -257,9 +271,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [matGlossiness, setMatGlossiness] = useState(0.5);
   const [matRoughness, setMatRoughness] = useState(0.3);
   const [matClearcoat, setMatClearcoat] = useState(0.0);
+  // Quarter turns applied with the rotate buttons ([x, y, z, w] or null).
+  const [modelRotation, setModelRotation] = useState(null);
+  // A model picked in EUP asks for its own texture dictionary (see the effect below).
+  const [autoTextureRequest, setAutoTextureRequest] = useState(null);
+  const autoTexturePathRef = useRef("");
   const [materialTextures, setMaterialTextures] = useState([]);
   const [materialsOpen, setMaterialsOpen] = useState(false);
-  const [nativeMaterialsEnabled, setNativeMaterialsEnabled] = useState(false);
+  // Sirens shows the whole vehicle with its own textures unless the user turns them off.
+  const [nativeMaterialsEnabled, setNativeMaterialsEnabled] = useState(() => defaultTextureMode === "sirens");
   const [nativeMaterialsReloadToken, setNativeMaterialsReloadToken] = useState(0);
   const [nativeMaterialsStatus, setNativeMaterialsStatus] = useState({
     state: "idle",
@@ -282,21 +302,204 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     lighting: true,
   }));
   const [activePanelTab, setActivePanelTab] = useState("asset");
+  const [metaModelInfo, setMetaModelInfo] = useState(null);
+  // Front wheel angle in degrees (positive steers right). A new model starts at
+  // the Settings default, capped by its handling.meta steering lock, and stays
+  // straight when no lock is found because the Meta panel can't steer it back.
+  const [steering, setSteering] = useState({ path: "", angle: 0 });
+  const [steeringLock, setSteeringLock] = useState({ path: "", lock: null });
+  const defaultSteering = normalizeSteeringDefault(defaults.steeringAngle);
+  const steeringAngle = steering.path === modelPath
+    ? steering.angle
+    : steeringLock.path === modelPath ? resolveDefaultSteering(defaultSteering, steeringLock.lock) : 0;
+  const setSteeringAngle = useCallback((angle) => setSteering({ path: modelPath, angle }), [modelPath]);
+  const needsSteeringLock = defaultSteering !== 0 && isTauriRuntime && /\.(yft|clmesh)$/i.test(modelPath || "");
+  useEffect(() => {
+    if (!needsSteeringLock) return undefined;
+    const controller = new AbortController();
+    const modelName = modelPath.split(/[\\/]/).pop().replace(/\.(yft|clmesh)$/i, "").replace(/_hi$/i, "");
+    (async () => {
+      await invoke("allow_model_resource", { path: modelPath });
+      if (controller.signal.aborted) return;
+      const result = await readModelResourceMeta(modelPath, { readDir, readTextFile, signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setSteeringLock({ path: modelPath, lock: simulateVehicle(result.meta, modelName).steering.lockDegrees });
+    })().catch((error) => {
+      if (controller.signal.aborted) return;
+      // The Meta tab reports unreadable meta files; the wheels just stay straight.
+      console.warn("[Steering] Could not read the steering lock for", modelPath, error);
+      setSteeringLock({ path: modelPath, lock: null });
+    });
+    return () => controller.abort();
+  }, [modelPath, needsSteeringLock]);
+  // Vehicle light preview. Switches persist across models; the carcols siren
+  // setting belongs to the model it was read for.
+  const [lightPreview, setLightPreview] = useState(() => ({
+    switches: DEFAULT_LIGHT_SWITCHES, muted: [], speed: 1, spill: true, spillStrength: 1, glow: 1, haze: DEFAULT_HAZE, setting: null, ulc: null, sirenContext: null, settingPath: "",
+    // Preview lens colours ({ path, tints }), kept with the model they were picked on.
+    lens: null,
+  }));
+  const fileSirenSetting = lightPreview.settingPath === modelPath ? lightPreview.setting : null;
+  // The siren editor's draft replaces the file's setting in the preview while it exists.
+  const sirenEditor = useSirenEditor({ modelPath, fileSetting: fileSirenSetting });
+  const vehicleLights = useMemo(() => ({
+    ...lightPreview,
+    setting: sirenEditor.draft ?? fileSirenSetting,
+    fileSetting: fileSirenSetting,
+    ulc: lightPreview.settingPath === modelPath ? lightPreview.ulc : null,
+    sirenContext: lightPreview.settingPath === modelPath ? lightPreview.sirenContext : null,
+    lens: lightPreview.lens?.path === modelPath ? lightPreview.lens.tints : null,
+  }), [lightPreview, modelPath, fileSirenSetting, sirenEditor.draft]);
+  // `lensTints` (siren number to "siren" or "#rrggbb") belongs to the open model.
+  const updateVehicleLights = useCallback(({ lensTints, ...patch }) => setLightPreview((current) => ({
+    ...current,
+    ...patch,
+    ...(Object.prototype.hasOwnProperty.call(patch, "setting") ? { settingPath: modelPath } : {}),
+    ...(lensTints !== undefined ? { lens: modelPath && Object.keys(lensTints || {}).length ? { path: modelPath, tints: lensTints } : null } : {}),
+  })), [modelPath]);
+  const getLightTime = useCallback(() => viewerApiRef.current?.getLightTime?.() ?? null, []);
+  const setLightTime = useCallback((seconds) => viewerApiRef.current?.setLightTime?.(seconds), []);
+  const getSirenMarkers = useCallback(() => viewerApiRef.current?.getSirenMarkers?.() ?? [], []);
+  // Overlays that track the camera lay out right after the viewer draws a frame.
+  const viewerFrameListenersRef = useRef(new Set());
+  const handleViewerFrame = useCallback(() => {
+    for (const listener of viewerFrameListenersRef.current) listener();
+  }, []);
+  const onViewerFrame = useCallback((listener) => {
+    viewerFrameListenersRef.current.add(listener);
+    return () => viewerFrameListenersRef.current.delete(listener);
+  }, []);
+  // Bumped after the siren editor writes carcols.meta so the Meta tab rereads it.
+  const [metaRescanToken, setMetaRescanToken] = useState(0);
+  const requestMetaRescan = useCallback(() => setMetaRescanToken((value) => value + 1), []);
+  // Doors, bonnet, boot and convertible roof. The viewer owns the pose and
+  // reports part targets here; the roof clip named by vehicles.meta comes from
+  // the resource's .ycd or the game files.
+  const [vehicleParts, setVehicleParts] = useState(null);
+  // Paint slots the loaded model's meshes take; null when nothing is loaded.
+  const [paintSlotsInUse, setPaintSlotsInUse] = useState(null);
+  const [roofClip, setRoofClip] = useState({ path: "", status: "idle", dict: "", clip: "", source: "", data: null, error: "" });
+  const vehiclePosable = Boolean(metaModelInfo?.vehiclePosable);
+  const canLoadRoofClip = vehiclePosable && isTauriRuntime && /\.yft$/i.test(modelPath || "");
+  useEffect(() => {
+    if (!canLoadRoofClip) {
+      setRoofClip({ path: modelPath, status: "idle", dict: "", clip: "", source: "", data: null, error: "" });
+      return undefined;
+    }
+    const controller = new AbortController();
+    const modelName = modelPath.split(/[\\/]/).pop().replace(/\.yft$/i, "").replace(/_hi$/i, "");
+    // A meta rescan of the same model keeps the loaded clip until the new one lands.
+    const keepReady = (current) => current.path === modelPath && current.status === "ready";
+    setRoofClip((current) => (keepReady(current) ? current : { path: modelPath, status: "loading", dict: "", clip: "", source: "", data: null, error: "" }));
+    (async () => {
+      await invoke("allow_model_resource", { path: modelPath });
+      if (controller.signal.aborted) return;
+      const result = await readModelResourceMeta(modelPath, { readDir, readTextFile, signal: controller.signal });
+      if (controller.signal.aborted) return;
+      const roof = simulateVehicle(result.meta, modelName).convertibleRoof;
+      if (!roof) {
+        setRoofClip({ path: modelPath, status: "none", dict: "", clip: "", source: "", data: null, error: "" });
+        return;
+      }
+      setRoofClip((current) => (keepReady(current) ? current : { path: modelPath, status: "loading", dict: roof.dict, clip: roof.clip, source: "", data: null, error: "" }));
+      const data = await invoke("export_model_clip", { modelPath, dict: roof.dict, clip: roof.clip });
+      if (controller.signal.aborted) return;
+      setRoofClip({ path: modelPath, status: "ready", dict: roof.dict, clip: roof.clip, source: data?.source || "", data, error: "" });
+    })().catch((error) => {
+      if (controller.signal.aborted) return;
+      setRoofClip((current) => ({ ...current, path: modelPath, status: "error", data: null, error: String(error?.message || error) }));
+    });
+    return () => controller.abort();
+  }, [modelPath, canLoadRoofClip, metaRescanToken]);
+  const activeRoofClip = roofClip.path === modelPath && roofClip.status === "ready" ? roofClip.data : null;
+  const vehiclePartControls = useMemo(() => ({
+    set: (id, value, options) => viewerApiRef.current?.setVehiclePart?.(id, value, options),
+    toggle: (id) => viewerApiRef.current?.toggleVehiclePart?.(id),
+    setAll: (open) => viewerApiRef.current?.setAllVehicleParts?.(open),
+  }), []);
+  // Extras follow the vehicle state: a new model spawns with none on, then the
+  // ULC config (or siren geometry) and manual toggles decide.
+  const [extrasStateEntry, setExtrasStateEntry] = useState(() => ({ path: "", ...DEFAULT_EXTRAS_STATE }));
+  // Stable while untouched, so effects that depend on it (session save) don't rerun every render.
+  const extrasState = useMemo(
+    () => (extrasStateEntry.path === modelPath ? extrasStateEntry : { path: modelPath, ...DEFAULT_EXTRAS_STATE }),
+    [extrasStateEntry, modelPath],
+  );
+  const updateExtrasState = useCallback((patch) => setExtrasStateEntry((current) => ({
+    ...(current.path === modelPath ? current : { path: modelPath, ...DEFAULT_EXTRAS_STATE }),
+    ...(typeof patch === "function" ? patch(current.path === modelPath ? current : { path: modelPath, ...DEFAULT_EXTRAS_STATE }) : patch),
+    path: modelPath,
+  })), [modelPath]);
+  const extrasPlan = useMemo(() => planExtras({
+    available: (metaModelInfo?.extras || []).map((extra) => extra.index),
+    ulc: vehicleLights.ulc,
+    lightExtras: metaModelInfo?.lights?.extras || {},
+    switches: vehicleLights.switches,
+    state: extrasState,
+  }), [metaModelInfo, vehicleLights.ulc, vehicleLights.switches, extrasState]);
+  const toggleMetaExtra = useCallback((index, visible) => {
+    updateExtrasState((current) => ({ overrides: { ...current.overrides, [index]: visible } }));
+    return true;
+  }, [updateExtrasState]);
+  // License plate drawn on YFT vehicles: game style index (0-12) and up to 8
+  // characters. Follows the Settings default until the user edits it here.
+  const defaultPlate = useMemo(() => normalizePlateDefault(defaults.licensePlate), [defaults.licensePlate]);
+  const [plateOverride, setPlateOverride] = useState(null);
+  const licensePlate = plateOverride ?? defaultPlate;
+  const [licensePlateStatus, setLicensePlateStatus] = useState(null);
+  const updateLicensePlate = useCallback(
+    (patch) => setPlateOverride((current) => ({ ...(current ?? defaultPlate), ...patch })),
+    [defaultPlate],
+  );
   const [textureReloadToken, setTextureReloadToken] = useState(0);
+  // Loads the open model again after a write changed its files (lens colours).
+  const [modelReloadToken, setModelReloadToken] = useState(0);
+  const reloadModel = useCallback(() => setModelReloadToken((token) => token + 1), []);
   const [windowTextureReloadToken, setWindowTextureReloadToken] = useState(0);
   const [textureTargets, setTextureTargets] = useState([]);
-  const [textureMode, setTextureMode] = useState(() => defaultTextureMode);
+  const [textureMode, setTextureMode] = useState(() => normalizeTextureMode(defaultTextureMode) || "livery");
+  const modkits = useVehicleModkits({ modelPath, enabled: isTauriRuntime && (textureMode === "everything" || textureMode === "sirens") });
+  // ELS lighting (the vehicle workspaces: Sirens edits the VCF, Livery and
+  // All switch it from the Lights panel): a vehicle switched to ELS has its
+  // VCF drive the extras, and the carcols sirens follow its light stage.
+  const elsModelExtras = useMemo(
+    () => [...new Set((metaModelInfo?.extras || []).map((extra) => extra.index))].sort((a, b) => a - b),
+    [metaModelInfo],
+  );
+  const elsMode = ELS_MODES.has(textureMode);
+  const els = useEls({ modelPath, isTauriRuntime, modelExtras: elsModelExtras, active: elsMode });
+  const elsLive = elsMode ? els.live : null;
+  const viewerLights = useMemo(() => (elsLive ? {
+    ...vehicleLights,
+    els: elsLive,
+    // The rig takes the sirens switch from the VCF; this keeps night lighting on while ELS runs.
+    switches: { ...vehicleLights.switches, sirens: elsRunning(elsLive.config, elsLive.preview) },
+  } : vehicleLights), [vehicleLights, elsLive]);
+  // The saved vehicle this tab was opened from or last saved as: { id, name, path }.
+  // It only applies while that model is loaded.
+  const [savedVehicleEntry, setSavedVehicleEntry] = useState(null);
+  const savedVehicle = savedVehicleEntry && savedVehicleEntry.path === modelPath ? savedVehicleEntry : null;
+  // The game texture livery (`_sign_N`) shown in All or Sirens: { path, number }.
+  // Like the mods, it belongs to the model it was chosen on.
+  const [gameLiveryEntry, setGameLiveryEntry] = useState(null);
+  const gameLivery = gameLiveryEntry && gameLiveryEntry.path === modelPath ? gameLiveryEntry.number : null;
+  const setGameLivery = useCallback((number) => {
+    setGameLiveryEntry(Number.isInteger(number) && modelPath ? { path: modelPath, number } : null);
+  }, [modelPath]);
+  // Reported by the viewer for the model it shows, which lags modelPath while
+  // the next model loads.
+  const [gameLiveriesReport, setGameLiveries] = useState(null);
+  const gameLiveries = gameLiveriesReport && gameLiveriesReport.path === modelPath ? gameLiveriesReport : null;
+  const [vehicleModsStatus, setVehicleModsStatus] = useState(null);
   const [textureTarget, setTextureTarget] = useState("all");
   const [liveryTarget, setLiveryTarget] = useState("");
   const [liveryLabel, setLiveryLabel] = useState("");
   const [windowTextureTarget, setWindowTextureTarget] = useState(() => getInitialDefaults().windowTextureTarget || "auto");
 
-  const [, setCameraWASD] = useState(() => Boolean(getInitialDefaults().cameraWASD));
   const [cameraControlsInPanel, setCameraControlsInPanel] = useState(() => Boolean(getInitialDefaults().cameraControlsInPanel));
-  const [showHints, setShowHints] = useState(() => Boolean(getInitialDefaults().showHints ?? true));
-  const [hideRotText, setHideRotText] = useState(() => Boolean(getInitialDefaults().hideRotText));
   const [showGrid, setShowGrid] = useState(() => Boolean(getInitialDefaults().showGrid));
   const [showShadows, setShowShadows] = useState(() => Boolean(getInitialDefaults().showShadows));
+  const [ambientOcclusion, setAmbientOcclusion] = useState(() => Boolean(getInitialDefaults().ambientOcclusion));
   const [windowLiveryTarget, setWindowLiveryTarget] = useState("");
   const [windowLiveryLabel, setWindowLiveryLabel] = useState("");
   const [liveryWindowOverride, setLiveryWindowOverride] = useState(""); // Manual override for glass material in livery mode
@@ -308,32 +511,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [windowTextureError, setWindowTextureError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
 
-  const dualViewerApiRef = useRef(null);
-  const [dualModelAPath, setDualModelAPath] = useState("");
-  const [dualModelBPath, setDualModelBPath] = useState("");
-  const [dualTextureAPath, setDualTextureAPath] = useState("");
-  const [dualTextureBPath, setDualTextureBPath] = useState("");
-  const [dualWindowTextureAPath, setDualWindowTextureAPath] = useState("");
-  const [dualWindowTextureBPath, setDualWindowTextureBPath] = useState("");
-  const [dualWindowTextureATarget, setDualWindowTextureATarget] = useState("auto");
-  const [dualWindowTextureBTarget, setDualWindowTextureBTarget] = useState("auto");
-  const [dualTextureTargetsA, setDualTextureTargetsA] = useState([]);
-  const [dualTextureTargetsB, setDualTextureTargetsB] = useState([]);
-  const [dualWindowAutoTargetA, setDualWindowAutoTargetA] = useState("");
-  const [dualWindowAutoTargetB, setDualWindowAutoTargetB] = useState("");
-  const [dualWindowAutoLabelA, setDualWindowAutoLabelA] = useState("");
-  const [dualWindowAutoLabelB, setDualWindowAutoLabelB] = useState("");
-  const [dualTextureAReloadToken, setDualTextureAReloadToken] = useState(0);
-  const [dualTextureBReloadToken, setDualTextureBReloadToken] = useState(0);
-  const [dualBodyColorA, setDualBodyColorA] = useState(() => getInitialDefaults().bodyColor);
-  const [dualBodyColorB, setDualBodyColorB] = useState(() => getInitialDefaults().bodyColor);
-  const [dualSelectedSlot, setDualSelectedSlot] = useState("A");
-  const [dualModelALoading, setDualModelALoading] = useState(false);
-  const [dualModelBLoading, setDualModelBLoading] = useState(false);
-  const [dualModelAError, setDualModelAError] = useState("");
-  const [dualModelBError, setDualModelBError] = useState("");
-  const [dualGizmoVisible, setDualGizmoVisible] = useState(true);
-  const [dualTextureMode, setDualTextureMode] = useState("livery");
+  const multiViewerApiRef = useRef(null);
+  const multi = useMultiLineup(bodyColor, initialShowroom.floor);
 
   const [modelLoading, setModelLoading] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
@@ -348,6 +527,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [generatingPreview, setGeneratingPreview] = useState(false);
   const [previewProgress, setPreviewProgress] = useState({ current: 0, total: 0, preset: "" });
   const [previewComplete, setPreviewComplete] = useState(false);
+  // What the last run actually wrote: { total, written, skipped, error, folder, note }.
+  const [previewResult, setPreviewResult] = useState(null);
+  // A run waiting on "Replace N files?": { conflicts, total, folder, job }.
+  const [previewReplace, setPreviewReplace] = useState(null);
   const [previewOutputPath, setPreviewOutputPath] = useState("");
   const [previewFolderOpening, setPreviewFolderOpening] = useState(false);
   const [previewFolderOpenError, setPreviewFolderOpenError] = useState("");
@@ -357,8 +540,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [previewCapturePresets, setPreviewCapturePresets] = useState(() => [...PREVIEW_CAPTURE_PRESET_KEYS]);
   const [previewZoomPreview, setPreviewZoomPreview] = useState("");
   const [previewZoomLoading, setPreviewZoomLoading] = useState(false);
-  const [dualModelAPos, setDualModelAPos] = useState([0, 0, 0]);
-  const [dualModelBPos, setDualModelBPos] = useState([0, 0, 3]);
   const lightIntensityRafRef = useRef(0);
   const pendingLightIntensityRef = useRef(null);
   const lightDirectionRafRef = useRef(0);
@@ -411,15 +592,19 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     });
   }, [lightAzimuth, scheduleLightDirectionUpdate]);
 
-  const setVehicleSlotColor = useCallback((slot, value) => {
-    if (slot === "primary") {
-      setBodyColor(value);
-    }
-    setVehicleSlotColors((prev) => ({
-      ...prev,
-      [slot]: value,
-    }));
+  // EUP mode has one body colour; it paints whatever takes primary.
+  const eupPaint = useMemo(() => buildVehiclePaint(bodyColor), [bodyColor]);
+
+  // `value` is a slot paint ({ index, color, finish }); primary also sets the base body colour.
+  const setVehiclePaintSlot = useCallback((slot, value) => {
+    if (!value) return;
+    if (slot === "primary") setBodyColor(paintDisplayColor(value));
+    setVehiclePaint((prev) => ({ ...prev, [slot]: value }));
   }, []);
+
+  const resetVehiclePaintSlot = useCallback((slot) => {
+    setVehiclePaintSlot(slot, buildVehiclePaint(defaultsRef.current.bodyColor)[slot]);
+  }, [setVehiclePaintSlot]);
 
   const resetLighting = useCallback(() => {
     if (lightIntensityRafRef.current) {
@@ -432,10 +617,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     }
     pendingLightIntensityRef.current = null;
     pendingLightDirectionRef.current = null;
-    setLightIntensity(1.0);
-    setLightAzimuth(54);
-    setLightElevation(46);
-  }, []);
+    const light = normalizeLightDefaults(defaults);
+    setLightIntensity(light.intensity);
+    setLightAzimuth(light.azimuth);
+    setLightElevation(light.elevation);
+  }, [defaults]);
 
   useEffect(() => () => {
     if (lightIntensityRafRef.current) cancelAnimationFrame(lightIntensityRafRef.current);
@@ -446,22 +632,28 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   useEffect(() => {
     if (!settingsVersion) return;
     const merged = getInitialDefaults();
+    const previous = defaultsRef.current;
     setDefaults(merged);
-    setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
-    setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
-    setWindowTextureTarget(merged.windowTextureTarget || "auto");
-    setCameraWASD(Boolean(merged.cameraWASD));
+    // These belong to the workspace. A changed default reaches a tab only while
+    // the tab still uses the old one; saving other settings leaves them alone.
+    const followDefault = (key, setValue, normalize) => {
+      const before = normalize(previous[key]);
+      const after = normalize(merged[key]);
+      if (before !== after) setValue((current) => (current === before ? after : current));
+    };
+    followDefault("windowTemplateEnabled", setWindowTemplateEnabled, Boolean);
+    followDefault("windowTextureTarget", setWindowTextureTarget, (value) => value || "auto");
+    followDefault("backgroundColor", setBackgroundColor, (value) => value || DEFAULT_BG);
     setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
-    setShowHints(Boolean(merged.showHints ?? true));
-    setHideRotText(Boolean(merged.hideRotText));
     setShowGrid(Boolean(merged.showGrid));
     setShowShadows(Boolean(merged.showShadows));
-    setBodyColor(merged.bodyColor);
-    setVehicleSlotColors(buildVehicleSlotColors(merged.bodyColor));
-    setDualBodyColorA(merged.bodyColor);
-    setDualBodyColorB(merged.bodyColor);
-    setBackgroundColor(merged.backgroundColor);
-    setExperimentalSettings(Boolean(merged.experimentalSettings));
+    setAmbientOcclusion(Boolean(merged.ambientOcclusion));
+    // Open paint follows a new base body colour; saving other settings keeps it.
+    if (merged.bodyColor !== defaultsRef.current.bodyColor) {
+      setBodyColor(merged.bodyColor);
+      setVehiclePaint(buildVehiclePaint(merged.bodyColor));
+      multi.repaintAll(merged.bodyColor);
+    }
     const hk = getInitialHotkeys();
     setHotkeys(hk);
   }, [settingsVersion]);
@@ -490,13 +682,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, []);
 
   const modelExtensions =
-    textureMode === "eup" || textureMode === "multi"
+    textureMode === "eup"
       ? ["yft", "clmesh", "dff", "ydd"]
       : ["yft", "clmesh", "dff"];
   const modelDropLabel = modelExtensions.map((ext) => `.${ext}`).join(" / ");
 
+  // `rename: false` keeps the tab's name, for a tab reopened from a saved vehicle.
   const loadModel = useCallback(
-    async (path) => {
+    async (path, { rename = true, autoTexture = false } = {}) => {
       if (!path) return;
 
       setFormatWarning(null);
@@ -509,8 +702,18 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         return;
       }
 
-      if (lower.endsWith(".yft") && !lower.endsWith("_hi.yft")) {
-        setFormatWarning({ type: "non-hi-model", path: path.split(/[\\/]/).pop() });
+      if (lower.endsWith(".yft") && !lower.endsWith("_hi.yft") && loadPrefs()?.defaults?.warnStandardModel !== false) {
+        const hiPath = path.replace(/\.yft$/i, "_hi.yft");
+        setFormatWarning({ type: "non-hi-model", path, hiPath: "", hiChecked: false, loadOptions: { rename, autoTexture } });
+        // Offer the _hi model when it sits beside this one.
+        if (isTauriRuntime) {
+          fsExists(hiPath).catch(() => null).then((found) => {
+            if (found == null) return;
+            setFormatWarning((current) => (current?.type === "non-hi-model" && current.path === path
+              ? { ...current, hiPath: found ? hiPath : "", hiChecked: true }
+              : current));
+          });
+        }
       }
 
       setDialogError("");
@@ -520,10 +723,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       setTextureTarget("all");
       setLiveryTarget("");
       setLiveryLabel("");
-      setWindowTextureTarget("none");
+      // A new model starts from the Settings default; restore applies a saved pick after this.
+      setWindowTextureTarget(defaultsRef.current.windowTextureTarget || "auto");
       setWindowLiveryTarget("");
       setWindowLiveryLabel("");
       setModelSourcePath(path);
+      // A new model stands the way the loader puts it; restore applies a saved turn after this.
+      setModelRotation(null);
+      if (autoTexture) setAutoTextureRequest({ path });
       setModelLoading(true);
 
       try {
@@ -531,7 +738,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         // Auto-rename the tab to the loaded filename
         const fileName = path.split(/[\\/]/).pop();
 
-        if (fileName && onRenameTab) onRenameTab(fileName);
+        if (fileName && onRenameTab && rename) onRenameTab(fileName);
       } catch (error) {
         const message =
           typeof error === "string"
@@ -571,11 +778,17 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     };
   }, [viewerReady]);
 
+  // Saving waits until a restore has applied everything, so a half-restored
+  // tab never overwrites its workspace. After that an empty tab saves as
+  // empty, so a model or texture the user removed stays removed.
+  const [restoreSettled, setRestoreSettled] = useState(() => !initialState);
   const sessionSaveTimerRef = useRef(null);
+  const lastSavedSnapshotRef = useRef("");
   useEffect(() => {
-    if (isBooting || showOnboarding) return;
-    const hasContent = modelPath || dualModelAPath || dualModelBPath || texturePath || dualTextureAPath || dualTextureBPath || dualWindowTextureAPath || dualWindowTextureBPath;
-    if (!hasContent) return;
+    if (isBooting || !restoreSettled || !shellTab?.workspaceId) return;
+    // A model that failed to load (a disconnected drive, a parse error) keeps
+    // its source path; saving now would wipe the project's per-model setup.
+    if (!modelPath && modelSourcePath) return;
 
     if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
     sessionSaveTimerRef.current = setTimeout(() => {
@@ -583,64 +796,166 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         textureMode,
         modelPath: modelPath || "",
         modelSourcePath: modelSourcePath || "",
+        modelRotation,
         texturePath: texturePath || "",
+        textureAuto: Boolean(texturePath) && texturePath === autoTexturePathRef.current,
         textureTarget,
         windowTexturePath: windowTexturePath || "",
         windowTextureTarget,
         windowTemplateEnabled,
         liveryWindowOverride,
         bodyColor,
-        vehicleSlotColors,
+        vehiclePaint,
         backgroundColor,
         backgroundImagePath,
         backgroundImageBlur,
         showWireframe,
         showCageWireframe,
+        showSolidWireframe,
         lightIntensity,
         lightAzimuth,
         lightElevation,
+        stage,
+        // EUP tabs saved before EUP had a showroom stored a vehicle default in `stage`.
+        eupStage: textureMode === "eup" ? stage : undefined,
+        stageSpot,
+        stageReflect,
+        stageBeam,
+        stageLight,
+        stageFloor,
+        turntable,
+        turntableSpeed,
         glossiness,
         liveryExteriorOnly,
         nativeMaterialsEnabled,
-        dualBodyColorA,
-        dualBodyColorB,
-        dualModelAPath: dualModelAPath || "",
-        dualModelBPath: dualModelBPath || "",
-        dualTextureAPath: dualTextureAPath || "",
-        dualTextureBPath: dualTextureBPath || "",
-        dualWindowTextureAPath: dualWindowTextureAPath || "",
-        dualWindowTextureBPath: dualWindowTextureBPath || "",
-        dualWindowTextureATarget,
-        dualWindowTextureBTarget,
-        dualModelAPos,
-        dualModelBPos,
-        dualSelectedSlot,
-        dualTextureMode,
+        lineup: multi.lineup,
+        multiGizmoVisible: multi.gizmoVisible,
+        multiShowroom: multi.showroom,
+        // Mod kit parts chosen in All or Sirens: { path, kitName, mods } or null.
+        vehicleMods: modkits.savedSelection,
+        extras: modelPath ? { path: modelPath, ...normalizeExtrasState(extrasState) } : null,
+        licensePlate: plateOverride,
+        savedVehicle,
+        gameLivery: gameLivery != null ? { path: modelPath, number: gameLivery } : null,
+        // Front wheel angle, for the model it was set on.
+        steering: modelPath && steering.path === modelPath ? { path: modelPath, angle: steering.angle } : null,
+        // Lights panel choices; the siren setting itself is reread from the model's files.
+        vehicleLights: {
+          switches: lightPreview.switches,
+          muted: lightPreview.muted,
+          speed: lightPreview.speed,
+          spill: lightPreview.spill,
+          spillStrength: lightPreview.spillStrength,
+          glow: lightPreview.glow,
+          haze: lightPreview.haze,
+          lens: lightPreview.lens,
+        },
+        materials: {
+          type: materialType,
+          lightIntensity: matLightIntensity,
+          glossiness: matGlossiness,
+          roughness: matRoughness,
+          clearcoat: matClearcoat,
+          textures: materialTextures.map(({ id, name, path }) => ({ id, name, path })),
+        },
       };
-      // Save to legacy session store
-      saveSession(stateSnapshot);
-      // Also persist to workspace so recent projects can restore full state
-      if (shellTab?.workspaceId) {
-        try {
-          updateWorkspace(shellTab.workspaceId, { state: stateSnapshot });
-        } catch {}
-      }
+      // Skip the localStorage round trip when nothing actually changed.
+      let serialized = "";
+      try {
+        serialized = JSON.stringify(stateSnapshot);
+      } catch {}
+      const snapshotKey = `${shellTab.workspaceId}::${serialized}`;
+      if (serialized && lastSavedSnapshotRef.current === snapshotKey) return;
+      lastSavedSnapshotRef.current = snapshotKey;
+      try {
+        updateWorkspace(shellTab.workspaceId, { state: stateSnapshot });
+      } catch {}
     }, 1000);
 
     return () => {
       if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
     };
   }, [
-    isBooting, showOnboarding, textureMode,
-    modelPath, modelSourcePath, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
-    liveryWindowOverride, bodyColor, vehicleSlotColors, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, lightIntensity, glossiness, liveryExteriorOnly, nativeMaterialsEnabled,
-    dualBodyColorA, dualBodyColorB,
-    dualModelAPath, dualModelBPath, dualTextureAPath, dualTextureBPath,
-    dualWindowTextureAPath, dualWindowTextureBPath,
-    dualWindowTextureATarget, dualWindowTextureBTarget,
-    dualModelAPos, dualModelBPos, dualSelectedSlot, dualTextureMode,
+    isBooting, restoreSettled, textureMode,
+    modelPath, modelSourcePath, modelRotation, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
+    liveryWindowOverride, bodyColor, vehiclePaint, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, showCageWireframe, showSolidWireframe,
+    lightIntensity, lightAzimuth, lightElevation, glossiness, liveryExteriorOnly, nativeMaterialsEnabled,
+    stage, stageSpot, stageReflect, stageBeam, stageLight, stageFloor, turntable, turntableSpeed,
+    multi.lineup, multi.gizmoVisible, multi.showroom, multi.slots,
+    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, steering,
+    lightPreview.switches, lightPreview.muted, lightPreview.speed, lightPreview.spill, lightPreview.spillStrength, lightPreview.glow, lightPreview.haze, lightPreview.lens,
+    materialType, matLightIntensity, matGlossiness, matRoughness, matClearcoat, materialTextures,
     shellTab,
   ]);
+
+  // A siren draft not yet written to a carcols.meta makes the Shell ask before
+  // this tab or the window closes.
+  const shellTabId = shellTab?.id;
+  useEffect(() => {
+    if (!shellTabId) return undefined;
+    setUnsavedChanges(shellTabId, sirenEditor.dirty ? "siren" : els.dirty ? "els" : null);
+    return () => setUnsavedChanges(shellTabId, null);
+  }, [shellTabId, sirenEditor.dirty, els.dirty]);
+
+  // Saves the loaded vehicle's setup to the library Home opens from. Updates
+  // the linked entry unless `asNew`; a name already in the library replaces it.
+  const saveVehicle = useCallback((name, { asNew = false } = {}) => {
+    const now = Date.now();
+    const entry = captureSavedVehicle({
+      id: !asNew && savedVehicle ? savedVehicle.id : generateSavedVehicleId(now),
+      name,
+      now,
+      mode: textureMode,
+      modelPath,
+      vehiclePaint,
+      bodyColor,
+      vehicleMods: modkits.savedSelection,
+      livery: gameLivery,
+      extras: extrasState,
+      // The plate shown, including one that still follows the Settings default.
+      plate: licensePlate,
+      texturePath,
+      windowTexturePath,
+      textureTarget,
+      windowTextureTarget,
+      windowTemplateEnabled,
+      liveryWindowOverride,
+    });
+    if (!entry) return { ok: false, error: "Saving needs a name and a loaded .yft, .clmesh or .dff model." };
+    const result = upsertSavedVehicle(loadSavedVehicles(), entry);
+    if (result.error === "full") {
+      return { ok: false, error: `Home keeps up to ${MAX_SAVED_VEHICLES} saved vehicles. Delete one there, or replace one by saving under its name.` };
+    }
+    if (!result.entry || !writeSavedVehicles(result.store)) {
+      return { ok: false, error: "The vehicle wasn't saved: app storage refused the write." };
+    }
+    setSavedVehicleEntry({ id: result.entry.id, name: result.entry.name, path: modelPath });
+    showToast(`Saved ${result.entry.name}. Open it from Home.`);
+    return { ok: true, entry: result.entry };
+  }, [savedVehicle, textureMode, modelPath, vehiclePaint, bodyColor, modkits.savedSelection, gameLivery, extrasState, licensePlate, texturePath, windowTexturePath, textureTarget, windowTextureTarget, windowTemplateEnabled, liveryWindowOverride, showToast]);
+
+  // The vehicle renamer moved the loaded model's files: reopen it at the new
+  // path and carry what is keyed by path (mods, livery, extras, the saved-vehicle link),
+  // and point saved vehicles on the old path at the new one.
+  const reloadMovedModel = useCallback(async (newPath) => {
+    const oldPath = modelPath;
+    const link = savedVehicle;
+    const mods = modkits.savedSelection;
+    const livery = gameLivery;
+    const extras = extrasState;
+    const rotation = modelRotation;
+    await loadModel(newPath);
+    setModelRotation(rotation);
+    if (!oldPath || !newPath || oldPath === newPath) return;
+    setExtrasStateEntry({ ...extras, path: newPath });
+    if (mods) modkits.restore({ ...mods, path: newPath });
+    if (livery != null) setGameLiveryEntry({ path: newPath, number: livery });
+    const { store, moved } = moveSavedVehicleModel(loadSavedVehicles(), oldPath, newPath, Date.now());
+    if (moved && !writeSavedVehicles(store)) {
+      showToast("Saved vehicles still point at the old model path: app storage refused the write.", "error");
+    }
+    if (link) setSavedVehicleEntry({ ...link, path: newPath });
+  }, [modelPath, modelRotation, savedVehicle, modkits, gameLivery, extrasState, loadModel, showToast]);
 
   const scheduleReload = (kind) => {
     const key = kind === "window" ? "window" : "primary";
@@ -652,21 +967,23 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     }, 350);
   };
 
-  const scheduleDualReload = (slot) => {
-    const key = slot === "B" ? "dualB" : "dualA";
-    const timers = reloadTimerRef.current;
-    if (timers[key]) clearTimeout(timers[key]);
-    timers[key] = setTimeout(() => {
-      if (key === "dualB") setDualTextureBReloadToken((prev) => prev + 1);
-      else setDualTextureAReloadToken((prev) => prev + 1);
-    }, 350);
-  };
-
   const togglePanel = useCallback((key) => {
     setPanelOpen((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
+  // Stable identities so memo(Viewer)/memo(MultiModelViewer) are not defeated
+  // by fresh arrows on every App render.
+  const handleViewerReady = useCallback((api) => {
+    viewerApiRef.current = api;
+    setViewerReady(true);
+  }, []);
+  const handleMultiViewerReady = useCallback((api) => {
+    multiViewerApiRef.current = api;
+    setViewerReady(true);
+  }, []);
+
   const handleModelInfo = useCallback((info) => {
+    setMetaModelInfo(info || null);
     const targets = info?.targets ?? [];
     setTextureTargets(targets);
     setGeneratedTemplateMap(info?.templateMap || null);
@@ -686,7 +1003,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     });
     setWindowTextureTarget((prev) => {
       if (prev === "all" || prev === "none" || prev === "auto") return prev;
-      return targets.some((target) => target.value === prev) ? prev : "none";
+      return targets.some((target) => target.value === prev) ? prev : defaultsRef.current.windowTextureTarget || "auto";
     });
 
     if (Object.prototype.hasOwnProperty.call(info || {}, "nativeMaterials")) {
@@ -718,42 +1035,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     if (windowTemplateEnabled) return;
     setWindowTextureError("");
   }, [windowTemplateEnabled]);
-
-  const handleDualModelAInfo = useCallback((info) => {
-    const targets = info?.targets ?? [];
-    setDualTextureTargetsA(targets);
-    setDualWindowAutoTargetA(info?.windowTarget || "");
-    setDualWindowAutoLabelA(info?.windowLabel || "");
-    setDualWindowTextureATarget((prev) => {
-      if (prev === "auto" || prev === "none" || prev === "all") return prev;
-      return targets.some((target) => target.value === prev) ? prev : "auto";
-    });
-  }, []);
-
-  const handleDualModelBInfo = useCallback((info) => {
-    const targets = info?.targets ?? [];
-    setDualTextureTargetsB(targets);
-    setDualWindowAutoTargetB(info?.windowTarget || "");
-    setDualWindowAutoLabelB(info?.windowLabel || "");
-    setDualWindowTextureBTarget((prev) => {
-      if (prev === "auto" || prev === "none" || prev === "all") return prev;
-      return targets.some((target) => target.value === prev) ? prev : "auto";
-    });
-  }, []);
-
-  useEffect(() => {
-    setDualWindowTextureATarget((prev) => {
-      if (prev === "auto" || prev === "none" || prev === "all") return prev;
-      return dualTextureTargetsA.some((target) => target.value === prev) ? prev : "auto";
-    });
-  }, [dualTextureTargetsA]);
-
-  useEffect(() => {
-    setDualWindowTextureBTarget((prev) => {
-      if (prev === "auto" || prev === "none" || prev === "all") return prev;
-      return dualTextureTargetsB.some((target) => target.value === prev) ? prev : "auto";
-    });
-  }, [dualTextureTargetsB]);
 
   const handleTextureError = useCallback((message) => {
     setTextureError(message || "");
@@ -858,18 +1139,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setWindowTextureTarget(merged.windowTextureTarget || "auto");
 
 
-    setCameraWASD(Boolean(merged.cameraWASD));
     setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
-    setShowHints(Boolean(merged.showHints ?? true));
-    setHideRotText(Boolean(merged.hideRotText));
     setShowGrid(Boolean(merged.showGrid));
     setShowShadows(Boolean(merged.showShadows));
+    setAmbientOcclusion(Boolean(merged.ambientOcclusion));
     setBodyColor(merged.bodyColor);
-    setVehicleSlotColors(buildVehicleSlotColors(merged.bodyColor));
-    setDualBodyColorA(merged.bodyColor);
-    setDualBodyColorB(merged.bodyColor);
+    setVehiclePaint(buildVehiclePaint(merged.bodyColor));
+    multi.repaintAll(merged.bodyColor);
     setBackgroundColor(merged.backgroundColor);
-    setExperimentalSettings(Boolean(merged.experimentalSettings));
     const prefs = loadPrefs() || {};
 
     savePrefs({ ...prefs, defaults: merged });
@@ -889,13 +1166,23 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       typeof nextValue === "function" ? Boolean(nextValue(Boolean(mergedDefaults[key]))) : Boolean(nextValue);
     const nextDefaults = { ...mergedDefaults, [key]: resolvedValue };
 
-    setDefaults(nextDefaults);
-    if (key === "showShadows") {
-      setShowShadows(resolvedValue);
-    }
-
     savePrefs({ ...currentPrefs, defaults: nextDefaults });
-    emitPrefsUpdated();
+    // Not emitPrefsUpdated: that reloads every default and drops view state
+    // such as Exterior Only. Every open viewer, this one included, applies it.
+    emitRenderEffectChanged(key, resolvedValue);
+  }, []);
+
+  useEffect(() => {
+    const handleRenderEffect = (event) => {
+      const { key, value } = event.detail || {};
+      if (key === "showShadows") setShowShadows(Boolean(value));
+      else if (key === "showGrid") setShowGrid(Boolean(value));
+      else if (key === "ambientOcclusion") setAmbientOcclusion(Boolean(value));
+      else return;
+      setDefaults((prev) => ({ ...prev, [key]: Boolean(value) }));
+    };
+    window.addEventListener(RENDER_EFFECT_EVENT, handleRenderEffect);
+    return () => window.removeEventListener(RENDER_EFFECT_EVENT, handleRenderEffect);
   }, []);
 
   const toggleGlobalRenderEffect = useCallback((key) => {
@@ -912,26 +1199,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const selectTextureRef = useRef(null);
   const selectWindowTextureRef = useRef(null);
 
-  const completeOnboarding = useCallback(
-    (next) => {
-      applyAndPersistDefaults(next);
-      setOnboarded();
-      setShowOnboarding(false);
-    },
-    [applyAndPersistDefaults],
-  );
-
-  const restoreState = useCallback(async (state) => {
-    if (!state) return;
-
+  const applyRestoredState = useCallback(async (state) => {
     const fileOk = async (p) => {
       if (!p) return false;
       try { return await fsExists(p); } catch { return false; }
     };
 
     // Restore non-path settings immediately
-    let resolvedTextureMode = state.textureMode;
-    if (!resolvedTextureMode && state.openFile) {
+    let resolvedTextureMode = normalizeTextureMode(state.textureMode);
+    if (!resolvedTextureMode && typeof state.openFile === "string") {
       const openFileLower = state.openFile.toLowerCase();
       if (openFileLower.endsWith(".ydd")) {
         resolvedTextureMode = "eup";
@@ -940,61 +1216,99 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       }
     }
     if (resolvedTextureMode) setTextureMode(resolvedTextureMode);
-    if (state.textureTarget) setTextureTarget(state.textureTarget);
-    if (state.windowTextureTarget) setWindowTextureTarget(state.windowTextureTarget);
     if (typeof state.liveryWindowOverride === "string") setLiveryWindowOverride(state.liveryWindowOverride);
     if (typeof state.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(state.windowTemplateEnabled);
     if (state.bodyColor) setBodyColor(state.bodyColor);
-    if (state.vehicleSlotColors) setVehicleSlotColors(normalizeVehicleSlotColors(state.vehicleSlotColors, state.bodyColor || DEFAULT_BODY));
-    else if (state.bodyColor) setVehicleSlotColors(buildVehicleSlotColors(state.bodyColor));
-    if (state.dualBodyColorA) setDualBodyColorA(state.dualBodyColorA);
-    else if (state.bodyColor) setDualBodyColorA(state.bodyColor);
-    if (state.dualBodyColorB) setDualBodyColorB(state.dualBodyColorB);
-    else if (state.bodyColor) setDualBodyColorB(state.bodyColor);
+    // Tabs saved before paint followed the game palette stored `vehicleSlotColors`.
+    const savedPaint = state.vehiclePaint || state.vehicleSlotColors;
+    if (savedPaint || state.bodyColor) setVehiclePaint(normalizeVehiclePaint(savedPaint, state.bodyColor || DEFAULT_BODY));
     if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
     if (typeof state.backgroundImageBlur === "number") {
       setBackgroundImageBlur(clampBackgroundImageBlur(state.backgroundImageBlur));
     }
     if (typeof state.showWireframe === "boolean") setShowWireframe(state.showWireframe);
     if (typeof state.showCageWireframe === "boolean") setShowCageWireframe(state.showCageWireframe);
+    if (typeof state.showSolidWireframe === "boolean") setShowSolidWireframe(state.showSolidWireframe);
     if (typeof state.lightIntensity === "number") setLightIntensity(state.lightIntensity);
     if (typeof state.lightAzimuth === "number") setLightAzimuth(state.lightAzimuth);
     if (typeof state.lightElevation === "number") setLightElevation(state.lightElevation);
+    const savedStage = (resolvedTextureMode || textureMode) === "eup" ? state.eupStage : state.stage;
+    if (savedStage === "workbench" || savedStage === "showroom") setStage(savedStage);
+    // An EUP tab saved before EUP had a showroom holds vehicle values here; it keeps the EUP scene.
+    const ownsShowroom = (resolvedTextureMode || textureMode) !== "eup" || savedStage !== undefined;
+    if (ownsShowroom) {
+      if (typeof state.stageSpot === "number") setStageSpot(Math.min(2, Math.max(0, state.stageSpot)));
+      if (typeof state.stageReflect === "number") setStageReflect(Math.min(1, Math.max(0, state.stageReflect)));
+      if (typeof state.stageBeam === "boolean") setStageBeam(state.stageBeam);
+      if (SHOWROOM_LIGHT_KEYS.includes(state.stageLight)) setStageLight(state.stageLight);
+      if (SHOWROOM_FLOORS.includes(state.stageFloor)) setStageFloor(state.stageFloor);
+    }
+    if (typeof state.turntable === "boolean") setTurntable(state.turntable);
+    if (state.turntableSpeed != null) setTurntableSpeed(normalizeTurntableSpeed(state.turntableSpeed));
     if (typeof state.glossiness === "number") setGlossiness(state.glossiness);
     if (typeof state.liveryExteriorOnly === "boolean") setLiveryExteriorOnly(state.liveryExteriorOnly);
     if (typeof state.nativeMaterialsEnabled === "boolean") setNativeMaterialsEnabled(state.nativeMaterialsEnabled);
-    if (state.dualSelectedSlot) setDualSelectedSlot(state.dualSelectedSlot);
-    if (state.dualTextureMode) setDualTextureMode(state.dualTextureMode);
-    if (state.dualWindowTextureATarget) setDualWindowTextureATarget(state.dualWindowTextureATarget);
-    if (state.dualWindowTextureBTarget) setDualWindowTextureBTarget(state.dualWindowTextureBTarget);
-    if (state.dualModelAPos) setDualModelAPos(state.dualModelAPos);
-    if (state.dualModelBPos) setDualModelBPos(state.dualModelBPos);
+    // Lights and Materials panels; tabs saved before these were kept start from the defaults.
+    const savedLights = normalizeSavedLightPreview(state.vehicleLights);
+    if (savedLights) setLightPreview((current) => ({ ...current, ...savedLights }));
+    const savedMaterials = normalizeSavedMaterials(state.materials);
+    if (savedMaterials) {
+      setMaterialType(savedMaterials.type);
+      setMatLightIntensity(savedMaterials.lightIntensity);
+      setMatGlossiness(savedMaterials.glossiness);
+      setMatRoughness(savedMaterials.roughness);
+      setMatClearcoat(savedMaterials.clearcoat);
+      setMaterialTextures(savedMaterials.textures);
+    }
+    // Multi lineup, including tabs saved with the earlier A/B fields.
+    multi.restore(state, state.bodyColor || DEFAULT_BODY);
 
     // Restore file paths (best effort). Some environments can report false negatives
     // on fs existence checks for previously approved paths.
-    const initialModelPath = state.modelSourcePath || state.modelPath || state.openFile || "";
+    autoTexturePathRef.current = state.textureAuto === true && typeof state.texturePath === "string" ? state.texturePath : "";
+    const initialModelPath = [state.modelSourcePath, state.modelPath, state.openFile].find((path) => typeof path === "string" && path) || "";
     if (initialModelPath) {
-      await loadModel(initialModelPath);
+      // A tab opened from a saved vehicle keeps the vehicle's name.
+      // A file opened with Cortex Studio is a fresh pick; a saved tab keeps its own texture choice.
+      const freshOpen = typeof state.openFile === "string" && Boolean(state.openFile) && !state.texturePath;
+      await loadModel(initialModelPath, { rename: !state.savedVehicle?.id, autoTexture: freshOpen });
+      setModelRotation(normalizeModelRotation(state.modelRotation));
+      // loadModel resets the mesh targets for a new model; the saved ones are
+      // the user's picks and win. handleModelInfo drops any the model lacks.
+      if (typeof state.textureTarget === "string" && state.textureTarget) setTextureTarget(state.textureTarget);
+      if (typeof state.windowTextureTarget === "string" && state.windowTextureTarget) setWindowTextureTarget(state.windowTextureTarget);
+      const savedSteering = normalizeSavedSteering(state.steering, initialModelPath);
+      if (savedSteering) setSteering(savedSteering);
+      // Saved for this model only; the parts load once the resource is scanned.
+      if (state.vehicleMods?.path === initialModelPath) modkits.restore(state.vehicleMods);
+      // Extras and the saved-vehicle link are per model, like the mods.
+      if (state.extras && (state.extras.path || initialModelPath) === initialModelPath) {
+        setExtrasStateEntry({ path: initialModelPath, ...normalizeExtrasState(state.extras) });
+      }
+      if (Number.isInteger(state.gameLivery?.number) && state.gameLivery.path === initialModelPath) {
+        setGameLiveryEntry({ path: initialModelPath, number: state.gameLivery.number });
+      }
+      if (state.savedVehicle?.id && state.savedVehicle.path === initialModelPath) {
+        setSavedVehicleEntry({ id: state.savedVehicle.id, name: String(state.savedVehicle.name || ""), path: initialModelPath });
+      }
     }
+    if (state.licensePlate && typeof state.licensePlate === "object") setPlateOverride(normalizePlateDefault(state.licensePlate));
     if (state.texturePath && (await fileOk(state.texturePath))) setTexturePath(state.texturePath);
     else if (state.texturePath) setTexturePath(state.texturePath);
     if (state.backgroundImagePath && (await fileOk(state.backgroundImagePath))) setBackgroundImagePath(state.backgroundImagePath);
     else if (state.backgroundImagePath) setBackgroundImagePath(state.backgroundImagePath);
     if (state.windowTexturePath && (await fileOk(state.windowTexturePath))) setWindowTexturePath(state.windowTexturePath);
     else if (state.windowTexturePath) setWindowTexturePath(state.windowTexturePath);
-    if (state.dualModelAPath && (await fileOk(state.dualModelAPath))) setDualModelAPath(state.dualModelAPath);
-    else if (state.dualModelAPath) setDualModelAPath(state.dualModelAPath);
-    if (state.dualModelBPath && (await fileOk(state.dualModelBPath))) setDualModelBPath(state.dualModelBPath);
-    else if (state.dualModelBPath) setDualModelBPath(state.dualModelBPath);
-    if (state.dualTextureAPath && (await fileOk(state.dualTextureAPath))) setDualTextureAPath(state.dualTextureAPath);
-    else if (state.dualTextureAPath) setDualTextureAPath(state.dualTextureAPath);
-    if (state.dualTextureBPath && (await fileOk(state.dualTextureBPath))) setDualTextureBPath(state.dualTextureBPath);
-    else if (state.dualTextureBPath) setDualTextureBPath(state.dualTextureBPath);
-    if (state.dualWindowTextureAPath && (await fileOk(state.dualWindowTextureAPath))) setDualWindowTextureAPath(state.dualWindowTextureAPath);
-    else if (state.dualWindowTextureAPath) setDualWindowTextureAPath(state.dualWindowTextureAPath);
-    if (state.dualWindowTextureBPath && (await fileOk(state.dualWindowTextureBPath))) setDualWindowTextureBPath(state.dualWindowTextureBPath);
-    else if (state.dualWindowTextureBPath) setDualWindowTextureBPath(state.dualWindowTextureBPath);
-  }, [loadModel]);
+  }, [loadModel, multi.restore, modkits.restore]);
+
+  const restoreState = useCallback(async (state) => {
+    if (!state) return;
+    try {
+      await applyRestoredState(state);
+    } finally {
+      setRestoreSettled(true);
+    }
+  }, [applyRestoredState]);
 
   // Auto-restore workspace state from initialState prop (passed by Shell from workspace)
   useEffect(() => {
@@ -1005,6 +1319,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [initialState, restoreState]);
 
   const selectModel = async () => {
+    if (textureMode === "multi") return selectMultiModel(multi.selectedId);
     if (!isTauriRuntime) {
       setDialogError("Tauri runtime required for file dialog.");
       return;
@@ -1015,17 +1330,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       });
       setDialogError("");
       if (typeof selected === "string") {
-        if (textureMode === "multi") {
-          if (dualSelectedSlot === "A") {
-            setDualModelAError("");
-            setDualModelAPath(selected);
-          } else {
-            setDualModelBError("");
-            setDualModelBPath(selected);
-          }
-        } else {
-          await loadModel(selected);
-        }
+        await loadModel(selected, { autoTexture: true });
       }
     } catch (error) {
       setDialogError("Dialog permission blocked. Check Tauri capabilities.");
@@ -1034,6 +1339,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   };
 
   const selectTexture = async () => {
+    if (textureMode === "multi") return selectMultiLivery(multi.selectedId);
     if (!isTauriRuntime) {
       setDialogError("Tauri runtime required for file dialog.");
       return;
@@ -1058,13 +1364,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
               "psd",
               "ai",
               "pdn",
+              ...(textureMode === "eup" ? ["ytd"] : []),
             ],
           },
         ],
       });
       setDialogError("");
       if (typeof selected === "string") {
-        if (!isTextureFormatSupported(selected)) {
+        if (!isTextureFormatSupported(selected) && !(textureMode === "eup" && isYtdTexturePath(selected))) {
           setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
           return;
         }
@@ -1079,7 +1386,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
   // Window controls are handled by Shell
 
-  const selectWindowTexture = async () => {
+  // In Multi, `slotId` picks the lineup slot; click events fall back to the selected one.
+  const selectWindowTexture = async (slotId) => {
+    const targetSlotId = typeof slotId === "string" && slotId ? slotId : multi.selectedId;
     if (!isTauriRuntime) {
       setDialogError("Tauri runtime required for file dialog.");
       return;
@@ -1115,8 +1424,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           return;
         }
         if (textureMode === "multi") {
-          if (dualSelectedSlot === "A") setDualWindowTextureAPath(selected);
-          else setDualWindowTextureBPath(selected);
+          multi.updateSlot(targetSlotId, { windowPath: selected });
           return;
         }
         setWindowTextureError("");
@@ -1176,8 +1484,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     }
   };
 
-  const modelExtsDual = ["yft", "clmesh", "dff", "ydd"];
-  const textureExtsDual = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai", "pdn"];
+  const multiTextureExts = ["png", "jpg", "jpeg", "webp", "avif", "bmp", "gif", "tga", "dds", "tif", "tiff", "psd", "ai", "pdn"];
 
   // Material texture upload handler
   const selectMaterialTexture = async () => {
@@ -1203,30 +1510,40 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setMaterialTextures((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const selectDualModel = async (slot) => {
-    if (!isTauriRuntime) return;
+  const selectMultiModel = async (slotId) => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
     try {
-      const selected = await open({ filters: [{ name: "Model", extensions: modelExtsDual }] });
-      if (typeof selected === "string") {
-        if (slot === "A") { setDualModelAError(""); setDualModelAPath(selected); }
-        else { setDualModelBError(""); setDualModelBPath(selected); }
-      }
-    } catch { /* dialog blocked */ }
+      const selected = await open({ filters: [{ name: "Vehicle model", extensions: [...VEHICLE_MODEL_EXTENSIONS] }] });
+      if (typeof selected !== "string") return;
+      setDialogError("");
+      multi.setModel(slotId || multi.selectedId, selected);
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
   };
 
-  const selectDualTexture = async (slot) => {
-    if (!isTauriRuntime) return;
+  const selectMultiLivery = async (slotId) => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
     try {
-      const selected = await open({ filters: [{ name: "Texture", extensions: textureExtsDual }] });
-      if (typeof selected === "string") {
-        if (!isTextureFormatSupported(selected)) {
-          setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
-          return;
-        }
-        if (slot === "A") setDualTextureAPath(selected);
-        else setDualTextureBPath(selected);
+      const selected = await open({ filters: [{ name: "Livery", extensions: multiTextureExts }] });
+      if (typeof selected !== "string") return;
+      if (!isTextureFormatSupported(selected)) {
+        setFormatWarning({ type: "unsupported-format", ext: getFileExtension(selected), path: selected.split(/[\\/]/).pop() });
+        return;
       }
-    } catch { /* dialog blocked */ }
+      setDialogError("");
+      multi.updateSlot(slotId || multi.selectedId, { liveryPath: selected });
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
   };
 
   selectModelRef.current = selectModel;
@@ -1234,7 +1551,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   selectWindowTextureRef.current = selectWindowTexture;
 
   const getActiveViewerApi = useCallback(
-    () => (textureMode === "multi" ? dualViewerApiRef.current : viewerApiRef.current),
+    () => (textureMode === "multi" ? multiViewerApiRef.current : viewerApiRef.current),
     [textureMode],
   );
 
@@ -1243,15 +1560,73 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [getActiveViewerApi]);
 
   const handleRotateModel = useCallback((axis) => {
-    getActiveViewerApi()?.rotateModel?.(axis);
-  }, [getActiveViewerApi]);
+    if (textureMode === "multi") {
+      getActiveViewerApi()?.rotateModel?.(axis);
+      return;
+    }
+    setModelRotation((current) => quarterTurn(current, axis));
+  }, [getActiveViewerApi, textureMode]);
+
+  const handleResetRotation = useCallback(() => setModelRotation(null), []);
+
+  // EUP: a clothing model's own texture dictionary (its _diff_ .ytd beside it)
+  // fills the texture slot when the model is picked. A texture the user chose
+  // stays; only an earlier automatic pick is replaced or cleared.
+  useEffect(() => {
+    if (!autoTextureRequest || textureMode !== "eup") return;
+    if (defaultsRef.current.eupAutoTextures === false) return;
+    if (texturePath && texturePath !== autoTexturePathRef.current) return;
+    let cancelled = false;
+    (async () => {
+      let found = "";
+      for (const candidate of pieceTextureCandidates(autoTextureRequest.path).filter(isYtdTexturePath)) {
+        if (await fsExists(candidate).catch(() => false)) {
+          found = candidate;
+          break;
+        }
+      }
+      if (cancelled) return;
+      autoTexturePathRef.current = found;
+      if (found !== texturePath) {
+        setTextureError("");
+        setTexturePath(found);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoTextureRequest]);
 
   const handleCenterCamera = useCallback(() => {
     getActiveViewerApi()?.reset?.();
   }, [getActiveViewerApi]);
 
+  // handleSaveViewPhoto is declared further down; the hotkey reaches it after render.
+  const saveViewPhotoRef = useRef(null);
+  useEffect(() => {
+    saveViewPhotoRef.current = handleSaveViewPhoto;
+  });
+
   useEffect(() => {
     if (!isActive) return undefined;
+
+    // A shortcut only acts where its control is on screen: Sirens has no
+    // texture or glass step, EUP has no glass step, the glass step is off until
+    // its switch is on, and Save this view lives in the Livery, All, EUP and
+    // Multi docks.
+    const singleLayout = textureMode !== "multi" && textureMode !== "sirens";
+    const isAvailable = (action, event) => {
+      switch (action) {
+        case HOTKEY_ACTIONS.SELECT_LIVERY:
+          return textureMode !== "sirens";
+        case HOTKEY_ACTIONS.SELECT_GLASS:
+          return textureMode === "multi" || (singleLayout && textureMode !== "eup" && windowTemplateEnabled);
+        case HOTKEY_ACTIONS.CAPTURE_VIEW:
+          return textureMode !== "sirens" && viewerReady && !event.repeat;
+        default:
+          return true;
+      }
+    };
 
     const handleKeyDown = (event) => {
       if (event.defaultPrevented) return;
@@ -1264,7 +1639,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       }
 
       const action = findMatchingAction(hotkeys, event);
-      if (!action) return;
+      if (!action || !isAvailable(action, event)) return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -1298,6 +1673,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         case HOTKEY_ACTIONS.CAMERA_PRESET_TOP:
           getActiveViewerApi()?.setPreset?.("top");
           break;
+        case HOTKEY_ACTIONS.CAPTURE_VIEW:
+          saveViewPhotoRef.current?.();
+          break;
         case HOTKEY_ACTIONS.SELECT_MODEL:
           selectModelRef.current?.();
           break;
@@ -1308,10 +1686,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           selectWindowTextureRef.current?.();
           break;
         case HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO:
-          setDualGizmoVisible((prev) => !prev);
+          multi.toggleGizmo("translate");
           break;
         case HOTKEY_ACTIONS.SWAP_DUAL_SLOT:
-          setDualSelectedSlot((prev) => (prev === "A" ? "B" : "A"));
+          multi.selectNext();
           break;
         default:
           break;
@@ -1320,7 +1698,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hotkeys, experimentalSettings, getActiveViewerApi, isActive, toggleGlobalRenderEffect]);
+  }, [hotkeys, getActiveViewerApi, isActive, toggleGlobalRenderEffect, textureMode, viewerReady, windowTemplateEnabled]);
 
   const persistPreviewFolder = useCallback(async (folder) => {
     const current = loadPrefs() || {};
@@ -1404,6 +1782,29 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     return result;
   }, [isTauriRuntime, persistPreviewFolder, promptForPreviewFolder, showToast]);
 
+  const kitShoot = useKitShoot({
+    enabled: isTauriRuntime && textureMode === "everything",
+    modkits,
+    viewerApiRef,
+    modelPath,
+    viewerReady,
+    isTauriRuntime,
+    ensureFolder: ensurePreviewFolderReady,
+    watermark: defaults.watermark || null,
+    nativeMaterialsEnabled,
+    bodyColor,
+    vehiclePaint,
+    setBodyColor,
+    setVehiclePaint,
+    showGrid,
+    setShowGrid,
+  });
+  const { handleModsStatus: handleKitShootModsStatus } = kitShoot;
+  const handleVehicleModsStatus = useCallback((status) => {
+    setVehicleModsStatus(status);
+    handleKitShootModsStatus(status);
+  }, [handleKitShootModsStatus]);
+
   const previewSnapTokenRef = useRef(0);
   const updatePreviewSnapshot = useCallback(async (zoomLevel) => {
     if (!viewerApiRef.current || !viewerReady) return;
@@ -1414,8 +1815,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       const dataUrl = await captureTemporaryViewerFrame(viewerApiRef.current, {
         presetKey: "angle",
         zoomFactor: zoomLevel,
-        delayMs: 120,
+        delayMs: 0,
         watermark: defaults.watermark || null,
+        thumbWidth: 720,
       });
       if (token !== previewSnapTokenRef.current) return;
       setPreviewZoomPreview(dataUrl || "");
@@ -1424,37 +1826,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     }
   }, [viewerReady, defaults]);
 
-  // Generate Preview — cycle through camera presets and capture screenshots
-  const handleGeneratePreview = useCallback(async (zoomLevel = 1, requestedPresets = PREVIEW_CAPTURE_PRESET_KEYS) => {
-    if (!viewerApiRef.current || !modelPath || generatingPreview) return;
-    const presetKeys = PREVIEW_CAPTURE_PRESET_KEYS.filter((key) => requestedPresets.includes(key));
-    if (!presetKeys.length) return;
-
-    const folderResult = await ensurePreviewFolderReady();
-    const folder = folderResult.folder;
-    if (!folder) return;
-
-    const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "preview";
-
-    // Create a subfolder named after the model to keep exports tidy
-    const modelFolder = `${folder}/${modelName}`;
-    let outputFolder = modelFolder;
-    if (isTauriRuntime) {
-      try { await invoke("ensure_dir", { path: modelFolder }); } catch {
-        // If ensure_dir command doesn't exist, try mkdir via writeFile workaround
-        // Tauri's writeFile will create the file, the folder must exist.
-        // Fall back to the base folder if subfolder creation fails.
-        outputFolder = folder;
-      }
-
-      try {
-        const subfolderExists = await fsExists(modelFolder);
-        if (!subfolderExists) outputFolder = folder;
-      } catch {
-        outputFolder = folder;
-      }
-    }
-
+  // Generate Preview: one PNG per camera preset. The destination is settled
+  // before the first write so a run never splits across folders, and the
+  // result counts only files that reached disk.
+  const runPreviewCapture = useCallback(async ({ zoomLevel, presetKeys, modelName, outputFolder, folderNote }) => {
     // Temporarily disable grid for clean screenshots
     const gridWasOn = showGrid;
     if (gridWasOn) setShowGrid(false);
@@ -1466,54 +1841,159 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     // Wait a frame for grid to disappear if it was on
     if (gridWasOn) await new Promise((r) => setTimeout(r, 100));
 
+    let written = 0;
+    const skipped = [];
+    let error = "";
     try {
       for (let i = 0; i < presetKeys.length; i++) {
         const preset = presetKeys[i];
-        setPreviewProgress({ current: i, total: presetKeys.length, preset: PREVIEW_CAPTURE_PRESET_LABELS[preset] || preset });
+        const label = PREVIEW_CAPTURE_PRESET_LABELS[preset] || preset;
+        setPreviewProgress({ current: i, total: presetKeys.length, preset: label });
 
-        const dataUrl = await captureTemporaryViewerFrame(viewerApiRef.current, {
+        const bytes = await captureViewerFrameBytes(viewerApiRef.current, {
           presetKey: preset,
           zoomFactor: zoomLevel,
-          delayMs: 400,
+          delayMs: 0,
           watermark: defaults.watermark || null,
         });
-        if (!dataUrl) continue;
-
-        const base64 = dataUrl.split(",")[1];
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let j = 0; j < binary.length; j++) {
-          bytes[j] = binary.charCodeAt(j);
+        if (!bytes) {
+          skipped.push(label);
+          continue;
         }
 
         const fileName = `${modelName}_${preset}.png`;
-        // Try model subfolder first, fall back to base folder
-        const filePath = `${outputFolder}/${fileName}`;
-        if (isTauriRuntime) {
-          try {
-            await writeFile(filePath, bytes);
-          } catch {
-            // Subfolder might not exist — write to base folder instead
-            await writeFile(`${folder}/${fileName}`, bytes);
-            outputFolder = folder;
-          }
+        try {
+          await writeFile(`${outputFolder}/${fileName}`, bytes);
+        } catch (writeError) {
+          // A refused destination refuses every remaining file too.
+          error = `Couldn't write ${fileName}: ${writeError?.message || writeError}`;
+          break;
         }
+        written += 1;
       }
-
-      const resolvedOutputFolder = await resolveExistingFolder(outputFolder, folder);
-      setPreviewOutputPath(resolvedOutputFolder);
-      setPreviewFolderOpenError("");
-      setPreviewProgress({ current: presetKeys.length, total: presetKeys.length, preset: "Complete" });
-      setGeneratingPreview(false);
-      setPreviewComplete(true);
     } catch (err) {
       console.error("Generate preview failed:", err);
-      setGeneratingPreview(false);
+      error = `The capture stopped: ${err?.message || err}`;
     } finally {
       // Restore grid state
       if (gridWasOn) setShowGrid(true);
     }
-  }, [modelPath, generatingPreview, showGrid, resolveExistingFolder, ensurePreviewFolderReady, defaults]);
+
+    setPreviewResult({
+      total: presetKeys.length,
+      written,
+      skipped,
+      error,
+      folder: written > 0 ? outputFolder : "",
+      note: written > 0 ? folderNote : "",
+    });
+    setPreviewOutputPath(written > 0 ? outputFolder : "");
+    setPreviewFolderOpenError("");
+    setPreviewProgress({ current: presetKeys.length, total: presetKeys.length, preset: "Complete" });
+    setGeneratingPreview(false);
+    setPreviewComplete(true);
+  }, [showGrid, defaults]);
+
+  const handleGeneratePreview = useCallback(async (zoomLevel = 1, requestedPresets = PREVIEW_CAPTURE_PRESET_KEYS) => {
+    if (!viewerApiRef.current || !modelPath || generatingPreview) return;
+    const presetKeys = PREVIEW_CAPTURE_PRESET_KEYS.filter((key) => requestedPresets.includes(key));
+    if (!presetKeys.length) return;
+    setPreviewReplace(null);
+
+    const failBeforeWriting = (error) => {
+      setPreviewResult({ total: presetKeys.length, written: 0, skipped: [], error, folder: "", note: "" });
+      setPreviewComplete(true);
+    };
+    if (!isTauriRuntime) {
+      failBeforeWriting("Capturing angles needs the desktop app.");
+      return;
+    }
+
+    const folderResult = await ensurePreviewFolderReady();
+    const folder = folderResult.folder;
+    if (!folder) return;
+
+    const modelName = modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "preview";
+
+    // Shots go in a subfolder named after the model. ensure_dir (src-tauri
+    // lib.rs) only creates folders under the user's home, app data and temp
+    // roots, so a picked folder elsewhere, such as another drive, takes the
+    // shots directly. Either way every shot of the run lands in one folder.
+    const modelFolder = `${folder}/${modelName}`;
+    let outputFolder = modelFolder;
+    let folderNote = "";
+    try {
+      await invoke("ensure_dir", { path: modelFolder });
+    } catch (error) {
+      outputFolder = folder;
+      folderNote = `Saved in the export folder because a ${modelName} subfolder couldn't be created there: ${error?.message || error}`;
+    }
+
+    const job = { modelPath, zoomLevel, presetKeys, modelName, outputFolder, folderNote };
+    const conflicts = await countExistingFiles(
+      presetKeys.map((preset) => `${outputFolder}/${modelName}_${preset}.png`),
+      fsExists,
+    );
+    if (conflicts > 0) {
+      setPreviewComplete(false);
+      setPreviewReplace({ conflicts, total: presetKeys.length, folder: outputFolder, job });
+      return;
+    }
+    await runPreviewCapture(job);
+  }, [modelPath, generatingPreview, isTauriRuntime, ensurePreviewFolderReady, runPreviewCapture]);
+
+  const confirmPreviewReplace = useCallback(() => {
+    const pending = previewReplace;
+    setPreviewReplace(null);
+    if (!pending || generatingPreview || !viewerApiRef.current || pending.job.modelPath !== modelPath) return;
+    runPreviewCapture(pending.job);
+  }, [previewReplace, generatingPreview, modelPath, runPreviewCapture]);
+
+  // A pending "Replace?" belongs to the model it was asked for.
+  useEffect(() => {
+    setPreviewReplace(null);
+  }, [modelPath]);
+
+  const [savingPhoto, setSavingPhoto] = useState(false);
+  // Multi saves the whole lineup as framed; every other mode saves its one viewer.
+  const multiHasModel = multi.slots.some((slot) => slot.modelPath);
+  const handleSaveViewPhoto = useCallback(async () => {
+    const lineupPhoto = textureMode === "multi";
+    const viewerApi = lineupPhoto ? multiViewerApiRef.current : viewerApiRef.current;
+    if (!viewerApi || !(lineupPhoto ? multiHasModel : modelPath) || generatingPreview || savingPhoto) return;
+    setPhotoError("");
+    let folder = "";
+    if (isTauriRuntime) {
+      const folderResult = await ensurePreviewFolderReady();
+      folder = folderResult.folder;
+      if (!folder) return;
+    }
+    setSavingPhoto(true);
+    try {
+      const modelName = lineupPhoto ? "lineup" : modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "photo";
+      const now = new Date();
+      const pad = (value) => String(value).padStart(2, "0");
+      const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const fileName = `${modelName}_photo_${stamp}.png`;
+      const bytes = await captureViewerFrameBytes(viewerApi, {
+        watermark: defaults.watermark || null,
+      });
+      if (!bytes) throw new Error("the viewer returned no image");
+      if (!isTauriRuntime) {
+        // The browser has no folder access; the PNG goes to its downloads.
+        downloadBytes(fileName, bytes, { mimeType: "image/png" });
+        showToast(`Downloading ${fileName}`);
+        return;
+      }
+      await writeFile(`${folder}/${fileName}`, bytes);
+      setPreviewOutputPath(folder);
+      showToast(`Saved ${fileName}`);
+    } catch (err) {
+      setPhotoError(`The photo wasn't saved${folder ? ` to ${folder}` : ""}: ${err?.message || err}.`);
+    } finally {
+      setSavingPhoto(false);
+    }
+  }, [textureMode, multiHasModel, modelPath, generatingPreview, savingPhoto, ensurePreviewFolderReady, defaults, isTauriRuntime, showToast]);
 
   useEffect(() => {
     if (!previewPromptOpen) return;
@@ -1566,32 +2046,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
     setDialogError("");
 
-    if (textureMode === "multi") {
-      if (modelFiles.length >= 2) {
-        const [first, second] = modelFiles;
-        if (!first?.path || !second?.path) {
-          setDialogError("Unable to read dropped model paths.");
-          return;
-        }
-        setDualModelAError("");
-        setDualModelBError("");
-        setDualModelAPath(first.path);
-        setDualModelBPath(second.path);
-        return;
-      }
-
-      if (dualSelectedSlot === "A") {
-        setDualModelAError("");
-        setDualModelAPath(modelFile.path);
-      } else {
-        setDualModelBError("");
-        setDualModelBPath(modelFile.path);
-      }
-      return;
-    }
-
-    loadModel(modelFile.path);
+    loadModel(modelFile.path, { autoTexture: true });
   };
+
+  const multiWatchKey = lineupWatchPaths(multi.slots).join("\n");
 
   useEffect(() => {
     let unlisten = null;
@@ -1612,9 +2070,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         await invoke("stop_watch").catch(() => null);
         await invoke("stop_window_watch").catch(() => null);
 
-        const aPath = dualTextureAPath;
-        const bPath = dualTextureBPath;
-        const paths = [aPath, bPath].filter(Boolean);
+        const paths = multiWatchKey ? multiWatchKey.split("\n") : [];
 
         if (!paths.length) {
           await invoke("stop_multi_watch").catch(() => null);
@@ -1622,28 +2078,35 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           return;
         }
 
-        const ok = await invoke("start_multi_watch", { paths }).then(
-          () => true,
-          () => false,
+        // Resolves with the files it could not watch; rejects only when none could be.
+        const watch = await invoke("start_multi_watch", { paths }).then(
+          (result) => ({ ok: true, unwatched: Array.isArray(result?.unwatched) ? result.unwatched : [] }),
+          (error) => ({ ok: false, error: String(error?.message ?? error) }),
         );
 
-        if (!cancelled) setWatchStatus(ok ? "watching" : "error");
-
-        unlisten = await listen("texture:update", (event) => {
-          const changedPath = normalizePath(event?.payload?.path);
-          const aNorm = normalizePath(aPath);
-          const bNorm = normalizePath(bPath);
-          if (!aNorm && !bNorm) return;
-
-          if (!changedPath) {
-            scheduleDualReload("A");
-            scheduleDualReload("B");
-            return;
+        if (!cancelled) {
+          setWatchStatus(watch.ok ? "watching" : "error");
+          if (!watch.ok) {
+            showToast(`Live reload is off: ${watch.error}`, "error");
+          } else if (watch.unwatched.length) {
+            const names = watch.unwatched.map((item) => getFileLabel(item?.path, "a livery")).join(", ");
+            showToast(`Changes to ${names} won't reload automatically.`, "error");
           }
+        }
 
-          if (aNorm && changedPath === aNorm) scheduleDualReload("A");
-          if (bNorm && changedPath === bNorm) scheduleDualReload("B");
+        // Every slot showing the changed file reloads it; a livery shared by
+        // several vehicles is decoded once per slot from one token bump.
+        const stopMultiListener = await listen("texture:update", (event) => {
+          const changed = lineupPathKey(event?.payload?.path);
+          for (const path of paths) {
+            if (!changed || lineupPathKey(path) === changed) multi.scheduleReload(path);
+          }
         });
+        if (cancelled) {
+          stopMultiListener();
+          return;
+        }
+        unlisten = stopMultiListener;
 
         return;
       }
@@ -1681,7 +2144,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
 
       if (!cancelled) setWatchStatus(primaryOk && secondaryOk ? "watching" : "error");
 
-      unlisten = await listen("texture:update", (event) => {
+      const stopListener = await listen("texture:update", (event) => {
         const changedPath = normalizePath(event?.payload?.path);
         const primaryNorm = normalizePath(primaryPath);
         const secondaryNorm = normalizePath(secondaryPath);
@@ -1697,6 +2160,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         if (matchesPrimary) scheduleReload("primary");
         if (matchesWindow) scheduleReload("window");
       });
+      if (cancelled) {
+        stopListener();
+        return;
+      }
+      unlisten = stopListener;
     };
 
     start();
@@ -1710,7 +2178,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         invoke("stop_multi_watch").catch(() => null);
       }
     };
-  }, [textureMode, texturePath, windowTexturePath, windowTemplateEnabled, dualTextureAPath, dualTextureBPath]);
+  }, [textureMode, texturePath, windowTexturePath, windowTemplateEnabled, multiWatchKey]);
 
   const onTextureReload = useCallback(() => {
     setLastUpdate(new Date().toLocaleTimeString());
@@ -1726,17 +2194,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     textureMode === "livery"
       ? liveryWindowOverride || resolvedWindowBaseTarget
       : resolvedWindowBaseTarget;
-  const resolvedDualWindowTextureATarget =
-    dualWindowTextureATarget === "auto"
-      ? dualWindowAutoTargetA || "none"
-      : dualWindowTextureATarget || "none";
-  const resolvedDualWindowTextureBTarget =
-    dualWindowTextureBTarget === "auto"
-      ? dualWindowAutoTargetB || "none"
-      : dualWindowTextureBTarget || "none";
-  const selectedDualTargets = dualSelectedSlot === "A" ? dualTextureTargetsA : dualTextureTargetsB;
-  const selectedDualWindowAutoTarget = dualSelectedSlot === "A" ? dualWindowAutoTargetA : dualWindowAutoTargetB;
-  const selectedDualWindowAutoLabel = dualSelectedSlot === "A" ? dualWindowAutoLabelA : dualWindowAutoLabelB;
   const activeMaterialTexturePath = materialTextures.length
     ? materialTextures[materialTextures.length - 1]?.path || ""
     : "";
@@ -1789,11 +2246,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       : textureTargets.find((target) => target.value === textureTarget)?.label || "Custom target";
   const targetingLabel = textureMode === "livery" ? (liveryTarget ? "Auto" : "No target") : manualTargetLabel;
   const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
-  const showVehicleSlotColorCards = textureMode === "livery" || textureMode === "everything";
+  const showVehicleSlotColorCards = textureMode === "livery" || textureMode === "everything" || textureMode === "sirens";
   const nativeMaterialsAvailable = Boolean(nativeMaterialsStatus.available);
-  const nativeMaterialsActive = Boolean(
-    experimentalSettings && nativeMaterialsEnabled && textureMode === "everything",
-  );
+  // Sirens loads the model the way All does.
+  const nativeMaterialsActive = Boolean(nativeMaterialsEnabled && (textureMode === "everything" || textureMode === "sirens"));
   const nativeMaterialsCompleteCount =
     (nativeMaterialsStatus.loadedTextureCount || 0) +
     (nativeMaterialsStatus.failedTextureCount || 0);
@@ -1821,1817 +2277,439 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       case "available":
       case "disabled":
         return nativeMaterialsAvailable
-          ? "Turn on native materials to resolve the model's GTA texture bindings."
-          : "Load a CodeWalker-backed .yft model to use native materials.";
-      case "loading": return "Resolving shader textures and building preview materials.";
-      case "ready": return "Native material maps are active on the highest available LOD.";
+          ? "Turn on to show the model's own GTA textures. A texture you pick still takes priority."
+          : "Needs a .yft model loaded through the CodeWalker bridge.";
+      case "loading": return "Loading the model's textures…";
+      case "ready": return "Showing the model's own textures on its highest detail level.";
       case "partial":
         if ((nativeMaterialsStatus.unsupportedBindingCount || 0) > 0) {
-          return `The preview is active; ${nativeMaterialsStatus.unsupportedBindingCount} advanced GTA shader binding${nativeMaterialsStatus.unsupportedBindingCount === 1 ? " is" : "s are"} deferred.`;
+          const count = nativeMaterialsStatus.unsupportedBindingCount;
+          return `Showing the model's textures. ${count} advanced shader ${count === 1 ? "map isn't" : "maps aren't"} previewed yet.`;
         }
-        return "The preview is active, but some texture bindings could not be loaded.";
-      case "error": return "Native materials could not be loaded. The standard preview remains active.";
-      case "unavailable": return "Load a CodeWalker-backed .yft model to use native materials.";
-      default: return "Load a model to check native material availability.";
+        return "Showing the model's textures, but some couldn't be loaded.";
+      case "error": return "The model's textures couldn't be loaded. The standard preview is still shown.";
+      case "unavailable": return "Needs a .yft model loaded through the CodeWalker bridge.";
+      default: return "Load a model to use its own textures.";
     }
   })();
 
-  const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
+  const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi", sirens: "Sirens" };
   const currentModeLabel = modeLabels[textureMode] || "Preview";
-  const previewExportCount = previewProgress.total > 0 ? previewProgress.total : PREVIEW_CAPTURE_PRESET_KEYS.length;
+
+  const singleViewer = (
+  <Viewer
+    modelPath={modelPath}
+    texturePath={texturePath}
+    windowTexturePath={windowTemplateEnabled ? windowTexturePath : ""}
+    bodyColor={bodyColor}
+    vehiclePaint={textureMode === "eup" ? eupPaint : vehiclePaint}
+    backgroundColor={backgroundColor}
+    backgroundImagePath={backgroundImagePath}
+    backgroundImageReloadToken={backgroundImageReloadToken}
+    backgroundImageBlur={backgroundImageBlur}
+    showGrid={showGrid}
+    textureReloadToken={textureReloadToken}
+    windowTextureReloadToken={windowTextureReloadToken}
+    modelReloadToken={modelReloadToken}
+    textureTarget={resolvedTextureTarget}
+    windowTextureTarget={resolvedWindowTextureTarget}
+    textureMode={textureMode}
+    showWireframe={showWireframe}
+    showCageWireframe={showCageWireframe}
+    showSolidWireframe={showSolidWireframe}
+    onMeshStats={setMeshStats}
+    wasdEnabled={true}
+    liveryExteriorOnly={(textureMode === "livery" || textureMode === "everything") && liveryExteriorOnly}
+    lightIntensity={lightIntensity}
+    lightAzimuth={lightAzimuth}
+    lightElevation={lightElevation}
+    stage={stage}
+    stageRim={textureMode === "eup" ? initialShowroom.rim : 0}
+    stageSpot={stageSpot}
+    stageReflect={stageReflect}
+    stageBeam={stageBeam}
+    stageLight={stageLight}
+    stageFloor={stageFloor}
+    turntable={turntable}
+    turntableSpeed={turntableSpeed}
+    glossiness={glossiness}
+    shadowsEnabled={showShadows}
+    ambientOcclusion={ambientOcclusion}
+    materialType={materialType}
+    materialLightIntensity={matLightIntensity}
+    materialGlossiness={matGlossiness}
+    materialRoughness={matRoughness}
+    materialClearcoat={matClearcoat}
+    materialTexturePath={activeMaterialTexturePath}
+    modelRotation={modelRotation}
+    nativeMaterialsEnabled={nativeMaterialsActive}
+    nativeMaterialsReloadToken={nativeMaterialsReloadToken}
+    onModelInfo={handleModelInfo}
+    onModelError={handleModelError}
+    onModelLoading={handleModelLoading}
+    onReady={handleViewerReady}
+    onFrame={handleViewerFrame}
+    onTextureReload={onTextureReload}
+    onTextureError={handleTextureError}
+    onWindowTextureError={handleWindowTextureError}
+    onFormatWarning={handleFormatWarning}
+    onAssetError={setDialogError}
+    onNativeMaterialsStatus={handleNativeMaterialsStatus}
+    vehicleMods={textureMode === "everything" || textureMode === "sirens" ? modkits.vehicleMods : null}
+    gameLivery={textureMode === "everything" || textureMode === "sirens" ? gameLivery : null}
+    onGameLiveryStatus={setGameLiveries}
+    steeringAngle={steeringAngle}
+    roofClip={activeRoofClip}
+    onVehiclePartsChange={setVehicleParts}
+    onPaintSlotsChange={setPaintSlotsInUse}
+    vehicleLights={viewerLights}
+    licensePlate={licensePlate}
+    extrasPlan={extrasPlan}
+    onLicensePlateStatus={setLicensePlateStatus}
+    onVehicleModsStatus={handleVehicleModsStatus}
+    isActive={isActive}
+  />
+  );
+
+  const dismissFormatWarning = () => {
+    const warning = formatWarning;
+    // A PSD the viewer couldn't read leaves its slot empty instead of stale.
+    if (warning && warning.type !== "non-hi-model" && warning.type !== "unsupported-format") {
+      if (warning.slotId) {
+        multi.updateSlot(warning.slotId, warning.kind === "window" ? { windowPath: "" } : { liveryPath: "" });
+      } else {
+        if (warning.kind === "window") setWindowTexturePath("");
+        // A material map's warning leaves the livery alone.
+        else if (warning.kind !== "material") setTexturePath("");
+      }
+      setTextureError("");
+      setWindowTextureError("");
+    }
+    setFormatWarning(null);
+  };
+
+  const openHiModel = () => {
+    const warning = formatWarning;
+    setFormatWarning(null);
+    if (warning?.hiPath) loadModel(warning.hiPath, warning.loadOptions);
+  };
+
+  // Settings > Standard Model Warning turns it back on.
+  const stopStandardModelWarnings = () => {
+    const prefs = loadPrefs() || {};
+    const saved = savePrefs({ ...prefs, defaults: { ...sanitizeStoredDefaults(prefs.defaults), warnStandardModel: false } });
+    setFormatWarning(null);
+    if (!saved) showToast("Couldn't save that: app storage refused the write, so the warning will show again.", "error");
+  };
+
+  const formatWarningModal = (
+    <FormatWarningDialog
+      warning={formatWarning}
+      supportedExtensions={SUPPORTED_TEXTURE_EXTS}
+      onDismiss={dismissFormatWarning}
+      onOpenHi={openHiModel}
+      onNeverShow={stopStandardModelWarnings}
+    />
+  );
+
+  // Livery has its own workspace (src/components/livery). It shares this
+  // component's state, handlers, watchers and Viewer; only the layout differs.
+  const handleLiveryDrop = (event) => {
+    const files = Array.from(event.dataTransfer?.files || []);
+    const hasModelFile = files.some((file) =>
+      modelExtensions.some((ext) => file.name?.toLowerCase()?.endsWith(`.${ext}`)),
+    );
+    // EUP also takes a clothing texture dictionary.
+    const textureFile = files.find((file) => isTextureFormatSupported(file.name || "") ||
+      (textureMode === "eup" && isYtdTexturePath(file.name || "")));
+    if (!hasModelFile && textureFile) {
+      event.preventDefault();
+      setIsDragging(false);
+      if (!isTauriRuntime || !textureFile.path) {
+        setDialogError("Drag-and-drop requires the Tauri app.");
+        return;
+      }
+      setDialogError("");
+      setTexturePath(textureFile.path);
+      return;
+    }
+    handleDrop(event);
+  };
+
+  const multiViewer = (
+    <MultiModelViewer
+      slots={multi.viewerSlots}
+      reloadTokens={multi.reloadTokens}
+      selectedId={multi.selectedId}
+      gizmoVisible={multi.gizmoVisible}
+      gizmoMode={multi.gizmoMode}
+      backgroundColor={backgroundColor}
+      backgroundImagePath={backgroundImagePath}
+      backgroundImageReloadToken={backgroundImageReloadToken}
+      backgroundImageBlur={backgroundImageBlur}
+      lightIntensity={lightIntensity}
+      lightAzimuth={lightAzimuth}
+      lightElevation={lightElevation}
+      glossiness={glossiness}
+      shadowsEnabled={showShadows}
+      ambientOcclusion={ambientOcclusion}
+      stage={stage}
+      stageSpot={stageSpot}
+      stageReflect={stageReflect}
+      stageBeam={stageBeam}
+      stageLight={stageLight}
+      stageFloor={multi.showroom.floor}
+      stageBays={multi.showroom.lights === "each"}
+      turntable={turntable}
+      turntableSpeed={turntableSpeed}
+      showWireframe={showWireframe}
+      showCageWireframe={showCageWireframe}
+      showSolidWireframe={showSolidWireframe}
+      onMeshStats={setMeshStats}
+      showGrid={showGrid}
+      wasdEnabled
+      isActive={isActive}
+      isTauriRuntime={isTauriRuntime}
+      onReady={handleMultiViewerReady}
+      onSelectSlot={multi.select}
+      onSlotPlacements={multi.setPlacements}
+      onSlotStatus={multi.reportStatus}
+      onSlotInfo={multi.reportInfo}
+      onFormatWarning={handleFormatWarning}
+    />
+  );
+
+  // Multi drops: models fill the selected empty slot, then add vehicles; an
+  // image alone becomes the selected vehicle's livery.
+  const handleMultiDrop = (event) => {
+    event.preventDefault();
+    setIsDragging(false);
+    if (!isTauriRuntime) {
+      setDialogError("Drag-and-drop requires the Tauri app.");
+      return;
+    }
+    const files = Array.from(event.dataTransfer?.files || []);
+    const models = files.filter((file) => isVehicleModelPath(file.name || ""));
+    if (models.length > 0) {
+      const paths = models.map((file) => file.path).filter(Boolean);
+      if (paths.length === 0) {
+        setDialogError("Unable to read dropped file path.");
+        return;
+      }
+      setDialogError("");
+      const skipped = multi.placeModels(paths);
+      if (skipped > 0) {
+        setDialogError(`Multi shows up to ${MAX_LINEUP_SLOTS} vehicles, so ${skipped} dropped ${skipped === 1 ? "model wasn't" : "models weren't"} added.`);
+      }
+      return;
+    }
+    const texture = files.find((file) => isTextureFormatSupported(file.name || ""));
+    if (texture?.path && multi.selectedId) {
+      setDialogError("");
+      multi.updateSlot(multi.selectedId, { liveryPath: texture.path });
+      return;
+    }
+    if (files.some((file) => /\.ydd$/i.test(file.name || ""))) {
+      setDialogError("Multi compares vehicles. Open clothing in EUP Studio, where you can wear several addon pieces at once.");
+      return;
+    }
+    setDialogError(`Drop ${VEHICLE_MODEL_EXTENSIONS.map((ext) => `.${ext}`).join(" / ")} models or a livery image.`);
+  };
+
+  // Livery, All and Multi use the Studio 5 workspaces (src/components/workspace).
+  // They share this component's state, handlers, watchers and viewers; only
+  // the layout differs. EUP keeps the panel layout below for now.
+  const workspaceCommon = {
+      isActive, isBooting, contextBarTarget, isTauriRuntime, hotkeys,
+      panelCollapsed, setPanelCollapsed, viewerReady, modelDropLabel,
+      dialogError, setDialogError, isDragging, handleDragOver, handleDragLeave,
+      toasts, cameraControlsInPanel,
+      handleSetCameraPreset, handleCenterCamera, handleRotateModel, handleResetRotation, modelRotation,
+      showWireframe, setShowWireframe, showCageWireframe, setShowCageWireframe,
+      showSolidWireframe, setShowSolidWireframe, meshStats,
+      showGrid, showShadows, ambientOcclusion, toggleRenderEffect: toggleGlobalRenderEffect,
+      colorSwatches: COLOR_SWATCHES, defaultBody: DEFAULT_BODY, defaultBg: DEFAULT_BG,
+      backgroundColor, setBackgroundColor, backgroundImagePath, selectBackgroundImage,
+      clearBackgroundImage: () => {
+        setBackgroundImagePath("");
+        setBackgroundImageReloadToken((token) => token + 1);
+      },
+      backgroundImageBlur,
+      setBackgroundImageBlur: (value) => setBackgroundImageBlur(clampBackgroundImageBlur(value)),
+      maxBackgroundBlur: MAX_BACKGROUND_IMAGE_BLUR,
+      lightAzimuth, lightElevation, lightIntensity,
+      handleLightAzimuthChange, handleLightElevationChange, handleLightIntensityChange, resetLighting,
+      stage, setStage, stageSpot, setStageSpot, stageReflect, setStageReflect, stageBeam, setStageBeam, stageLight, setStageLight,
+      stageFloor, setStageFloor,
+      turntable, setTurntable,
+      turntableSpeed, setTurntableSpeed,
+  };
+
+  if (textureMode !== "multi") {
+    const liveryStudio = {
+      ...workspaceCommon,
+      mode: textureMode,
+      isActive, isBooting, contextBarTarget, isTauriRuntime, hotkeys,
+      panelCollapsed, setPanelCollapsed,
+      modelPath, modelSourcePath, modelLoading, viewerReady, modelDropLabel,
+      selectModel,
+      unloadModel: () => {
+        setModelPath("");
+        setModelSourcePath("");
+        setDialogError("");
+        setGeneratedTemplateMap(null);
+        setTemplateMapError("");
+      },
+      texturePath, setTexturePath, selectTexture, liveryTargetLabel,
+      windowTemplateEnabled, setWindowTemplateEnabled, windowTexturePath, setWindowTexturePath,
+      selectWindowTexture, liveryWindowOverride, setLiveryWindowOverride,
+      windowLiveryTarget, windowStatusLabel, textureTargets,
+      liveryExteriorOnly, setLiveryExteriorOnly,
+      watchStatus, lastUpdate,
+      dialogError, setDialogError, textureError, setTextureError, windowTextureError, setWindowTextureError,
+      isDragging, handleDragOver, handleDragLeave, handleDrop: handleLiveryDrop,
+      toasts, cameraControlsInPanel,
+      handleSetCameraPreset, handleCenterCamera, handleRotateModel, handleResetRotation, modelRotation,
+      showWireframe, setShowWireframe, showCageWireframe, setShowCageWireframe,
+      showSolidWireframe, setShowSolidWireframe, meshStats,
+      showGrid, showShadows, ambientOcclusion, toggleRenderEffect: toggleGlobalRenderEffect,
+      vehiclePaint, setVehiclePaintSlot, resetVehiclePaintSlot, paintSlotsInUse,
+      colorSwatches: COLOR_SWATCHES, defaultBody: DEFAULT_BODY, defaultBg: DEFAULT_BG,
+      backgroundColor, setBackgroundColor, backgroundImagePath, selectBackgroundImage,
+      clearBackgroundImage: () => {
+        setBackgroundImagePath("");
+        setBackgroundImageReloadToken((token) => token + 1);
+      },
+      backgroundImageBlur,
+      setBackgroundImageBlur: (value) => setBackgroundImageBlur(clampBackgroundImageBlur(value)),
+      maxBackgroundBlur: MAX_BACKGROUND_IMAGE_BLUR,
+      materialType, setMaterialType,
+      matLightIntensity, setMatLightIntensity, matGlossiness, setMatGlossiness,
+      matRoughness, setMatRoughness, matClearcoat, setMatClearcoat,
+      materialTextures, selectMaterialTexture, removeMaterialTexture,
+      lightAzimuth, lightElevation, lightIntensity,
+      handleLightAzimuthChange, handleLightElevationChange, handleLightIntensityChange, resetLighting,
+      metaModelInfo,
+      onApplyMetaLivery: (path) => {
+        if (liveryTarget) setTextureTarget(liveryTarget);
+        setTexturePath(path);
+      },
+      onApplyMetaColors: (preset) => {
+        const next = {};
+        for (const key of VEHICLE_PAINT_KEYS) {
+          const paint = paintFromMetaColor(preset[key]);
+          if (paint) next[key] = paint;
+        }
+        if (next.primary) setBodyColor(paintDisplayColor(next.primary));
+        setVehiclePaint((current) => ({ ...current, ...next }));
+      },
+      onToggleMetaExtra: toggleMetaExtra,
+      extrasPlan, extrasState, updateExtrasState,
+      steeringAngle, setSteeringAngle,
+      vehicleParts, vehiclePartControls, roofClip: roofClip.path === modelPath ? roofClip : null,
+      vehicleLights, updateVehicleLights, getLightTime, setLightTime, getSirenMarkers, onViewerFrame,
+      sirenEditor, els, metaRescanToken, requestMetaRescan, showToast,
+      // Reopens a model by path, e.g. after the vehicle renamer moves its file.
+      loadModel, reloadMovedModel, reloadModel,
+      licensePlate, updateLicensePlate, licensePlateStatus,
+      // Kit Shoot is an All tool; Sirens only picks parts.
+      modkits, vehicleModsStatus, gameLivery, setGameLivery, gameLiveries, kitShoot: textureMode === "everything" ? kitShoot : null,
+      savedVehicle, saveVehicle: textureMode === "eup" ? null : saveVehicle,
+      generatingPreview, previewProgress, previewComplete, setPreviewComplete,
+      previewOutputPath, previewFolderOpening, previewFolderOpenError, handleOpenPreviewFolder,
+      previewPromptOpen, previewZoomDraft, setPreviewZoomDraft, previewZoomPreview, previewZoomLoading,
+      previewCapturePresets, capturePresets: PREVIEW_CAPTURE_PRESETS,
+      selectedPreviewPresetCount, allPreviewPresetsSelected,
+      togglePreviewCapturePreset, toggleAllPreviewCapturePresets, previewCaptureTooltip, previewResult,
+      previewReplace, confirmPreviewReplace, cancelPreviewReplace: () => setPreviewReplace(null),
+      previewFolder: loadPrefs()?.defaults?.previewFolder || "",
+      previewZoom,
+      stage, setStage, stageSpot, setStageSpot, stageReflect, setStageReflect, stageBeam, setStageBeam, stageLight, setStageLight,
+      stageFloor, setStageFloor,
+      turntable, setTurntable,
+      turntableSpeed, setTurntableSpeed,
+      saveViewPhoto: handleSaveViewPhoto, savingPhoto, photoError, setPhotoError,
+      captureNow: () => {
+        if (generatingPreview || !viewerReady) return;
+        setPreviewComplete(false);
+        handleGeneratePreview(previewZoom || 1, previewCapturePresets);
+      },
+      openCapture: () => {
+        if (generatingPreview || !viewerReady) return;
+        setPreviewComplete(false);
+        setPreviewZoomDraft(previewZoom || 1);
+        setPreviewZoomPreview("");
+        setPreviewPromptOpen(true);
+      },
+      closeCapture: () => setPreviewPromptOpen(false),
+      startCapture: () => {
+        setPreviewZoom(previewZoomDraft);
+        setPreviewPromptOpen(false);
+        handleGeneratePreview(previewZoomDraft, previewCapturePresets);
+      },
+      textureTarget, setTextureTarget, windowTextureTarget, setWindowTextureTarget,
+      nativeMaterialsEnabled, setNativeMaterialsEnabled,
+      nativeMaterialsAvailable, nativeMaterialsActive, nativeMaterialsStatus,
+      nativeMaterialsStatusMessage, nativeMaterialsProgress,
+      nativeMaterialsPlannedCount, nativeMaterialsCompleteCount,
+      retryNativeMaterials: () => setNativeMaterialsReloadToken((token) => token + 1),
+      bodyColor, setBodyColor,
+    };
+
+    const Workspace = textureMode === "sirens" ? SirenWorkspace : SingleWorkspace;
+    return (
+      <Workspace
+        s={liveryStudio}
+        viewer={(
+          <>
+            {singleViewer}
+            <AnimatePresence>
+              {modelLoading ? <AppLoader variant="background" /> : null}
+            </AnimatePresence>
+          </>
+        )}
+        overlays={(
+          <>
+            <AnimatePresence>{isBooting ? <AppLoader variant="pane" /> : null}</AnimatePresence>
+            {formatWarningModal}
+          </>
+        )}
+      />
+    );
+  }
+
+  const multiStudio = {
+    ...workspaceCommon,
+    handleDrop: handleMultiDrop,
+    lineup: multi,
+    watchStatus,
+    selectMultiModel,
+    selectMultiLivery,
+    selectMultiWindow: (slotId) => selectWindowTexture(slotId),
+    lineUp: () => multiViewerApiRef.current?.lineUp?.(multi.slots.map((slot) => slot.id)),
+    saveViewPhoto: handleSaveViewPhoto, savingPhoto, photoError, setPhotoError,
+    previewFolder: loadPrefs()?.defaults?.previewFolder || "",
+  };
+  const multiLoading = Object.values(multi.status).some((entry) => entry?.loading);
 
   return (
-    <motion.div
-      className={`app-shell ${panelCollapsed ? "is-panel-collapsed" : ""}`}
-      initial={{ opacity: 0, y: 6 }}
-      animate={isBooting ? { opacity: 0, y: 6 } : { opacity: 1, y: 0 }}
-      transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-      style={{ pointerEvents: isBooting ? "none" : "auto" }}
-    >
-      {/* ── Row 2 Portal: Context Bar ── */}
-      {isActive && contextBarTarget && createPortal(
-        <div className="ctx-bar-inner">
-          <div className="ctx-bar-left">
-            <button
-              type="button"
-              className="ctx-bar-toggle"
-              onClick={() => setPanelCollapsed((prev) => !prev)}
-              title={panelCollapsed ? "Show panel" : "Hide panel"}
-            >
-              <PanelLeft className="w-3.5 h-3.5" />
-            </button>
-
-          </div>
-
-          <div className="ctx-bar-drag-pad" aria-hidden="true" />
-
-          <div className="ctx-bar-center">
-            {!cameraControlsInPanel && (
-              <>
-                    <span className="ctx-bar-group-label">Camera</span>
-                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("front")} title="Front view">Front</button>
-                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("back")} title="Rear view">Back</button>
-                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("side")} title="Side view">Side</button>
-                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("angle")} title="3/4 angle view">3/4</button>
-                    <button type="button" className="ctx-bar-btn" onClick={() => handleSetCameraPreset("top")} title="Top-down view">Top</button>
-                    <div className="ctx-bar-sep" />
-                    <button type="button" className="ctx-bar-btn ctx-bar-action" onClick={handleCenterCamera} disabled={!viewerReady} title="Re-center camera on model">
-                      <RotateCcw className="w-3 h-3" style={{ marginRight: 3 }} />Center
-                    </button>
-                    {textureMode !== "multi" && (
-                      <>
-                        <div className="ctx-bar-sep" />
-                        <span className="ctx-bar-group-label">Rotate</span>
-                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("x")} title="Rotate 90° on X axis">
-                          <span style={{ color: "#f87171" }}>X</span>
-                        </button>
-                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("y")} title="Rotate 90° on Y axis">
-                          <span style={{ color: "#4ade80" }}>Y</span>
-                        </button>
-                        <button type="button" className="ctx-bar-btn ctx-bar-axis" onClick={() => handleRotateModel("z")} title="Rotate 90° on Z axis">
-                          <span style={{ color: "#60a5fa" }}>Z</span>
-                        </button>
-                        <div className="ctx-bar-sep" />
-                      </>
-                    )}
-              </>
-            )}
-          </div>
-
-          <div className="ctx-bar-drag-pad" aria-hidden="true" />
-
-          <div className="ctx-bar-right">
-          </div>
-        </div>,
-        contextBarTarget
-      )}
-
-      <CyberPanel
-        collapsed={panelCollapsed}
-        isBooting={isBooting}
-        statusBar={
-        <div className="cs-status-bar">
-          <div className="cs-status-left">
-            <span className={watchStatus === "watching" ? "status-dot" : "cs-status-dot-idle"} style={watchStatus === "error" ? { background: "#ef4444" } : {}} />
-            <span className="cs-status-text">
-              {watchStatus === "watching"
-                ? "Watching"
-                : watchStatus === "error"
-                  ? "Watcher error"
-                  : "Idle"}
-            </span>
-            {watchStatus === "watching" && texturePath && (
-              <span className="cs-status-file" title={texturePath}>
-                {texturePath.split(/[\\/]/).pop()}
-              </span>
-            )}
-          </div>
-          <span className="cs-status-timestamp">{lastUpdate}</span>
-        </div>
-      }
-        tabs={[
-          { id: "asset", label: "Asset", icon: Car },
-          { id: "aesthetics", label: "Aesthetics", icon: Palette },
-          { id: "environment", label: "Environment", icon: Sun },
-        ]}
-        activeTab={activePanelTab}
-        onTabChange={setActivePanelTab}
-        footer={
-          textureMode !== "multi" ? (
-            <div className="cyber-panel-footer">
-              <button
-                type="button"
-                className={`panel-capture-btn${generatingPreview ? " is-generating" : ""}`}
-                onClick={() => {
-                  if (generatingPreview || !viewerReady) return;
-                  setPreviewZoomDraft(previewZoom || 1);
-                  setPreviewPromptOpen(true);
-                  setPreviewZoomPreview("");
-                }}
-                disabled={generatingPreview || !viewerReady || !hasModel}
-                title={previewCaptureTooltip}
-              >
-                <Camera className="panel-capture-icon" />
-                <span className="panel-capture-label">
-                  {generatingPreview
-                    ? `${previewProgress.current} / ${previewProgress.total}`
-                    : "Capture Preview"}
-                </span>
-                {generatingPreview && previewProgress.total > 0 && (
-                  <div
-                    className="panel-capture-bar-fill"
-                    style={{ width: `${(previewProgress.current / previewProgress.total) * 100}%` }}
-                  />
-                )}
-              </button>
-            </div>
-          ) : null
-        }
-      >
-          {textureMode !== "multi" && (textureError || windowTextureError) ? (
-            <CyberCard className="mb-3">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="h-3.5 w-3.5 text-[var(--mg-warning)] mt-0.5 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  {textureError ? (
-                    <div className="text-[10px] text-[var(--mg-muted)] leading-snug break-words">
-                      <span className="text-[var(--mg-warning)] mr-1">Texture:</span>
-                      {textureError}
-                    </div>
-                  ) : null}
-                  {windowTextureError ? (
-                    <div className="text-[10px] text-[var(--mg-muted)] leading-snug break-words mt-1">
-                      <span className="text-[var(--mg-warning)] mr-1">Window:</span>
-                      {windowTextureError}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </CyberCard>
-          ) : null}
-
-          <CyberTabPanel id="asset" active={activePanelTab === "asset"}>
-
-          {textureMode !== "multi" ? (
-            <CyberSection
-              title="Model"
-              caption={modelLabel}
-              open={panelOpen.model}
-              onToggle={() => togglePanel("model")}
-              contentId="panel-model"
-              icon={Car}
-              color="blue"
-            >
-              <div className="flex flex-col gap-2">
-                <div className="cs-btn-row">
-                  <CyberButton
-                    onClick={selectModel}
-                    variant="blue"
-                    className="flex-1"
-                  >
-                    {modelPath ? "Change Model" : "Select Model"}
-                  </CyberButton>
-                  {modelPath ? (
-                    <UnloadButton
-                      className="flex-1"
-                      onClick={() => {
-                        setModelPath("");
-                        setModelSourcePath("");
-                        setDialogError("");
-                        setGeneratedTemplateMap(null);
-                        setTemplateMapError("");
-                      }}
-                      title="Unload model"
-                    />
-                  ) : null}
-                </div>
-                <CyberButton
-                  onClick={handleDownloadTemplateMap}
-                  hidden={textureMode !== "templategen"}
-                  variant="secondary"
-                  className="flex-1"
-                  disabled={!hasTemplateMap}
-                  title={hasTemplateMap ? "Download generated template map JSON" : "Load a .yft or .ydd model to generate a template map"}
-                >
-                  Download Template
-                </CyberButton>
-                <div className={`text-[9px] ${templateMapError ? "text-[var(--mg-destructive)]" : "text-[var(--mg-muted)]"}`}>
-                  {templateStatusLabel}
-                </div>
-                {modelLoading ? <div className="text-[10px] text-[var(--mg-primary)] animate-pulse">Initializing construct...</div> : null}
-              </div>
-            </CyberSection>
-          ) : null}
-
-          {textureMode === "livery" ? (
-            <div className="studio-mode-stack studio-mode-stack--livery" id="mode-panel-livery" role="group" aria-label="Livery controls">
-              <CyberSection
-                title="Livery"
-                caption={primaryTemplateLabel}
-
-                open={panelOpen.templates}
-                onToggle={() => togglePanel("templates")}
-                contentId="panel-templates"
-                icon={Layers}
-                color="blue"
-              >
-                <div className="flex flex-col gap-0">
-                    <div className="cs-btn-row">
-                      <CyberButton
-                        onClick={selectTexture}
-                        variant="blue"
-                        className="flex-1"
-                      >
-                    {texturePath ? "Change Livery" : "Select Livery"}
-                  </CyberButton>
-                      {texturePath ? (
-                        <UnloadButton
-                          className="flex-1"
-                          onClick={() => setTexturePath("")}
-                          title="Unload texture"
-                        />
-                      ) : null}
-                    </div>
-                </div>
-                <div className={`cs-target-status${liveryTargetToneClass}`}>
-                  <span className="cs-target-status-dot" />
-                  <span className="cs-target-status-text">{liveryTargetMessage}</span>
-                </div>
-              </CyberSection>
-
-              <CyberSection
-                title="Glass Overlay"
-                caption={overlayLabel}
-                open={panelOpen.overlays}
-                onToggle={() => togglePanel("overlays")}
-                contentId="panel-overlays"
-                icon={Disc}
-                color="blue"
-              >
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <CyberLabel className="mb-0">Enabled</CyberLabel>
-                    <button
-                      type="button"
-                      className={`settings-toggle ${windowTemplateEnabled ? "is-on" : ""}`}
-                      onClick={() => setWindowTemplateEnabled(!windowTemplateEnabled)}
-                      aria-pressed={windowTemplateEnabled}
-                      aria-label="Toggle glass overlay"
-                    >
-                      <span className="settings-toggle-dot" />
-                    </button>
-                  </div>
-                  {windowTemplateEnabled ? (
-                    <>
-                      <div className="flex flex-col gap-0">
-                        <div className="cs-btn-row">
-                          <CyberButton
-                            onClick={selectWindowTexture}
-                            variant="blue"
-                            className="flex-1"
-                          >
-                    {windowTexturePath ? "Change Glass" : "Select Glass"}
-                  </CyberButton>
-                          {windowTexturePath ? (
-                            <UnloadButton
-                              className="flex-1"
-                              onClick={() => setWindowTexturePath("")}
-                              title="Unload window template"
-                            />
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="mt-1">
-                        <CyberLabel>Override Target</CyberLabel>
-                        <Select value={liveryWindowOverride || "auto"} onValueChange={(val) => setLiveryWindowOverride(val === "auto" ? "" : val)}>
-                          <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                            <SelectValue placeholder="Select target" />
-                          </SelectTrigger>
-                          <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                            <SelectItem value="auto">
-                              {windowLiveryTarget
-                                ? `Auto (${windowStatusLabel})`
-                                : "Auto (no material detected)"}
-                            </SelectItem>
-                            {textureTargets.map((target) => (
-                              <SelectItem key={target.value} value={target.value}>
-                                {target.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-[9px] text-[var(--mg-primary)]/50">Enable to apply a glass texture overlay.</div>
-                  )}
-                </div>
-              </CyberSection>
-
-              <CyberSection
-                title="Visibility"
-                caption={viewLabel}
-                open={panelOpen.view}
-                onToggle={() => togglePanel("view")}
-                contentId="panel-visibility"
-                icon={Eye}
-                color="blue"
-              >
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <CyberLabel className="mb-0">Exterior Only</CyberLabel>
-<Toggle
-                      checked={liveryExteriorOnly}
-                      onChange={setLiveryExteriorOnly}
-                      ariaLabel="Toggle exterior only visibility"
-                    />
-                  </div>
-                  <div className="text-[9px] text-[var(--mg-primary)]/50">Hides interior, glass, and wheel meshes.</div>
-                </div>
-              </CyberSection>
-            </div>
-          ) : null}
-
-          {textureMode === "everything" ? (
-            <div className="studio-mode-stack studio-mode-stack--everything" id="mode-panel-everything" role="group" aria-label="All textures controls">
-              {experimentalSettings ? (
-                <CyberSection
-                  title="Native Materials"
-                  caption={nativeMaterialsCaption}
-                  open={panelOpen.nativeMaterials}
-                  onToggle={() => togglePanel("nativeMaterials")}
-                  contentId="panel-native-materials"
-                  icon={FlaskConical}
-                  color="blue"
-                  badge="EXPERIMENTAL"
-                >
-                  <div className="flex flex-col gap-2.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <CyberLabel className="mb-0">Render Model Textures</CyberLabel>
-                      <Toggle
-                        checked={nativeMaterialsEnabled}
-                        onChange={setNativeMaterialsEnabled}
-                        disabled={!nativeMaterialsAvailable && !nativeMaterialsEnabled}
-                        ariaLabel="Toggle experimental native model materials"
-                        tabIndex={panelOpen.nativeMaterials ? 0 : -1}
-                      />
-                    </div>
-
-                    <p className="m-0 text-[9px] leading-relaxed text-[var(--mg-primary)]/55">
-                      Uses embedded, sibling, and shared YTD textures when the bridge can resolve them. A selected manual texture overrides these maps.
-                    </p>
-
-                    <CyberCard>
-                      <div className="flex items-start justify-between gap-2">
-                        <div
-                          className="min-w-0 text-[9px] leading-relaxed text-[var(--mg-muted)]"
-                          role="status"
-                          aria-live="polite"
-                        >
-                          {nativeMaterialsStatusMessage}
-                        </div>
-                        {nativeMaterialsActive && (nativeMaterialsStatus.state === "error" || (nativeMaterialsStatus.failedTextureCount || 0) > 0) ? (
-                          <button
-                            type="button"
-                            className="shrink-0 inline-flex h-7 items-center gap-1 border border-[var(--mg-border)] px-2 text-[9px] uppercase tracking-wider text-[var(--mg-muted)] transition-colors duration-200 hover:border-[var(--mg-accent)] hover:text-[var(--mg-fg)] focus-visible:ring-2 focus-visible:ring-[var(--mg-accent)]"
-                            onClick={() => setNativeMaterialsReloadToken((token) => token + 1)}
-                            aria-label="Retry loading native model materials"
-                            tabIndex={panelOpen.nativeMaterials ? 0 : -1}
-                          >
-                            <RefreshCw className="h-3 w-3" />
-                            Retry
-                          </button>
-                        ) : null}
-                      </div>
-
-                      {nativeMaterialsStatus.state === "loading" ? (
-                        <div className="mt-2">
-                          <div
-                            className="h-1 overflow-hidden bg-[var(--mg-border)]"
-                            role="progressbar"
-                            aria-label="Native material texture loading progress"
-                            aria-valuemin={0}
-                            aria-valuemax={nativeMaterialsPlannedCount || undefined}
-                            aria-valuenow={nativeMaterialsCompleteCount}
-                          >
-                            <div
-                              className="h-full bg-[var(--mg-accent)] transition-[width] duration-200"
-                              style={{ width: `${nativeMaterialsProgress}%` }}
-                            />
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {nativeMaterialsAvailable ? (
-                        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-[var(--mg-border)] pt-2 text-[9px]">
-                          <div className="flex justify-between gap-2">
-                            <dt className="text-[var(--mg-primary)]/50">Active meshes</dt>
-                            <dd className="m-0 text-[var(--mg-fg)]">{nativeMaterialsStatus.activeMeshCount ?? nativeMaterialsStatus.meshCount ?? 0}</dd>
-                          </div>
-                          <div className="flex justify-between gap-2">
-                            <dt className="text-[var(--mg-primary)]/50">Textures</dt>
-                            <dd className="m-0 text-[var(--mg-fg)]">
-                              {nativeMaterialsStatus.loadedTextureCount ?? 0}/{nativeMaterialsPlannedCount || nativeMaterialsStatus.uniqueTextureCount || 0}
-                            </dd>
-                          </div>
-                          <div className="flex justify-between gap-2">
-                            <dt className="text-[var(--mg-primary)]/50">Hidden LOD</dt>
-                            <dd className="m-0 text-[var(--mg-fg)]">{nativeMaterialsStatus.hiddenLodMeshCount ?? 0}</dd>
-                          </div>
-                          <div className="flex justify-between gap-2">
-                            <dt className="text-[var(--mg-primary)]/50">Missing / failed</dt>
-                            <dd className="m-0 text-[var(--mg-fg)]">
-                              {nativeMaterialsStatus.missingBindingCount ?? 0} / {nativeMaterialsStatus.failedTextureCount ?? 0}
-                            </dd>
-                          </div>
-                          <div className="flex justify-between gap-2">
-                            <dt className="text-[var(--mg-primary)]/50">Deferred maps</dt>
-                            <dd className="m-0 text-[var(--mg-fg)]">{nativeMaterialsStatus.unsupportedBindingCount ?? 0}</dd>
-                          </div>
-                        </dl>
-                      ) : null}
-                    </CyberCard>
-                  </div>
-                </CyberSection>
-              ) : null}
-
-              <CyberSection
-                title="Texture"
-                caption={primaryTemplateLabel}
-                open={panelOpen.templates}
-                onToggle={() => togglePanel("templates")}
-                contentId="panel-templates"
-                icon={Layers}
-                color="blue"
-              >
-                <div className="flex flex-col gap-0">
-                    <div className="cs-btn-row">
-                      <CyberButton
-                        onClick={selectTexture}
-                        variant="blue"
-                        className="flex-1"
-                      >
-                    {texturePath ? "Change Texture" : "Select Texture"}
-                  </CyberButton>
-                      {texturePath ? (
-                        <UnloadButton
-                          className="flex-1"
-                          onClick={() => setTexturePath("")}
-                          title="Unload texture"
-                        />
-                      ) : null}
-                    </div>
-                </div>
-                <CyberCard className="mt-2">
-                  <CyberLabel>Apply To</CyberLabel>
-                  <Select value={textureTarget} onValueChange={setTextureTarget}>
-                    <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                      <SelectValue placeholder="Select target" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                      <SelectItem value="all">All meshes</SelectItem>
-                      {textureTargets.map((target) => (
-                        <SelectItem key={target.value} value={target.value}>
-                          {target.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </CyberCard>
-              </CyberSection>
-
-              <CyberSection
-                title="Overlay"
-                caption={overlayLabel}
-                open={panelOpen.overlays}
-                onToggle={() => togglePanel("overlays")}
-                contentId="panel-overlays"
-                icon={Disc}
-                color="blue"
-              >
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <CyberLabel className="mb-0">Secondary Texture</CyberLabel>
-                    <Toggle
-                      checked={windowTemplateEnabled}
-                      onChange={setWindowTemplateEnabled}
-                      ariaLabel="Toggle secondary texture"
-                    />
-                  </div>
-                  {windowTemplateEnabled ? (
-                    <>
-                        <div className="flex flex-col gap-0">
-                          <div className="cs-btn-row">
-                            <CyberButton
-                              onClick={selectWindowTexture}
-                              variant="blue"
-                              className="flex-1"
-                            >
-                    {windowTexturePath ? "Change Secondary" : "Select Secondary"}
-                  </CyberButton>
-                            {windowTexturePath ? (
-                              <UnloadButton
-                                className="flex-1"
-                                onClick={() => setWindowTexturePath("")}
-                                title="Unload secondary texture"
-                              />
-                            ) : null}
-                          </div>
-                        </div>
-                      <Select value={windowTextureTarget} onValueChange={setWindowTextureTarget}>
-                        <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                          <SelectValue placeholder="Select target" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                          <SelectItem value="auto">Auto (window materials)</SelectItem>
-                          <SelectItem value="none">None</SelectItem>
-                          <SelectItem value="all">All meshes</SelectItem>
-                          {textureTargets.map((target) => (
-                            <SelectItem key={target.value} value={target.value}>
-                              {target.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </>
-                  ) : (
-                    <div className="text-[9px] text-[var(--mg-primary)]/50">Enable to overlay a secondary texture.</div>
-                  )}
-                </div>
-              </CyberSection>
-              <CyberSection
-                title="Visibility"
-                caption={viewLabel}
-                open={panelOpen.view}
-                onToggle={() => togglePanel("view")}
-                contentId="panel-visibility"
-                icon={Eye}
-                color="blue"
-              >
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <CyberLabel className="mb-0">Exterior Only</CyberLabel>
-<Toggle
-                      checked={liveryExteriorOnly}
-                      onChange={setLiveryExteriorOnly}
-                      ariaLabel="Toggle exterior only visibility"
-                    />
-                  </div>
-                  <div className="text-[9px] text-[var(--mg-primary)]/50">Hides interior, glass, and wheel meshes.</div>
-                </div>
-              </CyberSection>
-            </div>
-          ) : null}
-
-          {textureMode === "eup" ? (
-            <div className="studio-mode-stack studio-mode-stack--eup" id="mode-panel-eup" role="group" aria-label="EUP controls">
-              <CyberSection
-                title="Uniform"
-                caption={primaryTemplateLabel}
-                open={panelOpen.templates}
-                onToggle={() => togglePanel("templates")}
-                contentId="panel-templates"
-                icon={Layers}
-                color="blue"
-              >
-                <div className="flex flex-col gap-0">
-                    <div className="cs-btn-row">
-                      <CyberButton
-                        onClick={selectTexture}
-                        variant="blue"
-                        className="flex-1"
-                      >
-                    {texturePath ? "Change Uniform" : "Select Uniform"}
-                  </CyberButton>
-                      {texturePath ? (
-                        <UnloadButton
-                          className="flex-1"
-                          onClick={() => setTexturePath("")}
-                          title="Unload texture"
-                        />
-                      ) : null}
-                    </div>
-                </div>
-                <CyberCard className="mt-2">
-                  <CyberLabel>Apply To</CyberLabel>
-                  <Select value={textureTarget} onValueChange={setTextureTarget}>
-                    <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                      <SelectValue placeholder="Select target" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                      <SelectItem value="all">All meshes</SelectItem>
-                      {textureTargets.map((target) => (
-                        <SelectItem key={target.value} value={target.value}>
-                          {target.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </CyberCard>
-              </CyberSection>
-            </div>
-          ) : null}
-
-          {textureMode === "multi" ? (
-            <div className="studio-mode-stack studio-mode-stack--multi" id="mode-panel-multi" role="group" aria-label="Multi preview controls">
-              <div className="studio-multi-kind" role="tablist" aria-label="Multi preview asset type">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={dualTextureMode === "livery"}
-                  className={`studio-multi-kind-btn${dualTextureMode === "livery" ? " is-active" : ""}`}
-                  onClick={() => setDualTextureMode("livery")}
-                >
-                  <Car className="h-3 w-3" />
-                  <span>Livery</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={dualTextureMode === "eup"}
-                  className={`studio-multi-kind-btn${dualTextureMode === "eup" ? " is-active" : ""}`}
-                  onClick={() => setDualTextureMode("eup")}
-                >
-                  <Shirt className="h-3 w-3" />
-                  <span>EUP</span>
-                </button>
-              </div>
-
-              <div className="cs-multi-slot-card">
-                {/* Header */}
-                <div className="cs-multi-slot-header">
-                  <span className="cs-multi-slot-header-label">Active Slot</span>
-                  <div className="cs-multi-slot-pips">
-                    <div className={`cs-multi-slot-pip cs-multi-slot-pip--a ${dualSelectedSlot === "A" ? "is-active" : ""}`} />
-                    <div className={`cs-multi-slot-pip cs-multi-slot-pip--b ${dualSelectedSlot === "B" ? "is-active" : ""}`} />
-                  </div>
-                </div>
-
-                {/* Slot switcher */}
-                <div className="cs-multi-slot-switcher">
-                  <button
-                    type="button"
-                    className={`cs-multi-slot-btn cs-multi-slot-btn--a ${dualSelectedSlot === "A" ? "is-active" : ""}`}
-                    onClick={() => setDualSelectedSlot("A")}
-                    aria-pressed={dualSelectedSlot === "A"}
-                  >
-                    <div className="cs-multi-slot-btn-bar" />
-                    <span className="cs-multi-slot-btn-glyph">A</span>
-                    <span className="cs-multi-slot-btn-sublabel">Slot</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`cs-multi-slot-btn cs-multi-slot-btn--b ${dualSelectedSlot === "B" ? "is-active" : ""}`}
-                    onClick={() => setDualSelectedSlot("B")}
-                    aria-pressed={dualSelectedSlot === "B"}
-                  >
-                    <div className="cs-multi-slot-btn-bar" />
-                    <span className="cs-multi-slot-btn-glyph">B</span>
-                    <span className="cs-multi-slot-btn-sublabel">Slot</span>
-                  </button>
-                </div>
-
-                {/* Action bar */}
-                <div className="cs-multi-slot-actions">
-                  <button
-                    type="button"
-                    className="cs-multi-slot-action"
-                    onClick={() => dualViewerApiRef.current?.snapTogether?.()}
-                    title="Snap models together"
-                  >
-                    <Link2 className="w-3 h-3" />
-                    <span>Snap</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="cs-multi-slot-action"
-                    onClick={handleCenterCamera}
-                    title="Re-center camera"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>Center</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`cs-multi-slot-action ${dualGizmoVisible ? "cs-multi-slot-action--gizmo-on" : ""}`}
-                    onClick={() => setDualGizmoVisible((p) => !p)}
-                    title={dualGizmoVisible ? "Hide gizmo" : "Show gizmo"}
-                  >
-                    {dualGizmoVisible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                    <span>Gizmo</span>
-                  </button>
-                </div>
-              </div>
-
-              <CyberSection
-                title={dualSelectedSlot === "A" ? "Slot A" : "Slot B"}
-                caption={dualSelectedSlot === "A" ? getFileLabel(dualModelAPath, "No model") : getFileLabel(dualModelBPath, "No model")}
-                open={true}
-                onToggle={() => {}}
-                contentId="panel-dual-selected-slot"
-                icon={Aperture}
-                color={dualSelectedSlot === "A" ? "orange" : "purple"}
-              >
-                {dualSelectedSlot === "A" ? (
-                  <div className="flex flex-col gap-3">
-                    <CyberCard>
-                      <CyberLabel>Model</CyberLabel>
-                      <div className="flex flex-col gap-0">
-                        <div className="cs-btn-row">
-                          <CyberButton
-                            variant="secondary"
-                            className="flex-1"
-                            onClick={() => selectDualModel("A")}
-                          >
-                    {dualModelAPath ? "Change Model A" : "Select Model A"}
-                  </CyberButton>
-                          {dualModelAPath ? (
-                            <UnloadButton
-                              className="flex-1"
-                              onClick={() => { setDualModelAPath(""); setDualModelAError(""); }}
-                              title="Unload model A"
-                            />
-                          ) : null}
-                        </div>
-                      </div>
-                      {dualModelALoading ? <div className="text-[9px] text-[var(--mg-primary)] animate-pulse mt-1">Loading...</div> : null}
-                      {dualModelAError ? <div className="text-[9px] text-red-400 mt-1">{dualModelAError}</div> : null}
-                    </CyberCard>
-                    <CyberCard>
-                      <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
-                      <div className="flex flex-col gap-0">
-                        <div className="cs-btn-row">
-                          <CyberButton
-                            variant="secondary"
-                            className="flex-1"
-                            onClick={() => selectDualTexture("A")}
-                          >
-                    {dualTextureAPath ? dualTextureMode === "eup" ? "Change Uniform A" : "Change Livery A" : dualTextureMode === "eup" ? "Select Uniform A" : "Select Livery A"}
-                  </CyberButton>
-                          {dualTextureAPath ? (
-                            <UnloadButton
-                              className="flex-1"
-                              onClick={() => setDualTextureAPath("")}
-                              title="Unload texture A"
-                            />
-                          ) : null}
-                        </div>
-                      </div>
-                    </CyberCard>
-                    {dualTextureMode === "livery" ? (
-                      <CyberCard>
-                        <CyberLabel>Window Design</CyberLabel>
-                        <div className="flex flex-col gap-0">
-                          <div className="cs-btn-row">
-                            <CyberButton
-                              variant="secondary"
-                              className="flex-1"
-                              onClick={selectWindowTexture}
-                            >
-                    {dualWindowTextureAPath ? "Change Window A" : "Select Window A"}
-                  </CyberButton>
-                            {dualWindowTextureAPath ? (
-                              <UnloadButton
-                                className="flex-1"
-                                onClick={() => setDualWindowTextureAPath("")}
-                                title="Unload window design A"
-                              />
-                            ) : null}
-                          </div>
-                        </div>
-                        <div className="mt-2">
-                          <CyberLabel>Apply To</CyberLabel>
-                          <Select value={dualWindowTextureATarget} onValueChange={setDualWindowTextureATarget}>
-                            <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                              <SelectValue placeholder="Select target" />
-                            </SelectTrigger>
-                            <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                              <SelectItem value="auto">
-                                {selectedDualWindowAutoTarget
-                                  ? `Auto (${selectedDualWindowAutoLabel || selectedDualWindowAutoTarget.replace("material:", "")})`
-                                  : "Auto (no material detected)"}
-                              </SelectItem>
-                              <SelectItem value="none">None</SelectItem>
-                              <SelectItem value="all">All meshes</SelectItem>
-                              {selectedDualTargets.map((target) => (
-                                <SelectItem key={`dual-a-window-${target.value}`} value={target.value}>
-                                  {target.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </CyberCard>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    <CyberCard>
-                      <CyberLabel>Model</CyberLabel>
-                      <div className="flex flex-col gap-0">
-                        <div className="cs-btn-row">
-                          <CyberButton
-                            variant="secondary"
-                            className="flex-1"
-                            onClick={() => selectDualModel("B")}
-                          >
-                    {dualModelBPath ? "Change Model B" : "Select Model B"}
-                  </CyberButton>
-                          {dualModelBPath ? (
-                            <UnloadButton
-                              className="flex-1"
-                              onClick={() => { setDualModelBPath(""); setDualModelBError(""); }}
-                              title="Unload model B"
-                            />
-                          ) : null}
-                        </div>
-                      </div>
-                      {dualModelBLoading ? <div className="text-[9px] text-[#a78bfa] animate-pulse mt-1">Loading...</div> : null}
-                      {dualModelBError ? <div className="text-[9px] text-red-400 mt-1">{dualModelBError}</div> : null}
-                    </CyberCard>
-                    <CyberCard>
-                      <CyberLabel>{dualTextureMode === "eup" ? "Uniform" : "Template"}</CyberLabel>
-                      <div className="flex flex-col gap-0">
-                        <div className="cs-btn-row">
-                          <CyberButton
-                            variant="secondary"
-                            className="flex-1"
-                            onClick={() => selectDualTexture("B")}
-                          >
-                    {dualTextureBPath ? dualTextureMode === "eup" ? "Change Uniform B" : "Change Livery B" : dualTextureMode === "eup" ? "Select Uniform B" : "Select Livery B"}
-                  </CyberButton>
-                          {dualTextureBPath ? (
-                            <UnloadButton
-                              className="flex-1"
-                              onClick={() => setDualTextureBPath("")}
-                              title="Unload texture B"
-                            />
-                          ) : null}
-                        </div>
-                      </div>
-                    </CyberCard>
-                    {dualTextureMode === "livery" ? (
-                      <CyberCard>
-                        <CyberLabel>Window Design</CyberLabel>
-                        <div className="flex flex-col gap-0">
-                          <div className="cs-btn-row">
-                            <CyberButton
-                              variant="secondary"
-                              className="flex-1"
-                              onClick={selectWindowTexture}
-                            >
-                    {dualWindowTextureBPath ? "Change Window B" : "Select Window B"}
-                  </CyberButton>
-                            {dualWindowTextureBPath ? (
-                              <UnloadButton
-                                className="flex-1"
-                                onClick={() => setDualWindowTextureBPath("")}
-                                title="Unload window design B"
-                              />
-                            ) : null}
-                          </div>
-                        </div>
-                        <div className="mt-2">
-                          <CyberLabel>Apply To</CyberLabel>
-                          <Select value={dualWindowTextureBTarget} onValueChange={setDualWindowTextureBTarget}>
-                            <SelectTrigger className="w-full h-8 text-xs bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                              <SelectValue placeholder="Select target" />
-                            </SelectTrigger>
-                            <SelectContent className="bg-[var(--mg-bg)] border-[var(--mg-border)] text-[var(--mg-muted)]">
-                              <SelectItem value="auto">
-                                {selectedDualWindowAutoTarget
-                                  ? `Auto (${selectedDualWindowAutoLabel || selectedDualWindowAutoTarget.replace("material:", "")})`
-                                  : "Auto (no material detected)"}
-                              </SelectItem>
-                              <SelectItem value="none">None</SelectItem>
-                              <SelectItem value="all">All meshes</SelectItem>
-                              {selectedDualTargets.map((target) => (
-                                <SelectItem key={`dual-b-window-${target.value}`} value={target.value}>
-                                  {target.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </CyberCard>
-                    ) : null}
-                  </div>
-                )}
-              </CyberSection>
-            </div>
-          ) : null}
-
-          </CyberTabPanel>
-
-          <CyberTabPanel id="aesthetics" active={activePanelTab === "aesthetics"}>
-
-          <CyberSection
-            title={textureMode === "multi" ? "Slot Colors" : textureMode === "eup" ? "Uniform Scene" : "Vehicle Colors"}
-            caption={textureMode === "multi" ? "A / B & backdrop" : textureMode === "eup" ? "Body & backdrop" : "Paint slots & backdrop"}
-            open={panelOpen.colors}
-            onToggle={() => togglePanel("colors")}
-            contentId="panel-colors"
-            icon={Palette}
-            color="blue"
-          >
-            <div className="cs-color-rows">
-              {textureMode === "multi" ? (
-                <>
-                  <ColorRow
-                    label="Slot A Body"
-                    value={dualBodyColorA}
-                    onChange={setDualBodyColorA}
-                    onReset={() => setDualBodyColorA(DEFAULT_BODY)}
-                    onCopy={copyHex}
-                    swatches={COLOR_SWATCHES}
-                    pickerLabel="Slot A body color picker"
-                    resetTitle="Reset Slot A color"
-                  />
-                  <ColorRow
-                    label="Slot B Body"
-                    value={dualBodyColorB}
-                    onChange={setDualBodyColorB}
-                    onReset={() => setDualBodyColorB(DEFAULT_BODY)}
-                    onCopy={copyHex}
-                    swatches={COLOR_SWATCHES}
-                    pickerLabel="Slot B body color picker"
-                    resetTitle="Reset Slot B color"
-                  />
-                </>
-              ) : showVehicleSlotColorCards ? (
-                <>
-                  <ColorRow
-                    label="Primary Paint"
-                    value={vehicleSlotColors.primary}
-                    onChange={(value) => setVehicleSlotColor("primary", value)}
-                    onReset={() => setVehicleSlotColor("primary", DEFAULT_BODY)}
-                    onCopy={copyHex}
-                    swatches={COLOR_SWATCHES}
-                    pickerLabel="Primary paint color picker"
-                    resetTitle="Reset primary paint color"
-                  />
-                  <ColorRow
-                    label="Secondary Paint"
-                    value={vehicleSlotColors.secondary}
-                    onChange={(value) => setVehicleSlotColor("secondary", value)}
-                    onReset={() => setVehicleSlotColor("secondary", DEFAULT_BODY)}
-                    onCopy={copyHex}
-                    swatches={COLOR_SWATCHES}
-                    pickerLabel="Secondary paint color picker"
-                    resetTitle="Reset secondary paint color"
-                  />
-                  <ColorRow
-                    label="Lightbar / Accent"
-                    value={vehicleSlotColors.accent}
-                    onChange={(value) => setVehicleSlotColor("accent", value)}
-                    onReset={() => setVehicleSlotColor("accent", DEFAULT_BODY)}
-                    onCopy={copyHex}
-                    swatches={COLOR_SWATCHES}
-                    pickerLabel="Lightbar and accent color picker"
-                    resetTitle="Reset accent color"
-                  />
-                  <ColorRow
-                    label="Glass Tint"
-                    value={vehicleSlotColors.glass}
-                    onChange={(value) => setVehicleSlotColor("glass", value)}
-                    onReset={() => setVehicleSlotColor("glass", DEFAULT_BODY)}
-                    onCopy={copyHex}
-                    swatches={COLOR_SWATCHES}
-                    pickerLabel="Glass tint color picker"
-                    resetTitle="Reset glass tint"
-                  />
-                </>
-              ) : (
-                <ColorRow
-                  label="Body Color"
-                  value={bodyColor}
-                  onChange={(value) => setVehicleSlotColor("primary", value)}
-                  onReset={() => setVehicleSlotColor("primary", DEFAULT_BODY)}
-                  onCopy={copyHex}
-                  swatches={COLOR_SWATCHES}
-                  pickerLabel="Body color picker"
-                  resetTitle="Revert to default"
-                />
-              )}
-
-              <ColorRow
-                label="Background"
-                value={backgroundColor}
-                onChange={setBackgroundColor}
-                onReset={() => setBackgroundColor(DEFAULT_BG)}
-                onCopy={copyHex}
-                swatches={COLOR_SWATCHES}
-                pickerLabel="Background color picker"
-                resetTitle="Revert to default"
-              />
-
-              <CyberCard>
-                <CyberLabel>Background Image</CyberLabel>
-                <div className="flex flex-col gap-0">
-                  <div className="cs-btn-row">
-                    <CyberButton
-                      onClick={selectBackgroundImage}
-                      variant="secondary"
-                      className="flex-1"
-                    >
-                    {backgroundImagePath ? "Change Background" : "Select Background"}
-                  </CyberButton>
-                    {backgroundImagePath ? (
-                      <UnloadButton
-                        className="flex-1"
-                        onClick={() => {
-                          setBackgroundImagePath("");
-                          setBackgroundImageReloadToken((token) => token + 1);
-                        }}
-                        title="Remove background image"
-                      />
-                    ) : null}
-                  </div>
-                  {backgroundImagePath ? (
-                    <div className="mt-3">
-                      <MaterialSlider
-                        label="Blur"
-                        value={backgroundImageBlur}
-                        onChange={(nextValue) => setBackgroundImageBlur(clampBackgroundImageBlur(nextValue))}
-                        min={0}
-                        max={MAX_BACKGROUND_IMAGE_BLUR}
-                        step={1}
-                        unit="px"
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              </CyberCard>
-
-            </div>
-          </CyberSection>
-
-          {/* ── Vehicle Materials Section ── */}
-          <CyberSection
-            title="Materials"
-            caption={`${textureMode === "multi" ? "Shared " : ""}${materialType.charAt(0).toUpperCase() + materialType.slice(1)} surface`}
-            open={panelOpen.materials}
-            onToggle={() => togglePanel("materials")}
-            contentId="panel-materials"
-            icon={Gem}
-            color="blue"
-            badge="NEW"
-          >
-            <div className="space-y-4">
-              <div>
-                <CyberLabel>Surface Type</CyberLabel>
-                <MaterialTypeSelector value={materialType} onChange={setMaterialType} />
-              </div>
-
-              <div>
-                <CyberLabel>Properties</CyberLabel>
-                <div className="flex flex-col gap-3">
-                  <MaterialSlider
-                    label="Light Int"
-                    value={matLightIntensity}
-                    onChange={setMatLightIntensity}
-                    min={0}
-                    max={3}
-                    step={0.05}
-                  />
-                  <MaterialSlider
-                    label="Glossiness"
-                    value={matGlossiness}
-                    onChange={setMatGlossiness}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    unit="%"
-                  />
-                  <MaterialSlider
-                    label="Roughness"
-                    value={matRoughness}
-                    onChange={setMatRoughness}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    unit="%"
-                  />
-                  <MaterialSlider
-                    label="Clearcoat"
-                    value={matClearcoat}
-                    onChange={setMatClearcoat}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    unit="%"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <CyberLabel>Textures</CyberLabel>
-                <TextureUploadGrid
-                  textures={materialTextures}
-                  onAdd={selectMaterialTexture}
-                  onRemove={removeMaterialTexture}
-                  maxSlots={6}
-                />
-              </div>
-            </div>
-          </CyberSection>
-
-          </CyberTabPanel>
-
-          <CyberTabPanel id="environment" active={activePanelTab === "environment"}>
-
-          {/* ── Scene Lighting ── */}
-          <CyberSection
-            title="Lighting"
-            open={panelOpen.lighting}
-            onToggle={() => togglePanel("lighting")}
-            contentId="panel-lighting"
-            icon={Sun}
-            color="yellow"
-          >
-              <div className="studio-lighting-panel">
-                <LightDome
-                  azimuth={lightAzimuth}
-                  elevation={lightElevation}
-                  onAzimuthChange={handleLightAzimuthChange}
-                  onElevationChange={handleLightElevationChange}
-                />
-                <div className="studio-lighting-output">
-                  <MaterialSlider
-                    label="Intensity"
-                    value={lightIntensity}
-                    onChange={handleLightIntensityChange}
-                    min={0}
-                    max={3}
-                    step={0.05}
-                  />
-                  <button
-                    type="button"
-                    className="panel-cam-action-btn studio-lighting-reset"
-                    onClick={resetLighting}
-                    title="Reset lighting to defaults"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    Reset
-                  </button>
-                </div>
-              </div>
-            </CyberSection>
-
-          {/* ── Camera Controls in Panel ── */}
-          {cameraControlsInPanel && (
-            <CyberSection
-              title="Camera"
-              caption="Presets & rotation"
-              open={panelOpen.camera !== false}
-              onToggle={() => togglePanel("camera")}
-              contentId="panel-camera"
-              icon={Camera}
-              color="blue"
-            >
-              <div className="space-y-3">
-                <div>
-                  <CyberLabel>Presets</CyberLabel>
-                  <div className="panel-cam-presets">
-                    {[
-                      { key: "front", label: "Front" },
-                      { key: "back", label: "Back" },
-                      { key: "side", label: "Side" },
-                      { key: "angle", label: "3/4" },
-                      { key: "top", label: "Top" },
-                    ].map(({ key, label }) => (
-                      <button
-                        key={key}
-                        type="button"
-                        className="panel-cam-preset-btn"
-                        onClick={() => handleSetCameraPreset(key)}
-                        title={`${label} view`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    className="panel-cam-action-btn flex-1"
-                    onClick={handleCenterCamera}
-                    disabled={!viewerReady}
-                    title="Re-center camera"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    Center
-                  </button>
-                  <button
-                    type="button"
-                    className={`panel-cam-action-btn ${showWireframe ? "is-active" : ""}`}
-                    onClick={() => setShowWireframe((prev) => !prev)}
-                    title={showWireframe ? "Disable wireframe" : "Enable wireframe"}
-                  >
-                    <Box className="w-3 h-3" />
-                    Wire
-                  </button>
-                  <button
-                    type="button"
-                    className={`panel-cam-action-btn ${showCageWireframe ? "is-active" : ""}`}
-                    onClick={() => setShowCageWireframe((prev) => !prev)}
-                    title={showCageWireframe ? "Disable cage wireframe" : "Enable cage wireframe"}
-                  >
-                    <Boxes className="w-3 h-3" />
-                    Cage
-                  </button>
-                </div>
-                {textureMode !== "multi" && (
-                  <div>
-                    <CyberLabel>Rotate Model</CyberLabel>
-                    <div className="flex gap-1.5 mt-1">
-                      <button
-                        type="button"
-                        className="panel-cam-axis-btn flex-1"
-                        onClick={() => handleRotateModel("x")}
-                        title="Rotate 90° on X axis"
-                      >
-                        <span style={{ color: "#f87171", fontWeight: 700 }}>X</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="panel-cam-axis-btn flex-1"
-                        onClick={() => handleRotateModel("y")}
-                        title="Rotate 90° on Y axis"
-                      >
-                        <span style={{ color: "#4ade80", fontWeight: 700 }}>Y</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="panel-cam-axis-btn flex-1"
-                        onClick={() => handleRotateModel("z")}
-                        title="Rotate 90° on Z axis"
-                      >
-                        <span style={{ color: "#60a5fa", fontWeight: 700 }}>Z</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-          </CyberSection>
-          )}
-
-          </CyberTabPanel>
-
-      </CyberPanel>
-
-      <motion.section
-        className={`viewer-shell ${isDragging ? "is-dragging" : ""}`}
-        initial={{ opacity: 0, y: 6 }}
-        animate={isBooting ? { opacity: 0, y: 6 } : { opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
-        onDragEnter={handleDragOver}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-          {isDragging ? (
-            <div className="drop-overlay">
-            <div className="drop-card">Drop {modelDropLabel} to load</div>
-            </div>
-          ) : null}
-        {textureMode === "multi" ? (
-          <DualModelViewer
-            modelAPath={dualModelAPath}
-            modelBPath={dualModelBPath}
-            textureAPath={dualTextureAPath}
-            textureBPath={dualTextureBPath}
-            windowTextureAPath={dualTextureMode === "livery" ? dualWindowTextureAPath : ""}
-            windowTextureBPath={dualTextureMode === "livery" ? dualWindowTextureBPath : ""}
-            windowTextureATarget={resolvedDualWindowTextureATarget}
-            windowTextureBTarget={resolvedDualWindowTextureBTarget}
-            textureAReloadToken={dualTextureAReloadToken}
-            textureBReloadToken={dualTextureBReloadToken}
-            bodyColorA={dualBodyColorA}
-            bodyColorB={dualBodyColorB}
-            backgroundColor={backgroundColor}
-            backgroundImagePath={backgroundImagePath}
-            backgroundImageReloadToken={backgroundImageReloadToken}
-            backgroundImageBlur={backgroundImageBlur}
-            lightIntensity={lightIntensity}
-            lightAzimuth={lightAzimuth}
-            lightElevation={lightElevation}
-            glossiness={glossiness}
-            shadowsEnabled={showShadows}
-            showWireframe={showWireframe}
-            showCageWireframe={showCageWireframe}
-            wasdEnabled={true}
-            selectedSlot={dualSelectedSlot}
-            gizmoVisible={dualGizmoVisible}
-            showGrid={showGrid}
-            textureMode={dualTextureMode}
-            initialPosA={dualModelAPos}
-            initialPosB={dualModelBPos}
-            onSelectSlot={setDualSelectedSlot}
-            onPositionChange={(posA, posB) => {
-              setDualModelAPos(posA);
-              setDualModelBPos(posB);
-            }}
-            onReady={(api) => {
-              dualViewerApiRef.current = api;
-              if (!viewerReady) setViewerReady(true);
-            }}
-            onModelAError={setDualModelAError}
-            onModelBError={setDualModelBError}
-            onModelALoading={setDualModelALoading}
-            onModelBLoading={setDualModelBLoading}
-            onModelAInfo={handleDualModelAInfo}
-            onModelBInfo={handleDualModelBInfo}
-            onFormatWarning={handleFormatWarning}
-            isActive={isActive}
-          />
-        ) : (
-          <Viewer
-            modelPath={modelPath}
-            texturePath={texturePath}
-            windowTexturePath={windowTemplateEnabled ? windowTexturePath : ""}
-            bodyColor={bodyColor}
-            slotColors={vehicleSlotColors}
-            backgroundColor={backgroundColor}
-            backgroundImagePath={backgroundImagePath}
-            backgroundImageReloadToken={backgroundImageReloadToken}
-            backgroundImageBlur={backgroundImageBlur}
-            showGrid={showGrid}
-            textureReloadToken={textureReloadToken}
-            windowTextureReloadToken={windowTextureReloadToken}
-            textureTarget={resolvedTextureTarget}
-            windowTextureTarget={resolvedWindowTextureTarget}
-            textureMode={textureMode}
-            showWireframe={showWireframe}
-            showCageWireframe={showCageWireframe}
-            wasdEnabled={true}
-            liveryExteriorOnly={(textureMode === "livery" || textureMode === "everything") && liveryExteriorOnly}
-            lightIntensity={lightIntensity}
-            lightAzimuth={lightAzimuth}
-            lightElevation={lightElevation}
-            glossiness={glossiness}
-            shadowsEnabled={showShadows}
-            materialType={materialType}
-            materialLightIntensity={matLightIntensity}
-            materialGlossiness={matGlossiness}
-            materialRoughness={matRoughness}
-            materialClearcoat={matClearcoat}
-            materialTexturePath={activeMaterialTexturePath}
-            nativeMaterialsEnabled={nativeMaterialsActive}
-            nativeMaterialsReloadToken={nativeMaterialsReloadToken}
-            onModelInfo={handleModelInfo}
-            onModelError={handleModelError}
-            onModelLoading={handleModelLoading}
-            onReady={(api) => {
-              viewerApiRef.current = api;
-              setViewerReady(true);
-            }}
-            onTextureReload={onTextureReload}
-            onTextureError={handleTextureError}
-            onWindowTextureError={handleWindowTextureError}
-            onFormatWarning={handleFormatWarning}
-            onNativeMaterialsStatus={handleNativeMaterialsStatus}
-            isActive={isActive}
-          />
-        )}
-
-        <AnimatePresence>
-          {(modelLoading || (textureMode === "multi" && (dualModelALoading || dualModelBLoading))) ? <AppLoader variant="background" /> : null}
-        </AnimatePresence>
-
-        {/* Controls now integrated into viewer-toolbar-bar above */}
-
-        {showHints ? (
-          <div className="viewer-hints">
-            <span><kbd>RMB</kbd> + mouse: Free look</span>
-            <span><kbd>WASD</kbd>: Fly · <kbd>Q/E</kbd>: Elevate</span>
-            <span><kbd>Alt</kbd>: Precision · <kbd>Shift</kbd>: Boost</span>
-            <span><kbd>LMB</kbd>: Orbit · Scroll: Zoom</span>
-          </div>
-        ) : null}
-
-        {/* Action toasts */}
-        <div className="cs-toast-stack">
+    <MultiWorkspace
+      s={multiStudio}
+      viewer={(
+        <>
+          {multiViewer}
           <AnimatePresence>
-            {toasts.map(t => (
-              <motion.div
-                key={t.id}
-                className="cs-toast-item"
-                initial={{ opacity: 0, y: 16, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -8, scale: 0.97 }}
-                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <Check className="h-3 w-3 text-[var(--es-success)]" />
-                <span>{t.message}</span>
-              </motion.div>
-            ))}
+            {multiLoading ? <AppLoader variant="background" /> : null}
           </AnimatePresence>
-        </div>
-      </motion.section>
-
-      <AnimatePresence>{isBooting ? <AppLoader /> : null}</AnimatePresence>
-      {/* Onboarding handled by Shell */}
-
-      {/* Format Warning Modal */}
-      <AnimatePresence>
-        {formatWarning ? (
-          <motion.div
-            className="warning-modal-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={() => setFormatWarning(null)}
-          >
-            <motion.div
-              className="warning-modal"
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="warning-modal-header">
-                <AlertTriangle className="warning-modal-icon" />
-                <div className="warning-modal-title-group">
-                  <div className="warning-modal-title">
-                    {formatWarning.type === "non-hi-model"
-                      ? "Standard Detail Model Detected"
-                      : formatWarning.type === "unsupported-format"
-                        ? "Unsupported Image Format"
-                        : `${formatWarning.bitDepth}-Bit PSD Not Supported`}
-                  </div>
-                  <div className="warning-modal-subtitle">
-                    {formatWarning.type === "non-hi-model"
-                      ? "Recommendation: Use _hi.yft"
-                      : formatWarning.type === "unsupported-format"
-                        ? `Cannot load .${formatWarning.ext} files`
-                        : "High bit depth format detected"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="warning-modal-body">
-                {formatWarning.type === "unsupported-format" ? (
-                  <div className="warning-modal-content">
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-text">
-                        The file <strong>{formatWarning.path}</strong> uses the <strong>.{formatWarning.ext}</strong> format, which is not supported and cannot be loaded.
-                      </div>
-                    </div>
-
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-section-title">Supported Formats</div>
-                      <div className="warning-modal-steps">
-                        <div className="warning-modal-step">
-                          <span className="warning-modal-step-num">1</span>
-                          <span className="warning-modal-step-text"><strong>PNG</strong> — Recommended for lossless textures</span>
-                        </div>
-                        <div className="warning-modal-step">
-                          <span className="warning-modal-step-num">2</span>
-                          <span className="warning-modal-step-text"><strong>JPG / JPEG</strong> — Smaller file size, lossy compression</span>
-                        </div>
-                        <div className="warning-modal-step">
-                          <span className="warning-modal-step-num">3</span>
-                          <span className="warning-modal-step-text"><strong>PSD</strong> — Photoshop files (8-bit only)</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-section-title">How to Fix</div>
-                      <div className="warning-modal-text">
-                        Open your <strong>.{formatWarning.ext}</strong> file in an image editor and export it as <strong>PNG</strong> or <strong>JPEG</strong> before loading it here.
-                      </div>
-                    </div>
-                  </div>
-                ) : formatWarning.type === "non-hi-model" ? (
-                  <div className="warning-modal-content">
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-text">
-                        You have loaded <strong>{formatWarning.path}</strong>. It is strongly recommended to use the high-detail version (ending in <strong>_hi.yft</strong>) whenever available.
-                      </div>
-                    </div>
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-section-title">Missing Features</div>
-                      <div className="warning-modal-text">
-                        Standard models often lack critical features such as <strong>window templates</strong>, high-quality material slots, and detailed geometry. Depending on the developer, this may affect what you see in the viewer.
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="warning-modal-content">
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-text">
-                        This PSD file uses <strong>{formatWarning.bitDepth}-bit</strong> color depth (high dynamic range), 
-                        which cannot be loaded directly.
-                      </div>
-                    </div>
-
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-section-title">How to Convert</div>
-                      <div className="warning-modal-steps">
-                        <div className="warning-modal-step">
-                          <span className="warning-modal-step-num">1</span>
-                          <span className="warning-modal-step-text">Open the file in <strong>Photoshop</strong></span>
-                        </div>
-                        <div className="warning-modal-step">
-                          <span className="warning-modal-step-num">2</span>
-                          <span className="warning-modal-step-text">
-                            Go to <span className="warning-modal-code">Image → Mode → 8 Bits/Channel</span>
-                          </span>
-                        </div>
-                        <div className="warning-modal-step">
-                          <span className="warning-modal-step-num">3</span>
-                          <span className="warning-modal-step-text">Save the file and reload it here</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-section-title">Trade-offs</div>
-                      <div className="warning-modal-note">
-                        8-bit has 256 color levels per channel vs {formatWarning.bitDepth === 16 ? "65,536" : "billions"} in {formatWarning.bitDepth}-bit. 
-                        For game textures, 8-bit is typically sufficient and more widely compatible.
-                      </div>
-                    </div>
-
-                    <div className="warning-modal-section">
-                      <div className="warning-modal-section-title">Alternative</div>
-                      <div className="warning-modal-text">
-                        Export as <strong>PNG</strong> or <strong>JPEG</strong> which automatically converts to 8-bit.
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="warning-modal-footer">
-                <button
-                  type="button"
-                  className="warning-modal-btn warning-modal-btn-primary"
-                  onClick={() => {
-                    if (formatWarning.type !== "non-hi-model" && formatWarning.type !== "unsupported-format") {
-                      if (formatWarning.slot === "A") {
-                        if (formatWarning.kind === "window") setDualWindowTextureAPath("");
-                        else setDualTextureAPath("");
-                      } else if (formatWarning.slot === "B") {
-                        if (formatWarning.kind === "window") setDualWindowTextureBPath("");
-                        else setDualTextureBPath("");
-                      } else {
-                        if (formatWarning.kind === "window") setWindowTexturePath("");
-                        else setTexturePath("");
-                      }
-                      setTextureError("");
-                      setWindowTextureError("");
-                    }
-                    setFormatWarning(null);
-                  }}
-                >
-                  GOT IT
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
-      {/* Session prompt removed — workspace state is now auto-restored via initialState prop */}
-
-      {/* Generate Preview — zoom prompt */}
-      <AnimatePresence>
-        {previewPromptOpen && (
-          <motion.div
-            className="preview-zoom-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={() => setPreviewPromptOpen(false)}
-          >
-            <motion.div
-              className="preview-zoom-card"
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 8 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="preview-zoom-header">
-                <Camera className="preview-zoom-icon" />
-                <div>
-                  <div className="preview-zoom-title">Preview Zoom</div>
-                  <div className="preview-zoom-sub">Choose how close the export screenshots should be.</div>
-                </div>
-              </div>
-
-              <div className="preview-zoom-preview">
-                {previewZoomPreview && !previewZoomLoading ? (
-                  <img src={previewZoomPreview} alt="Preview zoom" />
-                ) : (
-                  <div className="preview-zoom-placeholder">
-                    <div className="vp-spinner" />
-                    <span>{previewZoomLoading ? "Updating preview..." : "Preview pending"}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="preview-zoom-controls">
-                <div className="preview-zoom-row">
-                  <span>Zoom</span>
-                  <span>{previewZoomDraft.toFixed(2)}x</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.6"
-                  max="1.8"
-                  step="0.02"
-                  value={previewZoomDraft}
-                  onChange={(e) => setPreviewZoomDraft(parseFloat(e.target.value))}
-                  className="preview-zoom-slider"
-                />
-              </div>
-
-              <div className="preview-angles-section">
-                <div className="preview-angles-header">
-                  <div className="preview-angles-label">
-                    <Aperture className="w-3.5 h-3.5" />
-                    <span>Capture Angles</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="preview-angles-toggle-all"
-                    onClick={toggleAllPreviewCapturePresets}
-                  >
-                    {allPreviewPresetsSelected ? "Clear" : "All"}
-                  </button>
-                </div>
-                <div className="preview-angles-grid">
-                  {PREVIEW_CAPTURE_PRESETS.map((preset) => {
-                    const isActive = previewCapturePresets.includes(preset.key);
-                    return (
-                      <button
-                        key={preset.key}
-                        type="button"
-                        className={`preview-angle-btn${isActive ? " is-active" : ""}`}
-                        onClick={() => togglePreviewCapturePreset(preset.key)}
-                        aria-pressed={isActive}
-                      >
-                        {preset.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="preview-angles-count">
-                  {selectedPreviewPresetCount} / {PREVIEW_CAPTURE_PRESET_KEYS.length} selected
-                </div>
-                {selectedPreviewPresetCount === 0 ? (
-                  <div className="preview-angles-help">Select at least one angle to continue.</div>
-                ) : null}
-              </div>
-
-              <div className="preview-zoom-actions">
-                <button
-                  type="button"
-                  className="preview-zoom-btn preview-zoom-btn--cancel"
-                  onClick={() => setPreviewPromptOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="preview-zoom-btn preview-zoom-btn--confirm"
-                  disabled={selectedPreviewPresetCount === 0}
-                  onClick={() => {
-                    setPreviewZoom(previewZoomDraft);
-                    setPreviewPromptOpen(false);
-                    handleGeneratePreview(previewZoomDraft, previewCapturePresets);
-                  }}
-                >
-                  {selectedPreviewPresetCount > 0
-                    ? `Capture ${selectedPreviewPresetCount} Angle${selectedPreviewPresetCount === 1 ? "" : "s"}`
-                    : "Select Angles"}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Generate Preview — progress overlay */}
-      <AnimatePresence>
-        {generatingPreview && (
-          <motion.div
-            className="gen-preview-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <motion.div
-              className="gen-preview-card"
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <Camera className="gen-preview-icon" />
-              <div className="gen-preview-title">Generating Preview</div>
-              <div className="gen-preview-sub">{previewProgress.preset || "Starting..."}</div>
-              <div className="gen-preview-bar-track">
-                <motion.div
-                  className="gen-preview-bar-fill"
-                  animate={{ width: `${previewProgress.total > 0 ? (previewProgress.current / previewProgress.total) * 100 : 0}%` }}
-                  transition={{ duration: 0.3 }}
-                />
-              </div>
-              <div className="gen-preview-count">{previewProgress.current} / {previewProgress.total}</div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Generate Preview — completion modal */}
-      <AnimatePresence>
-        {previewComplete && (
-          <motion.div
-            className="gen-preview-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={() => setPreviewComplete(false)}
-          >
-            <motion.div
-              className="gen-preview-card"
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <motion.div
-                className="gen-preview-done-check"
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: "spring", stiffness: 400, damping: 20, delay: 0.1 }}
-              >
-                <Check className="w-6 h-6" />
-              </motion.div>
-              <div className="gen-preview-title">Preview Complete</div>
-              <div className="gen-preview-sub">
-                {previewExportCount} screenshot{previewExportCount === 1 ? "" : "s"} exported successfully
-              </div>
-              {previewFolderOpenError ? (
-                <div className="gen-preview-error" role="alert">
-                  {previewFolderOpenError}
-                </div>
-              ) : null}
-              <div className="gen-preview-actions">
-                <button
-                  type="button"
-                  className="gen-preview-btn gen-preview-btn--open"
-                  disabled={previewFolderOpening}
-                  aria-busy={previewFolderOpening}
-                  onClick={handleOpenPreviewFolder}
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                  {previewFolderOpening ? "Opening..." : "Open Folder"}
-                </button>
-                <button
-                  type="button"
-                  className="gen-preview-btn gen-preview-btn--close"
-                  onClick={() => setPreviewComplete(false)}
-                >
-                  Close
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-    </motion.div>
+        </>
+      )}
+      overlays={(
+        <>
+          <AnimatePresence>{isBooting ? <AppLoader variant="pane" /> : null}</AnimatePresence>
+          {formatWarningModal}
+        </>
+      )}
+    />
   );
 }
 

@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatHotkey, isValidHotkey, parseKeyEvent } from "../lib/hotkeys";
+import { formatHotkey, hotkeyProblem, parseKeyEvent } from "../lib/hotkeys";
 
-export default function HotkeyInput({ value, onChange, onClear }) {
+const PROBLEM_TEXT = {
+  needsModifier: "Add a modifier",
+  needsCtrlOrAlt: "Add Ctrl or Alt",
+  reserved: "Pick another key",
+};
+
+// `pending` is a captured key the parent hasn't applied yet (a conflict it is
+// asking about). The field shows it until the parent applies or drops it, then
+// shows `value` again; a capture never keeps its own copy of the key.
+export default function HotkeyInput({ value, pending = null, onChange, onClear }) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [tempValue, setTempValue] = useState(null);
   const inputRef = useRef(null);
@@ -25,14 +34,15 @@ export default function HotkeyInput({ value, onChange, onClear }) {
       }
 
       const parsed = parseKeyEvent(event);
+      const problem = hotkeyProblem(parsed);
 
-      if (isValidHotkey(parsed)) {
-        setTempValue(parsed);
+      if (!problem) {
+        setTempValue(null);
         onChange?.(parsed);
         setIsCapturing(false);
         inputRef.current?.blur();
       } else {
-        setTempValue({ ...parsed, invalid: true });
+        setTempValue({ ...parsed, invalid: PROBLEM_TEXT[problem] || PROBLEM_TEXT.reserved });
       }
     },
     [isCapturing, onChange]
@@ -69,11 +79,11 @@ export default function HotkeyInput({ value, onChange, onClear }) {
 
   const displayValue = tempValue
     ? tempValue.invalid
-      ? "Add modifier key"
+      ? tempValue.invalid
       : formatHotkey(tempValue)
     : isCapturing
       ? "Press keys..."
-      : formatHotkey(value);
+      : formatHotkey(pending?.key ? pending : value);
 
   return (
     <div className="hotkey-input-wrapper">

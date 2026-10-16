@@ -2,6 +2,20 @@ export type BugPriority = "normal" | "high";
 export type ReportType = "bug" | "feature";
 export type ConsoleLogLevel = "log" | "info" | "warn" | "error" | "debug";
 
+export type BugArea =
+  | "livery"
+  | "all-textures"
+  | "eup"
+  | "eup-studio"
+  | "prop-studio"
+  | "multi"
+  | "sirens"
+  | "variant-builder"
+  | "template-generator"
+  | "home-settings"
+  | "other";
+export type BugFrequency = "always" | "sometimes" | "once";
+
 type BugIssue = {
   reportType: "bug";
   summary: string;
@@ -9,6 +23,8 @@ type BugIssue = {
   expectedBehavior: string;
   actualBehavior: string;
   priority: BugPriority;
+  area?: BugArea;
+  frequency?: BugFrequency;
 };
 
 type FeatureIssue = {
@@ -18,6 +34,7 @@ type FeatureIssue = {
   featureOutcome: string;
   featureValue: string;
   priority: BugPriority;
+  area?: BugArea;
 };
 
 export type BugReportPayload = {
@@ -65,6 +82,39 @@ export const BUG_REPORT_DETAILS_MAX = 4000;
 export const BUG_REPORT_MAX_LOG_ENTRIES = 200;
 
 const PRIORITIES = new Set<BugPriority>(["normal", "high"]);
+// Optional triage context added by app builds after 4.1; older payloads omit it.
+// Keep in sync with BUG_REPORT_AREAS / BUG_REPORT_FREQUENCIES in the app's bug-report-core.js.
+const AREA_LABELS = new Map<BugArea, string>([
+  ["livery", "Livery"],
+  ["all-textures", "All Textures"],
+  ["eup", "EUP"],
+  ["eup-studio", "EUP Studio"],
+  ["prop-studio", "Prop Studio"],
+  ["sirens", "Sirens"],
+  ["multi", "Multi"],
+  ["variant-builder", "Variant Builder"],
+  ["template-generator", "Template Generator"],
+  ["home-settings", "Home / Settings"],
+  ["other", "Other"],
+]);
+const FREQUENCY_LABELS = new Map<BugFrequency, string>([
+  ["always", "Always"],
+  ["sometimes", "Sometimes"],
+  ["once", "Once"],
+]);
+
+function pickArea(value: unknown): { area?: BugArea } {
+  return typeof value === "string" && AREA_LABELS.has(value as BugArea)
+    ? { area: value as BugArea }
+    : {};
+}
+
+function pickFrequency(value: unknown): { frequency?: BugFrequency } {
+  return typeof value === "string" &&
+    FREQUENCY_LABELS.has(value as BugFrequency)
+    ? { frequency: value as BugFrequency }
+    : {};
+}
 const LOG_LEVELS = new Set<ConsoleLogLevel>([
   "log",
   "info",
@@ -261,6 +311,7 @@ export function validateBugReportPayload(payload: unknown): BugReportPayload {
             BUG_REPORT_DETAILS_MAX,
           ),
           priority,
+          ...pickArea(issue.area),
         }
       : {
           reportType,
@@ -275,6 +326,8 @@ export function validateBugReportPayload(payload: unknown): BugReportPayload {
             BUG_REPORT_DETAILS_MAX,
           ),
           priority,
+          ...pickArea(issue.area),
+          ...pickFrequency(issue.frequency),
         };
 
   if (normalizedIssue.reportType === "feature") {
@@ -476,14 +529,23 @@ ${issue.actualBehavior}`;
         ? "Important"
         : "High"
       : isFeature
-        ? "Standard"
+        ? "Nice to have"
         : "Normal";
+  const areaLabel = issue.area ? AREA_LABELS.get(issue.area) : undefined;
+  const frequencyLabel =
+    issue.reportType === "bug" && issue.frequency
+      ? FREQUENCY_LABELS.get(issue.frequency)
+      : undefined;
+  const contextSections = [
+    areaLabel ? `## Area\n${areaLabel}\n\n` : "",
+    frequencyLabel ? `## Frequency\n${frequencyLabel}\n\n` : "",
+  ].join("");
   const buildBody = (logsText: string, metadataText: string) => `## Summary
 ${payload.issue.summary}
 
 ${details}
 
-## ${priorityLabel}
+${contextSections}## ${priorityLabel}
 ${priorityValue}
 
 ## Environment

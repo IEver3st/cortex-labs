@@ -55,4 +55,18 @@ export default defineConfig(async () => ({
   worker: {
     format: "es",
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]node_modules[\\/]three[\\/]/.test(id)) return "three";
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler|motion|framer-motion|motion-dom|motion-utils)[\\/]/.test(id)) {
+            return "vendor";
+          }
+          return undefined;
+        },
+      },
+    },
+  },
 }));

@@ -13,7 +13,6 @@ Work directly with vehicle and EUP models, watch texture edits update in real ti
 [![Stars](https://img.shields.io/github/stars/IEver3st/cortex-labs?style=flat&label=stars)](https://github.com/IEver3st/cortex-labs/stargazers)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows)](https://github.com/IEver3st/cortex-labs/releases/latest)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
-[![License](https://img.shields.io/github/license/IEver3st/cortex-labs)](./LICENSE)
 
 [Official product page](https://frommeans.com/cortex/cortex-studio) · [Download Cortex Studio](https://github.com/IEver3st/cortex-labs/releases/latest) · [Read the guide](./docs/site/content/docs/index.mdx) · [Report a problem](https://github.com/IEver3st/cortex-labs/issues/new) · [View changelog](./CHANGELOG.md) · [Support on Ko-fi](https://ko-fi.com/C1C41TSVBX)
 
@@ -50,7 +49,10 @@ Livery work is iterative, but repeated in-game testing turns small visual decisi
 | **Livery** | Target vehicle paint and livery materials for the fastest everyday preview loop. |
 | **All Textures** | Apply a texture across the model or inspect experimental native material resolution. |
 | **EUP** | Preview clothing and Emergency Uniform Pack assets from `.ydd` models. |
-| **Multi-Model** | Compare two models side by side with independent texture controls. |
+| **Multi-Model** | Line up to six vehicles in one scene, each with its own model, livery, glass design and paint. |
+| **Sirens** | Build and edit a vehicle's carcols.meta siren setting, or its ELS VCF, while it runs on the full textured model, in the workbench or the showroom. |
+| **Prop Studio** | Preview `.ydr`, `.ydd` and `.yft` props with their textures, emissives and authored lights, in a workbench or a showroom scaled to the prop, and export transparent PNGs. |
+| **Photo Mode** | Stage game vehicles, freemode peds and game props (or your own models) on one set, open doors, set paint and poses from the game's animations, and save framed PNGs up to 4K. |
 | **Template Generator** | Turn supported `.yft` and `.ydd` geometry into layered PSD or PNG templates. |
 | **PSD Variant Builder** | Toggle PSD layers, manage visual variants, and batch-export finished PNGs. |
 
@@ -66,12 +68,12 @@ Viewer controls include:
 - quick camera angles and automatic framing;
 - adjustable background, gloss, and light intensity;
 - an interactive light dome for azimuth and elevation;
-- per-slot vehicle colors for primary, secondary, accent, and glass materials;
-- model shadows, cage wireframes, and persistent camera state.
+- GTA vehicle paint: primary, secondary, pearlescent, wheel, interior trim and dashboard colours from the game's palette or custom RGB, applied through each shader's paint layer;
+- model shadows, cage wireframes, a solid wireframe with live mesh stats (triangles, vertices, meshes, shaders, textures, size), and persistent camera state.
 
 ### Template generation
 
-Build paint-ready templates directly from vehicle and EUP geometry. The dedicated workbench provides Model, Template, and Split views, format-aware UV targeting, marker selection, a cage overlay, and layered export.
+Build paint-ready templates directly from vehicle and EUP geometry. The dedicated workbench provides Model, Template, and Split views, format-aware UV targeting, hand-drawn markers that land exactly where you box them, a cage overlay, and layered export. Vehicle templates can add a solid panel overlay in any colour, with at least 5 px of bleed past every edge, saved as its own layer and as a transparent PNG. Templates carry the Cortex Studio logo on its own layer, placed in clear space away from the UVs.
 
 Multi-drawable `.ydd` dictionaries can export one template per drawable so unrelated UV layouts do not overlap.
 
@@ -87,9 +89,15 @@ Experimental Native Materials resolves available embedded, sibling, resource, an
 
 This is a best-effort preview of GTA materials, not full shader parity. Manual texture selections always remain the final override on targeted meshes.
 
+### Sirens
+
+The Sirens workspace edits a YFT vehicle's carcols.meta siren setting while the pattern runs on the whole model, loaded with its own textures as in All: a 32-step grid per siren with paint-to-edit cells, every carcols siren field (flash and rotation channels, corona, colour, intensity, scale, light spill and head/tail light sequencers), presets, traffic advisor arrows and chases, a lens palette, eight-way facings, undo, and numbered markers on the model. **Install to resource** writes the setting into the resource's carcols.meta and links it in carvariations.meta, keeping a .bak of each file; **Save to file…** writes into any carcols.meta you choose and leaves the rest of that file untouched. **Import…** reads a setting from any carcols.meta. The Lights tab lists the vehicle's equipment (extras) with a switch each, and resource tools build a ULC `ulc.lua` config and rename the vehicle across its meta files, scripts and stream files.
+
+Vehicles built for ELS (LSPDFR's ELS V8, ELS-FiveM, ELS-Plus or MISS-ELS) switch Sirens to their VCF: Cortex Studio finds it beside the model or in ELS folders you add, flashes the model's extras by light stage, edits every VCF section, and saves only what changed after a .bak. ELS V8 pattern timings are imported from your own ELS-FiveM copy; none are bundled.
+
 ### Preview capture
 
-Export clean presentation images from front, back, side, three-quarter, and top camera angles. Captures support zoom control and configurable text watermarks with font, color, opacity, placement, tiling, and rotation options.
+Export clean presentation images from front, back, side, three-quarter, and top camera angles. Captures support zoom control and watermarks made from text, an imported logo, or both, with design presets, plain, shadow, outline, or plate finishes, and anchored or tiled placement.
 
 ### Workspace continuity
 
@@ -102,7 +110,8 @@ Cortex Studio remembers recent projects, pinned workspaces, model and texture pa
 | Format | Use |
 | --- | --- |
 | `.yft` | GTA V and FiveM vehicle models |
-| `.ydd` | GTA V clothing and EUP drawable dictionaries |
+| `.ydd` | GTA V clothing and EUP drawable dictionaries; props in Prop Studio |
+| `.ydr` | GTA V and FiveM props and other single drawables (Prop Studio) |
 | `.dff` | Legacy model support |
 | `.clmesh` | Cortex Studio's internal binary mesh cache |
 
@@ -150,15 +159,23 @@ The desktop app includes the native integrations required for dialogs, file watc
 - [Bun](https://bun.sh/)
 - [Rust](https://www.rust-lang.org/tools/install) with the stable toolchain
 - [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for Windows
-- .NET 10 SDK only when building the CodeWalker bridge from source
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for the CodeWalker bridge
 
 ### Clone and install
 
+The source is published here under the [Cortex Studio Source-Available License](./LICENSE). `main` is updated with each release.
+
+The bridge builds against [CodeWalker](https://github.com/dexyfex/CodeWalker), which must sit in `external/CodeWalker` next to this repository. CI pins the commit it builds against in [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+
 ```powershell
 git clone https://github.com/IEver3st/cortex-labs.git
+git clone https://github.com/dexyfex/CodeWalker.git external/CodeWalker
 cd cortex-labs
 bun install --frozen-lockfile
+node tools/publish-bridge.mjs
 ```
+
+`publish-bridge` places the bridge in `src-tauri/bin/codewalker-bridge`, which the desktop build bundles. Run it again after changing the bridge.
 
 ### Run the desktop app
 
@@ -253,6 +270,8 @@ A strong contribution should:
 
 Open an issue before starting a large workflow or format change so the compatibility and integration surface can be discussed.
 
+Accepted pull requests are carried into the next release's source snapshot. Submitting one licenses it to the project under section 3 of the [license](./LICENSE). CI builds every pull request without access to release secrets.
+
 ## Reporting problems
 
 When opening a bug report, include:
@@ -268,7 +287,14 @@ Do not publish credentials, paid assets, or proprietary source files in an issue
 
 ## License
 
-Cortex Studio is source-available under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Copying, modifying, distributing, or using Cortex Studio for commercial purposes requires a separate written license from the licensor.
+Cortex Studio is source-available under the [Cortex Studio Source-Available License 1.0](./LICENSE). Copyright (c) 2026 Ever3st.
+
+- **You can** use it for anything, including commercial livery work. What you make with it is yours. You can also read the code, build it, modify it for your own use or your team's, and send changes back as pull requests.
+- **You can't** redistribute it or a modified version, sell or bundle it, or rebrand it as your own. To share Cortex Studio, link to this repository or its [releases](https://github.com/IEver3st/cortex-labs/releases).
+
+Contributions are licensed to the project under section 3 of the license. Versions up to 4.1.0 remain under the licenses they were published with.
+
+Report security problems privately as described in [SECURITY.md](./SECURITY.md).
 
 ## Disclaimer
 

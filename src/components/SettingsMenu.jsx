@@ -1,18 +1,26 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Settings, Car, FlaskConical, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Check } from "lucide-react";
+import { ArrowLeft, Settings, Car, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Check, Bug, Lightbulb, Sparkles, Aperture } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { exists as fsExists } from "@tauri-apps/plugin-fs";
 import HotkeyInput from "./HotkeyInput";
+import WatermarkSettings from "./WatermarkSettings";
+import StudioDefaultsSettings from "./StudioDefaultsSettings";
+import { ColorField } from "./SettingsColorField";
 import { Toggle } from "./ui/toggle";
+import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
+import "./SettingsMenu.css";
 import {
   DEFAULT_HOTKEYS,
   HOTKEY_CATEGORIES,
   HOTKEY_LABELS,
+  findDuplicateHotkeys,
+  findHotkeyConflict,
+  formatHotkey,
   mergeHotkeys,
 } from "../lib/hotkeys";
-import { emitPrefsUpdated, loadPrefs, savePrefs } from "../lib/prefs";
+import { emitPrefsUpdated, loadPrefs, sanitizeStoredDefaults, savePrefs } from "../lib/prefs";
 import {
   THEME_PRESETS,
   applyAppearance,
@@ -22,65 +30,64 @@ import {
   normalizeThemePreset,
   resolveColorScheme,
 } from "../lib/theme";
-import { hasSeenWhatsNew, getAppVersion } from "../lib/changelog";
+import { hasSeenWhatsNew, hasNotesForAppVersion, getAppVersion } from "../lib/changelog";
 import { useUpdateChecker } from "../lib/updater";
+import { DEFAULT_WATERMARK, normalizeWatermarkConfig } from "../lib/watermark";
 import {
-  DEFAULT_TEMPLATE_MARKER_PICK_MODIFIER,
-  DEFAULT_TEMPLATE_MARKER_REGENERATE_BEHAVIOR,
-  normalizeTemplateMarkerPickModifier,
-  normalizeTemplateMarkerRegenerateBehavior,
-} from "../lib/template-marker-utils";
-import {
-  DEFAULT_WATERMARK,
-  WATERMARK_FONTS,
-  WATERMARK_POSITIONS,
-  normalizeWatermarkConfig,
-  renderWatermarkPreview,
-} from "../lib/watermark";
+  DEFAULT_LIGHT,
+  DEFAULT_PLATE,
+  normalizeLightDefaults,
+  normalizePlateDefault,
+  normalizeShowroomDefaults,
+  normalizeSteeringDefault,
+} from "../lib/studio-defaults";
 
 /* ─── Built-in defaults (canonical source) ─── */
 const BUILT_IN_DEFAULTS = {
   colorScheme: "dark",
-  themePreset: "roan",
+  themePreset: "cortex",
   darkMode: true,
   liveryExteriorOnly: false,
   windowTemplateEnabled: false,
   windowTextureTarget: "auto",
-  cameraWASD: false,
   bodyColor: "#e7ebf0",
   autoTemplateColor: "#c9d8ee",
   autoTemplateBackgroundColor: "#000000",
   backgroundColor: "#141414",
-  experimentalSettings: false,
-  showHints: true,
-  hideRotText: false,
   showGrid: false,
   showShadows: false,
+  ambientOcclusion: false,
   showRecents: true,
-  lightIntensity: 1.0,
-  glossiness: 0.5,
+  lightIntensity: DEFAULT_LIGHT.intensity,
+  lightAzimuth: DEFAULT_LIGHT.azimuth,
+  lightElevation: DEFAULT_LIGHT.elevation,
+  showroom: normalizeShowroomDefaults(null),
+  licensePlate: { ...DEFAULT_PLATE },
+  steeringAngle: 0,
   windowControlsStyle: "windows",
-  toolbarInTitlebar: false,
   uiScale: 1.0,
   previewFolder: "",
   variantExportFolder: "",
   autoTemplateExportFormat: "psd",
   cameraControlsInPanel: false,
+  eupAutoTextures: true,
+  warnStandardModel: true,
   legacyLayersLayout: false,
-  templateMarkerPickModifier: DEFAULT_TEMPLATE_MARKER_PICK_MODIFIER,
-  templateMarkerRegenerateBehavior: DEFAULT_TEMPLATE_MARKER_REGENERATE_BEHAVIOR,
   watermark: { ...DEFAULT_WATERMARK },
+  homeSort: "recent",
+  confirmProjectDelete: true,
+  reduceMotion: "system",
+  showKeycaps: true,
+  showWhatsNewOnUpdate: true,
+  autoCheckUpdates: true,
+  feedbackIncludeLogs: false,
 };
 
-function sanitizeStoredDefaults(stored) {
-  if (!stored || typeof stored !== "object") return {};
-  const {
-    showAmbientOcclusion: _removedAmbientOcclusion,
-    autoModelTexturesEnabled: _removedAutoModelTexturesEnabled,
-    ...rest
-  } = stored;
-  return rest;
-}
+const HOME_SORT_OPTIONS = [
+  ["recent", "Last opened"],
+  ["name", "Name"],
+  ["type", "Type"],
+];
 
 const MIN_UI_SCALE = 0.5;
 const MAX_UI_SCALE = 1.4;
@@ -96,6 +103,19 @@ function normalizeAutoTemplateExportFormat(value) {
   return BUILT_IN_DEFAULTS.autoTemplateExportFormat;
 }
 
+// Studio defaults (Settings > Studio) clamped to values the workspaces accept.
+function normalizeStudioDefaults(source) {
+  const light = normalizeLightDefaults(source);
+  return {
+    lightIntensity: light.intensity,
+    lightAzimuth: light.azimuth,
+    lightElevation: light.elevation,
+    showroom: normalizeShowroomDefaults(source.showroom),
+    licensePlate: normalizePlateDefault(source.licensePlate),
+    steeringAngle: normalizeSteeringDefault(source.steeringAngle),
+  };
+}
+
 function getStoredDefaults() {
   const prefs = loadPrefs();
   const stored = sanitizeStoredDefaults(prefs?.defaults);
@@ -108,56 +128,28 @@ function getStoredDefaults() {
     darkMode: resolveColorScheme(colorScheme) === "dark",
     uiScale: clampUiScale(merged.uiScale),
     autoTemplateExportFormat: normalizeAutoTemplateExportFormat(merged.autoTemplateExportFormat),
-    templateMarkerPickModifier: normalizeTemplateMarkerPickModifier(
-      merged.templateMarkerPickModifier,
-    ),
-    templateMarkerRegenerateBehavior: normalizeTemplateMarkerRegenerateBehavior(
-      merged.templateMarkerRegenerateBehavior,
-    ),
+    watermark: normalizeWatermarkConfig(merged.watermark),
+    ...normalizeStudioDefaults(merged),
+    homeSort: HOME_SORT_OPTIONS.some(([id]) => id === merged.homeSort) ? merged.homeSort : "recent",
+    reduceMotion: merged.reduceMotion === "always" ? "always" : "system",
   };
 }
 
+// An imported watermark logo can be megabytes of base64; compare a short
+// fingerprint instead of re-serializing it on every slider move.
+function signatureReplacer(key, value) {
+  if (key === "dataUrl" && typeof value === "string") return `${value.length}:${value.slice(-48)}`;
+  return value;
+}
+
 function settingsSignature(defaults, hotkeys) {
-  return JSON.stringify({ defaults, hotkeys });
+  return JSON.stringify({ defaults, hotkeys }, signatureReplacer);
 }
 
 function getStoredHotkeys() {
   const prefs = loadPrefs();
   const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
   return mergeHotkeys(stored, DEFAULT_HOTKEYS);
-}
-
-function ColorField({ label, value, onChange, onReset }) {
-  return (
-    <div className="flex flex-col gap-2 min-w-0">
-      <div className="text-[9px] uppercase tracking-[0.12em] font-mono" style={{ color: 'var(--mg-muted)' }}>{label}</div>
-      <div className="flex items-center gap-2 min-w-0">
-        <div className="relative shrink-0">
-          <div className="w-7 h-7 border" style={{ background: value, borderColor: 'var(--mg-border)', borderRadius: 'var(--mg-radius)' }} />
-          <input
-            type="color"
-            value={value}
-            onChange={(event) => onChange(event.currentTarget.value)}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            aria-label={`${label} picker`}
-          />
-        </div>
-        <input
-          className="settings-input flex-1"
-          value={value}
-          onChange={(event) => onChange(event.currentTarget.value)}
-          aria-label={`${label} hex color`}
-        />
-        <button
-          type="button"
-          className="settings-mini shrink-0"
-          onClick={onReset}
-        >
-          Reset
-        </button>
-      </div>
-    </div>
-  );
 }
 
 const THEME_OPTIONS = [
@@ -173,8 +165,9 @@ const SETTINGS_SECTION_GROUPS = [
     items: [
       { id: "general", label: "System", description: "Interface scaling and core behavior.", icon: Monitor },
       { id: "viewer", label: "Viewer", description: "Interaction and rendering defaults.", icon: Car },
+      { id: "studio", label: "Studio", description: "Showroom, lighting, plate, and steering that new work starts with.", icon: Aperture },
       { id: "appearance", label: "Appearance", description: "Theme, window chrome, and studio colors.", icon: Palette },
-      { id: "watermark", label: "Watermark", description: "Automatic preview watermarks.", icon: Stamp },
+      { id: "watermark", label: "Watermark", description: "Stamp captures with your text or logo.", icon: Stamp },
     ],
   },
   {
@@ -188,7 +181,7 @@ const SETTINGS_SECTION_GROUPS = [
     id: "support",
     label: "Support",
     items: [
-      { id: "about", label: "About", description: "Version, updates, and advanced access.", icon: Info },
+      { id: "about", label: "About", description: "Version, updates, release notes, and feedback.", icon: Info },
     ],
   },
 ];
@@ -294,7 +287,7 @@ export default function SettingsMenu({
   const [activeSection, setActiveSection] = useState("general");
   const [confirmReset, setConfirmReset] = useState(false);
   const [previewFolderExists, setPreviewFolderExists] = useState(true);
-  const [watermarkPreview, setWatermarkPreview] = useState("");
+  const [saveError, setSaveError] = useState("");
   const updater = useUpdateChecker();
   const prefersReducedMotion = useReducedMotion();
 
@@ -334,6 +327,7 @@ export default function SettingsMenu({
       setHotkeysDraft(nextHotkeys);
       setSavedSignature(settingsSignature(nextDraft, nextHotkeys));
       setConfirmReset(false);
+      setSaveError("");
       window.setTimeout(() => {
         (pageRef.current ?? document.querySelector(".settings-page"))?.focus();
       }, 0);
@@ -344,7 +338,12 @@ export default function SettingsMenu({
         themePreset: stored.themePreset,
         legacyDarkMode: stored.darkMode,
       });
+      // Return focus to the gear only when it was in the page (Escape, Close)
+      // or fell to the body; a tab or control the user clicked keeps it.
+      const pageNode = pageRef.current;
       window.setTimeout(() => {
+        const active = document.activeElement;
+        if (active && active !== document.body && !pageNode?.contains(active)) return;
         (settingsButtonRef.current ?? document.querySelector('button[aria-label="Settings"]'))?.focus();
       }, 0);
     }
@@ -378,21 +377,20 @@ export default function SettingsMenu({
     setDraft((prev) => ({ ...prev, themePreset: normalized }));
   }, []);
 
-  const updateWatermark = useCallback((key, value) => {
-    setDraft((prev) => ({
-      ...prev,
-      watermark: { ...prev.watermark, [key]: value },
-    }));
+  const updateStudioDefaults = useCallback((patch) => {
+    setDraft((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  useEffect(() => {
-    if (!open || activeSection !== "watermark") return;
-    let cancelled = false;
-    renderWatermarkPreview(draft.watermark).then((url) => {
-      if (!cancelled) setWatermarkPreview(url);
-    });
-    return () => { cancelled = true; };
-  }, [open, activeSection, draft.watermark]);
+  const updateWatermark = useCallback((watermark) => {
+    setDraft((prev) => ({ ...prev, watermark }));
+  }, []);
+
+  const openFromSettings = useCallback((eventName, detail) => {
+    closeSettings();
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent(eventName, detail ? { detail } : undefined));
+    }, 220);
+  }, [closeSettings]);
 
   useEffect(() => {
     if (!open) return;
@@ -422,7 +420,8 @@ export default function SettingsMenu({
         const exists = await fsExists(previewFolder);
         if (!cancelled) setPreviewFolderExists(Boolean(exists));
       } catch {
-        if (!cancelled) setPreviewFolderExists(false);
+        // A failed check is not proof the folder is gone; only warn on a definite "no".
+        if (!cancelled) setPreviewFolderExists(true);
       }
     };
 
@@ -467,12 +466,8 @@ export default function SettingsMenu({
       themePreset: normalizeThemePreset(draft.themePreset),
       uiScale: normalizedUiScale,
       autoTemplateExportFormat: normalizeAutoTemplateExportFormat(draft.autoTemplateExportFormat),
-      templateMarkerPickModifier: normalizeTemplateMarkerPickModifier(
-        draft.templateMarkerPickModifier,
-      ),
-      templateMarkerRegenerateBehavior: normalizeTemplateMarkerRegenerateBehavior(
-        draft.templateMarkerRegenerateBehavior,
-      ),
+      watermark: normalizeWatermarkConfig(draft.watermark),
+      ...normalizeStudioDefaults(draft),
     };
     const { resolvedTheme } = applyAppearance({
       colorScheme: normalizedDraft.colorScheme,
@@ -481,7 +476,15 @@ export default function SettingsMenu({
     });
     normalizedDraft.darkMode = resolvedTheme === "dark";
     const prefs = loadPrefs() || {};
-    savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: hotkeysDraft });
+    if (!savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: hotkeysDraft })) {
+      setSaveError(
+        normalizedDraft.watermark?.image
+          ? "Settings could not be saved. Storage may be full; try a smaller watermark logo."
+          : "Settings could not be saved. Storage may be full or unavailable.",
+      );
+      return;
+    }
+    setSaveError("");
     emitPrefsUpdated();
     // Apply UI scale immediately
     document.documentElement.style.setProperty("--es-ui-scale", String(normalizedUiScale));
@@ -493,8 +496,32 @@ export default function SettingsMenu({
     onSettingsSaved?.();
   }, [draft, hotkeysDraft, onSettingsSaved]);
 
+  // Keys already bound to another action wait here until the user swaps or
+  // cancels. The offer belongs to the draft it was made against, so reopening
+  // Settings or changing another shortcut drops it.
+  const [hotkeyConflict, setHotkeyConflict] = useState(null);
+  const pendingConflict = hotkeyConflict?.draft === hotkeysDraft ? hotkeyConflict : null;
+  const duplicateHotkeys = useMemo(() => findDuplicateHotkeys(hotkeysDraft), [hotkeysDraft]);
+
   const updateHotkey = (action, hotkey) => {
+    const other = findHotkeyConflict(hotkeysDraft, action, hotkey);
+    if (other) {
+      setHotkeyConflict({ action, hotkey, other, draft: hotkeysDraft });
+      return;
+    }
+    setHotkeyConflict(null);
     setHotkeysDraft((prev) => ({ ...prev, [action]: hotkey }));
+  };
+
+  const swapHotkey = () => {
+    if (!pendingConflict) return;
+    const { action, hotkey, other } = pendingConflict;
+    setHotkeysDraft((prev) => ({
+      ...prev,
+      [action]: hotkey,
+      [other]: prev[action]?.key ? { ...prev[action] } : { key: "", ctrl: false, alt: false, shift: false },
+    }));
+    setHotkeyConflict(null);
   };
 
   const clearHotkey = (action) => {
@@ -618,7 +645,7 @@ export default function SettingsMenu({
                             <ArrowLeft className="settings-back-icon" aria-hidden="true" />
                           </button>
                           <div className="settings-dialog-title-group">
-                            <h1 className="settings-dialog-title" id="settings-page-title">Settings</h1>
+                            <h1 className="settings-dialog-title cx-display" id="settings-page-title">Settings</h1>
                             <div className="settings-dialog-sub">Cortex Studio</div>
                           </div>
                         </div>
@@ -653,11 +680,17 @@ export default function SettingsMenu({
                       <main className="settings-content">
                         <div className="settings-content-header">
                           <div className="settings-content-heading">
-                            <h2 className="settings-content-title">{activeMeta.label}</h2>
+                            <h2 className="settings-content-title cx-display">{activeMeta.label}</h2>
                             <div className="settings-content-sub">{activeMeta.description}</div>
                           </div>
-                          {hasChanges ? (
+                          {saveError ? (
+                            <div className="settings-save-state has-error" role="alert">
+                              <AlertCircle className="settings-save-icon" aria-hidden="true" />
+                              {saveError}
+                            </div>
+                          ) : hasChanges ? (
                             <div className="settings-save-state has-changes" aria-live="polite">
+                              <span className="settings-save-dot" aria-hidden="true" />
                               Unsaved changes
                             </div>
                           ) : null}
@@ -669,38 +702,72 @@ export default function SettingsMenu({
                         >
                             {/* ─── General (System) ─── */}
                             {activeSection === "general" ? (
-                              <div className="space-y-6">
+                              <div className="settings-stack">
                                 <section className="settings-panel">
                                   <div className="settings-panel-title">Interface Configuration</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>UI Scaling</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Adjust interface density (Default 100%)</div>
+                                      <div className="settings-row-title">UI Scaling</div>
+                                      <div className="settings-row-desc">Adjust interface density (Default 100%)</div>
                                     </div>
-                                    <div className="flex items-center gap-4 min-w-[200px]">
+                                    <div className="settings-slider-field">
                                       <input
                                         type="range"
-                                        className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
-                                        style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
+                                        className="settings-slider"
                                         min={0.5}
                                         max={1.4}
                                         step={0.05}
                                         value={clampUiScale(draft.uiScale)}
                                         onChange={(e) => setDraft((p) => ({ ...p, uiScale: clampUiScale(parseFloat(e.target.value)) }))}
                                       />
-                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{Math.round(clampUiScale(draft.uiScale) * 100)}%</span>
+                                      <span className="settings-slider-value">{Math.round(clampUiScale(draft.uiScale) * 100)}%</span>
                                     </div>
                                   </div>
 
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Projects on Home</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Session Persistence</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Show recent activity on home screen</div>
+                                      <div className="settings-row-title">Show projects</div>
+                                      <div className="settings-row-desc">List saved projects on Home so you can pick up where you left off</div>
                                     </div>
                                     <Toggle
                                       checked={draft.showRecents !== false}
                                       onChange={toggleShowRecents}
-                                      ariaLabel="Toggle recent activity"
+                                      ariaLabel="Show projects on Home"
+                                    />
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Default order</div>
+                                      <div className="settings-row-desc">How the project list is sorted when Home opens</div>
+                                    </div>
+                                    <div className="settings-seg" role="radiogroup" aria-label="Default project order">
+                                      {HOME_SORT_OPTIONS.map(([value, label]) => (
+                                        <button
+                                          key={value}
+                                          type="button"
+                                          role="radio"
+                                          aria-checked={draft.homeSort === value}
+                                          className={`settings-seg-btn ${draft.homeSort === value ? "is-on" : ""}`}
+                                          onClick={() => setDraft((p) => ({ ...p, homeSort: value }))}
+                                        >
+                                          {label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Confirm before deleting</div>
+                                      <div className="settings-row-desc">Ask first when a project is deleted from Home. Files on disk are never touched.</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.confirmProjectDelete !== false}
+                                      onChange={(v) => setDraft((p) => ({ ...p, confirmProjectDelete: v }))}
+                                      ariaLabel="Confirm before deleting projects"
                                     />
                                   </div>
                                 </section>
@@ -709,17 +776,13 @@ export default function SettingsMenu({
                                     <div className="settings-panel-title">Data & Storage</div>
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Preview Export Path</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
-                                          {draft.previewFolder || "Not configured (You will be prompted when capturing previews)"}
+                                        <div className="settings-row-title">Preview Export Path</div>
+                                        <div className={`settings-row-desc ${draft.previewFolder ? "settings-path" : ""}`.trim()}>
+                                          {draft.previewFolder || "Not set. You'll be asked where to save each capture."}
                                         </div>
-                                        {draft.previewFolder && !previewFolderExists ? (
-                                          <div className="text-[9px] mt-1" style={{ color: 'var(--mg-destructive)' }}>
-                                            Saved folder no longer exists. Choose a new folder before capturing previews.
-                                          </div>
-                                        ) : null}
                                       </div>
-                                      <div className="flex items-center gap-2">
+                                      {draft.previewFolder && !previewFolderExists ? null : (
+                                      <div className="settings-row-actions">
                                         <button
                                           type="button"
                                           className="settings-mini"
@@ -730,22 +793,49 @@ export default function SettingsMenu({
                                         {draft.previewFolder && (
                                           <button
                                             type="button"
-                                            className="settings-mini"
-                                            style={{ color: 'var(--mg-destructive)', borderColor: 'color-mix(in srgb, var(--mg-destructive) 20%, transparent)' }}
+                                            className="settings-mini is-danger"
                                             onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
                                           >
                                             Clear
                                           </button>
                                         )}
                                       </div>
+                                      )}
                                     </div>
+                                    {draft.previewFolder && !previewFolderExists ? (
+                                      <div className="settings-callout is-warning" role="alert">
+                                        <AlertTriangle className="settings-callout-icon" aria-hidden="true" />
+                                        <div className="settings-callout-copy">
+                                          <div className="settings-callout-title">Preview folder not found</div>
+                                          <div className="settings-callout-text">
+                                            Captures can't be saved until you pick a folder that exists, or clear this to be asked each time.
+                                          </div>
+                                        </div>
+                                        <div className="settings-callout-actions">
+                                          <button
+                                            type="button"
+                                            className="cx-btn is-primary"
+                                            onClick={handleSelectPreviewFolder}
+                                          >
+                                            Choose folder
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="cx-btn is-quiet"
+                                            onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                          >
+                                            Clear
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : null}
 
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Variant Export Path</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>{draft.variantExportFolder || "Not configured (Default: Manual select)"}</div>
+                                        <div className="settings-row-title">Variant Export Path</div>
+                                        <div className={`settings-row-desc ${draft.variantExportFolder ? "settings-path" : ""}`.trim()}>{draft.variantExportFolder || "Not set. You'll choose a folder on each export."}</div>
                                       </div>
-                                      <div className="flex items-center gap-2">
+                                      <div className="settings-row-actions">
                                         <button
                                           type="button"
                                           className="settings-mini"
@@ -756,8 +846,7 @@ export default function SettingsMenu({
                                         {draft.variantExportFolder && (
                                           <button
                                             type="button"
-                                            className="settings-mini"
-                                            style={{ color: 'var(--mg-destructive)', borderColor: 'color-mix(in srgb, var(--mg-destructive) 20%, transparent)' }}
+                                            className="settings-mini is-danger"
                                             onClick={() => setDraft((p) => ({ ...p, variantExportFolder: "" }))}
                                           >
                                             Clear
@@ -768,8 +857,8 @@ export default function SettingsMenu({
 
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Auto Template Save Format</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Choose which files are exported when templates auto-save</div>
+                                        <div className="settings-row-title">Auto Template Save Format</div>
+                                        <div className="settings-row-desc">Choose which files are exported when templates auto-save</div>
                                       </div>
                                     <div className="settings-seg">
                                         <button
@@ -801,31 +890,53 @@ export default function SettingsMenu({
 
                             {/* ─── Viewer ─── */}
                             {activeSection === "viewer" ? (
-                              <div className="space-y-6">
+                              <div className="settings-stack">
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Navigation Defaults</div>
+                                  <div className="settings-panel-title">Workspace Defaults</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Free-Cam</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Focus the preview: WASD flies, RMB looks, Q/E elevates, Alt refines, Shift boosts</div>
+                                      <div className="settings-row-title">Free-Cam</div>
+                                      <div className="settings-row-desc">Focus the preview: WASD flies, RMB looks, Q/E elevates, Alt refines, Shift boosts</div>
                                     </div>
                                     <div className="settings-row-note">Enabled in Studio previews</div>
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Hide Text Labels</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Suppress rotation gizmo text in the viewport</div>
+                                      <div className="settings-row-title">Start in Exterior Only</div>
+                                      <div className="settings-row-desc">New Livery and All Textures workspaces open with interior, glass and wheels hidden. The camera deck toggles it per workspace.</div>
                                     </div>
                                     <Toggle
-                                      checked={draft.hideRotText}
-                                      onChange={(v) => setDraft((p) => ({ ...p, hideRotText: v }))}
-                                      ariaLabel="Toggle text labels"
+                                      checked={draft.liveryExteriorOnly === true}
+                                      onChange={(v) => setDraft((p) => ({ ...p, liveryExteriorOnly: v }))}
+                                      ariaLabel="Start new Livery and All Textures workspaces in Exterior Only"
                                     />
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Panel Camera Controls</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Move camera presets &amp; rotation to the side panel</div>
+                                      <div className="settings-row-title">Load EUP Textures</div>
+                                      <div className="settings-row-desc">Picking a clothing model in EUP also loads the texture dictionary beside it (its _diff_ .ytd). A texture you choose yourself is never replaced.</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.eupAutoTextures !== false}
+                                      onChange={(v) => setDraft((p) => ({ ...p, eupAutoTextures: v }))}
+                                      ariaLabel="Load a clothing model's own textures in EUP"
+                                    />
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Standard Model Warning</div>
+                                      <div className="settings-row-desc">Opening a vehicle .yft that isn't the _hi model says so, and offers the _hi model when it is in the same folder.</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.warnStandardModel !== false}
+                                      onChange={(v) => setDraft((p) => ({ ...p, warnStandardModel: v }))}
+                                      ariaLabel="Warn when a vehicle model isn't the _hi model"
+                                    />
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Panel Camera Controls</div>
+                                      <div className="settings-row-desc">Move the camera presets to the side panel. Rotate buttons stay on the bottom bar.</div>
                                     </div>
                                     <Toggle
                                       checked={draft.cameraControlsInPanel}
@@ -835,8 +946,8 @@ export default function SettingsMenu({
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Legacy Layers Layout</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Place the layers panel at the bottom instead of the right side</div>
+                                      <div className="settings-row-title">Legacy Layers Layout</div>
+                                      <div className="settings-row-desc">Place the layers panel at the bottom instead of the right side</div>
                                     </div>
                                     <Toggle
                                       checked={draft.legacyLayersLayout}
@@ -848,10 +959,13 @@ export default function SettingsMenu({
 
                                 <section className="settings-panel">
                                   <div className="settings-panel-title">Render Effects</div>
+                                  <p className="settings-panel-description">
+                                    Livery, All Textures, EUP, Multi and Sirens tabs share these, and their camera deck buttons change them too. EUP Studio, Prop Studio and Photo Mode keep their own with each workspace.
+                                  </p>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Show 3D Grid</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Display the ground grid in Studio viewers</div>
+                                      <div className="settings-row-title">Show 3D Grid</div>
+                                      <div className="settings-row-desc">Display the ground grid on the workbench</div>
                                     </div>
                                     <Toggle
                                       checked={draft.showGrid}
@@ -861,8 +975,8 @@ export default function SettingsMenu({
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Ground Shadows</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Project a floor shadow under the vehicle in Studio viewers</div>
+                                      <div className="settings-row-title">Ground Shadows</div>
+                                      <div className="settings-row-desc">Project a floor shadow under the vehicle on the workbench. The showroom always has shadows.</div>
                                     </div>
                                     <Toggle
                                       checked={draft.showShadows}
@@ -870,38 +984,16 @@ export default function SettingsMenu({
                                       ariaLabel="Toggle ground shadows"
                                     />
                                   </div>
-                                </section>
-
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Template Marker Interaction</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Marker Pick Modifier</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
-                                        Hold this key while edit mode is active to pick chunks from the model or template preview.
-                                      </div>
+                                      <div className="settings-row-title">Ambient Occlusion</div>
+                                      <div className="settings-row-desc">Darken creases, panel gaps, and wheel wells on the model. Uses more GPU while orbiting</div>
                                     </div>
-                                    <div className="settings-seg">
-                                      {[
-                                        ["alt", "Alt"],
-                                        ["shift", "Shift"],
-                                        ["ctrl", "Ctrl"],
-                                      ].map(([value, label]) => (
-                                        <button
-                                          key={value}
-                                          type="button"
-                                          className={`settings-seg-btn ${draft.templateMarkerPickModifier === value ? "is-on" : ""}`}
-                                          onClick={() =>
-                                            setDraft((prev) => ({
-                                              ...prev,
-                                              templateMarkerPickModifier: value,
-                                            }))
-                                          }
-                                        >
-                                          {label}
-                                        </button>
-                                      ))}
-                                    </div>
+                                    <Toggle
+                                      checked={draft.ambientOcclusion}
+                                      onChange={(v) => setDraft((p) => ({ ...p, ambientOcclusion: v }))}
+                                      ariaLabel="Toggle ambient occlusion"
+                                    />
                                   </div>
                                 </section>
                               </div>
@@ -909,28 +1001,55 @@ export default function SettingsMenu({
 
                             {/* ─── Hotkeys ─── */}
                             {activeSection === "hotkeys" ? (
-                              <div className="space-y-6">
+                              <div className="settings-stack">
                                 {Object.entries(HOTKEY_CATEGORIES).map(([categoryId, category]) => (
                                   <section key={categoryId} className="settings-panel">
                                     <div className="settings-panel-title">{category.label}</div>
-                                    <div className="grid grid-cols-1 gap-1">
-                                      {category.actions.map((action) => (
-                                <div key={action} className="settings-row px-2 transition-colors gap-4 border-b last:border-none" style={{ borderColor: 'var(--mg-border)' }}>
-                                          <div className="flex-1 min-w-0 py-2">
-                                            <div className="text-[10px] font-medium" style={{ color: 'var(--mg-fg)' }}>{HOTKEY_LABELS[action]}</div>
-                                          </div>
-                                          <HotkeyInput
-                                            value={hotkeysDraft[action]}
-                                            onChange={(hotkey) => updateHotkey(action, hotkey)}
-                                            onClear={() => clearHotkey(action)}
-                                          />
+                                    {category.actions.flatMap((action) => [
+                                      <div key={action} className="settings-row settings-hotkey-row">
+                                        <div className="settings-row-label">
+                                          <div className="settings-row-title">{HOTKEY_LABELS[action]}</div>
+                                          {duplicateHotkeys[action] ? (
+                                            <div className="settings-row-desc">
+                                              Also used by {duplicateHotkeys[action].map((other) => HOTKEY_LABELS[other]).join(", ")}
+                                            </div>
+                                          ) : null}
                                         </div>
-                                      ))}
-                                    </div>
+                                        <HotkeyInput
+                                          value={hotkeysDraft[action]}
+                                          pending={pendingConflict?.action === action ? pendingConflict.hotkey : null}
+                                          onChange={(hotkey) => updateHotkey(action, hotkey)}
+                                          onClear={() => clearHotkey(action)}
+                                        />
+                                      </div>,
+                                      pendingConflict?.action === action ? (
+                                        <div key={`${action}-conflict`} className="settings-callout is-warning" role="alert">
+                                          <AlertTriangle className="settings-callout-icon" aria-hidden="true" />
+                                          <div className="settings-callout-copy">
+                                            <div className="settings-callout-title">
+                                              {formatHotkey(pendingConflict.hotkey)} already runs {HOTKEY_LABELS[pendingConflict.other]}
+                                            </div>
+                                            <div className="settings-callout-text">
+                                              {hotkeysDraft[action]?.key
+                                                ? `Swap gives ${HOTKEY_LABELS[pendingConflict.other]} ${formatHotkey(hotkeysDraft[action])}. Cancel keeps both as they are.`
+                                                : `Swap moves it here and leaves ${HOTKEY_LABELS[pendingConflict.other]} without a shortcut.`}
+                                            </div>
+                                          </div>
+                                          <div className="settings-callout-actions">
+                                            <button type="button" className="cx-btn is-primary" onClick={swapHotkey}>
+                                              Swap
+                                            </button>
+                                            <button type="button" className="cx-btn is-quiet" onClick={() => setHotkeyConflict(null)}>
+                                              Cancel
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : null,
+                                    ])}
                                   </section>
                                 ))}
-                                <div className="pt-4 flex justify-between items-center" style={{ borderTop: '1px solid var(--mg-border)' }}>
-                                  <div className="text-[9px] italic" style={{ color: 'var(--mg-muted)' }}>Click a field to rebind keys</div>
+                                <div className="settings-hotkey-foot">
+                                  <div className="settings-row-desc">Click a binding, then press the new key combination.</div>
                                   <button type="button" className="settings-mini" onClick={resetAllHotkeys}>
                                     Restore default shortcuts
                                   </button>
@@ -985,8 +1104,8 @@ export default function SettingsMenu({
                                   <div className="settings-panel-title">Window Chrome</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Window Controls Style</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Choose the visual style for minimize, maximize, and close</div>
+                                      <div className="settings-row-title">Window Controls Style</div>
+                                      <div className="settings-row-desc">Choose the visual style for minimize, maximize, and close</div>
                                     </div>
                                     <div className="settings-seg">
                                       <button
@@ -1008,11 +1127,49 @@ export default function SettingsMenu({
                                 </section>
 
                                 <section className="settings-panel">
+                                  <div className="settings-panel-title">Motion and hints</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Reduce motion</div>
+                                      <div className="settings-row-desc">Turn off interface animations, or follow your Windows setting</div>
+                                    </div>
+                                    <div className="settings-seg" role="radiogroup" aria-label="Reduce motion">
+                                      {[
+                                        ["system", "Follow system"],
+                                        ["always", "Always"],
+                                      ].map(([value, label]) => (
+                                        <button
+                                          key={value}
+                                          type="button"
+                                          role="radio"
+                                          aria-checked={draft.reduceMotion === value}
+                                          className={`settings-seg-btn ${draft.reduceMotion === value ? "is-on" : ""}`}
+                                          onClick={() => setDraft((p) => ({ ...p, reduceMotion: value }))}
+                                        >
+                                          {label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Show shortcut keys</div>
+                                      <div className="settings-row-desc">Display keycaps next to actions on Home, menus, and workspaces. Shortcuts keep working either way.</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.showKeycaps !== false}
+                                      onChange={(v) => setDraft((p) => ({ ...p, showKeycaps: v }))}
+                                      ariaLabel="Show shortcut keys"
+                                    />
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
                                   <div className="settings-panel-title">Studio Defaults</div>
                                   <p className="settings-panel-description">
                                     Set the starting colors used by viewers and generated templates.
                                   </p>
-                                   <div className="grid grid-cols-2 gap-4 mt-2">
+                                   <div className="settings-color-grid">
                                     <ColorField
                                       label="Base Body"
                                       value={draft.bodyColor}
@@ -1047,173 +1204,23 @@ export default function SettingsMenu({
                               </div>
                             ) : null}
 
+                            {/* ─── Studio defaults ─── */}
+                            {activeSection === "studio" ? (
+                              <StudioDefaultsSettings value={draft} onChange={updateStudioDefaults} />
+                            ) : null}
+
                             {/* ─── Watermark ─── */}
                             {activeSection === "watermark" ? (
-                              <div className="space-y-6">
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Watermark Configuration</div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Enable Watermark</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Automatically stamp previews with your text</div>
-                                    </div>
-                                    <Toggle
-                                      checked={draft.watermark?.enabled}
-                                      onChange={(v) => updateWatermark("enabled", v)}
-                                      ariaLabel="Toggle watermark"
-                                    />
-                                  </div>
-                                </section>
-
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Content</div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Watermark Text</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Text to display on previews</div>
-                                    </div>
-                                    <input
-                                      className="settings-input flex-1"
-                                      value={draft.watermark?.text ?? ""}
-                                      onChange={(e) => updateWatermark("text", e.target.value)}
-                                      placeholder="© Your Name"
-                                    />
-                                  </div>
-
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Font Family</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Typeface for watermark text</div>
-                                    </div>
-                                    <select
-                                      className="settings-input"
-                                      value={draft.watermark?.font ?? "Inter"}
-                                      onChange={(e) => updateWatermark("font", e.target.value)}
-                                    >
-                                      {WATERMARK_FONTS.map((f) => (
-                                        <option key={f.value} value={f.value}>{f.label}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Font Size</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Size in pixels</div>
-                                    </div>
-                                    <div className="flex items-center gap-4 min-w-[200px]">
-                                      <input
-                                        type="range"
-                                        className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
-                                        style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
-                                        min={8}
-                                        max={120}
-                                        step={1}
-                                        value={draft.watermark?.fontSize ?? 32}
-                                        onChange={(e) => updateWatermark("fontSize", parseInt(e.target.value, 10))}
-                                      />
-                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{draft.watermark?.fontSize ?? 32}px</span>
-                                    </div>
-                                  </div>
-                                </section>
-
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Appearance</div>
-                                  <div className="grid grid-cols-2 gap-4 mt-2">
-                                    <ColorField
-                                      label="Text Color"
-                                      value={draft.watermark?.color ?? "#ffffff"}
-                                      onChange={(value) => updateWatermark("color", value)}
-                                      onReset={() => updateWatermark("color", DEFAULT_WATERMARK.color)}
-                                    />
-                                  </div>
-
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Opacity</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Transparency of watermark text</div>
-                                    </div>
-                                    <div className="flex items-center gap-4 min-w-[200px]">
-                                      <input
-                                        type="range"
-                                        className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
-                                        style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
-                                        min={0}
-                                        max={1}
-                                        step={0.05}
-                                        value={draft.watermark?.opacity ?? 0.5}
-                                        onChange={(e) => updateWatermark("opacity", parseFloat(e.target.value))}
-                                      />
-                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{Math.round((draft.watermark?.opacity ?? 0.5) * 100)}%</span>
-                                    </div>
-                                  </div>
-                                </section>
-
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Position &amp; Direction</div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Position</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Where the watermark appears on the image</div>
-                                    </div>
-                                    <div className="settings-seg">
-                                      {WATERMARK_POSITIONS.map((p) => (
-                                        <button
-                                          key={p.value}
-                                          type="button"
-                                          className={`settings-seg-btn ${draft.watermark?.position === p.value ? "is-on" : ""}`}
-                                          onClick={() => updateWatermark("position", p.value)}
-                                          title={p.value}
-                                        >
-                                          {p.label}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>Rotation</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Angle in degrees (-180 to 180)</div>
-                                    </div>
-                                    <div className="flex items-center gap-4 min-w-[200px]">
-                                      <input
-                                        type="range"
-                                        className="settings-slider flex-1 h-1 appearance-none cursor-pointer"
-                                        style={{ background: 'var(--mg-border)', accentColor: 'var(--mg-primary)', borderRadius: 'var(--mg-radius)' }}
-                                        min={-180}
-                                        max={180}
-                                        step={1}
-                                        value={draft.watermark?.rotation ?? 0}
-                                        onChange={(e) => updateWatermark("rotation", parseInt(e.target.value, 10))}
-                                      />
-                                      <span className="font-mono text-[10px] w-12 text-right" style={{ color: 'var(--mg-primary)' }}>{draft.watermark?.rotation ?? 0}°</span>
-                                    </div>
-                                  </div>
-                                </section>
-
-                                <section className="settings-panel">
-                                  <div className="settings-panel-title">Live Preview</div>
-                                  <div className="rounded-lg overflow-hidden border" style={{ borderColor: 'var(--mg-border)', background: 'var(--mg-bg-elevated)' }}>
-                                    {watermarkPreview ? (
-                                      <img src={watermarkPreview} alt="Watermark preview" className="w-full h-auto block" />
-                                    ) : (
-                                      <div className="flex items-center justify-center h-48 text-[10px]" style={{ color: 'var(--mg-muted)' }}>
-                                        Loading preview...
-                                      </div>
-                                    )}
-                                  </div>
-                                </section>
-                              </div>
+                              <WatermarkSettings value={draft.watermark} onChange={updateWatermark} />
                             ) : null}
 
                             {/* ─── About ─── */}
                             {activeSection === "about" ? (
                               <div className="settings-about-stack">
                                 <section className="settings-about-intro" aria-labelledby="settings-about-product">
+                                  <img src={cortexLogo} alt="" className="settings-about-logo" draggable={false} />
                                   <div className="settings-about-copy">
-                                    <div className="settings-about-kicker">Cortex Studio</div>
-                                    <h3 className="settings-about-product" id="settings-about-product">Built for the livery workflow</h3>
+                                    <h3 className="settings-about-product cx-display" id="settings-about-product">Cortex Studio</h3>
                                     <p>Windows-first livery development for GTA V and FiveM, from source asset to verified export.</p>
                                   </div>
                                   <div className="settings-about-version-block">
@@ -1229,10 +1236,10 @@ export default function SettingsMenu({
                                   {/* Published feed behind installed build */}
                                   {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind === "ahead" ? (
                                     <div className="settings-update-status settings-update-status--error" role="alert">
-                                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
+                                      <AlertTriangle className="settings-status-icon" />
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-[10px]" style={{ color: 'var(--mg-destructive)' }}>Published feed is behind this build</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
+                                        <div className="settings-status-title is-error">Published feed is behind this build</div>
+                                        <div className="settings-row-desc">
                                           {updater.statusNote}
                                         </div>
                                       </div>
@@ -1251,10 +1258,10 @@ export default function SettingsMenu({
                                   {/* Up-to-date state */}
                                   {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind !== "ahead" ? (
                                     <div className="settings-update-status settings-update-status--ok" role="status">
-                                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
+                                      <CheckCircle2 className="settings-status-icon" />
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-[10px]" style={{ color: 'var(--mg-fg)' }}>You're up to date</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
+                                        <div className="settings-status-title">You're up to date</div>
+                                        <div className="settings-row-desc">
                                           {updater.statusNote || `Last checked ${new Date(updater.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
                                         </div>
                                       </div>
@@ -1273,10 +1280,12 @@ export default function SettingsMenu({
                                   {/* Never checked / idle */}
                                   {!updater.available && !updater.checking && !updater.error && !updater.lastChecked ? (
                                     <div className="settings-update-status" role="status">
-                                      <RefreshCw className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-muted)' }} />
+                                      <RefreshCw className="settings-status-icon" />
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-[10px]" style={{ color: 'var(--mg-fg)' }}>Check for updates</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>Manual check or auto-checks every 30 min</div>
+                                        <div className="settings-status-title">Check for updates</div>
+                                        <div className="settings-row-desc">
+                                          {draft.autoCheckUpdates !== false ? "Checks automatically every 30 minutes" : "Automatic checks are off"}
+                                        </div>
                                       </div>
                                       <button
                                         type="button"
@@ -1297,19 +1306,19 @@ export default function SettingsMenu({
                                         transition={prefersReducedMotion ? { duration: 0 } : { repeat: Infinity, duration: 1, ease: "linear" }}
                                         className="shrink-0"
                                       >
-                                        <Loader className="h-3.5 w-3.5" style={{ color: 'var(--mg-primary)' }} />
+                                        <Loader className="settings-status-icon" />
                                       </motion.div>
-                                      <div className="text-[10px]" style={{ color: 'var(--mg-muted)' }}>Checking for updates...</div>
+                                      <div className="settings-status-title is-muted">Checking for updates…</div>
                                     </div>
                                   ) : null}
 
                                   {/* Error state */}
                                   {updater.error && !updater.checking && !updater.available ? (
                                     <div className="settings-update-status settings-update-status--error" role="alert">
-                                      <AlertCircle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
+                                      <AlertCircle className="settings-status-icon" />
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-[10px]" style={{ color: 'var(--mg-destructive)' }}>Check failed</div>
-                                        <div className="text-[9px] mt-0.5 truncate" style={{ color: 'var(--mg-muted)' }}>{updater.error}</div>
+                                        <div className="settings-status-title is-error">Check failed</div>
+                                        <div className="settings-status-desc is-truncated">{updater.error}</div>
                                       </div>
                                       <button
                                         type="button"
@@ -1331,29 +1340,29 @@ export default function SettingsMenu({
                                             animate={prefersReducedMotion ? { rotate: 0 } : { rotate: 360 }}
                                             transition={prefersReducedMotion ? { duration: 0 } : { repeat: Infinity, duration: 1, ease: "linear" }}
                                           >
-                                            <Loader className="h-3.5 w-3.5" style={{ color: 'var(--mg-primary)' }} />
+                                            <Loader className="settings-status-icon" />
                                           </motion.span>
                                         ) : updater.error ? (
-                                          <AlertCircle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-destructive)' }} />
+                                          <AlertCircle className="settings-status-icon" />
                                         ) : updater.downloaded || updater.installed ? (
-                                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
+                                          <CheckCircle2 className="settings-status-icon" />
                                         ) : (
-                                          <Download className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--mg-primary)' }} />
+                                          <Download className="settings-status-icon" />
                                         )}
                                         <div className="flex-1 min-w-0">
-                                          <div className="text-[10px] font-medium" style={{ color: 'var(--mg-primary)' }}>
-                                            Update available — v{updater.latest}
+                                          <div className="settings-status-title is-accent">
+                                            Update available: v{updater.latest}
                                           </div>
-                                          <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
+                                          <div className="settings-row-desc">
                                             {updater.installing
-                                              ? "Updating and reopening Cortex Studio..."
+                                              ? "Updating and reopening Cortex Studio…"
                                               : updater.error
                                                 ? updater.error
                                                 : updater.installed
                                                   ? "Installed. Restart Cortex Studio to finish."
                                                   : updater.downloaded
                                                     ? "Downloaded and ready to install"
-                                                    : "Downloading in the background..."}
+                                                    : "Downloading in the background…"}
                                           </div>
                                         </div>
                                         {!updater.installing && (updater.downloaded || updater.installed) ? (
@@ -1399,21 +1408,33 @@ export default function SettingsMenu({
 
                                       {updater.notes ? (
                                         <div className="settings-update-notes">
-                                          <div className="text-[9px] uppercase tracking-[0.08em] mb-1" style={{ color: 'var(--mg-muted)' }}>Release notes</div>
+                                          <div className="cx-label settings-update-notes-label">Release notes</div>
                                           <div className="settings-update-notes-body">{updater.notes}</div>
                                         </div>
                                       ) : null}
                                     </div>
                                   ) : null}
+
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Check automatically</div>
+                                      <div className="settings-row-desc">Look for updates in the background and download them when found</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.autoCheckUpdates !== false}
+                                      onChange={(v) => setDraft((p) => ({ ...p, autoCheckUpdates: v }))}
+                                      ariaLabel="Check for updates automatically"
+                                    />
+                                  </div>
                                 </section>
 
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Release Notes</div>
+                                  <div className="settings-panel-title">Release notes</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="font-medium" style={{ color: 'var(--mg-fg)' }}>What's New</div>
-                                      <div className="text-[9px] mt-0.5" style={{ color: 'var(--mg-muted)' }}>
-                                        {hasSeenWhatsNew() ? "You've seen the latest notes" : "New changes since last update"}
+                                      <div className="settings-row-title">Changelog</div>
+                                      <div className="settings-row-desc">
+                                        Every release on one timeline.{hasNotesForAppVersion() && !hasSeenWhatsNew() ? " This version has notes you haven't read." : ""}
                                       </div>
                                     </div>
                                     <button
@@ -1424,39 +1445,59 @@ export default function SettingsMenu({
                                         setTimeout(() => onOpenReleaseNotes?.(), 220);
                                       }}
                                     >
-                                      View Release Notes
+                                      <Sparkles aria-hidden="true" />
+                                      Open changelog
                                     </button>
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Show after updates</div>
+                                      <div className="settings-row-desc">Open the changelog once after Cortex Studio updates</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.showWhatsNewOnUpdate !== false}
+                                      onChange={(v) => setDraft((p) => ({ ...p, showWhatsNewOnUpdate: v }))}
+                                      ariaLabel="Show the changelog after updates"
+                                    />
                                   </div>
                                 </section>
 
-                                <section className="settings-panel settings-experimental-panel">
-                                  <div className="settings-panel-heading-row">
-                                    <div>
-                                      <div className="settings-panel-title">Experimental</div>
-                                      <p className="settings-panel-description">
-                                        Opt into early features and engineering diagnostics from one advanced area.
-                                      </p>
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Feedback</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Send feedback</div>
+                                      <div className="settings-row-desc">Report a bug or request a feature. It is filed on the Cortex Labs issue tracker.</div>
+                                    </div>
+                                    <div className="settings-row-actions">
+                                      <button
+                                        type="button"
+                                        className="settings-mini"
+                                        onClick={() => openFromSettings("cortex:open-feedback", { type: "bug" })}
+                                      >
+                                        <Bug aria-hidden="true" />
+                                        Report a bug
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="settings-mini"
+                                        onClick={() => openFromSettings("cortex:open-feedback", { type: "feature" })}
+                                      >
+                                        <Lightbulb aria-hidden="true" />
+                                        Request a feature
+                                      </button>
                                     </div>
                                   </div>
-                                  <div className="settings-experimental-row">
-                                    <FlaskConical className="settings-experimental-icon" aria-hidden="true" />
-                                    <div className="settings-experimental-copy">
-                                      <div className="settings-experimental-label">Experimental features</div>
-                                      <div className="settings-experimental-description">
-                                        Enable features that are still being validated for everyday projects.
-                                      </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Attach console logs by default</div>
+                                      <div className="settings-row-desc">Pre-select recent app logs on bug reports. You can still turn it off per report.</div>
                                     </div>
                                     <Toggle
-                                      checked={draft.experimentalSettings}
-                                      onChange={(v) => setDraft((p) => ({ ...p, experimentalSettings: v }))}
-                                      ariaLabel="Toggle experimental features"
+                                      checked={draft.feedbackIncludeLogs === true}
+                                      onChange={(v) => setDraft((p) => ({ ...p, feedbackIncludeLogs: v }))}
+                                      ariaLabel="Attach console logs to bug reports by default"
                                     />
-                                  </div>
-                                  <div className="settings-experimental-note" role="note">
-                                    <AlertTriangle aria-hidden="true" />
-                                    <span>
-                                      Experimental features may be unstable. If a workflow behaves unexpectedly, disable this setting and restart Cortex Studio.
-                                    </span>
                                   </div>
                                 </section>
                               </div>
@@ -1467,15 +1508,15 @@ export default function SettingsMenu({
                           {confirmReset ? (
                             <div className="settings-confirm-overlay">
                               <div className="settings-confirm-content">
-                                <AlertTriangle className="h-4 w-4" style={{ color: 'var(--mg-destructive)' }} />
-                                <span>Are you sure? This cannot be undone.</span>
+                                <AlertTriangle className="settings-status-icon" aria-hidden="true" />
+                                <span>Reset every setting and shortcut to its default? This cannot be undone.</span>
                               </div>
                               <div className="settings-confirm-actions">
                                 <button type="button" className="settings-mini" onClick={() => setConfirmReset(false)}>
                                   Cancel
                                 </button>
                                 <button type="button" className="settings-danger-btn" onClick={performReset}>
-                                  Yes, Reset All
+                                  Reset everything
                                 </button>
                               </div>
                             </div>

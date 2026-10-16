@@ -4,6 +4,7 @@ import {
   DEFAULT_SIDE_OFFSET,
   positionContextMenuPortal,
 } from "../lib/portalPositionGuard";
+import { Keycaps } from "./ui/keycaps";
 
 /**
  * ContextMenu — thin wrapper around @radix-ui/react-context-menu
@@ -140,10 +141,20 @@ export function Label({ children, ...props }) {
   );
 }
 
-export function Shortcut({ children, ...props }) {
+/**
+ * A shortcut as keycaps: pass a stored `hotkey`, or `keys` such as "Ctrl+X"
+ * or "Alt + 1". Lights up with its item.
+ */
+export function Shortcut({ hotkey, keys, children }) {
+  if (hotkey) return <Keycaps hotkey={hotkey} className="ctx-menu-keys" />;
+  const text = typeof keys === "string" ? keys : typeof children === "string" ? children : "";
+  const parts = text.split("+").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
   return (
-    <span className="ctx-menu-shortcut" aria-hidden="true" {...props}>
-      {children}
+    <span className="cx-keys ctx-menu-keys" aria-hidden="true">
+      {parts.map((part) => (
+        <kbd className="cx-keycap" key={part}>{part}</kbd>
+      ))}
     </span>
   );
 }

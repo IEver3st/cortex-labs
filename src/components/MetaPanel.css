@@ -1,0 +1,619 @@
+/* Vehicle meta, inside the workspace inspector. Problems lead, then what the
+   user can preview (liveries, colours, extras, steering). Sections with
+   nothing in them are omitted; reference data waits in Details. */
+
+.mp-root {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  font-family: var(--font-main);
+  color: var(--mg-fg);
+}
+
+.mp-mono {
+  font-family: var(--font-hud);
+}
+
+.mp-muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.mp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.mp-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--cx-wash);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+/* ── Header ── */
+.mp-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mp-head-text {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mp-model {
+  margin: 0;
+  overflow: hidden;
+  font-size: 22px;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.mp-rescan {
+  flex-shrink: 0;
+  margin-top: -2px;
+}
+
+.mp-rescan svg.is-spinning {
+  animation: mp-spin 900ms linear infinite;
+}
+
+@keyframes mp-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Sections ── */
+.mp-section {
+  display: grid;
+  gap: 10px;
+}
+
+.mp-section-head,
+.mp-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mp-section-title {
+  flex: 1;
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+}
+
+.mp-count {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.mp-status {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.mp-status.is-warn {
+  color: var(--cx-caution);
+}
+
+.mp-link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mg-primary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mp-link svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mp-link:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.mp-link:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mp-absent {
+  font-size: 11.5px;
+}
+
+/* ── Checks ── */
+.mp-clear {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.mp-clear-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--cx-confirm);
+}
+
+.mp-issues {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mp-issue + .mp-issue {
+  border-top: 1px solid var(--cx-rule);
+}
+
+.mp-issue summary {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) 14px;
+  align-items: start;
+  gap: 10px;
+  padding: 8px 4px 8px 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.mp-issue summary::-webkit-details-marker {
+  display: none;
+}
+
+.mp-issue summary:hover {
+  background: var(--cx-wash);
+}
+
+.mp-issue summary:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.mp-issue-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--mg-muted);
+}
+
+.mp-issue.is-error .mp-issue-dot {
+  background: var(--mg-destructive);
+}
+
+.mp-issue.is-warn .mp-issue-dot {
+  background: var(--cx-caution);
+}
+
+.mp-issue-message {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mp-issue details[open] .mp-issue-message {
+  display: block;
+}
+
+.mp-issue .mp-chevron {
+  margin-top: 2px;
+}
+
+.mp-issue details[open] .mp-chevron {
+  transform: rotate(180deg);
+}
+
+.mp-issue-more {
+  display: grid;
+  gap: 4px;
+  padding: 0 4px 10px 19px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.mp-issue-more p {
+  margin: 0;
+}
+
+.mp-issue-more .mp-mono {
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+/* ── Liveries ── */
+.mp-stepper {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--mg-input-bg);
+}
+
+.mp-stepper-readout {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  text-align: center;
+}
+
+.mp-stepper-readout strong {
+  font-size: 13px;
+}
+
+.mp-stepper-readout .mp-mono {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rows {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mp-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.mp-row.is-current {
+  background: var(--cx-wash-strong);
+}
+
+.mp-row-mark {
+  display: grid;
+  place-items: center;
+  color: var(--cx-confirm);
+}
+
+.mp-row-mark svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mp-row.is-missing .mp-row-mark,
+.mp-row.is-missing .mp-row-meta {
+  color: var(--mg-destructive);
+}
+
+.mp-row-name {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-row-meta {
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+}
+
+/* ── Colour presets: dense rows, chosen row in opposite ink ── */
+.mp-presets {
+  display: grid;
+  gap: 1px;
+}
+
+.mp-preset {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.mp-preset:hover {
+  background: var(--cx-wash);
+}
+
+.mp-preset.is-selected {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.mp-swatches {
+  display: flex;
+}
+
+.mp-swatch {
+  width: 14px;
+  height: 14px;
+  margin-left: -3px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1.5px var(--mg-bg), inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+.mp-swatch:first-child {
+  margin-left: 0;
+}
+
+.mp-preset.is-selected .mp-swatch {
+  box-shadow: 0 0 0 1.5px var(--cx-invert-bg), inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+.mp-swatch.is-unknown {
+  background-image: repeating-linear-gradient(45deg, transparent 0 3px, rgba(0, 0, 0, 0.35) 3px 6px) !important;
+}
+
+.mp-preset-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-preset-second {
+  color: var(--mg-muted);
+}
+
+.mp-preset.is-selected .mp-preset-second {
+  color: var(--cx-invert-muted);
+}
+
+/* ── Extras ── */
+.mp-extras {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: 4px;
+}
+
+.mp-extra {
+  height: 30px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-muted);
+  font: italic 800 14px / 1 var(--font-display);
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), border-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.mp-extra:hover {
+  color: var(--mg-fg);
+}
+
+.mp-extra.is-on {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.mp-extra:focus-visible,
+.mp-preset:focus-visible,
+.mp-file:focus-visible,
+.mp-disclosure:focus-visible,
+.mp-link:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* ── Details ── */
+.mp-details {
+  padding-top: 14px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.mp-disclosure {
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mp-chevron {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--mg-muted);
+  transition: transform 160ms var(--cx-ease);
+}
+
+.mp-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.mp-facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.mp-fact {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+  font-size: 12px;
+}
+
+.mp-fact dt {
+  color: var(--mg-muted);
+}
+
+.mp-fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mp-fact-note {
+  display: block;
+  color: var(--mg-muted);
+}
+
+.mp-fact dd.mp-mono {
+  font-size: 11.5px;
+}
+
+.mp-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mp-id {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--cx-wash-strong);
+  font-family: var(--font-hud);
+  font-size: 11px;
+}
+
+.mp-id.is-conflict {
+  background: color-mix(in srgb, var(--cx-caution) 22%, transparent);
+  color: var(--cx-caution);
+}
+
+.mp-files {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mp-file {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mp-file:hover {
+  background: var(--cx-wash);
+}
+
+.mp-file svg {
+  width: 14px;
+  height: 14px;
+  color: var(--mg-muted);
+}
+
+.mp-file-name {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-file-kind {
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.mp-errors {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--mg-destructive);
+}
+
+/* ── Empty states ── */
+.mp-empty {
+  display: grid;
+  gap: 8px;
+  padding: 18px 2px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+}
+
+.mp-empty strong {
+  font-size: 13.5px;
+  color: var(--mg-fg);
+}
+
+.mp-empty .mp-link {
+  margin-top: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-preset,
+  .mp-extra,
+  .mp-chevron {
+    transition: none;
+  }
+  .mp-rescan svg.is-spinning {
+    animation: none;
+  }
+}
