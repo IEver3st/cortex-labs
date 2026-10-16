@@ -290,7 +290,7 @@ Do not publish credentials, paid assets, or proprietary source files in an issue
 Cortex Studio is source-available under the [Cortex Studio Source-Available License 1.0](./LICENSE). Copyright (c) 2026 Ever3st.
 
 - **You can** use it for anything, including commercial livery work. What you make with it is yours. You can also read the code, build it, modify it for your own use or your team's, and send changes back as pull requests.
-- **You can't** redistribute it or a modified version, sell or bundle it, or rebrand it as your own. To share Cortex Studio, link to this repository or its [releases](https://github.com/IEver3st/cortex-labs/releases).
+- **You can't** redistribute it or a modified version, sell or bundle it, or rebrand it as your own. Adding features (AI included), reskinning the interface, or renaming it doesn't make it a new product: it is still a modified version of Cortex Studio. To share Cortex Studio, link to this repository or its [releases](https://github.com/IEver3st/cortex-labs/releases).
 
 Contributions are licensed to the project under section 3 of the license. Versions up to 4.1.0 remain under the licenses they were published with.
 
