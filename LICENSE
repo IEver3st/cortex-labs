@@ -11,6 +11,12 @@ The source code is published so people can use it, learn from it, and help
 improve it. It is not open source: you may not redistribute, resell, or
 rebrand the Software.
 
+A "modified version" is any work based on the Software or a substantial
+portion of its source code, however much it changes. Adding features
+(including AI features), changing or replacing the interface, renaming it,
+or combining it with other code still makes a modified version, and
+everything this license says about the Software applies to it.
+
 1. What you may do
 
    a. Use. Download, install, and run the Software for any purpose, personal
@@ -49,7 +55,8 @@ rebrand the Software.
 
    c. Rebrand. Remove or alter copyright notices, attribution, or this
       license; present the Software or a modified version of it as your own
-      work or as another person's product; or release it under another name.
+      work or as another person's product; or release it under another name,
+      with a new interface, or as a new product, free or paid.
 
    d. Use the names. Use "Cortex Studio", "Cortex Labs", or the Licensor's
       logos to name, promote, or imply endorsement of anything else.
