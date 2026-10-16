@@ -1,0 +1,24 @@
+/* Ask-before-replace prompt for exports (Livery capture, Variant Builder).
+   Matches the EUP export confirm: a caution hairline, the folder in mono. */
+.lv-replace {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--cx-caution) 45%, transparent);
+  border-radius: 9px;
+  /* Scrolled into view with the panel's bottom padding still showing. */
+  scroll-margin-block: 16px;
+}
+
+.lv-replace p {
+  margin: 0;
+  color: var(--mg-fg);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.lv-replace code {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}

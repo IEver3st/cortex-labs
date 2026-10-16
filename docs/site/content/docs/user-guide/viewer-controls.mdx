@@ -13,6 +13,17 @@ The viewer combines an orbit camera with a focused free camera.
 
 If your setup differs (touchpad, tablet, etc.), behavior may vary.
 
+## Doors and convertible roofs
+
+YFT vehicles opened in the desktop app can open their moving parts.
+
+- **Click** a door, bonnet or boot to open or close it. Windows and trim mounted on the part move with it.
+- **Alt + drag** a part to set any angle between closed and the limit stored in the model.
+- The **Meta** tab lists every moving part with a slider, plus **Open all** / **Close all**. Two-sided joints such as turrets rest centred and are left out of Open all.
+- A convertible whose `vehicles.meta` entry sets `animConvRoofDictName` and `animConvRoofName` gets **Up** / **Down** controls that play the roof clip at game speed and a slider to scrub it. Clicking the roof also plays it. The app reads `<dict>.ycd` from the vehicle's resource first, then from your GTA V files.
+
+Parts follow the hinge axes and limits authored in the model's skeleton; a part without a joint limit does not move. Mod kit parts loaded from the Mods tab stay in place.
+
 ## Presets and reset
 
 Cortex Studio provides quick camera presets (front/side/angle/top) and a reset/fit action so you can recover quickly after aggressive navigation.
@@ -50,14 +61,30 @@ These controls are meant to simulate a range of "looks" rather than match GTA’
 
 ## Render effects
 
-Studio viewer tabs support one optional global render effect:
+Studio viewer tabs support two optional global render effects:
 
 - **Ground Shadows**: enables a floor shadow under the loaded model
+- **Ambient Occlusion**: adds soft shading where the model occludes itself, such as panel gaps, creases, wheel wells and under trim
 
-These can be toggled in **Settings -> Viewer -> Render Effects**, from the **Lighting** section in the control panel, or with the default hotkeys:
+These can be toggled in **Settings -> Viewer -> Render Effects** or from the view deck under the viewfinder. Ground Shadows also has a default hotkey:
 
 - **Alt + Shift + S**: toggle Ground Shadows
 
 The settings apply to both the main viewer and multi-compare mode. Ground shadows project onto an invisible receiver below the vehicle and automatically hide when you move into an underside view.
+
+Ambient occlusion shades the model only. Glass, see-through and cut-out surfaces, the floor, the grid and the backdrop are never darkened, and lit vehicle lamps keep their full glow. It works in both Workbench and Showroom and is included in preview captures. It costs extra GPU time on every frame while you orbit, so turn it off on slower machines.
+
+## Solid wireframe and mesh stats
+
+The triangle button on the view deck draws every triangle edge over the shaded model. Edges behind the body stay hidden, so you read the topology of the surface you are looking at, with paint, liveries and lighting still visible underneath. Each pixel takes one line at most, so dense areas tint evenly instead of filling in; zoom in to see individual triangles.
+
+While it is on, a **Mesh stats** panel under the stage switch lists what the viewer is drawing right now:
+
+- **Triangles**: GTA drawables are triangle lists, so this is the model's polygon count
+- **Vertices** and **Meshes** (each mesh is at least one draw call)
+- **Shaders** and **Textures**: distinct GTA shaders and referenced textures, shown for GTA models only
+- **Size**: length × width × height in metres (single models only)
+
+Hidden parts, inactive LODs and lamp glow are not counted, and the numbers update when you toggle exterior-only, extras or mod parts. In Multi the panel totals every visible vehicle. The other Wireframe button still shows the see-through wireframe, and the two can be combined. The solid wireframe is included in preview captures.
 
 Tip: For subtle decals, try a darker background with slightly lower glossiness to see banding and edge artifacts.

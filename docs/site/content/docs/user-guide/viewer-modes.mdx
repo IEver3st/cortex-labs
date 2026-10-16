@@ -12,6 +12,10 @@ Best for **vehicle liveries**.
 - Attempts to auto-target common “livery / carpaint / decal” materials.
 - Designed so your texture applies where you expect without manually picking a mesh.
 - Optional **Exterior Only** behavior to avoid pushing livery textures onto interior/glass candidates.
+- The **Paint** tab holds the vehicle's six game colours, as carcols sets them: **Primary**, **Secondary**, **Pearlescent**, **Wheels**, **Interior trim** and **Dashboard**. Each mesh takes the colour its shader's paint layer names (`matDiffuseColor` `2, layer, 0`), so lights, glass, tires and unpainted parts keep their own look. Pick a colour from the game palette, grouped by finish (Metallic, Matte, Util, Worn and Metals), or type any hex for a custom colour. Primary and Secondary also take a finish; a palette colour brings its own, and changing it makes a custom colour. Pearlescent shows as a sheen on glossy primary paint. Slots the loaded model never uses say **Not on this model**. The Meta tab's colour presets fill all six slots.
+- The **Showroom** stage (Scene tab) parks the vehicle in a dark studio under an aimable spotlight, on a floor you choose: **Concrete**, **Polished**, **Tiles**, **Marble**, **Checker**, **Epoxy**, **Asphalt**, **Wood** or **Tread plate**. All and Sirens share the same floor picker.
+- **Turntable** (Scene tab) spins the vehicle in place under the lights at a speed you set, in Livery, All, Sirens and Multi. Turned off, the vehicle settles back facing forward. Captures from a named shot (Front, Side, 3/4 and so on) always show the vehicle at rest.
+- **Capture** (also in All and EUP) sits folded to one line at the bottom of the dock; click it to open. It saves one PNG per chosen angle, named `<model>_<angle>.png`, into a `<model>` folder inside your preview export folder. A preview folder outside your user folders (another drive, for example) takes the shots directly, and the result says so. Cortex asks before replacing shots that already exist, and the result counts only the files it wrote, naming any angle that couldn't be captured and the error that stopped a run. **Save this view** saves the viewfinder as framed; in the browser it downloads the PNG, and capturing angles needs the desktop app.
 
 Use this mode when:
 
@@ -30,12 +34,66 @@ Use this mode when:
 - You’re validating a blank template.
 - You don’t want auto-targeting logic to hide issues.
 
+### Mod kits
+
+The **Mods** inspector tab previews a vehicle's mod kit parts on the loaded `.yft` (desktop app only).
+
+- Cortex reads the resource's `carcols.meta` and `carvariations.meta` and lists the kit linked to the model under `<kits>`. A kit that only names the model, or the only kit in a single-vehicle resource, is shown with a warning, because the game will not offer it until carvariations links it.
+- **Livery**, at the top of the tab, switches between the liveries the vehicle has in game. It lists the texture liveries in the vehicle's texture dictionary chain (`<name>_sign_1`, `_sign_2` and so on, what `SetVehicleLivery` picks between) and the kit's livery mods (`VMT_LIVERY_MOD`). The arrows beside it step to the previous or next livery. Texture liveries use the kit's `<liveryNames>` text when the resource registers it, otherwise they show as Livery 1, Livery 2 and so on. **As modelled** shows the textures the model binds. A livery mod's model is only a placeholder, so its livery texture is shown on the paint instead; it covers a texture livery in game, so picking one clears the other. Liveries need **Model's own textures**, and texture liveries show even when the resource has no mod kit. A texture you loaded in step 2 stays on the meshes it's applied to, so a game livery only shows on the rest (with **All meshes**, nowhere until you unload it); the Livery section says so while one is loaded.
+- Each other slot (spoiler, front bumper and so on) lists its visible mods in carcols order. Pick one per slot, or **Stock**. Linked models load with their mod.
+- Switching a part animates on the model: the old part drops away and the new one lands from above. Extras switched in the Meta tab or in Sirens do the same. Parts the model loads with, Kit Shoot captures, and **Reduce motion** (in Settings or Windows) switch at once.
+- Slots use the kit's carcols `<slotNames>` when it names them. Parts use the text the resource registers for their `modShopLabel` with `AddTextEntry` or `AddTextEntryByHash` in its Lua or JavaScript files; without one, the label itself is shown. Escrow-encrypted scripts can't be read, so their names don't appear.
+- Mod `.yft` files are found anywhere in the resource, including `stream/` subfolders. A `_hi` version is used when present.
+- Turn on **Model's own textures** to see textured parts. A mod uses textures it embeds first, then the vehicle's texture dictionary chain, as in game. Textures that are in neither are reported as not found.
+- Stock meshes bound to a bone in the selected mod's `turnOffBones` are hidden. Meshes that span several bones stay visible.
+- A part follows the bone its carcols entry names in `<bone>` (a linked model uses its `<linkMods>` entry when the kit has one). Door badges on `door_dside_f` open with the driver door, and parts on `boot` lift with the boot, as in game. Parts on `chassis` stay put even when they sit on a door or the boot, because the game doesn't move them either. Clicking a part on a door opens that door.
+- The parts and livery you pick are saved with the workspace and load again when you reopen it from Home or restart the app. To keep a setup you can reopen later in a new tab, use **Save** on the **Saved vehicle** row under the model (see [Saved vehicles](/docs/user-guide/workspaces#saved-vehicles)).
+- Sirens has the same **Mods** tab, without Kit shoot.
+
+#### Builds
+
+Type a name under **Builds** and press **Save** to keep the parts picked above as a build for this vehicle model. **Apply** picks those parts again. A build that names a slot or part the kit no longer has leaves that slot stock.
+
+#### Kit shoot
+
+**Kit shoot** photographs the kit and writes the results to a new folder inside your preview export folder: `<model>/kit-shoot-<kit>-<date>-<time>/`. Your picks, paint and grid come back when the run ends. Picks are locked while it runs, and **Cancel** stops it after the current step; files already written stay, and the report marks the run as partial.
+
+- **Every part** shoots each part of the selected slots, starting each slot with its base: stock, or the part from your current picks when **Parts go on** is **Current build**. Other slots keep their base, so only one thing changes per shot.
+- **Camera: Best angle** first renders the slot's base and every part from 17 directions around and above the vehicle (plus a cabin camera for interior slots), keeps the direction where the most parts visibly change, and crops to the area they change. The shots are then rendered at full resolution through that crop, so they are real close-ups, and every part in a slot uses the same camera. Engine bay slots hide the stock `bonnet` and the trunk slot hides the stock `boot` so the parts can be seen. **This view** shoots everything from the viewfinder as framed when the run starts.
+- **Builds** shoots the chosen builds (and **Current build**) from each chosen angle. **Extra paints** takes GTA colour indices, such as `0, 27, 64`, and shoots each build again with that primary colour.
+- **Before and after** pairs every part with its slot's base (in Builds, every build with the stock vehicle at the same angle and paint). **Side by side** places the frames next to each other; **Wipe** divides one frame through the change. **Zoom to the change** crops both frames to the area that changed.
+- **Sheet per slot** writes one labelled grid per slot (or one grid of builds). **Cycle video** records the parts (or builds) in turn with their names. Videos record in real time.
+- Shots render at the chosen format (4:5, 1:1, 16:9 or 9:16) independent of the window size. **Double size** doubles them, up to 4096 pixels on the long edge. Your watermark from Settings is applied to every image.
+
+While a run goes, the panel shows each shot as it is written. When it ends, the **review** opens over the workspace: slots (or builds) on the left, the selected shot large, and a filmstrip below. **Compare** lays the shot over its base (stock, the build's part, or stock at the same angle and paint) with a handle you drag, or move with the arrow keys once it has focus. **Saved pair**, **Sheet** and **Video** show the files the run wrote. **Checks** lists every finding by type, and **View** jumps to the part. Use the left and right arrow keys for shots, up and down for slots, `C` to toggle Compare, and `Esc` to close. **Review shots** on the result card reopens it, and **Open an earlier shoot** opens any run from its `kit-shoot.json`.
+
+Every run writes `kit-shoot.json`, described in [Kit shoot manifest](/docs/reference/kit-shoot-manifest), `report.html`, which shows every image and lists the checks below, and a small JPEG preview of each shot under `thumbs/`.
+
+| Check | Meaning |
+| --- | --- |
+| `MODEL_MISSING` | A part's model or linked model isn't in the resource. |
+| `LOAD_FAILED` | A part's model or textures failed to load, or were still loading after 90 seconds. |
+| `TEXTURES_FAILED`, `TEXTURES_MISSING` | Some of a part's textures couldn't load or weren't found. |
+| `NO_VISIBLE_CHANGE` | The part looks the same as the slot's base from its camera. |
+| `DUPLICATE_PART` | Two parts in a slot look identical. |
+| `STOCK_NOT_HIDDEN` | A note: the part lists `turnOffBones`, but no stock mesh uses them. Packs often list bones that only other mods use. |
+| `UNNAMED_PART` | The part's `modShopLabel` has no `AddTextEntry`. Only checked when the resource registers some names. |
+| `KIT_NOT_LINKED` | carvariations.meta doesn't list the kit. |
+| `BUILD_PARTS_DROPPED` | A saved build names parts the kit doesn't have. |
+| `CAPTURE_FAILED` | A file couldn't be rendered or written. |
+
+Shots show the Studio preview, not the game renderer, so materials are a best-effort match. Turn on **Model's own textures** first, or parts are shot untextured and the report notes it. Visual checks such as `NO_VISIBLE_CHANGE` depend on the camera.
+
 ## EUP mode (Alt + 3)
 
 Best for **clothing models**.
 
 - Intended for `.ydd` workflows.
 - Uses clothing-friendly model scanning settings.
+- Clothing stands upright and faces the **Front** shot, converted from GTA's Z-up axes. If an item still faces the wrong way, the **X**, **Y** and **Z** buttons on the bottom bar turn it 90 degrees at a time and stand it back on the floor; the reset button next to them undoes the turns. The turns are saved with the workspace.
+- Picking a clothing model also loads its own texture dictionary into the **Uniform** slot: the `_diff_` `.ytd` beside it (`<pack>^task_diff_000_a_uni.ytd` for `<pack>^task_000_u.ydd`). A texture you chose yourself stays. Turn this off with **Load EUP Textures** in Settings > Viewer. You can also pick a `.ytd` as the uniform texture; it shows the dictionary's diffuse texture and reloads when you save it.
+- The **Workbench / Showroom** switch on the viewfinder works here too. The showroom stands the clothing in a dark studio under one spotlight, with the floor, light direction, spot strength and reflections in the Scene tab, and **Turntable** spins it. New EUP tabs start from the EUP scene in Settings > Studio, the one EUP Studio uses, including its rim light.
+- **Surface** in the Material tab sets how the clothing takes light: the type (Paint, Chrome, Plastic, Metal, Glass), **Light response**, **Gloss**, **Roughness** and **Clearcoat**.
 
 Use this mode when:
 
@@ -43,12 +101,25 @@ Use this mode when:
 
 ## Multi mode (Alt + 4)
 
-Best for **comparisons**.
+Best for **comparing vehicles**.
 
-- Shows two models side-by-side with independent texture selection.
-- Includes a transform gizmo for positioning and layout.
+- Lines up to six vehicles (`.yft`, `.clmesh` or `.dff`) in one scene. Each has its own model, livery, window design and paint (the same six game colours as Livery).
+- In the desktop app a `.yft` loads through the CodeWalker bridge, as in All: wheels and the vehicle's own game textures, tinted by its paint. A livery replaces the textures on the meshes it covers. Vehicles load one at a time in lineup order; the ones still waiting say so in their Model step. If the bridge can't read a model, the vehicle shows its shape only and the Model step says why.
+- **Add** creates an empty slot, the duplicate button copies the selected vehicle (same model, paint and liveries) so you can try another livery on it, and the arrows reorder the lineup. The eye button hides a vehicle without unloading it.
+- **Use on all** puts the selected livery on every vehicle; **Use this paint on every vehicle** does the same for paint.
+- Click a vehicle in the viewfinder to select it; the gizmo follows the selection. **Move** on the deck (Alt + G) drags the vehicle across the floor, and **Rotate** swaps it for a ring that turns the vehicle in place. Click the lit button again to hide the gizmo. These buttons stay on the deck even when camera controls are in the panel. **Line up** on the deck parks every visible vehicle side by side in lineup order and keeps each vehicle's facing.
+- Dropping several models on the viewfinder fills the selected empty slot and adds the rest. Dropping an image sets the selected vehicle's livery.
+- Liveries and window designs reload when you save them, on every vehicle that uses the file.
+- **Save this view**, under Capture at the bottom of the lineup panel, saves a PNG of the viewfinder exactly as framed, without the move or rotate gizmo, to your preview folder (you pick one the first time) as `lineup_photo_<date-time>.png`, with your watermark when one is set.
+- The **Showroom** stage parks the lineup in a dark studio. With **Spotlights** set to **Each vehicle**, every visible vehicle gets its own spotlight, floor pool, beam and contact shadow, all from the **Light from** direction, and they follow a vehicle you move. **Whole lineup** uses one wide light instead. The lights hang high above the lineup so they stay out of frame. With the **Turntable** on, each vehicle spins in its own bay. The Scene tab also picks the floor: **Concrete**, **Polished**, **Tiles**, **Marble**, **Checker**, **Epoxy**, **Asphalt**, **Wood** or **Tread plate**.
+
+Clothing is not compared here. Use **EUP Studio** and add each piece under **Addon pieces** to wear several at once. Multi tabs saved with uniforms open empty and say where the clothing went.
 
 Use this mode when:
 
-- You want to compare “before/after” textures.
-- You’re validating consistency across variants or across two assets.
+- You want to compare liveries across a fleet, or several liveries on the same vehicle.
+- You’re checking scale, paint or glass consistency across models.
+
+## Sirens mode (Alt + 9)
+
+Best for **emergency lights**. The vehicle loads the way All loads it, whole and with its own textures, and the workspace is built around its carcols siren setting: a step grid under the viewfinder, the selected sirens and the setting in the inspector, and the regular lamps, extras and stage beside them. Workbench and Showroom both work. See [Sirens](/docs/user-guide/sirens).

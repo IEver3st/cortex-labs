@@ -1,52 +1,93 @@
-import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { exists, writeFile } from "@tauri-apps/plugin-fs";
 import {
-  FileImage, Plus, Trash2, Download, Lock, Copy, Car, X,
-  Eye, EyeOff, FolderOpen, Check, Pencil,
-  ChevronRight, ChevronDown, Layers, AlertTriangle,
-  PanelRightOpen, PanelLeftOpen, Palette,
-  Maximize2, ZoomIn, ZoomOut, Grid3x3, SquareDashedBottom,
-  RotateCcw, Sun, MoreHorizontal, RefreshCw,
-  Play, Pause, Box, Search, FolderTree,
-  ChevronUp, Save, FileWarning,
-  Monitor, Upload,
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Crosshair,
+  Download,
+  Eye,
+  EyeOff,
+  FileImage,
+  FolderInput,
+  FolderOpen,
+  Frame,
+  Grid3x3,
+  Lock,
+  Maximize2,
+  PanelLeft,
+  PanelRight,
+  Pencil,
+  Plus,
+  Redo2,
+  RefreshCw,
+  Search,
+  SquareDashed,
+  Sun,
+  Trash2,
+  Box,
+  Undo2,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { parsePsdLayers, compositePsdVariant } from "../lib/psd-layers";
 import { loadPrefs } from "../lib/prefs";
+import { HOTKEY_ACTIONS, hotkeyMatches } from "../lib/hotkeys";
+import { useStoredHotkeys } from "../lib/use-workspace-hotkeys";
+import { hotkeyLabel } from "./ui/keycaps";
+import { normalizeVariantList } from "../lib/workspace-state";
 import { openFolderPath } from "../lib/open-folder";
+import { countExistingFiles } from "../lib/capture-output";
+import { editHistoryKey } from "../lib/edit-history";
+import { captureViewerFrameBytes } from "../lib/preview-capture";
+import { normalizeVariantExportShape, variantExportDimensions } from "../lib/variant-export";
+import { setLayers, soloLayer, toggleLayer } from "../lib/variant-layers";
+import useEditHistory from "./useEditHistory";
+import { Toggle } from "./ui/toggle";
 import * as Ctx from "./ContextMenu";
 import Viewer from "./Viewer";
+import { AssetSlot, DeckButton, splitPath } from "./workspace/parts";
+import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
+import ReplacePrompt from "./workspace/ReplacePrompt";
+import "./VariantsPage.css";
 
 /* ═══════════════════════════════════════════════════════════
    Constants
    ═══════════════════════════════════════════════════════════ */
-const DEFAULT_SIZES = [
-  { label: "4096", value: 4096 },
-  { label: "2048", value: 2048 },
-  { label: "1024", value: 1024 },
-  { label: "512", value: 512 },
+const SIZE_OPTIONS = [4096, 2048, 1024, 512];
+
+const EXPORT_SHAPES = [
+  { id: "source", label: "Keep aspect", title: "The long side takes the chosen size; the file's proportions stay" },
+  { id: "square", label: "Square", title: "Stretch to a square at the chosen size" },
 ];
 
-const CAMERA_PRESETS = [
+// Keys must match lib/camera-framing CAMERA_PRESETS; unknown keys fall back to 3/4.
+const CAMERA_SHOTS = [
   { key: "front", label: "Front" },
-  { key: "back", label: "Back" },
-  { key: "left", label: "Left" },
-  { key: "right", label: "Right" },
+  { key: "back", label: "Rear" },
+  { key: "side", label: "Side" },
+  { key: "angle", label: "3/4" },
   { key: "top", label: "Top" },
-  { key: "34", label: "3/4" },
 ];
 
 const LIGHTING_PRESETS = [
   { key: "studio", label: "Studio", intensity: 1.0 },
-  { key: "sunlight", label: "Harsh Sun", intensity: 1.6 },
-  { key: "night", label: "Night", intensity: 0.3 },
+  { key: "sunlight", label: "Harsh sun", intensity: 1.6 },
   { key: "overcast", label: "Overcast", intensity: 0.7 },
+  { key: "night", label: "Night", intensity: 0.3 },
 ];
 
-const BLEND_MODES = ["Normal", "Multiply", "Add", "Screen", "Overlay"];
+const LAYER_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "visible", label: "Visible" },
+  { id: "modified", label: "Changed" },
+];
+
 const NOOP = () => {};
 
 /* ═══════════════════════════════════════════════════════════
@@ -82,18 +123,39 @@ function buildVisibilityFromLegacy(variant, data, fallback) {
   return vis;
 }
 
-function isPowerOfTwo(n) { return n > 0 && (n & (n - 1)) === 0; }
+function exportFileName(name) {
+  return `${String(name || "variant").replace(/[^a-zA-Z0-9_\- ]/g, "_")}.png`;
+}
+
+/** A variant's vehicle render, saved beside its texture. */
+function renderFileName(name) {
+  return exportFileName(name).replace(/\.png$/, "_render.png");
+}
+
+function sameVisibility(a, b) {
+  const aKeys = Object.keys(a || {});
+  if (aKeys.length !== Object.keys(b || {}).length) return false;
+  return aKeys.every((key) => Boolean(a[key]) === Boolean(b?.[key]));
+}
 
 function getDefaultVariantExportFolder() {
   const prefs = loadPrefs();
   return prefs?.defaults?.variantExportFolder || "";
 }
 
+function toErrorMessage(error, fallback) {
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (error && typeof error === "object" && typeof error.message === "string" && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
+}
+
 /* ═══════════════════════════════════════════════════════════
    Sub-components
    ═══════════════════════════════════════════════════════════ */
 
-/* --- Horizontal drag handle (memo-wrapped to skip re-renders during panel drag) --- */
+/* Drag handles are memo-wrapped so a resize never re-renders their parent's tree. */
 const HResizer = memo(function HResizer({ onResize }) {
   const dragging = useRef(false);
   const startX = useRef(0);
@@ -116,13 +178,19 @@ const HResizer = memo(function HResizer({ onResize }) {
     }
   }, []);
   return (
-    <div className="vp-resizer vp-resizer--h" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-      <div className="vp-resizer-grip" />
-    </div>
+    <div
+      className="vb-resizer vb-resizer--h"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize preview panes"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    />
   );
 });
 
-/* --- Vertical drag handle for legacy bottom layers panel --- */
 const VResizer = memo(function VResizer({ onResize }) {
   const dragging = useRef(false);
   const startY = useRef(0);
@@ -145,84 +213,111 @@ const VResizer = memo(function VResizer({ onResize }) {
     }
   }, []);
   return (
-    <div className="vp-resizer vp-resizer--v" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-      <div className="vp-resizer-grip vp-resizer-grip--v" />
-    </div>
+    <div
+      className="vb-resizer vb-resizer--v"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize layers panel"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    />
   );
 });
 
-/* --- Opacity slider with double-click number entry --- */
-function OpacitySlider({ value, onChange }) {
-  const [editing, setEditing] = useState(false);
-  const inputRef = useRef(null);
-  const pct = Math.round((value ?? 1) * 100);
-  const commit = useCallback((val) => {
-    const n = parseInt(val, 10);
-    if (!isNaN(n)) onChange(Math.max(0, Math.min(100, n)) / 100);
-    setEditing(false);
-  }, [onChange]);
-  if (editing) {
-    return (
-      <input ref={inputRef} type="text" className="vp-opacity-input" defaultValue={pct} autoFocus
-        onClick={(e) => e.stopPropagation()} onBlur={(e) => commit(e.target.value)}
-        onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commit(e.target.value); if (e.key === "Escape") setEditing(false); }} />
-    );
-  }
+/* A pipeline step without a file: same disc, line and title as AssetSlot. */
+function Step({ id, step, title, done, trailing, children }) {
   return (
-    <div className="vp-opacity-slider" onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); setTimeout(() => inputRef.current?.select(), 30); }} onClick={(e) => e.stopPropagation()}>
-      <input type="range" min="0" max="100" value={pct} className="vp-opacity-range"
-        onChange={(e) => { e.stopPropagation(); onChange(parseInt(e.target.value, 10) / 100); }} onClick={(e) => e.stopPropagation()} />
-      <span className="vp-opacity-val">{pct}%</span>
-    </div>
+    <section id={id} className="lv-slot">
+      <header className="lv-slot-head">
+        <span className={`lv-step ${done ? "is-done" : ""}`} aria-hidden="true">
+          {done ? <Check /> : step}
+        </span>
+        <h3 className="lv-slot-title">{title}</h3>
+        {trailing}
+      </header>
+      <div className="lv-slot-body">{children}</div>
+    </section>
+  );
+}
+
+function LayerRow({ layer, isOn, child, locked, onToggle, onSolo }) {
+  return (
+    <button
+      type="button"
+      className={`vb-layer ${isOn ? "is-on" : ""} ${child ? "is-child" : ""}`}
+      onClick={() => onToggle(layer.id)}
+      onDoubleClick={onSolo ? () => onSolo(layer.id) : undefined}
+      aria-pressed={isOn}
+      title={onSolo ? `${layer.name}. Double-click to show only this layer in its group.` : layer.name}
+    >
+      {isOn ? <Eye className="vb-layer-eye" aria-hidden="true" /> : <EyeOff className="vb-layer-eye" aria-hidden="true" />}
+      <span className="vb-layer-name">{layer.name}</span>
+      {locked ? <Lock className="vb-layer-lock" aria-hidden="true" /> : null}
+    </button>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   VariantsPage — Restructured IDE-style PSD Variant Builder
-   Layout: [Header] / [Workflow Bar] / [Sidebar | Canvas | Inspector]
+   VariantsPage: named layer-visibility sets of one layered file, previewed
+   flat and on a vehicle, exported as one PNG per variant.
+   Layout: [Pipeline dock | Stage (3D / texture) | Layers inspector]
    ═══════════════════════════════════════════════════════════════════════ */
 export default function VariantsPage({ workspaceState, onStateChange, onRenameTab, settingsVersion, isActive, contextBarTarget }) {
-  /* ── State ── */
+  /* ── Source and variants ── */
   const [psdPath, setPsdPath] = useState(workspaceState?.psdPath || "");
   const [psdData, setPsdData] = useState(null);
   const [psdLoading, setPsdLoading] = useState(false);
   const [psdError, setPsdError] = useState("");
-  const [variants, setVariants] = useState(workspaceState?.variants || [
-    { id: generateId(), name: "Base", isBase: true, toggleable: {}, variantSelections: {}, locked: true },
-  ]);
-  const [selectedVariantId, setSelectedVariantId] = useState(workspaceState?.selectedVariantId || variants[0]?.id || "");
+  const [psdReloadToken, setPsdReloadToken] = useState(0);
+  // Saved lists from older or damaged workspaces are reshaped before use.
+  const [variants, setVariants] = useState(() => normalizeVariantList(workspaceState?.variants, generateId));
+  const [selectedVariantId, setSelectedVariantId] = useState(() => (
+    variants.some((variant) => variant.id === workspaceState?.selectedVariantId) ? workspaceState.selectedVariantId : variants[0]?.id || ""
+  ));
   const [editingName, setEditingName] = useState(null);
   const editNameRef = useRef(null);
+  const [layerVisibility, setLayerVisibility] = useState({});
+  const layerVisibilityRef = useRef(layerVisibility);
+  layerVisibilityRef.current = layerVisibility;
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set());
+  const [layerSearch, setLayerSearch] = useState("");
+  const [layerFilter, setLayerFilter] = useState("all");
+
+  /* ── Export ── */
   const [exportSize, setExportSize] = useState(workspaceState?.exportSize || 4096);
-  const [outputFolder, setOutputFolder] = useState(
-    workspaceState?.outputFolder || getDefaultVariantExportFolder()
-  );
+  // "source" keeps the file's aspect (long side = exportSize); "square" stretches to exportSize².
+  const [exportShape, setExportShape] = useState(() => normalizeVariantExportShape(workspaceState?.exportShape));
+  // Also save each variant on the loaded vehicle, from the vehicle pane's current view.
+  const [exportRenders, setExportRenders] = useState(Boolean(workspaceState?.exportRenders));
+  const [outputFolder, setOutputFolder] = useState(workspaceState?.outputFolder || getDefaultVariantExportFolder());
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exportResult, setExportResult] = useState(null);
+  // An export waiting on "Replace N files?": { conflicts, total, folder, mode }.
+  const [exportReplace, setExportReplace] = useState(null);
+
+  /* ── 3D preview ── */
   const [modelPath, setModelPath] = useState(workspaceState?.modelPath || "");
   const [viewerReady, setViewerReady] = useState(false);
   const [liveryTarget, setLiveryTarget] = useState("");
   const [liveryTargetReady, setLiveryTargetReady] = useState(false);
+  const [modelError, setModelError] = useState("");
+  const [modelLoading, setModelLoading] = useState(false);
   const viewerApiRef = useRef(null);
-  const [turntableActive, setTurntableActive] = useState(false);
   const [lightingPreset, setLightingPreset] = useState("studio");
   const [showWireframe, setShowWireframe] = useState(false);
-  const [showLightMenu, setShowLightMenu] = useState(false);
-  const turntableRef = useRef(null);
-  const [previewUrl, setPreviewUrl] = useState("");
+  const [lightMenuOpen, setLightMenuOpen] = useState(false);
+  const lightMenuRef = useRef(null);
+
+  // The composited preview stays a canvas: it is drawn into the texture pane and
+  // handed to the Viewer as a CanvasTexture, never encoded to PNG.
+  const previewCanvasRef = useRef(null);
+  const scratchCanvasesRef = useRef(new Map());
   const [previewToken, setPreviewToken] = useState(0);
-  const [layerVisibility, setLayerVisibility] = useState({});
-  const [collapsedGroups, setCollapsedGroups] = useState(new Set());
-  const [layerOpacities, setLayerOpacities] = useState({});
-  const [layerLocks, setLayerLocks] = useState({});
-  const [layerBlendModes, setLayerBlendModes] = useState({});
-  const [layerSearch, setLayerSearch] = useState("");
-  const [layerFilter, setLayerFilter] = useState("all");
-  const [viewerPanelWidth, setViewerPanelWidth] = useState(55);
-  const [viewerCollapsed, setViewerCollapsed] = useState(false);
-  const [previewCollapsed, setPreviewCollapsed] = useState(false);
-  const [activePanel, setActivePanel] = useState("viewer");
+
+  /* ── Texture pane ── */
   const [uvZoom, setUvZoom] = useState(1);
   const [uvPan, setUvPan] = useState({ x: 0, y: 0 });
   const [uvPanning, setUvPanning] = useState(false);
@@ -232,91 +327,117 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const [uvHover, setUvHover] = useState(null);
   const uvContainerRef = useRef(null);
   const uvImgRef = useRef(null);
-  const [isDirty, setIsDirty] = useState(false);
-  const [lastSavedAt, setLastSavedAt] = useState(null);
-  const initialStateRef = useRef(null);
-  const [selectedVariantIds, setSelectedVariantIds] = useState(new Set());
-  const [compactLayers, setCompactLayers] = useState(false);
-  const [selectedLayerId, setSelectedLayerId] = useState(null);
 
-  /* Legacy bottom layers layout (read from prefs, reloaded on settingsVersion) */
-  const [legacyLayersLayout, setLegacyLayersLayout] = useState(() => {
-    const prefs = loadPrefs();
-    return prefs?.defaults?.legacyLayersLayout ?? false;
-  });
-  const [legacyLayersHeight, setLegacyLayersHeight] = useState(220);
+  /* ── Layout ── */
+  const [stageMode, setStageMode] = useState("split"); // "model" | "split" | "texture"
+  const [viewerPanelWidth, setViewerPanelWidth] = useState(55);
+  const [dockOpen, setDockOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const panes = usePaneWidths("cortex.variants.panes");
+  const [legacyLayersLayout, setLegacyLayersLayout] = useState(() => loadPrefs()?.defaults?.legacyLayersLayout ?? false);
+  const [legacyLayersHeight, setLegacyLayersHeight] = useState(240);
   const pendingVResizeDyRef = useRef(0);
   const legacyLayersRafRef = useRef(0);
-
-  /* New layout state */
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
-
-  /* Breadcrumb dropdown menus */
-  const [openMenu, setOpenMenu] = useState(null); // "vehicle" | "template" | "output" | "variant" | null
-  const vehicleMenuRef = useRef(null);
-  const templateMenuRef = useRef(null);
-  const outputMenuRef = useRef(null);
-  const variantMenuRef = useRef(null);
-
-  const containerRef = useRef(null);
-  const exportMenuRef = useRef(null);
-  const lightMenuRef = useRef(null);
-  const [showSavedToast, setShowSavedToast] = useState(false);
-  const savedToastTimer = useRef(null);
+  const stageRef = useRef(null);
   const persistTimerRef = useRef(null);
   const pendingHResizeDxRef = useRef(0);
   const hResizeRafRef = useRef(0);
-  const sidebarOpenRef = useRef(sidebarOpen);
-  const inspectorOpenRef = useRef(inspectorOpen);
-  useEffect(() => { sidebarOpenRef.current = sidebarOpen; }, [sidebarOpen]);
-  useEffect(() => { inspectorOpenRef.current = inspectorOpen; }, [inspectorOpen]);
 
   const isTauriRuntime = typeof window !== "undefined" && typeof window.__TAURI_INTERNALS__ !== "undefined";
   const selectedVariant = variants.find((v) => v.id === selectedVariantId) || variants[0];
   const selectedVariantIdRef = useRef(selectedVariantId);
   useEffect(() => { selectedVariantIdRef.current = selectedVariantId; }, [selectedVariantId]);
+  const variantsRef = useRef(variants);
+  variantsRef.current = variants;
 
-  /* ── Derived: live validation status for context header ── */
-  const validationStatus = useMemo(() => {
-    if (!psdPath && !modelPath) return { type: "empty", label: "No files loaded", issues: [] };
-    const issues = [];
-    if (!outputFolder) issues.push({ type: "error", msg: "No output folder" });
-    if (!psdPath) issues.push({ type: "error", msg: "No layer source loaded" });
-    if (psdData) {
-      if (!isPowerOfTwo(exportSize)) issues.push({ type: "warn", msg: `Size ${exportSize} not power-of-two` });
-      if (psdData.width !== psdData.height) issues.push({ type: "warn", msg: `Non-square (${psdData.width}\u00D7${psdData.height})` });
-    }
-    const errors = issues.filter((i) => i.type === "error");
-    const warns = issues.filter((i) => i.type === "warn");
-    if (errors.length > 0) return { type: "error", label: `${errors.length} error${errors.length > 1 ? "s" : ""}`, issues };
-    if (warns.length > 0) return { type: "warn", label: `${warns.length} warning${warns.length > 1 ? "s" : ""}`, issues };
-    return { type: "ok", label: "Ready to export", issues: [] };
-  }, [psdPath, modelPath, outputFolder, psdData, exportSize]);
-
-  /* ── Dirty tracking ── */
+  /* ── Undo: variant and layer edits, as snapshots of the variant list ── */
+  const {
+    record: recordVariantSnapshot,
+    undo: undoVariantEdit,
+    redo: redoVariantEdit,
+    clear: clearVariantHistory,
+    canUndo: canUndoVariants,
+    canRedo: canRedoVariants,
+  } = useEditHistory();
+  // The last deleted variant, offered back with an inline Undo until the next edit.
+  const [deletedVariant, setDeletedVariant] = useState(null);
+  // Refs and stable setters only, so every callback below stays stable. A
+  // layer's double-click solo (two clicks, then the solo) shares the layer's
+  // key, so it undoes in one step.
+  const recordVariantEdit = useCallback((key = null) => {
+    recordVariantSnapshot({ variants: variantsRef.current, selectedVariantId: selectedVariantIdRef.current }, key);
+    setDeletedVariant(null);
+  }, [recordVariantSnapshot]);
+  const applyVariantSnapshot = useCallback((snapshot) => {
+    if (!snapshot) return;
+    const selected = snapshot.variants.find((v) => v.id === snapshot.selectedVariantId) || snapshot.variants[0];
+    setVariants(snapshot.variants);
+    setSelectedVariantId(selected?.id || "");
+    if (selected?.layerVisibility && Object.keys(selected.layerVisibility).length > 0) setLayerVisibility(selected.layerVisibility);
+    setEditingName(null);
+    setDeletedVariant(null);
+  }, []);
+  const handleUndoVariants = useCallback(() => {
+    applyVariantSnapshot(undoVariantEdit({ variants: variantsRef.current, selectedVariantId: selectedVariantIdRef.current }));
+  }, [applyVariantSnapshot, undoVariantEdit]);
+  const handleRedoVariants = useCallback(() => {
+    applyVariantSnapshot(redoVariantEdit({ variants: variantsRef.current, selectedVariantId: selectedVariantIdRef.current }));
+  }, [applyVariantSnapshot, redoVariantEdit]);
+  // Layer ids belong to one read of one file, so a new or reloaded file starts a fresh history.
   useEffect(() => {
-    if (!initialStateRef.current && psdPath) initialStateRef.current = JSON.stringify({ variants, layerVisibility });
-    if (initialStateRef.current) setIsDirty(JSON.stringify({ variants, layerVisibility }) !== initialStateRef.current);
-  }, [variants, layerVisibility, psdPath]);
+    clearVariantHistory();
+    setDeletedVariant(null);
+  }, [psdPath, psdData, clearVariantHistory]);
+
+  /* ── Export readiness ── */
+  const exportIssues = useMemo(() => {
+    const issues = [];
+    if (!psdPath) issues.push({ type: "error", msg: "Open a layered file first." });
+    if (!outputFolder) issues.push({ type: "error", msg: isTauriRuntime ? "Choose an output folder." : "Exporting needs the desktop app." });
+    const rendersWanted = exportRenders && Boolean(modelPath);
+    const seen = new Map();
+    for (const variant of variants) {
+      const files = rendersWanted ? [exportFileName(variant.name), renderFileName(variant.name)] : [exportFileName(variant.name)];
+      const clash = files.find((file) => seen.has(file.toLowerCase()));
+      if (clash) {
+        issues.push({ type: "error", msg: `“${seen.get(clash.toLowerCase())}” and “${variant.name}” would both save as ${clash}. Rename one.` });
+        break;
+      }
+      for (const file of files) seen.set(file.toLowerCase(), variant.name);
+    }
+    if (psdData && psdData.width !== psdData.height && exportShape === "square") {
+      issues.push({ type: "warn", msg: `The source is ${psdData.width} × ${psdData.height}. Square exports stretch it to ${exportSize} × ${exportSize}.` });
+    }
+    if (rendersWanted) {
+      if (modelError) issues.push({ type: "error", msg: "The vehicle didn't load, so renders can't be saved. Turn renders off or load another vehicle." });
+      else if (psdPath && stageMode === "texture") issues.push({ type: "error", msg: "Show the vehicle (Vehicle or Split) to save renders." });
+      else if (!viewerReady || modelLoading || !liveryTargetReady) issues.push({ type: "error", msg: "Renders wait for the vehicle to finish loading." });
+    }
+    return issues;
+  }, [psdPath, outputFolder, variants, psdData, isTauriRuntime, exportShape, exportSize, exportRenders, modelPath, modelError, stageMode, viewerReady, modelLoading, liveryTargetReady]);
+  const exportBlocked = exportIssues.some((issue) => issue.type === "error");
 
   /* ── Persist ── */
+  // onStateChange lives in a ref and is deliberately NOT an effect dep: the
+  // parent re-renders after every persisted change, and listing the callback
+  // here would re-arm the persist timer on each render and loop indefinitely.
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
   useEffect(() => {
-    if (!onStateChange) return;
+    if (!onStateChangeRef.current) return;
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
-      onStateChange({ psdPath, modelPath, variants, selectedVariantId, exportSize, outputFolder });
+      onStateChangeRef.current?.({ psdPath, modelPath, variants, selectedVariantId, exportSize, exportShape, exportRenders, outputFolder });
     }, 140);
     return () => {
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     };
-  }, [psdPath, modelPath, variants, selectedVariantId, exportSize, outputFolder, onStateChange]);
+  }, [psdPath, modelPath, variants, selectedVariantId, exportSize, exportShape, exportRenders, outputFolder]);
 
   useEffect(() => {
     if (!settingsVersion) return;
     setOutputFolder((prev) => prev || getDefaultVariantExportFolder());
-    const prefs = loadPrefs();
-    setLegacyLayersLayout(prefs?.defaults?.legacyLayersLayout ?? false);
+    setLegacyLayersLayout(loadPrefs()?.defaults?.legacyLayersLayout ?? false);
   }, [settingsVersion]);
 
   useEffect(() => () => {
@@ -324,9 +445,9 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     if (legacyLayersRafRef.current) cancelAnimationFrame(legacyLayersRafRef.current);
   }, []);
 
-  /* ── Load PSD ── */
+  /* ── Load layer source ── */
   useEffect(() => {
-    if (!psdPath) { setPsdData(null); setLayerVisibility({}); return; }
+    if (!psdPath) { setPsdData(null); setLayerVisibility({}); setPsdError(""); return; }
     let cancelled = false;
     setPsdLoading(true); setPsdError("");
     parsePsdLayers(psdPath).then((data) => {
@@ -347,16 +468,15 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           return v.isBase ? { ...v, toggleable: tog, variantSelections: vs, layerVisibility: lv } : { ...v, layerVisibility: lv };
         });
       });
-      initialStateRef.current = null;
-    }).catch((err) => { if (!cancelled) setPsdError(typeof err === "string" ? err : err?.message || "Failed to parse layer source"); })
+    }).catch((err) => { if (!cancelled) setPsdError(toErrorMessage(err, "The layered file could not be read.")); })
       .finally(() => { if (!cancelled) setPsdLoading(false); });
     return () => { cancelled = true; };
-  }, [psdPath]);
+  }, [psdPath, psdReloadToken]);
 
   const compositorVisibility = useMemo(() => ({ ...layerVisibility }), [layerVisibility]);
   const visibilityKey = useMemo(() => JSON.stringify(compositorVisibility), [compositorVisibility]);
 
-  /* ── Preview generation ── */
+  /* ── Preview composite ── */
   useEffect(() => {
     if (!isActive || !psdPath || !psdData) return;
     let cancelled = false;
@@ -366,13 +486,25 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
         const s = Math.min(1, Math.min(exportSize, maxDim) / maxDim);
         const pw = Math.max(1, Math.round((psdData.width || maxDim) * s));
         const ph = Math.max(1, Math.round((psdData.height || maxDim) * s));
-        const canvas = await compositePsdVariant(psdPath, compositorVisibility, pw, ph);
-        if (!cancelled) { setPreviewUrl(canvas.toDataURL("image/png")); setPreviewToken((t) => t + 1); }
-      } catch (err) { console.error("Preview failed:", err); }
+        const canvas = await compositePsdVariant(psdPath, compositorVisibility, pw, ph, { reuseCanvas: true, scratchCanvases: scratchCanvasesRef.current });
+        if (!cancelled) { previewCanvasRef.current = canvas; setPreviewToken((t) => t + 1); }
+      } catch (err) {
+        if (!cancelled) setPsdError(toErrorMessage(err, "The preview could not be composited."));
+      }
     };
     const timer = setTimeout(gen, 120);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [isActive, psdPath, psdData, visibilityKey, exportSize, compositorVisibility]);
+
+  useEffect(() => {
+    if (!psdPath) { previewCanvasRef.current = null; setPreviewToken((t) => t + 1); }
+  }, [psdPath]);
+
+  useEffect(() => () => {
+    for (const canvas of scratchCanvasesRef.current.values()) { canvas.width = 0; canvas.height = 0; }
+    scratchCanvasesRef.current.clear();
+    previewCanvasRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!psdData || !selectedVariantId) return;
@@ -386,26 +518,18 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     setVariants((prev) => prev.map((v) => v.id === id ? { ...v, layerVisibility: { ...layerVisibility } } : v));
   }, [layerVisibility]);
 
-  /* ── Turntable ── */
-  useEffect(() => {
-    if (!turntableActive || !isActive) { if (turntableRef.current) { cancelAnimationFrame(turntableRef.current); turntableRef.current = null; } return; }
-    const rot = () => { turntableRef.current = requestAnimationFrame(rot); };
-    turntableRef.current = requestAnimationFrame(rot);
-    return () => { if (turntableRef.current) cancelAnimationFrame(turntableRef.current); };
-  }, [turntableActive, isActive]);
-
   /* ── File selectors ── */
   const handleSelectPsd = useCallback(async () => {
     if (!isTauriRuntime) return;
     try {
-      const s = await open({ filters: [{ name: "Layer Source", extensions: ["psd", "pdn", "ai"] }] });
+      const s = await open({ filters: [{ name: "Layered file", extensions: ["psd", "pdn", "ai"] }] });
       if (typeof s === "string") { setPsdPath(s); const n = s.split(/[\\/]/).pop(); if (n && onRenameTab) onRenameTab(n); }
     } catch {}
   }, [isTauriRuntime, onRenameTab]);
 
   const handleSelectModel = useCallback(async () => {
     if (!isTauriRuntime) return;
-    try { const s = await open({ filters: [{ name: "Vehicle Model", extensions: ["yft", "ydd"] }] }); if (typeof s === "string") setModelPath(s); } catch {}
+    try { const s = await open({ filters: [{ name: "Vehicle model", extensions: ["yft", "ydd"] }] }); if (typeof s === "string") setModelPath(s); } catch {}
   }, [isTauriRuntime]);
 
   const handleSelectOutput = useCallback(async () => {
@@ -417,70 +541,96 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const handleAddVariant = useCallback(() => {
     const base = variants.find((v) => v.isBase);
     const bv = base?.layerVisibility && Object.keys(base.layerVisibility).length > 0 ? base.layerVisibility : { ...layerVisibility };
-    const nv = { id: generateId(), name: `Variant ${variants.length}`, isBase: false,
+    const taken = new Set(variants.map((v) => v.name.toLowerCase()));
+    let n = variants.length;
+    while (taken.has(`variant ${n}`)) n += 1;
+    const nv = { id: generateId(), name: `Variant ${n}`, isBase: false,
       toggleable: base ? { ...base.toggleable } : {}, variantSelections: base ? { ...base.variantSelections } : {},
       layerVisibility: { ...bv }, locked: false };
+    recordVariantEdit();
     setVariants((prev) => [...prev, nv]); setSelectedVariantId(nv.id);
-  }, [variants, layerVisibility]);
+  }, [variants, layerVisibility, recordVariantEdit]);
 
+  // No confirmation: the inline Undo (and Ctrl+Z) brings a deleted variant back.
   const handleDeleteVariant = useCallback((id) => {
+    const target = variantsRef.current.find((v) => v.id === id);
+    if (!target || target.isBase) return;
+    recordVariantEdit();
+    setDeletedVariant({ name: target.name });
     setVariants((prev) => {
       const f = prev.filter((v) => v.id !== id);
       if (selectedVariantId === id && f.length > 0) setSelectedVariantId(f[0].id);
       return f;
     });
-  }, [selectedVariantId]);
+  }, [selectedVariantId, recordVariantEdit]);
 
   const handleDuplicateVariant = useCallback((id) => {
     const src = variants.find((v) => v.id === id); if (!src) return;
-    const d = { ...src, id: generateId(), name: `${src.name} Copy`, isBase: false, locked: false, layerVisibility: { ...(src.layerVisibility || {}) } };
+    const d = { ...src, id: generateId(), name: `${src.name} copy`, isBase: false, locked: false, layerVisibility: { ...(src.layerVisibility || {}) } };
+    recordVariantEdit();
     setVariants((prev) => [...prev, d]); setSelectedVariantId(d.id);
-  }, [variants]);
+  }, [variants, recordVariantEdit]);
 
   const handleStartRename = useCallback((id) => { setEditingName(id); setTimeout(() => editNameRef.current?.select(), 50); }, []);
   const handleFinishRename = useCallback((id, name) => {
-    setVariants((prev) => prev.map((v) => v.id === id ? { ...v, name: name || v.name } : v)); setEditingName(null);
-  }, []);
+    const next = typeof name === "string" ? name.trim() : "";
+    const current = variantsRef.current.find((v) => v.id === id);
+    if (current && next && next !== current.name) recordVariantEdit();
+    setVariants((prev) => prev.map((v) => v.id === id ? { ...v, name: next || v.name } : v)); setEditingName(null);
+  }, [recordVariantEdit]);
 
   /* ── Layer ops ── */
-  const handleToggleLayerById = useCallback((lid) => { setLayerVisibility((p) => ({ ...p, [lid]: !p[lid] })); }, []);
+  // Edits read a layer the way the list shows it (stored value, else the
+  // file's own), and an edit that changes nothing records no undo step.
+  const handleToggleLayerById = useCallback((lid) => {
+    const layer = psdData?.allLayers?.find((l) => l.id === lid); if (!layer) return;
+    recordVariantEdit(`layer:${lid}`);
+    setLayerVisibility((p) => toggleLayer(p, layer));
+  }, [psdData, recordVariantEdit]);
   const handleToggleGroupCollapse = useCallback((gid) => {
     setCollapsedGroups((p) => { const n = new Set(p); if (n.has(gid)) n.delete(gid); else n.add(gid); return n; });
   }, []);
-  const handleEnableAllInGroup = useCallback((gid) => {
+  const handleSetGroup = useCallback((gid, value) => {
     if (!psdData?.allLayers) return; const g = psdData.allLayers.find((l) => l.id === gid); if (!g) return;
-    setLayerVisibility((p) => { const n = { ...p }; for (const c of g.childIds) n[c] = true; return n; });
-  }, [psdData]);
-  const handleDisableAllInGroup = useCallback((gid) => {
-    if (!psdData?.allLayers) return; const g = psdData.allLayers.find((l) => l.id === gid); if (!g) return;
-    setLayerVisibility((p) => { const n = { ...p }; for (const c of g.childIds) n[c] = false; return n; });
-  }, [psdData]);
+    const children = g.childIds.map((id) => psdData.allLayers.find((l) => l.id === id));
+    if (setLayers(layerVisibilityRef.current, children, value) === layerVisibilityRef.current) return;
+    recordVariantEdit();
+    setLayerVisibility((p) => setLayers(p, children, value));
+  }, [psdData, recordVariantEdit]);
   const handleSoloLayer = useCallback((lid) => {
     if (!psdData?.allLayers) return; const l = psdData.allLayers.find((x) => x.id === lid);
     if (!l || !l.parentId) return; const par = psdData.allLayers.find((x) => x.id === l.parentId); if (!par) return;
-    setLayerVisibility((p) => { const n = { ...p }; for (const s of par.childIds) n[s] = s === lid; return n; });
-  }, [psdData]);
-  const handleToggleLock = useCallback((lid) => { setLayerLocks((p) => ({ ...p, [lid]: !p[lid] })); }, []);
-  const handleSetOpacity = useCallback((lid, o) => { setLayerOpacities((p) => ({ ...p, [lid]: o })); }, []);
-  const handleSetBlendMode = useCallback((lid, m) => { setLayerBlendModes((p) => ({ ...p, [lid]: m })); }, []);
-
-  /* ── Save ── */
-  const handleSave = useCallback(() => {
-    initialStateRef.current = JSON.stringify({ variants, layerVisibility }); setIsDirty(false); setLastSavedAt(new Date());
-    setShowSavedToast(true);
-    if (savedToastTimer.current) clearTimeout(savedToastTimer.current);
-    savedToastTimer.current = setTimeout(() => setShowSavedToast(false), 2000);
-  }, [variants, layerVisibility]);
+    const siblings = par.childIds.map((id) => psdData.allLayers.find((x) => x.id === id));
+    if (soloLayer(layerVisibilityRef.current, siblings, lid) === layerVisibilityRef.current) return;
+    recordVariantEdit(`layer:${lid}`);
+    setLayerVisibility((p) => soloLayer(p, siblings, lid));
+  }, [psdData, recordVariantEdit]);
 
   /* ── Export ── */
-  const handleExport = useCallback(async (mode) => {
-    if (!psdPath || !psdData || !outputFolder) return;
-    if (validationStatus.issues.some((i) => i.type === "error")) return;
-    setExporting(true); setExportProgress(0); setShowExportMenu(false);
+  const handleExport = useCallback(async (mode, { replace = false } = {}) => {
+    if (!psdPath || !psdData || !outputFolder || exporting || exportBlocked) return;
+    const toExp = mode === "current" ? [selectedVariant].filter(Boolean) : variants;
+    if (toExp.length === 0) return;
+    setExportReplace(null);
+    if (!replace) {
+      const names = toExp.flatMap((vr) => (exportRenders && modelPath
+        ? [exportFileName(vr.name), renderFileName(vr.name)]
+        : [exportFileName(vr.name)]));
+      const conflicts = await countExistingFiles(names.map((name) => `${outputFolder}/${name}`), exists);
+      if (conflicts > 0) {
+        setExportResult(null);
+        setExportReplace({ conflicts, total: names.length, folder: outputFolder, mode });
+        return;
+      }
+    }
+    setExporting(true); setExportProgress(0); setExportResult(null);
+    const written = [];
+    // Renders shoot the vehicle pane's live view with each variant swapped in;
+    // the selected variant's preview goes back on the vehicle afterwards.
+    const rendersWanted = exportRenders && Boolean(modelPath);
+    const { width: outW, height: outH } = variantExportDimensions(psdData.width, psdData.height, exportSize, exportShape);
+    let renders = 0;
     try {
-      let toExp = variants;
-      if (mode === "current") toExp = [selectedVariant].filter(Boolean);
-      else if (mode === "selected") toExp = variants.filter((v) => selectedVariantIds.has(v.id));
       for (let i = 0; i < toExp.length; i++) {
         const vr = toExp[i]; let vis;
         if (vr.id === selectedVariantId) vis = { ...compositorVisibility };
@@ -494,18 +644,56 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           }
           for (const l of psdData.locked || []) vis[l.name] = true;
         }
-        const canvas = await compositePsdVariant(psdPath, vis, exportSize, exportSize);
+        const canvas = await compositePsdVariant(psdPath, vis, outW, outH);
         const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+        if (!blob) throw new Error(`“${vr.name}” could not be encoded as PNG.`);
         const u8 = new Uint8Array(await blob.arrayBuffer());
-        await writeFile(`${outputFolder}/${vr.name.replace(/[^a-zA-Z0-9_\- ]/g, "_")}.png`, u8);
+        await writeFile(`${outputFolder}/${exportFileName(vr.name)}`, u8);
+        written.push(vr.name);
+        if (rendersWanted) {
+          const viewer = viewerApiRef.current;
+          if (!viewer?.setCompositeTexture) throw new Error("The vehicle preview isn't available for renders.");
+          // Swapped in and shot in one task, so the frame always shows this variant.
+          viewer.setCompositeTexture(canvas);
+          const shot = await captureViewerFrameBytes(viewer, { watermark: loadPrefs()?.defaults?.watermark || null });
+          if (!shot) throw new Error(`The vehicle render of “${vr.name}” came back empty.`);
+          await writeFile(`${outputFolder}/${renderFileName(vr.name)}`, shot);
+          renders += 1;
+        }
         setExportProgress(((i + 1) / toExp.length) * 100);
       }
-    } catch (err) { console.error("Export failed:", err); } finally { setExporting(false); }
-  }, [psdPath, psdData, variants, exportSize, outputFolder, selectedVariantId, compositorVisibility, selectedVariant, selectedVariantIds, validationStatus]);
+      setExportResult({
+        tone: "ok",
+        message: toExp.length === 1
+          ? `Exported ${exportFileName(toExp[0].name)}${rendersWanted ? ` and ${renderFileName(toExp[0].name)}` : ""} to`
+          : `Exported ${toExp.length} PNGs${rendersWanted ? ` and ${renders} renders` : ""} to`,
+        folder: splitPath(outputFolder).name || outputFolder,
+      });
+    } catch (err) {
+      const reason = toErrorMessage(err, "The file could not be written.");
+      setExportResult({
+        tone: "error",
+        message: written.length
+          ? `Stopped after ${written.length} of ${toExp.length}${rendersWanted ? ` (${renders} render${renders === 1 ? "" : "s"} saved)` : ""}. ${reason}`
+          : `Nothing was exported. ${reason}`,
+      });
+    } finally {
+      if (rendersWanted) viewerApiRef.current?.setCompositeTexture?.(liveryTargetReady ? previewCanvasRef.current : null);
+      setExporting(false);
+    }
+  }, [psdPath, psdData, outputFolder, exporting, exportBlocked, selectedVariant, variants, selectedVariantId, compositorVisibility, exportSize, exportShape, exportRenders, modelPath, liveryTargetReady]);
+
+  useEffect(() => { setExportResult(null); }, [psdPath, outputFolder]);
+  // The question was about these variants in this folder; any change asks again.
+  useEffect(() => { setExportReplace(null); }, [psdPath, outputFolder, variants, selectedVariantId, exportRenders, modelPath]);
+
+  const openOutputFolder = useCallback(async () => {
+    if (await openFolderPath(outputFolder)) return;
+    setExportResult({ tone: "error", message: `Couldn't open ${outputFolder} in File Explorer.` });
+  }, [outputFolder]);
 
   /* ── Resize ── */
-  // Stable callback (empty deps) — reads sidebar/inspector from refs so the
-  // function identity never changes and memo'd HResizer never re-renders.
+  // Stable callback (empty deps): the memo'd HResizer never re-renders.
   const handleHResize = useCallback((dx) => {
     pendingHResizeDxRef.current += dx;
     if (hResizeRafRef.current) return;
@@ -513,11 +701,8 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       hResizeRafRef.current = 0;
       const batchedDx = pendingHResizeDxRef.current;
       pendingHResizeDxRef.current = 0;
-      if (!batchedDx || !containerRef.current) return;
-      const sidebar = sidebarOpenRef.current ? 260 : 36;
-      const inspector = inspectorOpenRef.current ? 320 : 0;
-      const avail = containerRef.current.getBoundingClientRect().width - sidebar - inspector;
-      if (avail <= 0) return;
+      const avail = stageRef.current?.getBoundingClientRect().width || 0;
+      if (!batchedDx || avail <= 0) return;
       setViewerPanelWidth((p) => {
         const next = Math.max(20, Math.min(80, p + (batchedDx / avail) * 100));
         return Math.abs(next - p) < 0.01 ? p : next;
@@ -532,109 +717,114 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       legacyLayersRafRef.current = 0;
       const batchedDy = pendingVResizeDyRef.current;
       pendingVResizeDyRef.current = 0;
-      setLegacyLayersHeight((h) => Math.max(120, Math.min(600, h + batchedDy)));
+      setLegacyLayersHeight((h) => Math.max(140, Math.min(600, h + batchedDy)));
     });
   }, []);
 
-  /* ── Model info ── */
+  /* ── Viewer ── */
   const handleViewerReady = useCallback((api) => { viewerApiRef.current = api; setViewerReady(true); }, []);
-  const handleModelInfo = useCallback((info) => { setLiveryTarget(info.liveryTarget || ""); setLiveryTargetReady(true); }, []);
-  useEffect(() => { setLiveryTarget(""); setLiveryTargetReady(false); }, [modelPath]);
 
-  /* ── UV pan/zoom ── */
+  /* Hand the composite to the viewer directly (no PNG round trip) and mirror it into the texture pane. */
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    const display = uvImgRef.current;
+    if (display && canvas) {
+      if (display.width !== canvas.width || display.height !== canvas.height) {
+        display.width = canvas.width;
+        display.height = canvas.height;
+      }
+      const ctx = display.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, display.width, display.height);
+        ctx.drawImage(canvas, 0, 0);
+      }
+    }
+    if (!viewerReady) return;
+    viewerApiRef.current?.setCompositeTexture?.(liveryTargetReady && canvas ? canvas : null);
+  }, [previewToken, viewerReady, liveryTargetReady, stageMode]);
+  const handleModelInfo = useCallback((info) => { setLiveryTarget(info.liveryTarget || ""); setLiveryTargetReady(true); }, []);
+  useEffect(() => {
+    setLiveryTarget(""); setLiveryTargetReady(false); setModelError("");
+    if (!modelPath) { viewerApiRef.current = null; setViewerReady(false); }
+  }, [modelPath]);
+
+  /* ── Texture pan/zoom ── */
   const handleUvPointerDown = useCallback((e) => { if (e.button === 1 || (e.button === 0 && e.altKey)) { setUvPanning(true); e.currentTarget.setPointerCapture(e.pointerId); } }, []);
   const handleUvPointerMove = useCallback((e) => {
     if (uvContainerRef.current && uvImgRef.current) {
       const r = uvImgRef.current.getBoundingClientRect();
-      const x = Math.round(e.clientX - r.left), y = Math.round(e.clientY - r.top);
-      setUvHover(x >= 0 && y >= 0 && x <= r.width && y <= r.height ? { x, y, px: Math.round(x / uvZoom), py: Math.round(y / uvZoom) } : null);
+      const canvas = uvImgRef.current;
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      setUvHover(x >= 0 && y >= 0 && x <= r.width && y <= r.height && r.width > 0
+        ? { px: Math.round((x / r.width) * canvas.width), py: Math.round((y / r.height) * canvas.height) }
+        : null);
     }
     if (uvPanning) setUvPan((p) => ({ x: p.x + e.movementX, y: p.y + e.movementY }));
-  }, [uvPanning, uvZoom]);
+  }, [uvPanning]);
   const handleUvPointerUp = useCallback(() => { setUvPanning(false); }, []);
   const handleUvZoomFit = useCallback(() => { setUvZoom(1); setUvPan({ x: 0, y: 0 }); }, []);
   useEffect(() => {
     const element = uvContainerRef.current;
     if (!element) return undefined;
-
     const handleWheel = (event) => {
       event.preventDefault();
       setUvZoom((previous) => Math.max(0.1, Math.min(10, previous * (event.deltaY > 0 ? 0.9 : 1.1))));
     };
-
     element.addEventListener("wheel", handleWheel, { passive: false });
     return () => element.removeEventListener("wheel", handleWheel);
-  }, [previewCollapsed, psdPath]);
+  }, [stageMode, psdPath, modelPath]);
 
-  /* ── Camera ── */
-  const handleCameraPreset = useCallback((k) => { viewerApiRef.current?.setPreset?.(k); }, []);
-  const handleCameraReset = useCallback(() => { viewerApiRef.current?.reset?.(); }, []);
   const currentLighting = LIGHTING_PRESETS.find((p) => p.key === lightingPreset) || LIGHTING_PRESETS[0];
 
-  /* ── Keyboard shortcuts ── */
+  /* ── Keyboard shortcuts (only while this tab is showing) ── */
+  // Layers follow the Toggle Control Panel binding; Ctrl+\ also still works.
+  const hotkeys = useStoredHotkeys();
+  const panelHotkey = hotkeys[HOTKEY_ACTIONS.TOGGLE_PANEL];
+  const layersShortcut = [...new Set([hotkeyLabel(panelHotkey), "Ctrl+\\"].filter(Boolean))].join(" or ");
   useEffect(() => {
+    if (!isActive) return undefined;
     const h = (e) => {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+      const t = e.target;
+      if (t?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t?.tagName)) return;
+      if (typeof e.key !== "string") return;
       const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey, shift = e.shiftKey, alt = e.altKey;
+      // Undo and redo handlers are stable (refs only), so they aren't effect deps.
+      const historyAction = editHistoryKey(e);
+      if (historyAction) { e.preventDefault(); if (historyAction === "undo") handleUndoVariants(); else handleRedoVariants(); return; }
       if (ctrl && !shift && k === "e") { e.preventDefault(); handleExport("current"); return; }
       if (ctrl && shift && k === "e") { e.preventDefault(); handleExport("all"); return; }
-      if (ctrl && k === "s") { e.preventDefault(); handleSave(); return; }
-      if (!ctrl && !shift && !alt && k === "f") { handleUvZoomFit(); return; }
-      if (!ctrl && !shift && !alt && k === "tab") { e.preventDefault(); setActivePanel((p) => p === "viewer" ? "texture" : p === "texture" ? "layers" : "viewer"); return; }
-      if (!ctrl && shift && !alt && k === "tab") { e.preventDefault(); setActivePanel((p) => p === "viewer" ? "layers" : p === "layers" ? "texture" : "viewer"); return; }
-      if (ctrl && k === "b") { e.preventDefault(); setSidebarOpen((s) => !s); return; }
-      if (ctrl && k === "\\") { e.preventDefault(); setInspectorOpen((s) => !s); return; }
+      if (ctrl && !shift && k === "b") { e.preventDefault(); setDockOpen((s) => !s); return; }
+      if (hotkeyMatches(panelHotkey, e) || (ctrl && k === "\\")) { e.preventDefault(); setInspectorOpen((s) => !s); return; }
+      if (!ctrl && !shift && !alt && k === "f") { handleUvZoomFit(); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [handleExport, handleSave, handleUvZoomFit]);
+  }, [isActive, handleExport, handleUvZoomFit, panelHotkey]);
 
-  /* ── Click-away ── */
   useEffect(() => {
-    if (!showExportMenu) return;
-    const h = (e) => { if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) setShowExportMenu(false); };
-    document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h);
-  }, [showExportMenu]);
-  useEffect(() => {
-    if (!showLightMenu) return;
-    const h = (e) => { if (lightMenuRef.current && !lightMenuRef.current.contains(e.target)) setShowLightMenu(false); };
-    document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h);
-  }, [showLightMenu]);
-  useEffect(() => {
-    if (!openMenu) return;
-    const refs = { vehicle: vehicleMenuRef, template: templateMenuRef, output: outputMenuRef, variant: variantMenuRef };
-    const h = (e) => {
-      const ref = refs[openMenu];
-      if (ref?.current && !ref.current.contains(e.target)) setOpenMenu(null);
-    };
+    if (!lightMenuOpen) return undefined;
+    const h = (e) => { if (lightMenuRef.current && !lightMenuRef.current.contains(e.target)) setLightMenuOpen(false); };
+    const k = (e) => { if (e.key === "Escape") setLightMenuOpen(false); };
     document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [openMenu]);
+    document.addEventListener("keydown", k);
+    return () => { document.removeEventListener("mousedown", h); document.removeEventListener("keydown", k); };
+  }, [lightMenuOpen]);
 
   /* ── Derived for render ── */
-  const viewerTexturePath = liveryTargetReady ? (previewUrl || "") : "";
+  const hasPreview = previewToken > 0 && Boolean(previewCanvasRef.current);
   const viewerTextureTarget = liveryTarget || "all";
-  const psdFileName = psdPath ? psdPath.split(/[\\/]/).pop() : "";
-  const modelFileName = modelPath ? modelPath.split(/[\\/]/).pop() : "";
-  const hasLayers = psdData && (psdData.allLayers?.length > 0);
-  const hasContent = !!(modelPath || psdPath);
-
-  const statusChip = useMemo(() => {
-    if (exporting) return { type: "exporting", label: `${Math.round(exportProgress)}%` };
-    if (!hasContent) return null;
-    if (validationStatus.type === "error") return { type: "error", label: validationStatus.label };
-    if (isDirty) return { type: "dirty", label: "Unsaved" };
-    if (validationStatus.type === "warn") return { type: "warn", label: validationStatus.label };
-    if (validationStatus.type === "ok") return { type: "ok", label: "Ready" };
-    return null;
-  }, [exporting, exportProgress, validationStatus, isDirty, hasContent]);
+  const hasLayers = Boolean(psdData && psdData.allLayers?.length > 0);
+  const bothLoaded = Boolean(modelPath && psdPath);
+  const showModelPane = Boolean(modelPath) && (!bothLoaded || stageMode !== "texture");
+  const showTexturePane = Boolean(psdPath) && (!bothLoaded || stageMode !== "model");
+  const inspectorVisible = hasLayers && inspectorOpen;
+  const layersDocked = legacyLayersLayout;
 
   const layerSections = useMemo(() => {
     if (!psdData?.allLayers) return { topLevel: [], groups: [], locked: [] };
     const topLevel = [], groups = [], locked = [], sl = layerSearch.toLowerCase();
     const matchSearch = (l) => !layerSearch || l.name.toLowerCase().includes(sl);
     const matchFilter = (l) => {
-      if (layerFilter === "all") return true;
       if (layerFilter === "visible") return layerVisibility[l.id] ?? l.visible;
       if (layerFilter === "modified") return (layerVisibility[l.id] ?? l.visible) !== l.visible;
       return true;
@@ -662,689 +852,747 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       }).slice().reverse();
   }, [psdData, layerSearch, layerFilter, layerVisibility]);
 
-  const exportSummary = useMemo(() => ({
-    visibleCount: Object.values(layerVisibility).filter(Boolean).length,
-    format: "PNG", size: exportSize, variantCount: variants.length,
-  }), [layerVisibility, exportSize, variants]);
+  const layerCounts = useMemo(() => {
+    const all = (psdData?.allLayers || []).filter((l) => !l.isGroup);
+    return {
+      all: all.length,
+      visible: all.filter((l) => layerVisibility[l.id] ?? l.visible).length,
+      modified: all.filter((l) => (layerVisibility[l.id] ?? l.visible) !== l.visible).length,
+    };
+  }, [psdData, layerVisibility]);
 
-  const variantStatuses = useMemo(() => {
+  const baseVariant = variants.find((v) => v.isBase);
+  const changedFromBase = useMemo(() => {
     const map = {};
-    const baseV = variants.find(b => b.isBase);
     for (const v of variants) {
-      const hasLv = v.layerVisibility && Object.keys(v.layerVisibility).length > 0;
-      const isModified = v.id === selectedVariantId ? isDirty : (hasLv && baseV && JSON.stringify(v.layerVisibility) !== JSON.stringify(baseV.layerVisibility));
-      if (validationStatus.type === "error") map[v.id] = "error";
-      else if (validationStatus.type === "warn") map[v.id] = "warn";
-      else if (isModified) map[v.id] = "modified";
-      else map[v.id] = "ok";
+      if (v.isBase) continue;
+      map[v.id] = Boolean(baseVariant?.layerVisibility && v.layerVisibility && !sameVisibility(v.layerVisibility, baseVariant.layerVisibility));
     }
     return map;
-  }, [variants, selectedVariantId, isDirty, validationStatus]);
+  }, [variants, baseVariant]);
 
-  const selectedLayerInfo = useMemo(() => {
-    if (!selectedLayerId || !psdData?.allLayers) return null;
-    return psdData.allLayers.find(l => l.id === selectedLayerId) || null;
-  }, [selectedLayerId, psdData]);
+  const nothingInFilter = hasLayers
+    && layerSections.topLevel.length === 0
+    && layerSections.locked.length === 0
+    && layerSections.groups.every((g) => getGroupChildren(g.id).length === 0);
 
-  /* ── Layers panel inner content — shared between right and legacy-bottom panels ── */
-  const renderLayersContent = () => (
+  const psdSummary = psdData
+    ? `${psdData.width} × ${psdData.height} · ${layerCounts.all} layer${layerCounts.all === 1 ? "" : "s"}`
+    : "";
+  const exportDims = psdData ? variantExportDimensions(psdData.width, psdData.height, exportSize, exportShape) : null;
+  const { name: outputName } = splitPath(outputFolder);
+
+  /* ══════════════════════════════════════════════════════════
+     Pieces
+     ══════════════════════════════════════════════════════════ */
+  const contextBar = isActive && contextBarTarget
+    ? createPortal(
+        <div className="ctx-bar-inner lv-ctx">
+          <button
+            type="button"
+            className={`lv-ctx-btn ${dockOpen ? "is-on" : ""}`}
+            onClick={() => setDockOpen((v) => !v)}
+            title={dockOpen ? "Hide the pipeline (Ctrl+B)" : "Show the pipeline (Ctrl+B)"}
+            aria-label={dockOpen ? "Hide the pipeline" : "Show the pipeline"}
+            aria-pressed={dockOpen}
+          >
+            <PanelLeft aria-hidden="true" />
+          </button>
+          <div className="ctx-bar-drag-pad" aria-hidden="true" />
+          {hasLayers ? (
+            <button
+              type="button"
+              className={`lv-ctx-btn ${inspectorOpen ? "is-on" : ""}`}
+              onClick={() => setInspectorOpen((v) => !v)}
+              title={`${inspectorOpen ? "Hide" : "Show"} layers (${layersShortcut})`}
+              aria-label={inspectorOpen ? "Hide layers" : "Show layers"}
+              aria-pressed={inspectorOpen}
+            >
+              <PanelRight aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>,
+        contextBarTarget,
+      )
+    : null;
+
+  const layersPanel = (
     <>
-      <div className="vp-inspector-head">
-        <div className="vp-inspector-title">
-          <Layers className="w-3.5 h-3.5" />
-          <span>Layers</span>
+      <header className="vb-layers-head">
+        <div className="vb-layers-title">
+          <h2>Layers</h2>
+          <span className="vb-layers-editing" title={selectedVariant?.name}>
+            {selectedVariant?.name}
+          </span>
         </div>
-        <button type="button" className="vp-inspector-close" onClick={() => setInspectorOpen(false)} title="Close (Ctrl+\\)">
-          <PanelRightOpen className="w-3 h-3" />
-        </button>
-      </div>
-
-      {/* Search + Filters */}
-      <div className="vp-inspector-toolbar">
-        <div className="vp-inspector-search">
-          <Search className="w-3 h-3 vp-inspector-search-icon" />
-          <input type="text" className="vp-inspector-search-input" placeholder="Search layers..." value={layerSearch} onChange={(e) => setLayerSearch(e.target.value)} />
-        </div>
-        <div className="vp-inspector-filters">
-          {["all", "visible", "modified"].map((f) => (
-            <button key={f} type="button" className={`vp-filter-btn ${layerFilter === f ? "is-active" : ""}`} onClick={() => setLayerFilter(f)}>
-              {f === "all" ? "All" : f === "visible" ? "Visible" : "Modified"}
+        <label className="vb-search">
+          <Search className="vb-search-icon" aria-hidden="true" />
+          <input
+            type="text"
+            value={layerSearch}
+            onChange={(e) => setLayerSearch(e.target.value)}
+            placeholder="Find a layer"
+            aria-label="Find a layer"
+          />
+          {layerSearch ? (
+            <button type="button" className="vb-search-clear" onClick={() => setLayerSearch("")} aria-label="Clear search">
+              <X aria-hidden="true" />
+            </button>
+          ) : null}
+        </label>
+        <div className="vb-filters" role="tablist" aria-label="Layer filter">
+          {LAYER_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              role="tab"
+              aria-selected={layerFilter === f.id}
+              className={`lv-tab vb-filter ${layerFilter === f.id ? "is-active" : ""}`}
+              onClick={() => setLayerFilter(f.id)}
+            >
+              {f.label}
+              <span className="vb-filter-num">{layerCounts[f.id]}</span>
             </button>
           ))}
-          <button type="button" className={`vp-filter-btn vp-compact-toggle ${compactLayers ? "is-active" : ""}`} onClick={() => setCompactLayers(c => !c)} title={compactLayers ? "Comfortable view" : "Compact view"}>
-            {compactLayers ? "Dense" : "Comfy"}
-          </button>
         </div>
-      </div>
+      </header>
 
-      {/* Layer list */}
-      <div className="vp-inspector-body">
-        {layerSections.topLevel.length > 0 && (
-          <div className="vp-layer-section">
-            <div className="vp-layer-section-head">
-              <span>Layers</span>
-              <span className="vp-layer-section-count">{layerSections.topLevel.length}</span>
-            </div>
-            {layerSections.topLevel.map((layer) => {
-              const isOn = layerVisibility[layer.id] ?? layer.visible;
-              const isLocked = layerLocks[layer.id] || false;
-              const opacity = layerOpacities[layer.id] ?? layer.opacity;
-              const bm = layerBlendModes[layer.id] || "Normal";
-              const isSel = selectedLayerId === layer.id;
-              return (
-                <div key={layer.id} className={`vp-layer-row ${isOn ? "is-on" : ""} ${isLocked ? "is-locked" : ""} ${compactLayers ? "vp-layer-row--compact" : ""} ${isSel ? "is-selected" : ""}`}
-                  onClick={() => setSelectedLayerId(layer.id)}>
-                  <button type="button" className="vp-layer-vis-btn" onClick={(e) => { e.stopPropagation(); handleToggleLayerById(layer.id); }}>
-                    {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                  </button>
-                  <span className="vp-layer-name">{layer.name}</span>
-                  <div className="vp-layer-props">
-                    <select className="vp-layer-blend" value={bm} onChange={(e) => { e.stopPropagation(); handleSetBlendMode(layer.id, e.target.value); }} onClick={(e) => e.stopPropagation()}>
-                      {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                    <OpacitySlider value={opacity} onChange={(v) => handleSetOpacity(layer.id, v)} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+      <div className="vb-layers-body custom-scrollbar">
+        {layerSections.topLevel.length > 0 ? (
+          <section className="vb-layer-group" aria-label="Layers">
+            {layerSections.topLevel.map((layer) => (
+              <LayerRow key={layer.id} layer={layer} isOn={layerVisibility[layer.id] ?? layer.visible} onToggle={handleToggleLayerById} />
+            ))}
+          </section>
+        ) : null}
+
         {layerSections.groups.map((group) => {
-          const collapsed = collapsedGroups.has(group.id);
           const children = getGroupChildren(group.id);
-          const allIds = psdData.allLayers.find((l) => l.id === group.id)?.childIds || [];
+          if ((layerSearch || layerFilter !== "all") && children.length === 0) return null;
+          const collapsed = collapsedGroups.has(group.id) && !layerSearch;
+          const allIds = group.childIds || [];
           const enCt = allIds.filter((id) => { const l = psdData.allLayers.find((x) => x.id === id); return layerVisibility[id] ?? l?.visible; }).length;
           const allOn = enCt === allIds.length && allIds.length > 0;
           const someOn = enCt > 0 && !allOn;
           return (
-            <div key={group.id} className="vp-layer-section">
-              <div className="vp-layer-section-head vp-layer-section-head--group">
-                <button type="button" className="vp-layer-collapse-btn" onClick={() => handleToggleGroupCollapse(group.id)}>
-                  {collapsed ? <ChevronRight className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+            <section key={group.id} className="vb-layer-group" aria-label={group.name}>
+              <div className="vb-group-head">
+                <button
+                  type="button"
+                  className="vb-group-toggle"
+                  onClick={() => handleToggleGroupCollapse(group.id)}
+                  aria-expanded={!collapsed}
+                >
+                  {collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+                  <span className="vb-group-name">{group.name}</span>
+                  <span className="vb-group-count">{enCt}/{allIds.length}</span>
                 </button>
-                <button type="button" className={`vp-layer-group-check ${allOn ? "is-all" : someOn ? "is-partial" : ""}`}
-                  onClick={() => allOn ? handleDisableAllInGroup(group.id) : handleEnableAllInGroup(group.id)}>
-                  {allOn ? <Check className="vp-layer-group-check-icon" /> : <div className="vp-layer-group-check-inner" />}
+                <button
+                  type="button"
+                  className={`vb-check ${allOn ? "is-all" : someOn ? "is-some" : ""}`}
+                  role="checkbox"
+                  aria-checked={allOn ? "true" : someOn ? "mixed" : "false"}
+                  aria-label={`${allOn ? "Hide" : "Show"} every layer in ${group.name}`}
+                  title={allOn ? "Hide all" : "Show all"}
+                  onClick={() => handleSetGroup(group.id, !allOn)}
+                >
+                  {allOn ? <Check aria-hidden="true" /> : null}
                 </button>
-                <FolderTree className="w-3 h-3" style={{ opacity: 0.35, flexShrink: 0 }} />
-                <span className="vp-layer-section-name">{group.name}</span>
-                <span className="vp-layer-section-count">{enCt}/{allIds.length}</span>
-                <div className="vp-layer-group-actions">
-                  <button type="button" className="vp-layer-group-act" onClick={() => handleEnableAllInGroup(group.id)}>All</button>
-                  <button type="button" className="vp-layer-group-act" onClick={() => handleDisableAllInGroup(group.id)}>None</button>
-                </div>
               </div>
-              {!collapsed && children.map((child) => {
-                const isOn = layerVisibility[child.id] ?? child.visible;
-                const isLocked = layerLocks[child.id] || false;
-                const opacity = layerOpacities[child.id] ?? child.opacity;
-                const bm = layerBlendModes[child.id] || "Normal";
-                const isSel = selectedLayerId === child.id;
-                return (
-                  <div key={child.id} className={`vp-layer-row vp-layer-row--child ${isOn ? "is-on" : ""} ${isLocked ? "is-locked" : ""} ${compactLayers ? "vp-layer-row--compact" : ""} ${isSel ? "is-selected" : ""}`}
-                    onClick={() => setSelectedLayerId(child.id)}
-                    onDoubleClick={() => handleSoloLayer(child.id)} title="Double-click to solo">
-                    <button type="button" className="vp-layer-vis-btn" onClick={(e) => { e.stopPropagation(); handleToggleLayerById(child.id); }}>
-                      {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                    </button>
-                    <span className="vp-layer-name">{child.name}</span>
-                    <div className="vp-layer-props">
-                      <select className="vp-layer-blend" value={bm} onChange={(e) => { e.stopPropagation(); handleSetBlendMode(child.id, e.target.value); }} onClick={(e) => e.stopPropagation()}>
-                        {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                      <OpacitySlider value={opacity} onChange={(v) => handleSetOpacity(child.id, v)} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+              {!collapsed && children.map((child) => (
+                <LayerRow
+                  key={child.id}
+                  layer={child}
+                  child
+                  isOn={layerVisibility[child.id] ?? child.visible}
+                  onToggle={handleToggleLayerById}
+                  onSolo={handleSoloLayer}
+                />
+              ))}
+            </section>
           );
         })}
-        {layerSections.locked.length > 0 && (
-          <div className="vp-layer-section vp-layer-section--locked">
-            <div className="vp-layer-section-head">
-              <Lock className="w-2.5 h-2.5" /><span>Base Layers</span>
-              <span className="vp-layer-section-count">{layerSections.locked.length}</span>
-            </div>
-            {layerSections.locked.map((layer) => {
-              const isOn = layerVisibility[layer.id] ?? layer.visible;
-              return (
-                <div key={layer.id} className={`vp-layer-row vp-layer-row--locked ${isOn ? "is-on" : ""}`}>
-                  <button type="button" className="vp-layer-vis-btn" onClick={() => handleToggleLayerById(layer.id)}>
-                    {isOn ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                  </button>
-                  <Lock className="w-2.5 h-2.5 vp-layer-lock-icon" />
-                  <span className="vp-layer-name">{layer.name}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
-      {selectedLayerInfo && (
-        <div className="vp-layer-inspector">
-          <div className="vp-layer-inspector-head">
-            <span className="vp-layer-inspector-name">{selectedLayerInfo.name}</span>
-            <button type="button" className="vp-layer-inspector-close" onClick={() => setSelectedLayerId(null)}><X className="w-3 h-3" /></button>
-          </div>
-          <div className="vp-layer-inspector-body">
-            <div className="vp-layer-inspector-row">
-              <span className="vp-layer-inspector-label">Blend</span>
-              <select className="vp-layer-blend" value={layerBlendModes[selectedLayerInfo.id] || "Normal"} onChange={(e) => handleSetBlendMode(selectedLayerInfo.id, e.target.value)}>
-                {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+        {layerSections.locked.length > 0 ? (
+          <section className="vb-layer-group" aria-label="Base layers">
+            <div className="vb-group-head is-static">
+              <span className="cx-label">Base layers</span>
+              <span className="vb-group-count">{layerSections.locked.length}</span>
             </div>
-            <div className="vp-layer-inspector-row">
-              <span className="vp-layer-inspector-label">Opacity</span>
-              <OpacitySlider value={layerOpacities[selectedLayerInfo.id] ?? selectedLayerInfo.opacity} onChange={(v) => handleSetOpacity(selectedLayerInfo.id, v)} />
-            </div>
-            {selectedLayerInfo.isGroup && (
-              <div className="vp-layer-inspector-row">
-                <span className="vp-layer-inspector-label">Children</span>
-                <span className="vp-layer-inspector-val">{selectedLayerInfo.childIds?.length || 0}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+            {layerSections.locked.map((layer) => (
+              <LayerRow key={layer.id} layer={layer} locked isOn={layerVisibility[layer.id] ?? layer.visible} onToggle={handleToggleLayerById} />
+            ))}
+          </section>
+        ) : null}
+
+        {nothingInFilter ? (
+          <p className="vb-layers-empty">
+            {layerSearch ? `No layer matches “${layerSearch}”.` : layerFilter === "modified" ? "Every layer matches the source file." : "No layers are visible in this variant."}
+          </p>
+        ) : null}
+      </div>
     </>
   );
 
   /* ══════════════════════════════════════════════════════════
      RENDER
      ══════════════════════════════════════════════════════════ */
+  const rootClass = [
+    "lv-root vb-root",
+    dockOpen ? "" : "is-dock-closed",
+    inspectorVisible && !layersDocked ? "" : "is-inspector-closed",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className="vp" ref={containerRef}>
+    <div className={rootClass} style={panes.style}>
+      {contextBar}
 
-      {/* ── Row 2 Portal: Unified Toolbar ── */}
-      {isActive && contextBarTarget && createPortal(
-        <div className="ctx-bar-inner">
-          {/* LEFT ZONE: Setup Breadcrumbs */}
-          <nav className="vp-crumb">
-            {/* Vehicle ▾ */}
-            <div className="vp-crumb-anchor" ref={vehicleMenuRef}>
-              <button type="button" className={`vp-crumb-chip ${!modelPath ? "vp-crumb-chip--empty" : ""}`}
-                onClick={() => modelPath ? setOpenMenu((m) => m === "vehicle" ? null : "vehicle") : handleSelectModel()}
-                title={modelPath || "Load vehicle model"}>
-                <span className="vp-crumb-chip-label">Vehicle</span>
-                <span className="vp-crumb-chip-value">{modelFileName ? modelFileName.replace(/\.(yft|ydd)$/i, "") : "None"}</span>
-                {modelPath && <ChevronDown className="vp-crumb-chip-chevron" />}
-              </button>
-              {openMenu === "vehicle" && modelPath && (
-                <div className="vp-dropdown-menu vp-dropdown-menu--crumb">
-                  <button type="button" className="vp-dropdown-item" onClick={() => { handleSelectModel(); setOpenMenu(null); }}>
-                    <Car className="w-3 h-3" /> Load vehicle
+      {/* ──── Pipeline ──── */}
+      <aside className="lv-dock" aria-label="Variant pipeline" inert={!dockOpen}>
+        <div className="lv-dock-scroll custom-scrollbar">
+          <AssetSlot
+            id="vb-source"
+            step={1}
+            title="Layered file"
+            path={psdPath}
+            done={Boolean(psdData) && !psdError}
+            emptyTitle="Open a layered file"
+            emptyHint="PSD, PDN or AI. Each variant is a set of visible layers."
+            onPick={handleSelectPsd}
+            onUnload={() => setPsdPath("")}
+          >
+            {!psdPath && !isTauriRuntime ? (
+              <p className="lv-slot-note is-warn">
+                <span className="lv-dot" aria-hidden="true" />
+                Opening files needs the desktop app.
+              </p>
+            ) : null}
+            {psdPath ? (
+              psdLoading ? (
+                <p className="lv-slot-note is-idle"><span className="lv-dot" aria-hidden="true" />Reading layers…</p>
+              ) : psdError ? (
+                <p className="lv-slot-note is-error"><span className="lv-dot" aria-hidden="true" />{psdError}</p>
+              ) : psdData ? (
+                <p className="lv-slot-note is-ok">
+                  <span className="lv-dot" aria-hidden="true" />
+                  {psdSummary}
+                  <button type="button" className="lv-link vb-reload" onClick={() => setPsdReloadToken((t) => t + 1)}>
+                    Reload
                   </button>
-                  <div className="vp-dropdown-sep" />
-                  <button type="button" className="vp-dropdown-item vp-dropdown-item--danger" onClick={() => { setModelPath(""); setOpenMenu(null); }}>
-                    <X className="w-3 h-3" /> Unload vehicle
-                  </button>
-                </div>
-              )}
-            </div>
+                </p>
+              ) : null
+            ) : null}
+          </AssetSlot>
 
-            <span className="vp-crumb-sep">/</span>
+          <AssetSlot
+            id="vb-vehicle"
+            step={2}
+            title="Vehicle"
+            path={modelPath}
+            done={Boolean(modelPath) && viewerReady && !modelError}
+            emptyTitle="Preview on a vehicle"
+            emptyHint="Optional. A .yft or .ydd shows the current variant on the car."
+            onPick={handleSelectModel}
+            onUnload={() => setModelPath("")}
+            trailing={<span className="vb-optional">Optional</span>}
+          >
+            {modelPath ? (
+              modelLoading ? (
+                <p className="lv-slot-note is-idle"><span className="lv-dot" aria-hidden="true" />Loading model…</p>
+              ) : modelError ? (
+                <p className="lv-slot-note is-error"><span className="lv-dot" aria-hidden="true" />{modelError}</p>
+              ) : liveryTarget ? (
+                <p className="lv-slot-note is-ok">
+                  <span className="lv-dot" aria-hidden="true" />
+                  Painted on {liveryTarget.replace("material:", "")}
+                </p>
+              ) : null
+            ) : null}
+          </AssetSlot>
 
-            {/* Template ▾ */}
-            <div className="vp-crumb-anchor" ref={templateMenuRef}>
-              <button type="button" className={`vp-crumb-chip ${!psdFileName ? "vp-crumb-chip--empty" : ""}`}
-                onClick={() => psdPath ? setOpenMenu((m) => m === "template" ? null : "template") : handleSelectPsd()}
-                title={psdPath || "Import PSD/PDN/AI layer source"}>
-                <span className="vp-crumb-chip-label">Template</span>
-                <span className="vp-crumb-chip-value">{psdFileName ? psdFileName.replace(/\.(psd|pdn|ai)$/i, "") : "None"}</span>
-                {psdPath && <ChevronDown className="vp-crumb-chip-chevron" />}
-              </button>
-              {openMenu === "template" && psdPath && (
-                <div className="vp-dropdown-menu vp-dropdown-menu--crumb">
-                  <button type="button" className="vp-dropdown-item" onClick={() => { handleSelectPsd(); setOpenMenu(null); }}>
-                    <FileImage className="w-3 h-3" /> Import layer source
-                  </button>
-                  <button type="button" className="vp-dropdown-item" onClick={() => { setPsdPath(psdPath); setOpenMenu(null); }}>
-                    <RefreshCw className="w-3 h-3" /> Reload
-                  </button>
-                  <div className="vp-dropdown-sep" />
-                  <button type="button" className="vp-dropdown-item vp-dropdown-item--danger" onClick={() => { setPsdPath(""); setOpenMenu(null); }}>
-                    <X className="w-3 h-3" /> Unload template
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <span className="vp-crumb-sep">/</span>
-
-            {/* Output ▾ */}
-            <div className="vp-crumb-anchor" ref={outputMenuRef}>
-              <button type="button" className={`vp-crumb-chip ${!outputFolder ? "vp-crumb-chip--empty" : ""}`}
-                onClick={() => outputFolder ? setOpenMenu((m) => m === "output" ? null : "output") : handleSelectOutput()}
-                title={outputFolder || "Set output folder"}>
-                <span className="vp-crumb-chip-label">Output</span>
-                <span className="vp-crumb-chip-value">{outputFolder ? `\u2026/${outputFolder.split(/[\\/]/).pop()}` : "None"}</span>
-                {outputFolder && <ChevronDown className="vp-crumb-chip-chevron" />}
-              </button>
-              {openMenu === "output" && outputFolder && (
-                <div className="vp-dropdown-menu vp-dropdown-menu--crumb">
-                  <button type="button" className="vp-dropdown-item" onClick={() => { handleSelectOutput(); setOpenMenu(null); }}>
-                    <FolderOpen className="w-3 h-3" /> Change folder
-                  </button>
-                  <button type="button" className="vp-dropdown-item" onClick={async () => { setOpenMenu(null); if (isTauriRuntime) await openFolderPath(outputFolder); }}>
-                    <FolderTree className="w-3 h-3" /> Open output folder
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <span className="vp-crumb-sep">/</span>
-
-            {/* Variant ▾ */}
-            <div className="vp-crumb-anchor" ref={variantMenuRef}>
-              {editingName === selectedVariantId ? (
-                <div className="vp-crumb-chip vp-crumb-chip--editing">
-                  <span className="vp-crumb-chip-label">Variant</span>
-                  <input ref={editNameRef} type="text" className="vp-crumb-input" defaultValue={selectedVariant?.name} autoFocus
-                    onBlur={(e) => handleFinishRename(selectedVariantId, e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleFinishRename(selectedVariantId, e.target.value); if (e.key === "Escape") setEditingName(null); }} />
-                </div>
-              ) : (
-                <button type="button" className="vp-crumb-chip vp-crumb-chip--variant"
-                  onClick={() => setOpenMenu((m) => m === "variant" ? null : "variant")}
-                  title={selectedVariant?.name || "Select variant"}>
-                  <span className="vp-crumb-chip-label">Variant</span>
-                  {isDirty && <span className="vp-crumb-dirty" />}
-                  <span className="vp-crumb-chip-value">{selectedVariant?.name || "None"}</span>
-                  {selectedVariant?.isBase && <span className="vp-crumb-tag">base</span>}
-                  <ChevronDown className="vp-crumb-chip-chevron" />
+          <Step
+            id="vb-variants"
+            step={3}
+            title="Variants"
+            done={variants.length > 1}
+            trailing={(
+              <span className="vb-history">
+                <button
+                  type="button"
+                  className="cx-icon-btn"
+                  onClick={handleUndoVariants}
+                  disabled={!canUndoVariants}
+                  aria-label="Undo"
+                  title="Undo the last variant or layer change (Ctrl+Z)"
+                >
+                  <Undo2 aria-hidden="true" />
                 </button>
-              )}
-              {openMenu === "variant" && (
-                <div className="vp-dropdown-menu vp-dropdown-menu--crumb vp-dropdown-menu--variant">
-                  <button type="button" className="vp-dropdown-item" onClick={() => { handleStartRename(selectedVariantId); setOpenMenu(null); }}>
-                    <Pencil className="w-3 h-3" /> Rename
-                  </button>
-                  <button type="button" className="vp-dropdown-item" onClick={() => { handleDuplicateVariant(selectedVariantId); setOpenMenu(null); }}>
-                    <Copy className="w-3 h-3" /> Duplicate
-                  </button>
-                  {variants.length > 1 && <div className="vp-dropdown-sep" />}
-                  {variants.length > 1 && variants.map((v) => (
-                    <button key={v.id} type="button" className={`vp-dropdown-item ${v.id === selectedVariantId ? "is-active" : ""}`}
-                      onClick={() => { setSelectedVariantId(v.id); setOpenMenu(null); }}>
-                      <span className={`vp-variant-dot vp-variant-dot--${variantStatuses[v.id] || "ok"}`} style={{ width: 5, height: 5, borderRadius: "50%", flexShrink: 0 }} />
-                      {v.name}{v.isBase ? " (base)" : ""}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </nav>
-
-          <div className="ctx-bar-drag-pad" aria-hidden="true" />
-
-          {/* RIGHT ZONE: View toggles + Size + Status + Export — unified strip */}
-          <div className="ctx-bar-right">
-            {/* View toggles */}
-            <div className="vp-view-toggles">
-              {modelPath && (
-                <button type="button" className={`vp-wf-toggle ${!viewerCollapsed ? "is-active" : ""}`} onClick={() => setViewerCollapsed((c) => !c)} title="Toggle 3D viewer">
-                  <Box className="w-2.5 h-2.5" /><span>3D</span>
+                <button
+                  type="button"
+                  className="cx-icon-btn"
+                  onClick={handleRedoVariants}
+                  disabled={!canRedoVariants}
+                  aria-label="Redo"
+                  title="Redo (Ctrl+Shift+Z)"
+                >
+                  <Redo2 aria-hidden="true" />
                 </button>
-              )}
-              {psdPath && (
-                <button type="button" className={`vp-wf-toggle ${!previewCollapsed ? "is-active" : ""}`} onClick={() => setPreviewCollapsed((c) => !c)} title="Toggle texture">
-                  <FileImage className="w-2.5 h-2.5" /><span>Tex</span>
+                <span className="vb-count">{variants.length}</span>
+              </span>
+            )}
+          >
+            <Ctx.Root>
+              <Ctx.Trigger>
+                <ul className="vb-variants" aria-label="Variants">
+                  {variants.map((v) => {
+                    const selected = v.id === selectedVariant?.id;
+                    return (
+                      <Ctx.Root key={v.id}>
+                        <Ctx.Trigger>
+                          <li className={`vb-variant ${selected ? "is-selected" : ""}`}>
+                            {editingName === v.id ? (
+                              <input
+                                ref={editNameRef}
+                                type="text"
+                                className="vb-rename"
+                                defaultValue={v.name}
+                                aria-label="Variant name"
+                                autoFocus
+                                onBlur={(e) => handleFinishRename(v.id, e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleFinishRename(v.id, e.target.value);
+                                  if (e.key === "Escape") setEditingName(null);
+                                }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="vb-variant-open"
+                                onClick={() => setSelectedVariantId(v.id)}
+                                onDoubleClick={() => handleStartRename(v.id)}
+                                aria-current={selected ? "true" : undefined}
+                              >
+                                <span className="vb-variant-name">{v.name}</span>
+                                {v.isBase && v.name.trim().toLowerCase() !== "base" ? <span className="vb-variant-tag">Base</span> : null}
+                                {changedFromBase[v.id] ? (
+                                  <span className="vb-variant-changed" title="Differs from the base variant" aria-label="Differs from base" />
+                                ) : null}
+                              </button>
+                            )}
+                            {editingName === v.id ? null : (
+                              <span className="vb-variant-actions">
+                                <button type="button" className="cx-icon-btn" onClick={() => handleStartRename(v.id)} aria-label={`Rename ${v.name}`} title="Rename">
+                                  <Pencil aria-hidden="true" />
+                                </button>
+                                <button type="button" className="cx-icon-btn" onClick={() => handleDuplicateVariant(v.id)} aria-label={`Duplicate ${v.name}`} title="Duplicate">
+                                  <Copy aria-hidden="true" />
+                                </button>
+                                {!v.isBase ? (
+                                  <button type="button" className="cx-icon-btn is-danger" onClick={() => handleDeleteVariant(v.id)} aria-label={`Delete ${v.name}`} title="Delete">
+                                    <Trash2 aria-hidden="true" />
+                                  </button>
+                                ) : null}
+                              </span>
+                            )}
+                          </li>
+                        </Ctx.Trigger>
+                        <Ctx.Content>
+                          <Ctx.Item onSelect={() => handleStartRename(v.id)}><Pencil className="w-3 h-3" /> Rename</Ctx.Item>
+                          <Ctx.Item onSelect={() => handleDuplicateVariant(v.id)}><Copy className="w-3 h-3" /> Duplicate</Ctx.Item>
+                          {!v.isBase ? (
+                            <>
+                              <Ctx.Separator />
+                              <Ctx.Item onSelect={() => handleDeleteVariant(v.id)} destructive><Trash2 className="w-3 h-3" /> Delete</Ctx.Item>
+                            </>
+                          ) : null}
+                        </Ctx.Content>
+                      </Ctx.Root>
+                    );
+                  })}
+                </ul>
+              </Ctx.Trigger>
+              <Ctx.Content>
+                <Ctx.Item onSelect={handleAddVariant}><Plus className="w-3 h-3" /> Add variant</Ctx.Item>
+              </Ctx.Content>
+            </Ctx.Root>
+            {deletedVariant ? (
+              <p className="lv-slot-note vb-undo-note" role="status">
+                <span>{`Deleted ${deletedVariant.name}.`}</span>
+                <button type="button" className="lv-link" onClick={handleUndoVariants}>Undo</button>
+              </p>
+            ) : null}
+            <button type="button" className="cx-btn is-quiet lv-btn-sm vb-add" onClick={handleAddVariant}>
+              <Plus aria-hidden="true" />
+              Add variant
+            </button>
+          </Step>
+        </div>
+
+        {/* Export is the dock's exit, pinned under the pipeline. */}
+        <footer className="lv-dock-foot vb-export">
+          <div className="lv-field">
+            <span className="cx-label">Size</span>
+            <div className="lv-seg" role="radiogroup" aria-label="Export size">
+              {SIZE_OPTIONS.map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  role="radio"
+                  aria-checked={exportSize === size}
+                  aria-label={exportDims && exportDims.width !== exportDims.height ? `${size} pixels on the long side` : `${size} by ${size} pixels`}
+                  className={`lv-seg-btn ${exportSize === size ? "is-on" : ""}`}
+                  onClick={() => setExportSize(size)}
+                >
+                  {size >= 1024 ? `${size / 1024}K` : size}
                 </button>
-              )}
-              <button type="button" className={`vp-wf-toggle ${inspectorOpen ? "is-active" : ""}`} onClick={() => setInspectorOpen((o) => !o)} title="Toggle layers (Ctrl+\)">
-                <Layers className="w-2.5 h-2.5" /><span>Layers</span>
-              </button>
-            </div>
-            <div className="ctx-bar-sep" />
-            {/* Resolution selector */}
-            <div className="vp-sizes vp-segmented">
-              {DEFAULT_SIZES.map((s) => (
-                <button key={s.value} type="button" className={`vp-size ${exportSize === s.value ? "is-active" : ""}`} onClick={() => setExportSize(s.value)}>{s.label}</button>
               ))}
             </div>
-            <div className="ctx-bar-sep" />
-            {showSavedToast && <span className="vp-toast">Saved</span>}
-            {!exporting && statusChip && (
-              <button type="button" className={`vp-status-chip vp-status-chip--${statusChip.type}`}
-                title={validationStatus.issues.map((i) => i.msg).join("\n") || undefined}
-                onClick={statusChip.type === "error" || statusChip.type === "warn" ? () => { setInspectorOpen(true); setActivePanel("layers"); } : undefined}>
-                {statusChip.type === "ok" && <Check className="w-2.5 h-2.5" />}
-                {statusChip.type === "warn" && <AlertTriangle className="w-2.5 h-2.5" />}
-                {statusChip.type === "error" && <FileWarning className="w-2.5 h-2.5" />}
-                {statusChip.type === "dirty" && <span className="vp-chip-dot" />}
-                <span>{statusChip.label}</span>
+          </div>
+
+          {psdData && psdData.width !== psdData.height ? (
+            <div className="lv-field">
+              <span className="cx-label">Shape</span>
+              <div className="lv-seg" role="radiogroup" aria-label="Export shape">
+                {EXPORT_SHAPES.map((shape) => (
+                  <button
+                    key={shape.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={exportShape === shape.id}
+                    className={`lv-seg-btn ${exportShape === shape.id ? "is-on" : ""}`}
+                    onClick={() => setExportShape(shape.id)}
+                    title={shape.title}
+                  >
+                    {shape.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {exportDims ? <p className="vb-dims">{`Saves ${exportDims.width} × ${exportDims.height} PNGs`}</p> : null}
+
+          <div className="vb-dest">
+            <span className="cx-label">Save to</span>
+            {outputFolder ? (
+              <div className="vb-dest-row">
+                <span className="vb-dest-name" title={outputFolder}>{outputName || outputFolder}</span>
+                <button type="button" className="cx-icon-btn" onClick={handleSelectOutput} disabled={!isTauriRuntime} aria-label="Change output folder" title="Change output folder">
+                  <FolderInput aria-hidden="true" />
+                </button>
+                {isTauriRuntime ? (
+                  <button type="button" className="cx-icon-btn" onClick={openOutputFolder} aria-label="Open output folder" title="Open output folder">
+                    <FolderOpen aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <button type="button" className="cx-btn lv-btn-sm vb-dest-pick" onClick={handleSelectOutput} disabled={!isTauriRuntime}>
+                <FolderInput aria-hidden="true" />
+                Choose a folder
               </button>
             )}
-            <button type="button" className={`vp-wf-save ${isDirty ? "is-dirty" : ""}`} onClick={handleSave} title="Save (Ctrl+S)"><Save className="w-3 h-3" /></button>
-            {exporting ? (
-              <div className="vp-export-progress"><div className="vp-export-bar" style={{ width: `${exportProgress}%` }} /><span className="vp-export-pct">{Math.round(exportProgress)}%</span></div>
-            ) : (
-              <div className="vp-cmd-export" ref={exportMenuRef}>
-                <button type="button" className="vp-cmd-export-btn" onClick={() => handleExport("all")} disabled={!psdPath || !outputFolder || variants.length === 0}>
-                  <Download className="w-3 h-3" /><span>Export</span>
-                </button>
-                <button type="button" className="vp-cmd-export-arrow" onClick={() => setShowExportMenu((s) => !s)} disabled={!psdPath || !outputFolder}>
-                  <ChevronDown className="w-2.5 h-2.5" />
-                </button>
-                {showExportMenu && (
-                  <div className="vp-dropdown-menu vp-dropdown-menu--export">
-                    <button type="button" className="vp-dropdown-item" onClick={() => { handleExport("current"); setShowExportMenu(false); }}>Export current variant</button>
-                    {selectedVariantIds.size > 0 && (
-                      <button type="button" className="vp-dropdown-item" onClick={() => { handleExport("selected"); setShowExportMenu(false); }}>Export selected ({selectedVariantIds.size})</button>
-                    )}
-                    <button type="button" className="vp-dropdown-item" onClick={() => { handleExport("all"); setShowExportMenu(false); }}>Export all ({variants.length})</button>
-                    <div className="vp-dropdown-sep" />
-                    <button type="button" className="vp-dropdown-item" onClick={async () => { await handleExport("all"); setShowExportMenu(false); if (outputFolder && isTauriRuntime) await openFolderPath(outputFolder); }}>Export all + open folder</button>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
-        </div>,
-        contextBarTarget
-      )}
 
-      {/* ── Main Workspace ── */}
-      <div className="vp-workspace">
-
-        {/* ── Left Sidebar: Variants ── */}
-        <motion.div
-          style={{ overflow: "hidden", flexShrink: 0, display: "flex" }}
-          animate={{ width: sidebarOpen ? 260 : 28 }}
-          transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.8 }}
-        >
-          <AnimatePresence mode="wait" initial={false}>
-            {sidebarOpen ? (
-              <motion.div
-                key="sidebar-open"
-                className="vp-sidebar"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.1 }}
-              >
-            <div className="vp-sidebar-head">
-              <span className="vp-sidebar-title">Variants</span>
-              <span className="vp-sidebar-count">{variants.length}</span>
-              <div className="vp-sidebar-head-actions">
-                <button type="button" className="vp-sidebar-act" onClick={handleAddVariant} title="Add variant"><Plus className="w-3 h-3" /></button>
-                <button type="button" className="vp-sidebar-act" onClick={() => handleDuplicateVariant(selectedVariantId)} disabled={!selectedVariant} title="Duplicate variant"><Copy className="w-3 h-3" /></button>
+          {modelPath ? (
+            <div className="vb-renders">
+              <div className="lv-toggle-row">
+                <span>Save vehicle renders</span>
+                <Toggle checked={exportRenders} onChange={setExportRenders} ariaLabel="Save a vehicle render of each variant" />
               </div>
-              <button type="button" className="vp-sidebar-collapse" onClick={() => setSidebarOpen(false)} title="Collapse (Ctrl+B)"><PanelLeftOpen className="w-3.5 h-3.5" /></button>
+              {exportRenders ? (
+                <p className="lv-slot-note">One per variant, from the vehicle view as framed now.</p>
+              ) : null}
             </div>
-            <Ctx.Root><Ctx.Trigger>
-              <div className="vp-sidebar-list">
-                {variants.map((v) => {
-                  const vs = variantStatuses[v.id] || "ok";
-                  return (
-                    <Ctx.Root key={v.id}><Ctx.Trigger>
-                      <div className={`vp-sidebar-item ${selectedVariantId === v.id ? "is-active" : ""}`} onClick={() => setSelectedVariantId(v.id)} onDoubleClick={() => handleStartRename(v.id)}>
-                        <span className={`vp-variant-dot vp-variant-dot--${vs}`} />
-                        {v.isBase && <span className="vp-badge">BASE</span>}
-                        {editingName === v.id
-                          ? <input ref={editNameRef} type="text" className="vp-rename-input" defaultValue={v.name} autoFocus
-                              onBlur={(e) => handleFinishRename(v.id, e.target.value)}
-                              onKeyDown={(e) => { if (e.key === "Enter") handleFinishRename(v.id, e.target.value); if (e.key === "Escape") setEditingName(null); }}
-                              onClick={(e) => e.stopPropagation()} />
-                          : <span className="vp-sidebar-name">{v.name}</span>}
-                        <div className="vp-sidebar-actions">
-                          <button type="button" className="vp-sidebar-act" onClick={(e) => { e.stopPropagation(); handleStartRename(v.id); }} title="Rename"><Pencil className="w-2.5 h-2.5" /></button>
-                          <button type="button" className="vp-sidebar-act" onClick={(e) => { e.stopPropagation(); handleDuplicateVariant(v.id); }} title="Duplicate"><Copy className="w-2.5 h-2.5" /></button>
-                          {!v.isBase && (
-                            <button type="button" className="vp-sidebar-act vp-sidebar-act--danger" onClick={(e) => { e.stopPropagation(); handleDeleteVariant(v.id); }} title="Delete"><Trash2 className="w-2.5 h-2.5" /></button>
-                          )}
-                        </div>
-                      </div>
-                    </Ctx.Trigger><Ctx.Content>
-                      <Ctx.Item onSelect={() => handleStartRename(v.id)}><Pencil className="w-3 h-3" /> Rename</Ctx.Item>
-                      <Ctx.Item onSelect={() => handleDuplicateVariant(v.id)}><Copy className="w-3 h-3" /> Duplicate</Ctx.Item>
-                      {!v.isBase && <><Ctx.Separator /><Ctx.Item onSelect={() => handleDeleteVariant(v.id)} destructive><Trash2 className="w-3 h-3" /> Delete</Ctx.Item></>}
-                    </Ctx.Content></Ctx.Root>
-                  );
-                })}
-              </div>
-            </Ctx.Trigger><Ctx.Content><Ctx.Item onSelect={handleAddVariant}><Plus className="w-3 h-3" /> Add Variant</Ctx.Item></Ctx.Content></Ctx.Root>
-            <div className="vp-sidebar-foot">
-              <button type="button" className="vp-add-btn" onClick={handleAddVariant}><Plus className="w-3 h-3" /><span>Add Variant</span></button>
-              {selectedVariant && !selectedVariant.isBase && (
-                <button type="button" className="vp-del-btn" onClick={() => handleDeleteVariant(selectedVariantId)}><Trash2 className="w-3 h-3" /></button>
-              )}
-            </div>
-            {variants.length > 1 && (
-              <div className="vp-sidebar-batch">
-                <button type="button" className="vp-batch-btn" onClick={() => handleExport("all")} disabled={!psdPath || !outputFolder}>
-                  <Download className="w-3 h-3" /><span>Export all</span>
-                </button>
-              </div>
-            )}
-              </motion.div>
-            ) : (
-              <motion.button
-                key="sidebar-collapsed"
-                type="button"
-                className="vp-sidebar-expand"
-                onClick={() => setSidebarOpen(true)}
-                title="Show sidebar (Ctrl+B)"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.1 }}
-              >
-                <Palette className="w-3.5 h-3.5 vp-collpanel-icon" />
-                <span className="vp-collpanel-label">Variants</span>
-              </motion.button>
-            )}
-          </AnimatePresence>
-        </motion.div>
+          ) : null}
 
-        {/* ── Center Canvas + Legacy Bottom Layers ── */}
-        <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div className="vp-canvas">
-          {!hasContent ? (
-            /* Empty state */
-            <div className="vp-empty-state">
-              <div className="vp-empty-graphic">
-                <div className="vp-empty-icon-ring">
-                  <FileImage className="w-10 h-10" strokeWidth={1.2} />
-                </div>
-              </div>
-              <div className="vp-empty-title">Start Building</div>
-              <div className="vp-empty-desc">Use the breadcrumbs above or click a button below to load your assets.</div>
-              <div className="vp-empty-actions">
-                <button type="button" className="vp-empty-btn" onClick={handleSelectModel}>
-                  <Car className="w-4 h-4" /><span>Vehicle</span>
+          {exportIssues.length > 0 && psdPath ? (
+            <ul className="vb-issues">
+              {exportIssues.map((issue) => (
+                <li key={issue.msg} className={`lv-slot-note is-${issue.type === "error" ? "error" : "warn"}`}>
+                  <span className="lv-dot" aria-hidden="true" />
+                  {issue.msg}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {exporting ? (
+            <div className="vb-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(exportProgress)} aria-label="Export progress">
+              <span style={{ width: `${exportProgress}%` }} />
+            </div>
+          ) : null}
+
+          <div className="vb-export-actions">
+            <button
+              type="button"
+              className="cx-btn is-primary vb-export-btn"
+              onClick={() => handleExport("all")}
+              disabled={!psdData || exportBlocked || exporting}
+              title="Export every variant (Ctrl+Shift+E)"
+            >
+              <Download aria-hidden="true" />
+              {exporting
+                ? `Exporting ${Math.round(exportProgress)}%`
+                : variants.length === 1 ? "Export variant" : `Export ${variants.length} variants`}
+            </button>
+          </div>
+          {variants.length > 1 ? (
+            <button
+              type="button"
+              className="vb-export-current"
+              onClick={() => handleExport("current")}
+              disabled={!psdData || exportBlocked || exporting}
+              title="Export only the selected variant (Ctrl+E)"
+            >
+              <span>Export only</span>
+              <span className="vb-export-current-name">{selectedVariant?.name}</span>
+            </button>
+          ) : null}
+
+          {exportReplace ? (
+            <ReplacePrompt
+              conflicts={exportReplace.conflicts}
+              total={exportReplace.total}
+              folder={exportReplace.folder}
+              onConfirm={() => handleExport(exportReplace.mode, { replace: true })}
+              onCancel={() => setExportReplace(null)}
+            />
+          ) : null}
+          {exportResult ? (
+            <p className={`vb-result is-${exportResult.tone}`} role={exportResult.tone === "error" ? "alert" : "status"}>
+              {exportResult.tone === "ok" ? <Check aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}
+              <span>
+                {exportResult.message}
+                {exportResult.folder ? <> <span className="vb-result-path" title={outputFolder}>{exportResult.folder}</span></> : null}
+              </span>
+              {exportResult.tone === "ok" && isTauriRuntime && outputFolder ? (
+                <button type="button" className="lv-link" onClick={openOutputFolder}>Open</button>
+              ) : null}
+            </p>
+          ) : null}
+        </footer>
+        <PaneResizer side="dock" label="Resize the variant pipeline" setWidth={panes.setWidth} />
+      </aside>
+
+      {/* ──── Stage ──── */}
+      <div className="vb-stage-col">
+        <section className={`vb-stage ${bothLoaded ? `is-${stageMode}` : ""}`} ref={stageRef} aria-label="Preview">
+          {!modelPath && !psdPath ? (
+            <div className="vb-empty">
+              <p className="vb-empty-title">Nothing to preview yet</p>
+              <p className="vb-empty-copy">
+                Open a layered file. Every variant you make here is one set of visible layers, exported as its own PNG.
+              </p>
+              <div className="vb-empty-actions">
+                <button type="button" className="cx-btn is-primary" onClick={handleSelectPsd} disabled={!isTauriRuntime}>
+                  <FileImage aria-hidden="true" />
+                  Open layered file
                 </button>
-                <button type="button" className="vp-empty-btn vp-empty-btn--primary" onClick={handleSelectPsd}>
-                  <FileImage className="w-4 h-4" /><span>Template</span>
+                <button type="button" className="cx-btn" onClick={handleSelectModel} disabled={!isTauriRuntime}>
+                  Add a vehicle
                 </button>
-                <button type="button" className="vp-empty-btn" onClick={handleSelectOutput}>
-                  <FolderOpen className="w-4 h-4" /><span>Output</span>
-                </button>
-              </div>
-              <div className="vp-empty-drop">
-                <Upload className="w-3 h-3" /><span>or drop files here</span>
               </div>
             </div>
           ) : (
-            /* Canvas views */
-            <div className="vp-canvas-views">
-              {/* 3D Viewer */}
-              {!viewerCollapsed && modelPath && (
-                <div className={`vp-viewer-pane ${activePanel === "viewer" ? "is-focused" : ""}`}
-                  style={{ width: previewCollapsed || !psdPath ? "100%" : `${viewerPanelWidth}%` }}
-                  onClick={() => setActivePanel("viewer")}>
-                  <div className="vp-pane-label">
-                    <Car className="w-3 h-3" /><span>3D Preview</span>
-                    {liveryTarget && <span className="vp-pane-target">{liveryTarget.replace("material:", "")}</span>}
+            <div className="vb-panes">
+              {showModelPane ? (
+                <section
+                  className="vb-pane vb-pane--model"
+                  aria-label="Vehicle preview"
+                  style={showTexturePane ? { flexBasis: `${viewerPanelWidth}%` } : undefined}
+                >
+                  <div className="vb-pane-canvas">
+                    <Viewer
+                      modelPath={modelPath}
+                      texturePath=""
+                      textureReloadToken={0}
+                      textureTarget={viewerTextureTarget}
+                      textureMode="livery"
+                      windowTexturePath=""
+                      windowTextureTarget="none"
+                      windowTextureReloadToken={0}
+                      bodyColor="#e7ebf0"
+                      backgroundColor="#111214"
+                      lightIntensity={currentLighting.intensity}
+                      glossiness={0.5}
+                      showGrid={false}
+                      showWireframe={showWireframe}
+                      wasdEnabled={false}
+                      isActive={isActive && showModelPane}
+                      onReady={handleViewerReady}
+                      onModelInfo={handleModelInfo}
+                      onTextureReload={NOOP}
+                      onTextureError={NOOP}
+                      onWindowTextureError={NOOP}
+                      onModelError={(message) => { setModelError(message || "The model could not be loaded."); setModelLoading(false); }}
+                      onModelLoading={(loading) => { setModelLoading(Boolean(loading)); if (loading) setModelError(""); }}
+                      onFormatWarning={NOOP}
+                    />
                   </div>
-                  <div className="vp-camera-bar">
-                    {CAMERA_PRESETS.map((cp) => (
-                      <button key={cp.key} type="button" className="vp-camera-btn" onClick={() => handleCameraPreset(cp.key)} title={cp.label}>{cp.label}</button>
-                    ))}
-                    <button type="button" className="vp-camera-btn vp-camera-btn--reset" onClick={handleCameraReset} title="Reset"><RotateCcw className="w-2.5 h-2.5" /></button>
-                    <div className="vp-camera-sep" />
-                    <button type="button" className={`vp-camera-btn ${turntableActive ? "is-active" : ""}`} onClick={() => setTurntableActive((t) => !t)} title="Turntable">
-                      {turntableActive ? <Pause className="w-2.5 h-2.5" /> : <Play className="w-2.5 h-2.5" />}
-                    </button>
-                    <div className="vp-camera-sep" />
-                    <div className="vp-light-dropdown" ref={lightMenuRef}>
-                      <button type="button" className="vp-camera-btn" onClick={(e) => { e.stopPropagation(); setShowLightMenu((s) => !s); }} title="Lighting">
-                        <Sun className="w-2.5 h-2.5" /><span>{currentLighting.label}</span>
-                      </button>
-                      {showLightMenu && (
-                        <div className="vp-dropdown-menu">
-                          {LIGHTING_PRESETS.map((lp) => (
-                            <button key={lp.key} type="button" className={`vp-dropdown-item ${lightingPreset === lp.key ? "is-active" : ""}`}
-                              onClick={() => { setLightingPreset(lp.key); setShowLightMenu(false); }}>{lp.label}</button>
-                          ))}
-                        </div>
-                      )}
+                  {modelError ? (
+                    <div className="vb-pane-state lv-slip is-error" role="alert">
+                      <AlertTriangle aria-hidden="true" />
+                      <span>
+                        <strong>The vehicle could not be loaded</strong>
+                        <small>{modelError}</small>
+                      </span>
                     </div>
-                    <div className="vp-camera-sep" />
-                    <button type="button" className={`vp-camera-btn ${showWireframe ? "is-active" : ""}`} onClick={() => setShowWireframe((w) => !w)} title="Wireframe"><Box className="w-2.5 h-2.5" /></button>
-                  </div>
-                  <Viewer modelPath={modelPath} texturePath={viewerTexturePath} textureReloadToken={previewToken} textureTarget={viewerTextureTarget}
-                    textureMode="livery" windowTexturePath="" windowTextureTarget="none" windowTextureReloadToken={0}
-                    bodyColor="#e7ebf0" backgroundColor="#111214" lightIntensity={currentLighting.intensity} glossiness={0.5}
-                    showGrid={false} showWireframe={showWireframe} wasdEnabled={false}
-                    isActive={isActive}
-                    onReady={handleViewerReady} onModelInfo={handleModelInfo}
-                    onTextureReload={NOOP} onTextureError={NOOP} onWindowTextureError={NOOP} onModelError={NOOP} onModelLoading={NOOP} onFormatWarning={NOOP} />
-                </div>
-              )}
-
-              {!viewerCollapsed && !previewCollapsed && modelPath && psdPath && <HResizer onResize={handleHResize} />}
-
-              {/* 2D Texture */}
-              {!previewCollapsed && psdPath && (
-                <div className={`vp-texture-pane ${activePanel === "texture" ? "is-focused" : ""}`}
-                  style={{ width: (!modelPath || viewerCollapsed) ? "100%" : `${100 - viewerPanelWidth}%` }}
-                  onClick={() => setActivePanel("texture")}>
-                  <div className="vp-pane-label">
-                    <FileImage className="w-3 h-3" /><span>Livery Texture</span>
-                    {psdData && <span className="vp-pane-dim">{psdData.width}&times;{psdData.height}</span>}
-                  </div>
-                  <div className="vp-uv-toolbar">
-                    <button type="button" className="vp-uv-btn" onClick={handleUvZoomFit} title="Fit (F)"><Maximize2 className="w-2.5 h-2.5" /><span>Fit</span></button>
-                    <button type="button" className="vp-uv-btn" onClick={() => setUvZoom(1)} title="100%">100%</button>
-                    <button type="button" className="vp-uv-btn" onClick={() => setUvZoom((z) => Math.min(10, z * 1.25))} title="Zoom in"><ZoomIn className="w-2.5 h-2.5" /></button>
-                    <button type="button" className="vp-uv-btn" onClick={() => setUvZoom((z) => Math.max(0.1, z * 0.8))} title="Zoom out"><ZoomOut className="w-2.5 h-2.5" /></button>
-                    <div className="vp-uv-sep" />
-                    <button type="button" className={`vp-uv-btn ${showGrid ? "is-active" : ""}`} onClick={() => setShowGrid((g) => !g)} title="Grid"><Grid3x3 className="w-2.5 h-2.5" /></button>
-                    <button type="button" className={`vp-uv-btn ${showChecker ? "is-active" : ""}`} onClick={() => setShowChecker((c) => !c)} title="Checker"><SquareDashedBottom className="w-2.5 h-2.5" /></button>
-                    <button type="button" className={`vp-uv-btn ${showSafeArea ? "is-active" : ""}`} onClick={() => setShowSafeArea((s) => !s)} title="Safe area"><Monitor className="w-2.5 h-2.5" /></button>
-                    <div className="vp-uv-sep" />
-                    <span className="vp-uv-zoom-label">{Math.round(uvZoom * 100)}%</span>
-                    {uvHover && <span className="vp-uv-readout">{uvHover.px},{uvHover.py}</span>}
-                  </div>
-                  <div className={`vp-texture-view ${showChecker ? "vp-texture-view--checker" : ""} ${showGrid ? "vp-texture-view--grid" : ""}`}
-                    ref={uvContainerRef} onPointerDown={handleUvPointerDown} onPointerMove={handleUvPointerMove} onPointerUp={handleUvPointerUp}>
-                    {previewUrl ? (
-                      <div className="vp-uv-canvas" style={{ transform: `translate(${uvPan.x}px, ${uvPan.y}px) scale(${uvZoom})`, transformOrigin: "center center" }}>
-                        <img ref={uvImgRef} src={previewUrl} alt="Variant preview" className="vp-texture-img" draggable={false} />
-                        {showSafeArea && <div className="vp-safe-area-overlay" />}
+                  ) : modelLoading ? (
+                    <div className="vb-pane-state lv-slip" role="status">
+                      <span className="vb-spinner" aria-hidden="true" />
+                      Loading model…
+                    </div>
+                  ) : null}
+                  <div className="lv-deck vb-deck" role="toolbar" aria-label="Camera">
+                    <div className="lv-deck-group" role="group" aria-label="Camera shots">
+                      {CAMERA_SHOTS.map((shot) => (
+                        <DeckButton
+                          key={shot.key}
+                          onClick={() => viewerApiRef.current?.setPreset?.(shot.key)}
+                          title={`${shot.label} view`}
+                          disabled={!viewerReady}
+                        >
+                          {shot.label}
+                        </DeckButton>
+                      ))}
+                      <DeckButton onClick={() => viewerApiRef.current?.reset?.()} title="Re-centre on the model" disabled={!viewerReady} className="is-icon">
+                        <Crosshair aria-hidden="true" />
+                      </DeckButton>
+                    </div>
+                    <div className="lv-deck-group" role="group" aria-label="View">
+                      <DeckButton active={showWireframe} onClick={() => setShowWireframe((w) => !w)} title="Wireframe" className="is-icon">
+                        <Box aria-hidden="true" />
+                      </DeckButton>
+                      <div className="vb-light" ref={lightMenuRef}>
+                        <DeckButton active={lightMenuOpen} onClick={() => setLightMenuOpen((o) => !o)} title={`Lighting: ${currentLighting.label}`} className="vb-light-btn">
+                          <Sun aria-hidden="true" />
+                          <span>{currentLighting.label}</span>
+                        </DeckButton>
+                        {lightMenuOpen ? (
+                          <div className="vb-menu" role="menu" aria-label="Lighting">
+                            {LIGHTING_PRESETS.map((lp) => (
+                              <button
+                                key={lp.key}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={lightingPreset === lp.key}
+                                className={`vb-menu-item ${lightingPreset === lp.key ? "is-active" : ""}`}
+                                onClick={() => { setLightingPreset(lp.key); setLightMenuOpen(false); }}
+                              >
+                                <Check className="vb-menu-check" aria-hidden="true" />
+                                {lp.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : psdLoading ? (
-                      <div className="vp-placeholder"><div className="vp-spinner" /><span>Parsing layer source...</span></div>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
+
+              {showModelPane && showTexturePane ? <HResizer onResize={handleHResize} /> : null}
+
+              {showTexturePane ? (
+                <section className="vb-pane vb-pane--texture" aria-label="Texture preview">
+                  <div
+                    className={`vb-texture ${showChecker ? "has-checker" : ""} ${showGrid ? "has-grid" : ""} ${uvPanning ? "is-panning" : ""}`}
+                    ref={uvContainerRef}
+                    onPointerDown={handleUvPointerDown}
+                    onPointerMove={handleUvPointerMove}
+                    onPointerUp={handleUvPointerUp}
+                    onPointerLeave={() => setUvHover(null)}
+                  >
+                    {hasPreview ? (
+                      <div className="vb-texture-canvas" style={{ transform: `translate(${uvPan.x}px, ${uvPan.y}px) scale(${uvZoom})` }}>
+                        <div className="vb-texture-frame" style={{ "--ar": `${psdData?.width || 1} / ${psdData?.height || 1}` }}>
+                          <canvas ref={uvImgRef} aria-label={`${selectedVariant?.name || "Variant"} texture`} className="vb-texture-img" />
+                          {showSafeArea ? <div className="vb-safe-area" aria-hidden="true" /> : null}
+                        </div>
+                      </div>
                     ) : psdError ? (
-                      <div className="vp-placeholder vp-placeholder--error"><AlertTriangle className="w-5 h-5" /><span>{psdError}</span></div>
+                      <div className="vb-texture-state is-error" role="alert">
+                        <AlertTriangle aria-hidden="true" />
+                        <p className="vb-texture-title">The layered file could not be read</p>
+                        <p className="vb-texture-copy">{psdError}</p>
+                        <button type="button" className="cx-btn lv-btn-sm" onClick={() => setPsdReloadToken((t) => t + 1)}>
+                          <RefreshCw aria-hidden="true" />
+                          Try again
+                        </button>
+                      </div>
                     ) : (
-                      <div className="vp-placeholder"><Eye className="w-5 h-5 opacity-30" /><span>Generating preview...</span></div>
+                      <div className="vb-texture-state" role="status">
+                        <span className="vb-spinner" aria-hidden="true" />
+                        <p className="vb-texture-title">{psdLoading ? "Reading layers" : "Compositing preview"}</p>
+                      </div>
                     )}
                   </div>
-                </div>
-              )}
-
-              {/* Both hidden */}
-              {viewerCollapsed && previewCollapsed && (
-                <div className="vp-empty-state vp-empty-state--compact">
-                  <span className="vp-empty-desc">All preview panels hidden</span>
-                  <span className="vp-empty-desc" style={{ opacity: 0.4 }}>Use the View toggles in the workflow bar</span>
-                </div>
-              )}
+                  {psdData ? (
+                    <span className="vb-texture-meta lv-slip">
+                      {psdData.width} × {psdData.height}
+                      <span>{Math.round(uvZoom * 100)}%</span>
+                      {uvHover ? <span>{uvHover.px}, {uvHover.py}</span> : null}
+                    </span>
+                  ) : null}
+                  <div className="lv-deck vb-deck" role="toolbar" aria-label="Texture view">
+                    <div className="lv-deck-group">
+                      <DeckButton onClick={handleUvZoomFit} title="Fit (F)" className="is-icon"><Maximize2 aria-hidden="true" /></DeckButton>
+                      <DeckButton onClick={() => setUvZoom((z) => Math.max(0.1, z * 0.8))} title="Zoom out" className="is-icon"><ZoomOut aria-hidden="true" /></DeckButton>
+                      <DeckButton onClick={() => setUvZoom(1)} title="Actual fit size">100%</DeckButton>
+                      <DeckButton onClick={() => setUvZoom((z) => Math.min(10, z * 1.25))} title="Zoom in" className="is-icon"><ZoomIn aria-hidden="true" /></DeckButton>
+                    </div>
+                    <div className="lv-deck-group">
+                      <DeckButton active={showChecker} onClick={() => setShowChecker((c) => !c)} title="Transparency checker" className="is-icon"><SquareDashed aria-hidden="true" /></DeckButton>
+                      <DeckButton active={showGrid} onClick={() => setShowGrid((g) => !g)} title="Grid" className="is-icon"><Grid3x3 aria-hidden="true" /></DeckButton>
+                      <DeckButton active={showSafeArea} onClick={() => setShowSafeArea((s) => !s)} title="Safe area" className="is-icon"><Frame aria-hidden="true" /></DeckButton>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
             </div>
           )}
-        </div>
 
-          {/* ── Legacy Bottom Layers Panel ── */}
-          {legacyLayersLayout && hasLayers && (
-            <>
-              {inspectorOpen && <VResizer onResize={handleVResize} />}
-              <div className="vp-legacy-layers" style={{ height: inspectorOpen ? legacyLayersHeight : 28, flexShrink: 0 }}>
-                {!inspectorOpen ? (
-                  <button type="button" className="vp-legacy-layers-expand" onClick={() => setInspectorOpen(true)}>
-                    <Layers className="w-3.5 h-3.5 vp-collpanel-icon" />
-                    <span className="vp-collpanel-label">Layers</span>
-                  </button>
-                ) : (
-                  <div className={`vp-inspector ${activePanel === "layers" ? "is-focused" : ""}`} onClick={() => setActivePanel("layers")}>
-                    {renderLayersContent()}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* ── Right Panel: Layers Inspector ── */}
-        {hasLayers && (
-          <motion.div
-            style={{ overflow: "hidden", flexShrink: 0, display: "flex" }}
-            animate={{ width: legacyLayersLayout ? 0 : (inspectorOpen ? 320 : 28) }}
-            transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.8 }}
-          >
-            <AnimatePresence mode="wait" initial={false}>
-              {!inspectorOpen ? (
-                <motion.button
-                  key="inspector-collapsed"
+          {bothLoaded ? (
+            <div className="lv-stage-switch vb-view-switch" role="radiogroup" aria-label="Layout">
+              {[
+                { id: "model", label: "Vehicle" },
+                { id: "split", label: "Split" },
+                { id: "texture", label: "Texture" },
+              ].map((mode) => (
+                <button
+                  key={mode.id}
                   type="button"
-                  className="vp-inspector-expand"
-                  onClick={() => setInspectorOpen(true)}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.1 }}
+                  role="radio"
+                  aria-checked={stageMode === mode.id}
+                  className={stageMode === mode.id ? "is-on" : ""}
+                  onClick={() => setStageMode(mode.id)}
                 >
-                  <Layers className="w-3.5 h-3.5 vp-collpanel-icon" />
-                  <span className="vp-collpanel-label">Layers</span>
-                </motion.button>
-              ) : (
-                <motion.div
-                  key="inspector-open"
-                  className={`vp-inspector ${activePanel === "layers" ? "is-focused" : ""}`}
-                  onClick={() => setActivePanel("layers")}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.1 }}
-                >
-                  {renderLayersContent()}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-        )}
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
+        {layersDocked && hasLayers ? (
+          inspectorOpen ? (
+            <>
+              <VResizer onResize={handleVResize} />
+              <aside className="vb-layers is-docked" style={{ height: legacyLayersHeight }} aria-label="Layers">
+                {layersPanel}
+              </aside>
+            </>
+          ) : null
+        ) : null}
       </div>
 
-      {/* ── Footer ── */}
-      <div className="vp-footer">
-        <div className="vp-footer-left">
-          {psdData && (
-            <span className="vp-footer-summary">
-              {exportSummary.visibleCount} layers &middot; {exportSize}&sup2; &middot; {exportSummary.format} &middot; {variants.length} variant{variants.length !== 1 ? "s" : ""}
-            </span>
-          )}
-        </div>
-        <div className="vp-footer-right">
-          {activePanel && <span className="vp-footer-panel-hint"><span className="vp-footer-panel-active">{activePanel === "viewer" ? "3D" : activePanel === "texture" ? "Texture" : "Layers"}</span></span>}
-          <span className="vp-footer-hint"><kbd>Tab</kbd> cycle panels</span>
-          <span className="vp-footer-hint"><kbd>Ctrl+B</kbd> sidebar</span>
-          <span className="vp-footer-hint"><kbd>Ctrl+S</kbd> save</span>
-          <span className="vp-footer-hint"><kbd>Ctrl+E</kbd> export</span>
-        </div>
-      </div>
+      {/* ──── Layers ──── */}
+      {!layersDocked ? (
+        <aside className="lv-inspector vb-layers" aria-label="Layers" inert={!inspectorVisible}>
+          <PaneResizer side="insp" label="Resize the layers panel" setWidth={panes.setWidth} />
+          {hasLayers ? layersPanel : null}
+        </aside>
+      ) : null}
     </div>
   );
 }

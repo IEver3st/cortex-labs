@@ -315,7 +315,7 @@ export function TextureUploadGrid({ textures, onAdd, onRemove, maxSlots = 6 }) {
 }
 
 /* ── Toggle Switch ── */
-export function CyberToggle({ checked, onChange, size = "sm" }) {
+export function CyberToggle({ checked, onChange, size = "sm", label }) {
   return (
     <button
       type="button"
@@ -323,6 +323,7 @@ export function CyberToggle({ checked, onChange, size = "sm" }) {
       onClick={() => onChange(!checked)}
       role="switch"
       aria-checked={checked}
+      aria-label={label}
     >
       <div className="cs-toggle-thumb" />
     </button>

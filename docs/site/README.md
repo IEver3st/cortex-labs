@@ -59,6 +59,13 @@ The app itself must point at this endpoint with:
 VITE_BUG_REPORT_ENDPOINT=https://your-docs-site.example.com/api/report-bug
 ```
 
+The desktop app sends reports from its native side, which reads the endpoint
+from `CORTEX_BUG_REPORT_ENDPOINT` (or `VITE_BUG_REPORT_ENDPOINT`) in the
+environment of the `tauri build` process; a value only in `.env` is not
+compiled in. It must be an `https` URL. Desktop requests carry
+`Origin: http://tauri.localhost`, so add that origin to
+`BUG_REPORT_ALLOWED_ORIGINS`.
+
 ## Learn More
 
 To learn more about Next.js and Fumadocs, take a look at the following

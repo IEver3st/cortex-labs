@@ -1,29 +1,81 @@
 ---
 title: Hotkeys
-description: Default shortcuts and how to customize them.
+description: Default shortcuts, where they work, and how to change them.
 ---
 
-Hotkeys can be edited in **Settings -> Shortcuts**.
+Hotkeys can be edited in **Settings -> Shortcuts**: click a binding, then press the new keys. If another action already uses those keys, Settings names it and offers to swap the two shortcuts.
 
 ## Default hotkeys
+
+### New tabs
+
+Each one opens the workspace as a new project in its own tab, the same as starting it from Home or the new-tab menu, so it is saved and listed on Home.
+
+| Action | Default |
+| --- | --- |
+| New Livery Tab | Alt + 1 |
+| New All Tab | Alt + 2 |
+| New EUP Tab | Alt + 3 |
+| New Multi Tab | Alt + 4 |
+| New Variant Builder Tab | Alt + 5 |
+| New Template Generator Tab | Alt + 6 |
+| New EUP Studio Tab | Alt + 7 |
+| New Prop Studio Tab | Alt + 8 |
+| New Sirens Tab | Alt + 9 |
+| New Photo Mode Tab | Alt + 0 |
+
+### View controls
 
 | Action | Default |
 | --- | --- |
 | Toggle Exterior Only | Alt + E |
 | Toggle Ground Shadows | Alt + Shift + S |
-| New Livery Tab | Alt + 1 |
-| New All Tab | Alt + 2 |
-| New EUP Tab | Alt + 3 |
-| New Multi Tab | Alt + 4 |
 | Toggle Control Panel | \\ |
+
+### Camera
+
+| Action | Default |
+| --- | --- |
+| Reset View | Alt + R |
+| Camera Preset: Front | Alt + F |
+| Camera Preset: Back | Alt + B |
+| Camera Preset: Side | Alt + S |
+| Camera Preset: 3/4 | Alt + A |
+| Camera Preset: Top | Alt + T |
+| Save This View | Alt + P |
+
+### Multi
+
+| Action | Default |
+| --- | --- |
+| Toggle Multi Gizmo | Alt + G |
+| Next Vehicle in Multi | Alt + X |
+
+### File selection
+
+| Action | Default |
+| --- | --- |
 | Select Model | Ctrl + O |
 | Select Livery/Texture | Ctrl + L |
 | Select Glass/Window | Ctrl + G |
-| Toggle Multi Gizmo | Alt + G |
-| Swap Selected Slot (Multi) | Alt + X |
+
+## Where they work
+
+- **New tabs** work from any tab. They wait while the first-run screen is open, and close Settings if it is open.
+- **Livery, All, EUP, Multi and Sirens** take the view, camera and file shortcuts, each where its control is on screen. **Toggle Exterior Only** changes Livery's targeting. **Select Livery/Texture** does nothing in Sirens. **Select Glass/Window** works in Multi, and in Livery or All with the window template switched on.
+- **Save This View** saves the viewfinder as framed, like the **Save this view** button, in Livery, All, EUP, Multi, EUP Studio and Prop Studio. In Photo Mode it takes the photo, like **P**.
+- **EUP Studio**, **Prop Studio** and **Photo Mode** also take **Toggle Control Panel**, **Reset View** and the camera presets. Reset View frames the current shot; in Photo Mode it frames the selection, or the whole set, like **F**. Side shows the right side in EUP Studio and Prop Studio. EUP Studio has no 3/4 or Top shot, so those two do nothing there. In Photo Mode the presets frame the whole set, like the deck. **Select Model** opens a prop in Prop Studio.
+- **Variant Builder**: Toggle Control Panel shows or hides the layers panel. **Ctrl + \\** does the same.
+- Shortcuts are ignored while you type in a text field.
+
+## Rules for new bindings
+
+- Letters and digits need Ctrl, Alt or Shift.
+- Space, Tab, Enter, Backspace, Delete, the arrow keys, Home, End, Page Up and Page Down need Ctrl or Alt, because Shift alone still moves focus, scrolls or selects text with them.
+- Escape and the lock keys can't be bound.
+- Each shortcut can belong to one action. Older settings that bound the same keys to two actions show **Also used by** under both rows until you change one.
 
 ## Tips
 
 - The ground shadows hotkey updates the global viewer default, so every open Studio viewer tab reflects the change immediately.
-- If a single key doesn’t "stick", add a modifier (Ctrl/Alt/Shift). Cortex Studio rejects some unmodified keys to avoid interfering with typing.
 - On macOS-style keyboards, Ctrl bindings may map via Meta in the browser layer.

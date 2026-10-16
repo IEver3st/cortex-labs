@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CVehicleModelInfoVarGlobal>
+  <Kits>
+    <Item>
+      <kitName>500_carb_modkit</kitName>
+      <id value="500" />
+      <kitType>MKT_STANDARD</kitType>
+      <visibleMods />
+      <linkMods />
+      <statMods />
+      <slotNames />
+      <liveryNames />
+    </Item>
+  </Kits>
+  <Lights />
+  <Sirens>
+    <Item>
+      <id value="20" />
+      <name>carb</name>
+      <timeMultiplier value="1.000000" />
+      <lightFalloffMax value="50.000000" />
+      <sequencerBpm value="600" />
+      <sirens />
+    </Item>
+  </Sirens>
+</CVehicleModelInfoVarGlobal>

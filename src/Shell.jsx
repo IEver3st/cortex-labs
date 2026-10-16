@@ -1,24 +1,18 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { AnimatePresence, motion, useMotionValue, useTransform, useSpring } from "motion/react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { AnimatePresence, MotionConfig, motion, useMotionValue, useTransform, useSpring } from "motion/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Home, Eye, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Sparkles, MessageSquarePlus } from "lucide-react";
+import { Minus, Square, X, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Sparkles, MessageSquarePlus, Flashlight, CopyX, Siren, Aperture } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
-import App from "./App";
-import VariantsPage from "./components/VariantsPage";
-import TemplateGenerationPage from "./components/TemplateGenerationPage";
-import Onboarding from "./components/Onboarding";
-
-import SettingsMenu from "./components/SettingsMenu";
-import WhatsNew from "./components/WhatsNew";
-import BugReportModal from "./components/BugReportModal";
 import UpdateToolbarControl from "./components/UpdateToolbarControl";
 import GlobalContextMenu from "./components/GlobalContextMenu";
+import { Keycaps } from "./components/ui/keycaps";
 import * as Ctx from "./components/ContextMenu";
 import appMeta from "../package.json";
-import cortexLogo from "../src-tauri/icons/cortex-logo.svg";
+import cortexLogo from "../src-tauri/icons/128x128@2x.png";
+import "./Shell.css";
 import {
   setActiveWorkspaceId,
   updateWorkspace,
@@ -26,43 +20,114 @@ import {
   loadWorkspaces,
   renameWorkspace,
   addRecent,
+  markWorkspaceOpened,
+  loadOpenTabs,
+  planOpenTabs,
+  saveOpenTabs,
 } from "./lib/workspace";
+import { applySavedVehicleToState, findSavedVehicleWorkspace, savedVehicleWorkspaceState } from "./lib/saved-vehicles";
+import { subscribeUnsavedChanges, unsavedChangeKeys } from "./lib/unsaved-changes";
+import { clearSession } from "./lib/prefs";
+import UnsavedChangesDialog from "./components/UnsavedChangesDialog";
 import { loadOnboarded, setOnboarded, loadPrefs, PREFS_UPDATED_EVENT } from "./lib/prefs";
+import {
+  WORKSPACE_MODES,
+  WORKSPACE_MODE_GROUPS,
+  workspaceLabel,
+  workspaceModeForAction,
+  workspaceModeRoute,
+} from "./lib/workspace-modes";
 import { applyAppearance, setSystemTheme } from "./lib/theme";
 import {
   DEFAULT_HOTKEYS,
-  HOTKEY_ACTIONS,
   findMatchingAction,
   formatHotkey,
   mergeHotkeys,
 } from "./lib/hotkeys";
 
-const MIN_BOOT_MS = 500;
+// Secondary pages and modals load on first use so the viewer shell boots lighter.
+const VariantsPage = lazy(() => import("./components/VariantsPage"));
+const App = lazy(() => import("./App"));
+const EupPage = lazy(() => import("./components/EupPage"));
+const PropStudioPage = lazy(() => import("./components/PropStudioPage"));
+const PhotoModePage = lazy(() => import("./components/PhotoModePage"));
+const TemplateGenerationPage = lazy(() => import("./components/TemplateGenerationPage"));
+const WhatsNew = lazy(() => import("./components/WhatsNew"));
+const BugReportModal = lazy(() => import("./components/BugReportModal"));
+const Onboarding = lazy(() => import("./components/Onboarding"));
+const SettingsMenu = lazy(() => import("./components/SettingsMenu"));
+
+// Long enough for the intro to land its lockup; nothing else waits on it.
+const MIN_BOOT_MS = 1500;
 function generateTabId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-const TAB_ICONS = {
-  home: Home,
-  viewer: Eye,
-  variants: Layers,
-  templategen: Sparkles,
+const NEW_TAB_ACTIONS = WORKSPACE_MODES.map((mode) => mode.action);
+
+const HOME_TAB = { id: "home", type: "home", label: "Home", workspaceId: null, closable: false };
+
+// Reopens the project tabs that were open last time, in order, with the one
+// that was in front. Restored tabs are `deferred`: each mounts (and loads its
+// model) the first time it is shown, so startup loads one model, not every
+// tab's. A file opened with the app (open-with) still takes the front.
+function restoreOpenTabs() {
+  clearSession();
+  const plan = planOpenTabs(loadOpenTabs(), loadWorkspaces());
+  const restored = plan.tabs.map((entry) => ({
+    id: generateTabId(),
+    type: entry.type,
+    label: entry.name,
+    workspaceId: entry.workspaceId,
+    closable: true,
+    defaultMode: entry.defaultMode,
+    initialState: entry.state,
+    deferred: true,
+  }));
+  const active = restored.find((tab) => tab.workspaceId === plan.activeWorkspaceId);
+  return { tabs: [HOME_TAB, ...restored], activeTabId: active ? active.id : HOME_TAB.id };
+}
+
+// Same glyphs as the New tab menu, so a tab names its workspace kind.
+const VIEWER_MODE_ICONS = {
+  livery: Car,
+  everything: Layers,
+  eup: Shirt,
+  multi: Link2,
+  sirens: Siren,
 };
+
+const TAB_ICONS = {
+  variants: Palette,
+  templategen: Sparkles,
+  eupstudio: Shirt,
+  propstudio: Flashlight,
+  photo: Aperture,
+};
+
+function tabIconFor(tab) {
+  if (tab.type === "viewer") {
+    const mode = tab.initialState?.textureMode || tab.defaultMode || "livery";
+    return VIEWER_MODE_ICONS[mode] || Car;
+  }
+  return TAB_ICONS[tab.type] || Car;
+}
 
 
 const MIN_UI_SCALE = 0.5;
 const MAX_UI_SCALE = 1.4;
 const WINDOW_DRAG_THRESHOLD_PX = 4;
 
-function renderLabelWithBeta(label, showBeta, className = "") {
-  if (!showBeta) return <span className={className}>{label}</span>;
-  const combinedClassName = `${className} template-gen-label`.trim();
-  return (
-    <span className={combinedClassName}>
-      <span>{label}</span>
-      <span className="template-gen-beta-badge">Beta</span>
-    </span>
-  );
+// Feedback "Area" defaults to the workflow the report was opened from.
+const FEEDBACK_AREA_BY_MODE = { livery: "livery", everything: "all-textures", eup: "eup", multi: "multi", sirens: "sirens" };
+function feedbackAreaForTab(tab, settingsOpen) {
+  if (settingsOpen || !tab || tab.type === "home") return "home-settings";
+  if (tab.type === "eupstudio") return "eup-studio";
+  if (tab.type === "propstudio") return "prop-studio";
+  if (tab.type === "variants") return "variant-builder";
+  if (tab.type === "templategen") return "template-generator";
+  const mode = loadWorkspaces()[tab.workspaceId]?.state?.textureMode || tab.defaultMode;
+  return FEEDBACK_AREA_BY_MODE[mode] || "other";
 }
 
 function clampUiScale(value) {
@@ -79,13 +144,19 @@ export default function Shell() {
   const [booted, setBooted] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
   const [isBugReportOpen, setIsBugReportOpen] = useState(false);
+  // The modal chunk loads on first open and then stays mounted so its close
+  // animation keeps working exactly as before.
+  const [bugReportLoaded, setBugReportLoaded] = useState(false);
+  useEffect(() => {
+    if (isBugReportOpen) setBugReportLoaded(true);
+  }, [isBugReportOpen]);
   const [feedbackInitialType, setFeedbackInitialType] = useState("bug");
+  const [feedbackInitialArea, setFeedbackInitialArea] = useState("");
 
   // Tab system
-  const [tabs, setTabs] = useState([
-    { id: "home", type: "home", label: "Home", workspaceId: null, closable: false },
-  ]);
-  const [activeTabId, setActiveTabId] = useState("home");
+  const [startupTabs] = useState(restoreOpenTabs);
+  const [tabs, setTabs] = useState(startupTabs.tabs);
+  const [activeTabId, setActiveTabId] = useState(startupTabs.activeTabId);
   const [editingTabId, setEditingTabId] = useState(null);
   const editTabRef = useRef(null);
   const toolbarDragGestureRef = useRef(null);
@@ -97,6 +168,9 @@ export default function Shell() {
   // Per-tab variant state cache
   const [variantStates, setVariantStates] = useState({});
   const [templateGenStates, setTemplateGenStates] = useState({});
+  const [eupStates, setEupStates] = useState({});
+  const [propStates, setPropStates] = useState({});
+  const [photoStates, setPhotoStates] = useState({});
 
   // Settings change counter — bumped when settings are saved so children re-read prefs
   const [settingsVersion, setSettingsVersion] = useState(0);
@@ -107,6 +181,9 @@ export default function Shell() {
   const paneRefs = useRef(new Map());
 
   // Hotkeys for new-tab shortcuts (reloaded when settings change)
+  const [reduceMotionPref, setReduceMotionPref] = useState(
+    () => loadPrefs()?.defaults?.reduceMotion === "always",
+  );
   const [hotkeys, setHotkeys] = useState(() => {
     const prefs = loadPrefs();
     const stored = prefs?.hotkeys && typeof prefs.hotkeys === "object" ? prefs.hotkeys : {};
@@ -129,6 +206,15 @@ export default function Shell() {
     
     const style = prefs?.defaults?.windowControlsStyle ?? "windows";
     document.documentElement.setAttribute("data-window-style", style);
+
+    const reduceMotion = prefs?.defaults?.reduceMotion === "always";
+    setReduceMotionPref(reduceMotion);
+    if (reduceMotion) document.documentElement.setAttribute("data-motion", "reduce");
+    else document.documentElement.removeAttribute("data-motion");
+    document.documentElement.setAttribute(
+      "data-keycaps",
+      prefs?.defaults?.showKeycaps === false ? "off" : "on",
+    );
 
     applyAppearance({
       colorScheme: prefs?.defaults?.colorScheme,
@@ -211,10 +297,16 @@ export default function Shell() {
         return [...prev];
       }
 
-      const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
+      const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi", sirens: "Sirens" };
       const fallbackLabel =
         type === "viewer"
           ? modeLabels[defaultMode] || "Preview"
+          : type === "eupstudio"
+            ? "EUP Studio"
+          : type === "propstudio"
+            ? "Prop Studio"
+          : type === "photo"
+            ? "Photo Mode"
           : type === "templategen"
             ? "Template Gen"
             : "Variants";
@@ -234,6 +326,15 @@ export default function Shell() {
       if (state && type === "templategen") {
         setTemplateGenStates((s) => ({ ...s, [newTab.id]: state }));
       }
+      if (state && type === "eupstudio") {
+        setEupStates((s) => ({ ...s, [newTab.id]: state }));
+      }
+      if (state && type === "propstudio") {
+        setPropStates((s) => ({ ...s, [newTab.id]: state }));
+      }
+      if (state && type === "photo") {
+        setPhotoStates((s) => ({ ...s, [newTab.id]: state }));
+      }
 
 
       pendingActiveRef.current = newTab.id;
@@ -250,11 +351,18 @@ export default function Shell() {
     lastExternalFileOpenRef.current = { path: filePath, at: now };
 
     const lower = filePath.toLowerCase();
-    if (!(lower.endsWith(".yft") || lower.endsWith(".ydd") || lower.endsWith(".dff") || lower.endsWith(".clmesh"))) {
+    if (!(lower.endsWith(".yft") || lower.endsWith(".ydd") || lower.endsWith(".ydr") || lower.endsWith(".dff") || lower.endsWith(".clmesh"))) {
       return;
     }
 
     const fileName = filePath.split(/[\\/]/).pop();
+    // A single drawable is a prop; it opens in Prop Studio.
+    if (lower.endsWith(".ydr")) {
+      const propState = { modelPath: filePath };
+      const propWsId = createWorkspace(fileName, "propstudio", propState);
+      openTab("propstudio", fileName, propWsId, propState);
+      return;
+    }
     const mode = lower.endsWith(".ydd") ? "eup" : "livery";
     const initialState = { textureMode: mode, modelPath: filePath, openFile: filePath };
     const wsId = createWorkspace(fileName, "viewer", initialState);
@@ -312,18 +420,18 @@ export default function Shell() {
     }
   }, [tabs, activeTabId]);
 
-  // Close tab
-  const closeTab = useCallback((tabId) => {
+  // Close tab (unguarded; closeTab below asks first when edits would be lost)
+  const closeTabNow = useCallback((tabId) => {
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.id === tabId);
       if (idx === -1) return prev;
       if (!prev[idx].closable) return prev;
 
       const next = prev.filter((t) => t.id !== tabId);
-      if (tabId === activeTabId) {
-        const newIdx = Math.min(idx, next.length - 1);
-        setActiveTabId(next[newIdx]?.id || "home");
-      }
+      // Read the active tab now, not when the close was asked for: a tab
+      // opened while the unsaved-edits dialog was up must keep the front.
+      const newIdx = Math.min(idx, next.length - 1);
+      setActiveTabId((current) => (current === tabId ? next[newIdx]?.id || "home" : current));
       return next;
     });
     setVariantStates((s) => {
@@ -336,20 +444,111 @@ export default function Shell() {
       delete next[tabId];
       return next;
     });
-  }, [activeTabId]);
+    setEupStates((s) => {
+      const next = { ...s };
+      delete next[tabId];
+      return next;
+    });
+    setPropStates((s) => {
+      const next = { ...s };
+      delete next[tabId];
+      return next;
+    });
+    setPhotoStates((s) => {
+      const next = { ...s };
+      delete next[tabId];
+      return next;
+    });
+  }, []);
 
 
   // Close other tabs
-  const closeOtherTabs = useCallback((keepTabId) => {
+  const closeOtherTabsNow = useCallback((keepTabId) => {
     setTabs((prev) => prev.filter((t) => !t.closable || t.id === keepTabId));
     setActiveTabId(keepTabId);
   }, []);
 
   // Close all closable tabs
-  const closeAllTabs = useCallback(() => {
+  const closeAllTabsNow = useCallback(() => {
     setTabs((prev) => prev.filter((t) => !t.closable));
     setActiveTabId("home");
   }, []);
+
+  // Closing a tab that holds unsaved siren edits asks first. `pendingClose` is
+  // { names, scope, run } while the dialog is up.
+  const [pendingClose, setPendingClose] = useState(null);
+  const guardClose = useCallback((tabIds, scope, run) => {
+    const dirty = unsavedChangeKeys(tabIds);
+    if (dirty.length === 0) {
+      run();
+      return;
+    }
+    const names = dirty.map((id) => tabsRef.current.find((tab) => tab.id === id)?.label || "A tab");
+    setPendingClose({ names, scope, run });
+  }, []);
+  const closeTab = useCallback((tabId) => guardClose([tabId], "tab", () => closeTabNow(tabId)), [guardClose, closeTabNow]);
+  const closeOtherTabs = useCallback((keepTabId) => guardClose(
+    tabsRef.current.filter((tab) => tab.closable && tab.id !== keepTabId).map((tab) => tab.id),
+    "tabs",
+    () => closeOtherTabsNow(keepTabId),
+  ), [guardClose, closeOtherTabsNow]);
+  const closeAllTabs = useCallback(() => guardClose(
+    tabsRef.current.filter((tab) => tab.closable).map((tab) => tab.id),
+    "tabs",
+    closeAllTabsNow,
+  ), [guardClose, closeAllTabsNow]);
+  const confirmPendingClose = useCallback(() => {
+    const run = pendingClose?.run;
+    setPendingClose(null);
+    run?.();
+  }, [pendingClose]);
+  const cancelPendingClose = useCallback(() => setPendingClose(null), []);
+
+  // The window asks too while any tab holds unsaved edits. The close listener
+  // exists only then, so a clean app closes exactly as before; Tauri holds a
+  // close while a JS listener is registered, so confirming drops the listener
+  // and closes again.
+  const [hasUnsavedTabs, setHasUnsavedTabs] = useState(false);
+  useEffect(() => subscribeUnsavedChanges(() => setHasUnsavedTabs(unsavedChangeKeys().length > 0)), []);
+  useEffect(() => {
+    if (!hasUnsavedTabs) return undefined;
+    if (!isTauriRuntime) {
+      const handleBeforeUnload = (event) => {
+        event.preventDefault();
+        event.returnValue = "";
+      };
+      window.addEventListener("beforeunload", handleBeforeUnload);
+      return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    }
+    const appWindow = getCurrentWindow();
+    let unlisten = null;
+    let cancelled = false;
+    const stopListening = async () => {
+      const stop = unlisten;
+      unlisten = null;
+      await stop?.();
+    };
+    appWindow.onCloseRequested((event) => {
+      event.preventDefault();
+      const names = unsavedChangeKeys().map((id) => tabsRef.current.find((tab) => tab.id === id)?.label || "A tab");
+      setPendingClose({
+        names,
+        scope: "window",
+        run: () => {
+          stopListening()
+            .then(() => appWindow.close())
+            .catch((error) => console.error("[Shell] Closing the window failed:", error));
+        },
+      });
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    }).catch((error) => console.error("[Shell] Couldn't watch for window close:", error));
+    return () => {
+      cancelled = true;
+      stopListening().catch(() => {});
+    };
+  }, [hasUnsavedTabs, isTauriRuntime]);
 
   // Rename tab (called by child components when content loads)
   const renameTab = useCallback((tabId, newLabel) => {
@@ -382,24 +581,27 @@ export default function Shell() {
     });
   }, []);
 
-  // Navigate from HomePage
+  // Opens a workspace tab. Without a workspace id it starts a new project named
+  // after the workspace, so Home, the new-tab menu, onboarding and the new-tab
+  // hotkeys all save the tab and list it in Recents the same way.
   const handleNavigate = useCallback((type, workspaceId, defaultMode) => {
     setSettingsOpen(false);
-    const ws = workspaceId ? loadWorkspaces()[workspaceId] : null;
-    const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
-    const fallbackLabel =
-      type === "viewer"
-        ? modeLabels[defaultMode] || "Preview"
-        : type === "templategen"
-          ? "Template Gen"
-          : "Variants";
+    const fallbackLabel = workspaceLabel(type, defaultMode);
+    if (!workspaceId) {
+      const initial = type === "viewer" ? { textureMode: defaultMode || "livery" } : {};
+      workspaceId = createWorkspace(fallbackLabel, type, initial);
+    }
+    const ws = loadWorkspaces()[workspaceId];
     const label = ws?.name || fallbackLabel;
     openTab(type, label, workspaceId, ws?.state, defaultMode);
-    if (workspaceId) {
-      setActiveWorkspaceId(workspaceId);
-      addRecent(workspaceId, label, type);
-    }
+    setActiveWorkspaceId(workspaceId);
+    addRecent(workspaceId, label, type);
   }, [openTab]);
+
+  const launchWorkspaceMode = useCallback((modeId) => {
+    const route = workspaceModeRoute(modeId) || workspaceModeRoute("livery");
+    handleNavigate(route.page, null, route.textureMode);
+  }, [handleNavigate]);
 
 
   const handleOpenWorkspace = useCallback((ws) => {
@@ -408,7 +610,13 @@ export default function Shell() {
     const latestWs = loadWorkspaces()[ws.id] || ws;
     const defaultMode = latestWs?.state?.textureMode || "livery";
     const page =
-      latestWs.page === "variants"
+      latestWs.page === "eupstudio"
+        ? "eupstudio"
+      : latestWs.page === "propstudio"
+        ? "propstudio"
+      : latestWs.page === "photo"
+        ? "photo"
+      : latestWs.page === "variants"
         ? "variants"
         : latestWs.page === "templategen"
           ? "templategen"
@@ -419,17 +627,136 @@ export default function Shell() {
     addRecent(latestWs.id, latestWs.name, page);
   }, [openTab]);
 
-  // Variant state per-tab
+  // A saved vehicle opens on its model with its setup restored: in the tab
+  // already showing it, else in the project already linked to it, else in a
+  // new project. Reopening a linked project applies the saved setup over it.
+  const handleOpenSavedVehicle = useCallback((entry) => {
+    const state = savedVehicleWorkspaceState(entry);
+    if (!state) return;
+    setSettingsOpen(false);
+    const workspaces = loadWorkspaces();
+    const openIds = tabsRef.current.map((tab) => tab.workspaceId).filter(Boolean);
+    const linkedId = findSavedVehicleWorkspace(workspaces, entry.id, openIds);
+    if (linkedId && openIds.includes(linkedId)) {
+      const ws = workspaces[linkedId];
+      openTab("viewer", ws.name, linkedId, ws.state, state.textureMode);
+      setActiveWorkspaceId(linkedId);
+      markWorkspaceOpened(linkedId);
+      return;
+    }
+    if (linkedId) {
+      const ws = workspaces[linkedId];
+      const merged = applySavedVehicleToState(ws.state, entry);
+      updateWorkspace(linkedId, { state: merged, page: "viewer" });
+      openTab("viewer", ws.name, linkedId, merged, state.textureMode);
+      setActiveWorkspaceId(linkedId);
+      addRecent(linkedId, ws.name, "viewer");
+      return;
+    }
+    const id = createWorkspace(entry.name, "viewer", state);
+    openTab("viewer", entry.name, id, state, state.textureMode);
+    setActiveWorkspaceId(id);
+    addRecent(id, entry.name, "viewer");
+  }, [openTab]);
+
+  // Variant/template state per-tab.
+  // These handlers must stay referentially stable: the pages call them from a
+  // debounced persist effect, and a fresh callback per Shell render would turn
+  // every setVariantStates/setTemplateGenStates into another persist cycle.
+  // Tabs are read through a ref so the callbacks never need `tabs` as a dep.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const lastPersistedPageStateRef = useRef(new Map());
+
+  // Switching to an already-open project tab counts as opening it, so Home's
+  // last-opened order follows what the user actually worked on.
+  useEffect(() => {
+    const tab = tabsRef.current.find((t) => t.id === activeTabId);
+    if (tab?.workspaceId) markWorkspaceOpened(tab.workspaceId);
+  }, [activeTabId]);
+
+  // A tab restored at startup mounts the first time it is shown. Panes render
+  // after boot, so a file opened with the app before then skips mounting the
+  // tab that was in front last time.
+  useEffect(() => {
+    if (!booted) return;
+    setTabs((prev) => (prev.some((tab) => tab.id === activeTabId && tab.deferred)
+      ? prev.map((tab) => (tab.id === activeTabId ? { ...tab, deferred: false } : tab))
+      : prev));
+  }, [activeTabId, booted]);
+
+  // Remember the open project tabs for the next start.
+  useEffect(() => {
+    const active = tabs.find((tab) => tab.id === activeTabId);
+    saveOpenTabs(tabs.map((tab) => tab.workspaceId).filter(Boolean), active?.workspaceId || null);
+  }, [tabs, activeTabId]);
+
+  const persistPageState = useCallback((tabId, state, page, setStates) => {
+    let serialized = "";
+    try {
+      serialized = JSON.stringify(state);
+    } catch {
+      serialized = "";
+    }
+    const key = `${page}:${tabId}`;
+    if (serialized && lastPersistedPageStateRef.current.get(key) === serialized) return;
+    lastPersistedPageStateRef.current.set(key, serialized);
+    setStates((s) => ({ ...s, [tabId]: state }));
+    const tab = tabsRef.current.find((t) => t.id === tabId);
+    if (tab?.workspaceId) updateWorkspace(tab.workspaceId, { state, page });
+  }, []);
+
   const handleVariantStateChange = useCallback((tabId, state) => {
-    setVariantStates((s) => ({ ...s, [tabId]: state }));
-    const tab = tabs.find((t) => t.id === tabId);
-    if (tab?.workspaceId) updateWorkspace(tab.workspaceId, { state, page: "variants" });
-  }, [tabs]);
+    persistPageState(tabId, state, "variants", setVariantStates);
+  }, [persistPageState]);
 
   const handleTemplateGenStateChange = useCallback((tabId, state) => {
-    setTemplateGenStates((s) => ({ ...s, [tabId]: state }));
-    const tab = tabs.find((t) => t.id === tabId);
-    if (tab?.workspaceId) updateWorkspace(tab.workspaceId, { state, page: "templategen" });
+    persistPageState(tabId, state, "templategen", setTemplateGenStates);
+  }, [persistPageState]);
+
+  const handleEupStateChange = useCallback((tabId, state) => {
+    persistPageState(tabId, state, "eupstudio", setEupStates);
+  }, [persistPageState]);
+
+  const handlePropStateChange = useCallback((tabId, state) => {
+    persistPageState(tabId, state, "propstudio", setPropStates);
+  }, [persistPageState]);
+
+  const handlePhotoStateChange = useCallback((tabId, state) => {
+    persistPageState(tabId, state, "photo", setPhotoStates);
+  }, [persistPageState]);
+
+  // Per-tab bound callbacks, cached so the page props stay stable across renders.
+  const pageStateCallbacksRef = useRef(new Map());
+  const getPageStateCallback = useCallback((tabId, type) => {
+    const key = `${type}:${tabId}`;
+    const cache = pageStateCallbacksRef.current;
+    let fn = cache.get(key);
+    if (!fn) {
+      const handler = type === "variants"
+        ? handleVariantStateChange
+        : type === "eupstudio"
+          ? handleEupStateChange
+          : type === "propstudio"
+            ? handlePropStateChange
+            : type === "photo"
+              ? handlePhotoStateChange
+              : handleTemplateGenStateChange;
+      fn = (state) => handler(tabId, state);
+      cache.set(key, fn);
+    }
+    return fn;
+  }, [handleVariantStateChange, handleTemplateGenStateChange, handleEupStateChange, handlePropStateChange, handlePhotoStateChange]);
+
+  useEffect(() => {
+    const liveIds = new Set(tabs.map((tab) => tab.id));
+    for (const cache of [pageStateCallbacksRef.current, lastPersistedPageStateRef.current]) {
+      for (const key of cache.keys()) if (!liveIds.has(key.slice(key.indexOf(":") + 1))) cache.delete(key);
+    }
+    for (const setStates of [setVariantStates, setTemplateGenStates, setEupStates, setPropStates, setPhotoStates]) {
+      setStates((current) => Object.keys(current).some((id) => !liveIds.has(id))
+        ? Object.fromEntries(Object.entries(current).filter(([id]) => liveIds.has(id))) : current);
+    }
   }, [tabs]);
 
   // Onboarding
@@ -441,20 +768,7 @@ export default function Shell() {
     if (!action || typeof action !== "object") return;
 
     if (action.type === "launch") {
-      const target = action.target;
-      if (target === "variants") {
-        handleNavigate("variants");
-        return;
-      }
-      if (target === "templategen") {
-        handleNavigate("templategen");
-        return;
-      }
-
-      const mode = ["livery", "everything", "eup", "multi"].includes(target)
-        ? target
-        : "livery";
-      handleNavigate("viewer", null, mode);
+      launchWorkspaceMode(action.target);
       return;
     }
 
@@ -466,7 +780,7 @@ export default function Shell() {
         );
       }
     }
-  }, [handleNavigate]);
+  }, [launchWorkspaceMode]);
 
   // Settings saved callback
   const handleSettingsSaved = useCallback(() => {
@@ -487,9 +801,12 @@ export default function Shell() {
     }
   }, [activeTabId]);
 
-  // Global hotkeys for opening new mode tabs
+  // Global hotkeys for opening new mode tabs. They wait while the first-run
+  // screen is up; with Settings open they close it, as the new-tab menu does.
   useEffect(() => {
+    if (showOnboarding || pendingClose) return undefined;
     const handleKeyDown = (event) => {
+      if (event.repeat) return;
       const target = event.target;
       if (target instanceof Element) {
         const tag = target.tagName;
@@ -498,53 +815,17 @@ export default function Shell() {
         if (target.classList.contains("hotkey-input")) return;
       }
 
-      const action = findMatchingAction(hotkeys, event);
-      if (!action) return;
-
-      const modeMap = {
-        [HOTKEY_ACTIONS.NEW_TAB_LIVERY]: "livery",
-        [HOTKEY_ACTIONS.NEW_TAB_ALL]: "everything",
-        [HOTKEY_ACTIONS.NEW_TAB_EUP]: "eup",
-        [HOTKEY_ACTIONS.NEW_TAB_MULTI]: "multi",
-      };
-      const mode = modeMap[action];
-      if (mode) {
-        event.preventDefault();
-        event.stopPropagation();
-        const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi" };
-        const label = modeLabels[mode] || "Preview";
-        const id = createWorkspace(label, "viewer", { textureMode: mode });
-        openTab("viewer", label, id, { textureMode: mode }, mode);
-        setActiveWorkspaceId(id);
-        addRecent(id, label, "viewer");
-        return;
-      }
-
-      if (action === HOTKEY_ACTIONS.NEW_TAB_VARIANTS) {
-        event.preventDefault();
-        event.stopPropagation();
-        const label = "Variant Builder";
-        const id = createWorkspace(label, "variants");
-        openTab("variants", label, id, {});
-        setActiveWorkspaceId(id);
-        addRecent(id, label, "variants");
-        return;
-      }
-
-      if (action === HOTKEY_ACTIONS.NEW_TAB_TEMPLATE_GEN) {
-        event.preventDefault();
-        event.stopPropagation();
-        const label = "Template Generator";
-        const id = createWorkspace(label, "templategen");
-        openTab("templategen", label, id, {});
-        setActiveWorkspaceId(id);
-        addRecent(id, label, "templategen");
-      }
+      const action = findMatchingAction(hotkeys, event, NEW_TAB_ACTIONS);
+      const mode = workspaceModeForAction(action);
+      if (!mode) return;
+      event.preventDefault();
+      event.stopPropagation();
+      launchWorkspaceMode(mode.id);
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hotkeys, openTab]);
+  }, [hotkeys, launchWorkspaceMode, showOnboarding, pendingClose]);
 
   // Window controls
   const isWindowDragGestureTarget = useCallback((target) => {
@@ -661,6 +942,25 @@ export default function Shell() {
   const [newTabOpen, setNewTabOpen] = useState(false);
   const newTabBtnRef = useRef(null);
 
+  // Tabs that don't fit scroll inside the strip (New tab stays pinned at its
+  // end). Keep the active tab in view once the toolbar mounts, when it
+  // changes, a tab opens, or the window narrows.
+  const tabStripRef = useRef(null);
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    if (!booted || !strip || settingsOpen) return undefined;
+    const reveal = () => strip.querySelector(".shell-tab.is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    reveal();
+    // A new tab grows in over ~180 ms; reveal it again once it has its width.
+    const timer = window.setTimeout(reveal, 240);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(reveal) : null;
+    observer?.observe(strip);
+    return () => {
+      window.clearTimeout(timer);
+      observer?.disconnect();
+    };
+  }, [booted, activeTabId, tabs.length, settingsOpen]);
+
   // Close new-tab dropdown on outside click
   useEffect(() => {
     if (!newTabOpen) return;
@@ -678,67 +978,39 @@ export default function Shell() {
   const handleCloseWhatsNew = useCallback(() => setWhatsNewManual(false), []);
   const openFeedback = useCallback((reportType = "bug") => {
     setFeedbackInitialType(reportType === "feature" ? "feature" : "bug");
+    setFeedbackInitialArea(feedbackAreaForTab(activeTab, settingsOpen));
     setIsBugReportOpen(true);
-  }, []);
+  }, [activeTab, settingsOpen]);
 
-  // New-tab dropdown option data for DRY rendering
-  const newTabOptions = useMemo(() => [
-    { mode: "livery", icon: Car, label: "Livery", type: "viewer" },
-    { mode: "everything", icon: Layers, label: "All", type: "viewer" },
-    { mode: "eup", icon: Shirt, label: "EUP", type: "viewer" },
-    { mode: "multi", icon: Link2, label: "Multi", type: "viewer" },
-    { mode: "templategen", icon: Sparkles, label: "Template Gen", type: "templategen" },
-  ], []);
+  // Home's utility links reach Shell-owned dialogs through these events.
+  useEffect(() => {
+    const handleReleaseNotes = () => setWhatsNewManual(true);
+    const handleFeedback = (event) => openFeedback(event.detail?.type);
+    window.addEventListener("cortex:open-release-notes", handleReleaseNotes);
+    window.addEventListener("cortex:open-feedback", handleFeedback);
+    return () => {
+      window.removeEventListener("cortex:open-release-notes", handleReleaseNotes);
+      window.removeEventListener("cortex:open-feedback", handleFeedback);
+    };
+  }, [openFeedback]);
 
-  const workspaceContextOptions = useMemo(() => [
-    {
-      id: "livery",
-      icon: Car,
-      label: "New Livery",
-      onSelect: () => handleNavigate("viewer", null, "livery"),
-      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_LIVERY]),
-    },
-    {
-      id: "everything",
-      icon: Layers,
-      label: "New All",
-      onSelect: () => handleNavigate("viewer", null, "everything"),
-      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_ALL]),
-    },
-    {
-      id: "eup",
-      icon: Shirt,
-      label: "New EUP",
-      onSelect: () => handleNavigate("viewer", null, "eup"),
-      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_EUP]),
-    },
-    {
-      id: "multi",
-      icon: Link2,
-      label: "New Multi",
-      onSelect: () => handleNavigate("viewer", null, "multi"),
-      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_MULTI]),
-    },
-    {
-      id: "variants",
-      icon: Palette,
-      label: "New Variant Builder",
-      onSelect: () => handleNavigate("variants"),
-      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_VARIANTS]),
-    },
-    {
-      id: "templategen",
-      icon: Sparkles,
-      label: "New Template Generator",
-      onSelect: () => handleNavigate("templategen", null, "templategen"),
-      shortcut: formatHotkey(hotkeys[HOTKEY_ACTIONS.NEW_TAB_TEMPLATE_GEN]),
-    },
-  ], [handleNavigate, hotkeys]);
+  // Home's Start list, in its group order; viewer modes open a viewer tab.
+  const newTabMenuOptions = useMemo(() => WORKSPACE_MODE_GROUPS.flatMap((group) =>
+    WORKSPACE_MODES.filter((mode) => mode.group === group.id).map((mode) => ({
+      id: mode.id,
+      icon: mode.icon,
+      label: mode.label,
+      action: mode.action,
+      hotkey: hotkeys[mode.action],
+      onSelect: () => launchWorkspaceMode(mode.id),
+    })),
+  ), [launchWorkspaceMode, hotkeys]);
 
 
   return (
+    <MotionConfig reducedMotion={reduceMotionPref ? "always" : "user"}>
     <GlobalContextMenu
-      newTabOptions={workspaceContextOptions}
+      newTabOptions={newTabMenuOptions}
       onOpenHome={() => {
         setSettingsOpen(false);
         setActiveTabId("home");
@@ -748,18 +1020,25 @@ export default function Shell() {
     <div className="shell-root">
       <AnimatePresence>{!booted ? <AppLoader /> : null}</AnimatePresence>
 
-      {booted && <WhatsNew />}
-      {whatsNewManual && <WhatsNew forceOpen isManual onClose={handleCloseWhatsNew} />}
-      <BugReportModal
-        open={isBugReportOpen}
-        initialType={feedbackInitialType}
-        onClose={() => setIsBugReportOpen(false)}
-      />
+      <Suspense fallback={null}>
+        {booted && <WhatsNew />}
+        {whatsNewManual && <WhatsNew forceOpen isManual onClose={handleCloseWhatsNew} />}
+        {bugReportLoaded && (
+          <BugReportModal
+            open={isBugReportOpen}
+            initialType={feedbackInitialType}
+            initialArea={feedbackInitialArea}
+            onClose={() => setIsBugReportOpen(false)}
+          />
+        )}
+      </Suspense>
       <AnimatePresence>
         {booted && showOnboarding ? (
-          <Onboarding
-            onComplete={handleOnboardingComplete}
-          />
+          <Suspense fallback={null}>
+            <Onboarding
+              onComplete={handleOnboardingComplete}
+            />
+          </Suspense>
         ) : null}
       </AnimatePresence>
 
@@ -775,82 +1054,108 @@ export default function Shell() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           >
-            {/* Brand mark */}
-            <div className="shell-brand">
-              <img src={cortexLogo} alt="" className="shell-brand-logo" draggable={false} />
-              <span className="shell-brand-name">CORTEX</span>
-            </div>
-
-            <div className="shell-toolbar-sep" />
-
             {/* Tab strip — inline in the single row */}
-            <div className="shell-tabs">
+            <div
+              className="shell-tabs"
+              ref={tabStripRef}
+              onWheel={(event) => {
+                // The strip hides its scrollbar, so a mouse wheel scrolls it sideways.
+                const strip = event.currentTarget;
+                if (event.deltaX || !event.deltaY || strip.scrollWidth <= strip.clientWidth) return;
+                strip.scrollLeft += event.deltaY;
+              }}
+            >
               <AnimatePresence initial={false}>
                 {tabs.map((tab, index) => {
-                  const Icon = TAB_ICONS[tab.type] || Eye;
+                  const Icon = tabIconFor(tab);
                   const isTabActive = tab.id === activeTabId && !settingsOpen;
                   const isEditing = editingTabId === tab.id;
+
+                  // The Cortex mark is the Home tab.
+                  if (tab.type === "home") {
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        className={`shell-tab shell-tab-home ${isTabActive ? "is-active" : ""}`}
+                        onClick={() => {
+                          setSettingsOpen(false);
+                          setActiveTabId(tab.id);
+                        }}
+                        aria-label="Home"
+                        aria-current={isTabActive ? "page" : undefined}
+                        title="Home"
+                      >
+                        <img src={cortexLogo} alt="" className="shell-tab-logo" draggable={false} />
+                      </button>
+                    );
+                  }
 
                   const tabElement = (
                     <motion.div
                       key={tab.id}
-                      className={`shell-tab ${isTabActive ? "is-active" : ""}`}
+                      className={`shell-tab ${isTabActive ? "is-active" : ""} ${isEditing ? "is-editing" : ""}`}
                       onClick={() => {
                         setSettingsOpen(false);
                         setActiveTabId(tab.id);
                       }}
                       onDoubleClick={() => tab.closable && startRenameTab(tab.id)}
-                      layout
-                      initial={{ opacity: 0, scale: 0.9, width: 0 }}
-                      animate={{ opacity: 1, scale: 1, width: "auto" }}
-                      exit={{ opacity: 0, scale: 0.9, width: 0, marginRight: -1 }}
+                      title={isEditing ? undefined : tab.label}
+                      layout="position"
+                      initial={{ opacity: 0, width: 0 }}
+                      animate={{ opacity: 1, width: "auto" }}
+                      exit={{ opacity: 0, width: 0 }}
                       transition={{
-                        layout: { type: "spring", stiffness: 500, damping: 35 },
-                        opacity: { duration: 0.15 },
-                        scale: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
-                        width: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
+                        layout: { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] },
+                        opacity: { duration: 0.14 },
+                        width: { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] },
                       }}
                     >
-                      <motion.span
-                        className="shell-tab-icon-wrap"
-                        animate={isTabActive ? { scale: 1 } : { scale: 0.9 }}
-                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                      >
-                        <Icon className="shell-tab-icon" />
-                      </motion.span>
                       {isEditing ? (
-                        <input
-                          ref={editTabRef}
-                          type="text"
-                          className="shell-tab-rename"
-                          defaultValue={tab.label}
-                          onBlur={(e) => finishRenameTab(tab.id, e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") finishRenameTab(tab.id, e.target.value);
-                            if (e.key === "Escape") setEditingTabId(null);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          autoFocus
-                        />
+                        <span className="shell-tab-select">
+                          <Icon className="shell-tab-icon" aria-hidden="true" />
+                          <input
+                            ref={editTabRef}
+                            type="text"
+                            className="shell-tab-rename"
+                            defaultValue={tab.label}
+                            aria-label="Tab name"
+                            onBlur={(e) => finishRenameTab(tab.id, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") finishRenameTab(tab.id, e.target.value);
+                              if (e.key === "Escape") setEditingTabId(null);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            autoFocus
+                          />
+                        </span>
                       ) : (
-                        renderLabelWithBeta(
-                          tab.label,
-                          tab.type === "templategen" && tab.label === "Template Gen",
-                          "shell-tab-label",
-                        )
+                        <button
+                          type="button"
+                          className="shell-tab-select"
+                          aria-current={isTabActive ? "page" : undefined}
+                          onKeyDown={(e) => {
+                            if (e.key === "F2" && tab.closable) {
+                              e.preventDefault();
+                              startRenameTab(tab.id);
+                            }
+                          }}
+                        >
+                          <Icon className="shell-tab-icon" aria-hidden="true" />
+                          <span className="shell-tab-label">{tab.label}</span>
+                        </button>
                       )}
                       {tab.closable && (
-                        <motion.button
+                        <button
                           type="button"
                           className="shell-tab-close"
                           onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
                           data-tauri-drag-region="false"
-                          whileHover={{ scale: 1.15, backgroundColor: "rgba(232,93,76,0.15)" }}
-                          whileTap={{ scale: 0.9 }}
-                          transition={{ type: "spring", stiffness: 400, damping: 20 }}
+                          aria-label={`Close ${tab.label}`}
+                          title="Close tab"
                         >
-                          <X className="w-3 h-3" />
-                        </motion.button>
+                          <X aria-hidden="true" />
+                        </button>
                       )}
 
                     </motion.div>
@@ -862,17 +1167,22 @@ export default function Shell() {
                         <Ctx.Trigger>{tabElement}</Ctx.Trigger>
                         <Ctx.Content>
                           <Ctx.Item onSelect={() => startRenameTab(tab.id)}>
-                            <Pencil className="w-3 h-3" /> Rename
+                            <Pencil aria-hidden="true" />
+                            <span>Rename</span>
+                            <Ctx.Shortcut keys="F2" />
                           </Ctx.Item>
                           <Ctx.Separator />
                           <Ctx.Item onSelect={() => closeTab(tab.id)}>
-                            <X className="w-3 h-3" /> Close
+                            <X aria-hidden="true" />
+                            <span>Close</span>
                           </Ctx.Item>
-                          <Ctx.Item onSelect={() => closeOtherTabs(tab.id)}>
-                            Close Others
+                          <Ctx.Item onSelect={() => closeOtherTabs(tab.id)} disabled={tabs.filter((t) => t.closable).length < 2}>
+                            <CopyX aria-hidden="true" />
+                            <span>Close other tabs</span>
                           </Ctx.Item>
                           <Ctx.Item onSelect={() => closeAllTabs()} destructive>
-                            <Trash2 className="w-3 h-3" /> Close All
+                            <Trash2 aria-hidden="true" />
+                            <span>Close all tabs</span>
                           </Ctx.Item>
                         </Ctx.Content>
                       </Ctx.Root>
@@ -885,61 +1195,43 @@ export default function Shell() {
 
             {/* + New tab button (inside tabs flex row, at end) */}
             <div className="shell-new-tab-wrap" ref={newTabBtnRef} data-tauri-drag-region="false">
-                <motion.button
+                <button
                   type="button"
-                  className="shell-new-tab-btn"
+                  className={`shell-new-tab-btn ${newTabOpen ? "is-open" : ""}`}
                   onClick={() => setNewTabOpen((p) => !p)}
                   data-tauri-drag-region="false"
                   title="New tab"
-                  whileHover={{ scale: 1.08, backgroundColor: "rgba(255,255,255,0.06)" }}
-                  whileTap={{ scale: 0.92 }}
-                  transition={{ type: "spring", stiffness: 500, damping: 25 }}
+                  aria-label="New tab"
+                  aria-haspopup="menu"
+                  aria-expanded={newTabOpen}
                 >
-                  <motion.span
-                    animate={newTabOpen ? { rotate: 45 } : { rotate: 0 }}
-                    transition={{ type: "spring", stiffness: 400, damping: 20 }}
-                  >
-                    <Plus className="w-3 h-3" />
-                  </motion.span>
-                </motion.button>
+                  <Plus aria-hidden="true" />
+                </button>
                 <AnimatePresence>
                   {newTabOpen && (
                     <motion.div
                       className="shell-new-tab-menu"
-                      initial={{ opacity: 0, y: -6, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -6, scale: 0.95 }}
-                      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                      role="menu"
+                      aria-label="New tab"
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.14, ease: [0.2, 0.8, 0.2, 1] }}
                     >
-                      {newTabOptions.map((opt, i) => (
-                        <motion.button
-                          key={opt.mode}
+                      <div className="shell-new-tab-heading cx-label">New tab</div>
+                      {newTabMenuOptions.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          role="menuitem"
                           className="shell-new-tab-option"
-                          onClick={() => { handleNavigate(opt.type, null, opt.mode); setNewTabOpen(false); }}
-                          initial={{ opacity: 0, x: -8 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.03, duration: 0.15 }}
-                          whileHover={{ x: 3, backgroundColor: "rgba(61,186,163,0.08)" }}
+                          onClick={() => { opt.onSelect(); setNewTabOpen(false); }}
                         >
-                          <opt.icon className="w-3 h-3" />
-                          {renderLabelWithBeta(
-                            opt.label,
-                            opt.mode === "templategen",
-                            "shell-new-tab-option-label",
-                          )}
-                        </motion.button>
+                          <opt.icon className="shell-new-tab-option-icon" aria-hidden="true" />
+                          <span className="shell-new-tab-option-label">{opt.label}</span>
+                          <Keycaps hotkey={opt.hotkey} />
+                        </button>
                       ))}
-                      <div className="shell-new-tab-sep" />
-                      <motion.button
-                        className="shell-new-tab-option"
-                        onClick={() => { handleNavigate("variants"); setNewTabOpen(false); }}
-                        initial={{ opacity: 0, x: -8 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.12, duration: 0.15 }}
-                        whileHover={{ x: 3, backgroundColor: "rgba(61,186,163,0.08)" }}
-                      >
-                        <Palette className="w-3 h-3" /> Variant Builder
-                      </motion.button>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -960,56 +1252,40 @@ export default function Shell() {
               <Ctx.Trigger>
                 <div className="shell-toolbar-spacer" />
               </Ctx.Trigger>
-              <Ctx.Content>
-                <Ctx.Label>New Tab</Ctx.Label>
-                <Ctx.Item onSelect={() => handleNavigate("viewer", null, "livery")}>
-                  <Car className="w-3 h-3" /> New Livery
-                </Ctx.Item>
-                <Ctx.Item onSelect={() => handleNavigate("viewer", null, "everything")}>
-                  <Layers className="w-3 h-3" /> New All
-                </Ctx.Item>
-                <Ctx.Item onSelect={() => handleNavigate("viewer", null, "eup")}>
-                  <Shirt className="w-3 h-3" /> New EUP
-                </Ctx.Item>
-                <Ctx.Item onSelect={() => handleNavigate("viewer", null, "multi")}>
-                  <Link2 className="w-3 h-3" /> New Multi
-                </Ctx.Item>
-                <Ctx.Separator />
-                <Ctx.Item onSelect={() => handleNavigate("variants")}>
-                  <Palette className="w-3 h-3" /> New Variant Builder
-                </Ctx.Item>
-                <Ctx.Item onSelect={() => handleNavigate("templategen")}>
-                  <Sparkles className="w-3 h-3" />
-                  {renderLabelWithBeta("New Template Generator", true)}
-                </Ctx.Item>
-
+              <Ctx.Content aria-label="New tab">
+                <Ctx.Label>New tab</Ctx.Label>
+                {newTabMenuOptions.map((opt) => (
+                  <Ctx.Item key={opt.id} onSelect={opt.onSelect}>
+                    <opt.icon aria-hidden="true" />
+                    <span>{opt.label}</span>
+                    <Ctx.Shortcut hotkey={opt.hotkey} />
+                  </Ctx.Item>
+                ))}
               </Ctx.Content>
             </Ctx.Root>
 
             <UpdateToolbarControl />
 
-            <div className="settings-anchor">
-              <motion.button
-                type="button"
-                className="settings-cog"
-                aria-label="Send feedback"
-                title="Send feedback"
-                onClick={() => openFeedback("bug")}
-              >
-                <span className="settings-cog-icon">
-                  <MessageSquarePlus className="settings-cog-svg" />
-                </span>
-              </motion.button>
-            </div>
+            <button
+              type="button"
+              className="shell-frame-btn"
+              aria-label="Send feedback"
+              title="Send feedback"
+              onClick={() => openFeedback("bug")}
+            >
+              <MessageSquarePlus aria-hidden="true" />
+            </button>
 
             {/* Settings */}
-            <SettingsMenu
-              pageTarget={settingsPageTarget}
-              pageOpen={settingsOpen}
-              onOpenChange={setSettingsOpen}
-              onSettingsSaved={handleSettingsSaved}
-              onOpenReleaseNotes={handleOpenReleaseNotes}
-            />
+            <Suspense fallback={null}>
+              <SettingsMenu
+                pageTarget={settingsPageTarget}
+                pageOpen={settingsOpen}
+                onOpenChange={setSettingsOpen}
+                onSettingsSaved={handleSettingsSaved}
+                onOpenReleaseNotes={handleOpenReleaseNotes}
+              />
+            </Suspense>
 
             {/* Window controls */}
             <motion.div
@@ -1018,41 +1294,33 @@ export default function Shell() {
               animate={{ opacity: 1 }}
               transition={{ delay: 0.2, duration: 0.25 }}
             >
-              <motion.button
+              <button
                 type="button"
                 className="shell-wc-btn shell-wc-min"
                 onClick={handleMinimize}
                 aria-label="Minimize"
                 data-tauri-drag-region="false"
-                whileHover={{ backgroundColor: "rgba(255,255,255,0.08)" }}
-                whileTap={{ scale: 0.88 }}
-                transition={{ type: "spring", stiffness: 400, damping: 25 }}
               >
                 <Minus className="shell-wc-icon" />
-              </motion.button>
-              <motion.button
+              </button>
+              <button
                 type="button"
                 className="shell-wc-btn shell-wc-max"
                 onClick={handleMaximize}
                 aria-label="Maximize"
                 data-tauri-drag-region="false"
-                whileHover={{ backgroundColor: "rgba(255,255,255,0.08)" }}
-                whileTap={{ scale: 0.88 }}
-                transition={{ type: "spring", stiffness: 400, damping: 25 }}
               >
                 <Square className="shell-wc-icon" />
-              </motion.button>
-              <motion.button
+              </button>
+              <button
                 type="button"
                 className="shell-wc-btn shell-wc-close"
                 onClick={handleClose}
                 aria-label="Close"
                 data-tauri-drag-region="false"
-                whileTap={{ scale: 0.88 }}
-                transition={{ type: "spring", stiffness: 400, damping: 25 }}
               >
                 <X className="shell-wc-icon" />
-              </motion.button>
+              </button>
             </motion.div>
           </motion.div>
 
@@ -1060,6 +1328,9 @@ export default function Shell() {
           <div className="shell-content">
             {tabs.map((tab) => {
               const isActive = tab.id === activeTabId && !settingsOpen;
+              if (tab.deferred && tab.id !== activeTabId) {
+                return <div key={tab.id} className="shell-pane is-hidden" aria-hidden="true" />;
+              }
 
               return (
                 <div
@@ -1074,12 +1345,15 @@ export default function Shell() {
                 >
                   {tab.type === "home" && (
                     <HomePage
+                      isActive={isActive}
                       onNavigate={handleNavigate}
                       onOpenWorkspace={handleOpenWorkspace}
+                      onOpenSavedVehicle={handleOpenSavedVehicle}
                       settingsVersion={settingsVersion}
                     />
                   )}
                   {tab.type === "viewer" && (
+                    <Suspense fallback={<AppLoader variant="pane" />}>
                     <App
                       shellTab={tab}
                       isActive={isActive}
@@ -1089,26 +1363,64 @@ export default function Shell() {
                       settingsVersion={settingsVersion}
                       contextBarTarget={contextBarRef.current}
                     />
+                    </Suspense>
+                  )}
+                  {tab.type === "eupstudio" && (
+                    <Suspense fallback={<AppLoader variant="pane" />}>
+                      <EupPage
+                        workspaceState={eupStates[tab.id] || tab.initialState || {}}
+                        onStateChange={getPageStateCallback(tab.id, "eupstudio")}
+                        onRenameTab={(label) => renameTab(tab.id, label)}
+                        settingsVersion={settingsVersion}
+                        isActive={isActive}
+                        contextBarTarget={contextBarRef.current}
+                      />
+                    </Suspense>
+                  )}
+                  {tab.type === "propstudio" && (
+                    <Suspense fallback={<AppLoader variant="pane" />}>
+                      <PropStudioPage
+                        workspaceState={propStates[tab.id] || tab.initialState || {}}
+                        onStateChange={getPageStateCallback(tab.id, "propstudio")}
+                        onRenameTab={(label) => renameTab(tab.id, label)}
+                        isActive={isActive}
+                        contextBarTarget={contextBarRef.current}
+                      />
+                    </Suspense>
+                  )}
+                  {tab.type === "photo" && (
+                    <Suspense fallback={<AppLoader variant="pane" />}>
+                      <PhotoModePage
+                        workspaceState={photoStates[tab.id] || tab.initialState || {}}
+                        onStateChange={getPageStateCallback(tab.id, "photo")}
+                        isActive={isActive}
+                        contextBarTarget={contextBarRef.current}
+                      />
+                    </Suspense>
                   )}
                   {tab.type === "variants" && (
-                    <VariantsPage
-                      workspaceState={variantStates[tab.id] || tab.initialState || {}}
-                      onStateChange={(state) => handleVariantStateChange(tab.id, state)}
-                      onRenameTab={(label) => renameTab(tab.id, label)}
-                      settingsVersion={settingsVersion}
-                      isActive={isActive}
-                      contextBarTarget={contextBarRef.current}
-                    />
+                    <Suspense fallback={<AppLoader variant="pane" />}>
+                      <VariantsPage
+                        workspaceState={variantStates[tab.id] || tab.initialState || {}}
+                        onStateChange={getPageStateCallback(tab.id, "variants")}
+                        onRenameTab={(label) => renameTab(tab.id, label)}
+                        settingsVersion={settingsVersion}
+                        isActive={isActive}
+                        contextBarTarget={contextBarRef.current}
+                      />
+                    </Suspense>
                   )}
                   {tab.type === "templategen" && (
-                    <TemplateGenerationPage
-                      workspaceState={templateGenStates[tab.id] || tab.initialState || {}}
-                      onStateChange={(state) => handleTemplateGenStateChange(tab.id, state)}
-                      onRenameTab={(label) => renameTab(tab.id, label)}
-                      settingsVersion={settingsVersion}
-                      isActive={isActive}
-                      contextBarTarget={contextBarRef.current}
-                    />
+                    <Suspense fallback={<AppLoader variant="pane" />}>
+                      <TemplateGenerationPage
+                        workspaceState={templateGenStates[tab.id] || tab.initialState || {}}
+                        onStateChange={getPageStateCallback(tab.id, "templategen")}
+                        onRenameTab={(label) => renameTab(tab.id, label)}
+                        settingsVersion={settingsVersion}
+                        isActive={isActive}
+                        contextBarTarget={contextBarRef.current}
+                      />
+                    </Suspense>
                   )}
 
                 </div>
@@ -1122,7 +1434,9 @@ export default function Shell() {
           </div>
         </>
       )}
+      <UnsavedChangesDialog pending={pendingClose} onCancel={cancelPendingClose} onConfirm={confirmPendingClose} />
     </div>
     </GlobalContextMenu>
+    </MotionConfig>
   );
 }

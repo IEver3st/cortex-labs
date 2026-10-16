@@ -1,95 +1,40 @@
-import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import cortexLogo from "../../src-tauri/icons/cortex-logo.svg";
+import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
+import appMeta from "../../package.json";
+import markLeft from "../assets/brand/mark-left.png";
+import markRight from "../assets/brand/mark-right.png";
+import markLid from "../assets/brand/mark-lid.png";
+import markBase from "../assets/brand/mark-base.png";
+import markInner from "../assets/brand/mark-inner.png";
+import "./AppLoader.css";
 
-const GRID = 32;
-const SEGMENTS = 16;
-
-const BOOT_LINES = [
-  "renderer.init() → ok",
-  "workspace.mount() → ok",
-  "shaders compiled",
-  "runtime ready",
+/* The mark's faces, cut from the real icon by colour with
+   tools/split-mark-faces.py. Stacked in place they recombine into the icon,
+   so the assembly always lands on the true logo. */
+const FACES = [
+  { id: "left", src: markLeft },
+  { id: "right", src: markRight },
+  { id: "lid", src: markLid },
+  { id: "base", src: markBase },
+  { id: "inner", src: markInner },
 ];
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
+function MarkFaces({ className }) {
+  return (
+    <div className={`cx-faces ${className}`} aria-hidden="true">
+      {FACES.map((face) => (
+        <img
+          key={face.id}
+          className={`cx-face cx-face--${face.id}`}
+          src={face.src}
+          alt=""
+          draggable={false}
+        />
+      ))}
+      <img className="cx-face-whole" src={cortexLogo} alt="" draggable={false} />
+    </div>
+  );
 }
-
-function buildCubePoints() {
-  const S = 8;
-  const scaleX = 2;
-  const scaleY = 1;
-
-  const temp = [];
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-
-  const pushPoint = (x, y, z, alpha) => {
-    const px = (x - y) * scaleX;
-    const py = (x + y - 2 * z) * scaleY;
-    temp.push({ px, py, alpha });
-    minX = Math.min(minX, px);
-    maxX = Math.max(maxX, px);
-    minY = Math.min(minY, py);
-    maxY = Math.max(maxY, py);
-  };
-
-  for (let x = 0; x < S; x += 1) {
-    for (let y = 0; y < S; y += 1) {
-      const z = S - 1;
-      pushPoint(x, y, z, 0.95);
-    }
-  }
-
-  for (let y = 0; y < S; y += 1) {
-    for (let z = 0; z < S; z += 1) {
-      const x = S - 1;
-      const dither = (y + z) % 2 === 0;
-      if (dither) pushPoint(x, y, z, 0.65);
-    }
-  }
-
-  for (let x = 0; x < S; x += 1) {
-    for (let z = 0; z < S; z += 1) {
-      const y = S - 1;
-      const dither = (x + z) % 2 === 0;
-      if (dither) pushPoint(x, y, z, 0.45);
-    }
-  }
-
-  const width = maxX - minX + 1;
-  const height = maxY - minY + 1;
-  const offsetX = Math.floor((GRID - width) / 2) - minX;
-  const offsetY = Math.floor((GRID - height) / 2) - minY;
-
-  const map = new Map();
-  for (const point of temp) {
-    const x = point.px + offsetX;
-    const y = point.py + offsetY;
-    if (x < 0 || y < 0 || x >= GRID || y >= GRID) continue;
-    const key = `${x},${y}`;
-    const prev = map.get(key);
-    map.set(key, prev ? Math.max(prev, point.alpha) : point.alpha);
-  }
-
-  return Array.from(map.entries())
-    .map(([key, alpha]) => {
-      const [x, y] = key.split(",").map((value) => Number.parseInt(value, 10));
-      return { x, y, alpha };
-    })
-    .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
-}
-
-const CUBE_POINTS = buildCubePoints();
-
-// Compute per-dot diagonal wave delay for materialization effect
-const CUBE_DELAYS = (() => {
-  const maxDiag = (GRID - 1) * 2;
-  return CUBE_POINTS.map((p) => ((p.x + p.y) / maxDiag) * 0.55);
-})();
 
 export function LoadingGlyph({ className, animate: doAnimate = false, ...props }) {
   const classes = [className || "loader-glyph", doAnimate ? "loader-glyph-animated" : ""]
@@ -107,101 +52,57 @@ export function LoadingGlyph({ className, animate: doAnimate = false, ...props }
   );
 }
 
+/** Compact loader for panes and in-viewer loading: the mark's faces drift
+ *  apart and rejoin while work is genuinely in progress. */
+function MarkLoader({ label, variant }) {
+  return (
+    <motion.div
+      className={`app-loader app-loader--${variant}`}
+      role="status"
+      aria-live="polite"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
+    >
+      <div className="cx-mark-loader">
+        <MarkFaces className="cx-mark-loader-glyph is-looping" />
+        <span className="cx-mark-loader-label">{label}</span>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function AppLoader({ variant = "boot" }) {
-  const [visibleLines, setVisibleLines] = useState(0);
-  const [litSegments, setLitSegments] = useState(0);
-
-  const isBackground = variant === "background";
-
-  useEffect(() => {
-    if (isBackground) return;
-    // Reveal boot lines one by one, paired with segment fill
-    const timers = BOOT_LINES.map((_, i) =>
-      setTimeout(() => {
-        setVisibleLines(i + 1);
-        setLitSegments(Math.round(((i + 1) / BOOT_LINES.length) * SEGMENTS));
-      }, 600 + i * 480)
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [isBackground]);
-
-  if (isBackground) {
-    return (
-      <motion.div
-        className="app-loader app-loader--bg"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      >
-        <div className="loader-bg-inner">
-          <motion.div
-            className="loader-shape-sm"
-            animate={{ opacity: [0.35, 0.6, 0.35] }}
-            transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-          >
-            <LoadingGlyph />
-          </motion.div>
-        </div>
-      </motion.div>
-    );
-  }
+  if (variant === "background") return <MarkLoader variant="background" label="Loading model" />;
+  if (variant === "pane") return <MarkLoader variant="pane" label="Loading workspace" />;
 
   return (
     <motion.div
-      className="app-loader"
+      className="app-loader app-loader--boot"
+      role="status"
+      aria-label="Starting Cortex Studio"
       initial={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.5, ease: "easeInOut" }}
+      transition={{ duration: 0.45, ease: [0.2, 0.8, 0.2, 1] }}
     >
-      <div className="loader-stage">
-        {/* Logo */}
-        <motion.div
-          className="loader-glyph-wrap"
-          initial={{ opacity: 0, scale: 0.88 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <LoadingGlyph animate />
-        </motion.div>
-
-        {/* Title */}
-        <motion.div
-          className="loader-meta"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3, duration: 0.4 }}
-        >
-          <div className="loader-title">CORTEX STUDIO</div>
-        </motion.div>
-
-        {/* Boot log */}
-        <motion.div
-          className="loader-boot-log"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5, duration: 0.3 }}
-        >
-          {BOOT_LINES.map((line, i) => (
-            <div
-              key={line}
-              className="loader-log-line"
-              style={{
-                opacity: i < visibleLines ? 1 : 0,
-                color: i === visibleLines - 1
-                  ? "var(--mg-primary)"
-                  : "var(--mg-muted)",
-                transition: "opacity 0.2s ease, color 0.6s ease",
-              }}
-            >
-              <span className="loader-log-prompt">›</span>
-              {line}
-            </div>
-          ))}
-        </motion.div>
-
-
-      </div>
+      <div className="cx-intro-field" aria-hidden="true" />
+      <motion.div
+        className="cx-intro"
+        exit={{ scale: 1.04, y: -6 }}
+        transition={{ duration: 0.45, ease: [0.2, 0.8, 0.2, 1] }}
+      >
+        <MarkFaces className="cx-intro-mark is-assembling" />
+        <div className="cx-intro-lockup">
+          <span className="cx-intro-word cx-display">
+            <span>Cortex <span className="cx-intro-accent">Studio</span></span>
+          </span>
+          <span className="cx-intro-version">v{appMeta.version}</span>
+        </div>
+        <div className="cx-intro-progress" aria-hidden="true">
+          <span />
+        </div>
+      </motion.div>
     </motion.div>
   );
 }

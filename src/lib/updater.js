@@ -5,6 +5,7 @@ import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import tauriConfig from "../../src-tauri/tauri.conf.json";
 import { createDownloadMetrics, reduceDownloadEvent } from "./updater-state";
+import { loadPrefs, PREFS_UPDATED_EVENT } from "./prefs";
 
 const CHECK_INTERVAL = 30 * 60 * 1000;
 const IS_DEV = typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
@@ -40,6 +41,7 @@ const store = {
   listeners: new Set(),
   initialized: false,
   timerId: null,
+  autoCheckEligible: false,
   update: null,
   downloadMetrics: createDownloadMetrics(),
   downloadInFlight: null,
@@ -411,11 +413,28 @@ function ensureUpdaterInitialized() {
 
   if (IS_DEV) return;
 
-  void runCheck({ manual: false });
+  store.autoCheckEligible = true;
+  syncAutoCheckTimer();
+  window.addEventListener(PREFS_UPDATED_EVENT, syncAutoCheckTimer);
+}
 
-  store.timerId = setInterval(() => {
-    runCheck({ manual: false });
-  }, CHECK_INTERVAL);
+export function isAutoUpdateCheckEnabled() {
+  return loadPrefs()?.defaults?.autoCheckUpdates !== false;
+}
+
+// Background checks follow the Settings toggle; manual checks always work.
+function syncAutoCheckTimer() {
+  if (!store.autoCheckEligible) return;
+  const enabled = isAutoUpdateCheckEnabled();
+  if (enabled && !store.timerId) {
+    void runCheck({ manual: false });
+    store.timerId = setInterval(() => {
+      runCheck({ manual: false });
+    }, CHECK_INTERVAL);
+  } else if (!enabled && store.timerId) {
+    clearInterval(store.timerId);
+    store.timerId = null;
+  }
 }
 
 async function downloadUpdate() {

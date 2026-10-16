@@ -12,25 +12,82 @@
 
 import { readFile } from "@tauri-apps/plugin-fs";
 import { detectPsdBitDepth, getFileExtension } from "./viewer-utils";
-
-let readPsdLoader = null;
-async function getReadPsd() {
-  if (!readPsdLoader) {
-    readPsdLoader = import("ag-psd").then((mod) => mod.readPsd);
-  }
-  return readPsdLoader;
-}
-
-let pdnModuleLoader = null;
-async function getPdnModule() {
-  if (!pdnModuleLoader) {
-    pdnModuleLoader = import("./pdn");
-  }
-  return pdnModuleLoader;
-}
+import { readPsdAsync } from "./psd-reader";
+import { flattenPdnLayersAsync, readPdnLayersAsync } from "./pdn-reader";
 
 const FLAT_LAYER_ID = "__layer_source__/image";
 const FLAT_LAYER_NAME = "Image";
+
+/* --- Composite source cache ---
+ * Decoding a layered PSD/PDN (every layer rasterized) is the expensive part of
+ * a preview; the per-toggle composite is cheap. Parsed sources are kept per
+ * path (small LRU) and dropped whenever the page re-parses the file, which is
+ * the only moment the user has asked for fresh bytes. */
+const COMPOSITE_SOURCE_CACHE_LIMIT = 2;
+const compositeSourceCache = new Map();
+
+function getCompositeSource(path) {
+  const entry = compositeSourceCache.get(path);
+  if (!entry) return null;
+  compositeSourceCache.delete(path);
+  compositeSourceCache.set(path, entry);
+  return entry;
+}
+
+function storeCompositeSource(path, entry) {
+  compositeSourceCache.delete(path);
+  compositeSourceCache.set(path, entry);
+  while (compositeSourceCache.size > COMPOSITE_SOURCE_CACHE_LIMIT) {
+    const oldestKey = compositeSourceCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    compositeSourceCache.delete(oldestKey);
+  }
+  return entry;
+}
+
+export function invalidateCompositeSource(path) {
+  if (!path) return;
+  compositeSourceCache.delete(path);
+}
+
+/* Reusable scratch canvases for the live preview. Export keeps fresh canvases
+ * so an in-flight export is never overdrawn by a preview re-composite. */
+function getCanvas(width, height, reuseSlot = "", scratchCanvases) {
+  if (reuseSlot && scratchCanvases) {
+    let canvas = scratchCanvases.get(reuseSlot);
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      scratchCanvases.set(reuseSlot, canvas);
+    }
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    } else {
+      canvas.getContext("2d")?.clearRect(0, 0, width, height);
+    }
+    return canvas;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+function snapshotHiddenFlags(layers) {
+  if (!layers) return;
+  for (const layer of layers) {
+    layer.__sourceHidden = Boolean(layer.hidden);
+    if (layer.children) snapshotHiddenFlags(layer.children);
+  }
+}
+
+function restoreHiddenFlags(layers) {
+  if (!layers) return;
+  for (const layer of layers) {
+    layer.hidden = layer.__sourceHidden;
+    if (layer.children) restoreHiddenFlags(layer.children);
+  }
+}
 
 /* ─── Category mapping ─── */
 const COLOR_CATEGORY_MAP = {
@@ -264,16 +321,21 @@ async function decodeAiCanvas(bytes) {
   ).href;
 
   const loadingTask = pdfjsLib.getDocument({ data: buffer });
-  const pdf = await loadingTask.promise;
-  const page = await pdf.getPage(1);
-  const viewport = page.getViewport({ scale: 2.0 });
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(viewport.width));
-  canvas.height = Math.max(1, Math.round(viewport.height));
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas 2D context unavailable.");
-  await page.render({ canvasContext: context, viewport }).promise;
-  return canvas;
+  try {
+    const pdf = await loadingTask.promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 2.0 });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(viewport.width));
+    canvas.height = Math.max(1, Math.round(viewport.height));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Canvas 2D context unavailable.");
+    await page.render({ canvasContext: context, viewport }).promise;
+    return canvas;
+  } finally {
+    // Each getDocument call starts its own pdf.js worker; this ends it.
+    await loadingTask.destroy().catch(() => {});
+  }
 }
 
 async function decodeFlatLayerSourceCanvas(extension, bytes, filePath = "") {
@@ -310,12 +372,10 @@ function isFlatLayerVisible(layerVisibility) {
  * used by the variant builder. Format matches parsePsdLayers output.
  */
 async function parsePdnLayerSource(bytes) {
-  const { decodePdnLayers, decodePdn } = await getPdnModule();
-  const result = decodePdnLayers(bytes);
+  const { result, flat } = await readPdnLayersAsync(bytes);
 
   // If layer-aware decoding failed, fall back to flat composite
   if (!result || !result.layers || result.layers.length === 0) {
-    const flat = decodePdn(bytes);
     if (flat?.width && flat?.height && flat?.data) {
       return buildFlatLayerSourceData(flat.width, flat.height);
     }
@@ -380,66 +440,92 @@ async function parsePdnLayerSource(bytes) {
  * Composite a PDN file with specific layer visibility into a canvas.
  * Per-layer compositing with blend modes, opacity, and visibility control.
  */
-async function compositePdnVariant(bytes, layerVisibility, targetWidth, targetHeight) {
-  const { decodePdnLayers, decodePdn } = await getPdnModule();
-  const result = decodePdnLayers(bytes);
-
-  // Fallback to flat composite
+async function loadPdnCompositeSource(filePath, readBytes) {
+  const cached = filePath ? getCompositeSource(filePath) : null;
+  // A source whose layers were lost in a failed composite is decoded again.
+  if (cached?.kind === "pdn" && !cached.lost) return cached;
+  const bytes = await readBytes();
+  const { result, flat } = await readPdnLayersAsync(bytes);
+  let entry;
   if (!result || !result.layers || result.layers.length === 0) {
-    const flat = decodePdn(bytes);
     if (!flat?.width || !flat?.height || !flat?.data) {
       throw new Error("Failed to decode Paint.NET file.");
     }
-    const srcCanvas = canvasFromRgba(flat.width, flat.height, flat.data);
-    const outW = targetWidth || flat.width;
-    const outH = targetHeight || flat.height;
-    const outCanvas = document.createElement("canvas");
-    outCanvas.width = outW;
-    outCanvas.height = outH;
+    entry = { kind: "pdn", flatCanvas: canvasFromRgba(flat.width, flat.height, flat.data) };
+  } else {
+    entry = { kind: "pdn", result, pixels: null, queue: Promise.resolve(), lost: null };
+  }
+  return filePath ? storeCompositeSource(filePath, entry) : entry;
+}
+
+function isPdnLayerVisible(pdnLayer, layerVisibility) {
+  // By name, matching the allLayers id format.
+  const layerName = pdnLayer.name || "";
+  if (Object.prototype.hasOwnProperty.call(layerVisibility, layerName)) {
+    return Boolean(layerVisibility[layerName]);
+  }
+  return pdnLayer.visible !== false;
+}
+
+function isDetached(buffer) {
+  return buffer.detached ?? buffer.byteLength === 0;
+}
+
+/**
+ * Runs `task` once earlier composites of `source` have finished: the
+ * worker holds the layer buffers while it flattens them, so composites of one
+ * source take turns.
+ */
+function withPdnSource(source, task) {
+  const run = source.queue.then(() => {
+    if (source.lost) throw source.lost;
+    return task();
+  });
+  source.queue = run.catch(() => {});
+  return run;
+}
+
+async function compositePdnVariant(filePath, readBytes, layerVisibility, targetWidth, targetHeight, reuseCanvas, scratchCanvases) {
+  const source = await loadPdnCompositeSource(filePath, readBytes);
+
+  // Fallback to flat composite
+  if (source.flatCanvas) {
+    const srcCanvas = source.flatCanvas;
+    const outW = targetWidth || srcCanvas.width;
+    const outH = targetHeight || srcCanvas.height;
+    const outCanvas = getCanvas(outW, outH, reuseCanvas ? "out" : "", scratchCanvases);
     const outCtx = outCanvas.getContext("2d");
     if (!outCtx) throw new Error("Canvas 2D context unavailable.");
     outCtx.drawImage(srcCanvas, 0, 0, outW, outH);
     return outCanvas;
   }
 
-  const { width, height, layers: pdnLayers } = result;
+  const { result } = source;
+  const { width, height } = result;
+  const visible = result.layers.map((pdnLayer) => isPdnLayerVisible(pdnLayer, layerVisibility));
 
-  // Create work canvas at native PDN dimensions
-  const workCanvas = document.createElement("canvas");
-  workCanvas.width = width;
-  workCanvas.height = height;
-  const workCtx = workCanvas.getContext("2d");
-  if (!workCtx) throw new Error("Canvas 2D context unavailable.");
-
-  // Draw each layer bottom-to-top with visibility/blend/opacity
-  for (const pdnLayer of pdnLayers) {
-    const layerName = pdnLayer.name || "";
-
-    // Check visibility map (by name, matching the allLayers id format)
-    let isVisible;
-    if (Object.prototype.hasOwnProperty.call(layerVisibility, layerName)) {
-      isVisible = Boolean(layerVisibility[layerName]);
-    } else {
-      isVisible = pdnLayer.visible !== false;
+  // Paint.NET's own per-pixel blend arithmetic (pdn.js), off the main thread.
+  // Canvas2D has no Reflect, Glow or Negation and differs on Additive and Xor.
+  const workCanvas = await withPdnSource(source, async () => {
+    let flattened;
+    try {
+      flattened = await flattenPdnLayersAsync(result, visible, source.pixels);
+    } catch (error) {
+      // Gone with the worker: decode the file again next time. A refusal
+      // (unknown blend mode) is raised before anything moves.
+      if (result.layers.some((pdnLayer) => isDetached(pdnLayer.image.buffer)) || (source.pixels && isDetached(source.pixels.buffer))) {
+        source.lost = error;
+      }
+      throw error;
     }
-
-    if (!isVisible) continue;
-
-    const opacity = (pdnLayer.opacity ?? 255) / 255;
-    if (opacity <= 0) continue;
-
-    if (!pdnLayer.image || pdnLayer.image.length === 0) continue;
-
-    // Create a temporary canvas for this layer's pixel data
-    const layerCanvas = canvasFromRgba(width, height, pdnLayer.image);
-
-    // Apply blend mode and opacity
-    workCtx.save();
-    workCtx.globalAlpha = opacity;
-    workCtx.globalCompositeOperation = pdnLayer.blendModeCanvas || "source-over";
-    workCtx.drawImage(layerCanvas, 0, 0);
-    workCtx.restore();
-  }
+    flattened.images.forEach((image, index) => { result.layers[index].image = image; });
+    source.pixels = flattened.data;
+    const canvas = getCanvas(width, height, reuseCanvas ? "work" : "", scratchCanvases);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas 2D context unavailable.");
+    ctx.putImageData(new ImageData(source.pixels, width, height), 0, 0);
+    return canvas;
+  });
 
   // Scale to target dimensions if needed
   const outW = targetWidth || width;
@@ -449,9 +535,7 @@ async function compositePdnVariant(bytes, layerVisibility, targetWidth, targetHe
     return workCanvas;
   }
 
-  const outCanvas = document.createElement("canvas");
-  outCanvas.width = outW;
-  outCanvas.height = outH;
+  const outCanvas = getCanvas(outW, outH, reuseCanvas ? "out" : "", scratchCanvases);
   const outCtx = outCanvas.getContext("2d");
   outCtx.drawImage(workCanvas, 0, 0, outW, outH);
   return outCanvas;
@@ -462,6 +546,8 @@ async function compositePdnVariant(bytes, layerVisibility, targetWidth, targetHe
  * Returns both the legacy categorized buckets AND a full flat layer list.
  */
 export async function parsePsdLayers(filePath) {
+  // A (re)parse is the user's explicit request for fresh bytes.
+  invalidateCompositeSource(filePath);
   const bytes = await readFile(filePath);
   const extension = getFileExtension(filePath);
 
@@ -481,10 +567,7 @@ export async function parsePsdLayers(filePath) {
     error.bitDepth = bitDepth;
     throw error;
   }
-  const buffer = bytes.buffer || bytes;
-  const readPsd = await getReadPsd();
-
-  const psd = readPsd(new DataView(buffer), {
+  const psd = await readPsdAsync(bytes, {
     skipCompositeImageData: true,
     skipThumbnail: true,
     skipLayerImageData: true,
@@ -644,21 +727,48 @@ function getCompositeOp(blendMode) {
  *   - Layer opacity and blend modes
  *   - Clipping masks (layers with .clipping flag)
  */
-export async function compositePsdVariant(filePath, layerVisibility = {}, targetWidth, targetHeight) {
-  const bytes = await readFile(filePath);
+async function loadPsdCompositeSource(filePath, readBytes) {
+  const cached = filePath ? getCompositeSource(filePath) : null;
+  if (cached?.kind === "psd") return cached;
+  const bytes = await readBytes();
+  const bitDepth = detectPsdBitDepth(bytes);
+  if (bitDepth === 16 || bitDepth === 32) {
+    const error = new Error(`${bitDepth}-bit PSD not supported`);
+    error.type = "unsupported-bit-depth";
+    error.bitDepth = bitDepth;
+    throw error;
+  }
+  const psd = await readPsdAsync(bytes, {
+    skipThumbnail: true,
+    skipCompositeImageData: true,
+    skipLayerImageData: false,
+  });
+  snapshotHiddenFlags(psd.children || []);
+  const entry = { kind: "psd", psd, opacityDivisor: getOpacityScaleDivisor(psd.children || []) };
+  return filePath ? storeCompositeSource(filePath, entry) : entry;
+}
+
+export async function compositePsdVariant(filePath, layerVisibility = {}, targetWidth, targetHeight, options = {}) {
+  const scratchCanvases = options?.scratchCanvases;
+  const reuseCanvas = Boolean(options?.reuseCanvas && scratchCanvases);
   const extension = getFileExtension(filePath);
+  const readBytes = () => readFile(filePath);
 
   if (isPdnExtension(extension)) {
-    return await compositePdnVariant(bytes, layerVisibility, targetWidth, targetHeight);
+    return await compositePdnVariant(filePath, readBytes, layerVisibility, targetWidth, targetHeight, reuseCanvas, scratchCanvases);
   }
 
   if (isFlatLayerSourceExtension(extension)) {
-    const sourceCanvas = await decodeFlatLayerSourceCanvas(extension, bytes, filePath);
+    let source = filePath ? getCompositeSource(filePath) : null;
+    if (source?.kind !== "flat") {
+      const canvas = await decodeFlatLayerSourceCanvas(extension, await readBytes(), filePath);
+      source = { kind: "flat", canvas };
+      if (filePath) storeCompositeSource(filePath, source);
+    }
+    const sourceCanvas = source.canvas;
     const outW = targetWidth || sourceCanvas.width;
     const outH = targetHeight || sourceCanvas.height;
-    const outCanvas = document.createElement("canvas");
-    outCanvas.width = outW;
-    outCanvas.height = outH;
+    const outCanvas = getCanvas(outW, outH, reuseCanvas ? "out" : "", scratchCanvases);
     if (isFlatLayerVisible(layerVisibility)) {
       const outCtx = outCanvas.getContext("2d");
       if (!outCtx) throw new Error("Canvas 2D context unavailable.");
@@ -667,34 +777,19 @@ export async function compositePsdVariant(filePath, layerVisibility = {}, target
     return outCanvas;
   }
 
-  const bitDepth = detectPsdBitDepth(bytes);
-  if (bitDepth === 16 || bitDepth === 32) {
-    const error = new Error(`${bitDepth}-bit PSD not supported`);
-    error.type = "unsupported-bit-depth";
-    error.bitDepth = bitDepth;
-    throw error;
-  }
-  const buffer = bytes.buffer || bytes;
-  const readPsd = await getReadPsd();
-
-  const psd = readPsd(new DataView(buffer), {
-    skipThumbnail: true,
-    skipCompositeImageData: true,
-    skipLayerImageData: false,
-  });
+  const { psd, opacityDivisor } = await loadPsdCompositeSource(filePath, readBytes);
 
   const psdW = psd.width;
   const psdH = psd.height;
-  const opacityDivisor = getOpacityScaleDivisor(psd.children || []);
   const outW = targetWidth || psdW;
   const outH = targetHeight || psdH;
 
-  // Apply visibility to the raw ag-psd tree
+  // Apply visibility to the raw ag-psd tree, starting from the file's own
+  // flags so a cached tree behaves exactly like a freshly parsed one.
+  restoreHiddenFlags(psd.children || []);
   applyVisibilityToTree(psd.children || [], layerVisibility);
 
-  const workCanvas = document.createElement("canvas");
-  workCanvas.width = psdW;
-  workCanvas.height = psdH;
+  const workCanvas = getCanvas(psdW, psdH, reuseCanvas ? "work" : "", scratchCanvases);
   const workCtx = workCanvas.getContext("2d");
 
   /**
@@ -783,9 +878,7 @@ export async function compositePsdVariant(filePath, layerVisibility = {}, target
     return workCanvas;
   }
 
-  const outCanvas = document.createElement("canvas");
-  outCanvas.width = outW;
-  outCanvas.height = outH;
+  const outCanvas = getCanvas(outW, outH, reuseCanvas ? "out" : "", scratchCanvases);
   const outCtx = outCanvas.getContext("2d");
   outCtx.drawImage(workCanvas, 0, 0, outW, outH);
   return outCanvas;

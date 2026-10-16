@@ -3,7 +3,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        main: ["Syne", "sans-serif"],
+        main: ["Segoe UI Variable Text", "Segoe UI", "system-ui", "sans-serif"],
         hud: ["DM Mono", "ui-monospace", "monospace"],
       },
       colors: {

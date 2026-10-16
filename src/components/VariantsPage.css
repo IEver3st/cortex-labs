@@ -1,0 +1,1167 @@
+/* Variant Builder: a member of the viewer workspace family. The dock is the
+   pipeline (layered file, vehicle, variants) with export pinned at its foot,
+   the stage previews the current variant on the car and flat, and the
+   inspector edits the variant's visible layers. Shared lv- parts come from
+   workspace/workspace.css; vb- rules only cover what is specific here. */
+
+.vb-root.lv-root {
+  grid-template-columns: var(--lv-dock) minmax(0, 1fr) var(--lv-insp);
+}
+
+.vb-root.lv-root.is-inspector-closed {
+  grid-template-columns: var(--lv-dock) minmax(0, 1fr) 0;
+}
+
+.vb-root.lv-root.is-dock-closed {
+  grid-template-columns: 0 minmax(0, 1fr) var(--lv-insp);
+}
+
+.vb-root.lv-root.is-dock-closed.is-inspector-closed {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+.vb-root.is-dock-closed .lv-dock,
+.vb-root.is-inspector-closed .lv-inspector {
+  border: 0;
+}
+
+/* ── Pipeline ── */
+.vb-optional {
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.vb-history {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: -3px 0;
+}
+
+.vb-history .cx-icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.vb-history .cx-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.vb-history .cx-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.vb-history .cx-icon-btn:disabled:hover {
+  background: transparent;
+  color: var(--mg-muted);
+}
+
+.vb-history .vb-count {
+  margin-left: 6px;
+}
+
+.vb-undo-note .lv-link {
+  flex-shrink: 0;
+}
+
+.vb-count {
+  font-family: var(--font-hud);
+  font-size: 12px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-reload {
+  margin-left: auto;
+  color: var(--mg-muted);
+}
+
+.vb-reload:hover {
+  color: var(--mg-fg);
+}
+
+.vb-variants {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vb-variant {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  border-radius: 6px;
+  color: var(--mg-fg);
+  transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.vb-variant::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--mg-primary);
+  transform: scaleY(0);
+  transition: transform 160ms var(--cx-ease);
+}
+
+.vb-variant:hover {
+  background: var(--cx-wash);
+}
+
+.vb-variant:hover::before {
+  transform: scaleY(1);
+}
+
+.vb-variant.is-selected {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.vb-variant.is-selected::before {
+  transform: scaleY(0);
+}
+
+.vb-variant-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 6px 0 12px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-main);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vb-variant-open:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.vb-variant-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-variant-tag {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+}
+
+.vb-variant-changed {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--mg-primary);
+}
+
+.vb-variant.is-selected .vb-variant-tag {
+  color: var(--cx-invert-muted);
+}
+
+.vb-variant.is-selected .vb-variant-changed {
+  background: currentColor;
+}
+
+.vb-variant-actions {
+  display: flex;
+  flex-shrink: 0;
+  padding-right: 4px;
+  opacity: 0;
+  transition: opacity 120ms var(--cx-ease);
+}
+
+.vb-variant:hover .vb-variant-actions,
+.vb-variant:focus-within .vb-variant-actions,
+.vb-variant.is-selected .vb-variant-actions {
+  opacity: 1;
+}
+
+.vb-variant-actions .cx-icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.vb-variant-actions .cx-icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.vb-variant.is-selected .cx-icon-btn {
+  color: var(--cx-invert-muted);
+}
+
+.vb-variant.is-selected .cx-icon-btn:hover {
+  background: color-mix(in srgb, var(--cx-invert-fg) 10%, transparent);
+  color: var(--cx-invert-fg);
+}
+
+.vb-variant.is-selected .cx-icon-btn.is-danger:hover {
+  color: var(--mg-destructive);
+}
+
+.vb-rename {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--mg-primary);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.vb-add {
+  align-self: flex-start;
+  margin-left: -6px;
+}
+
+/* ── Export (dock foot) ── */
+.vb-export {
+  display: grid;
+  gap: 10px;
+  container-type: inline-size;
+}
+
+/* Size sits on one line with its label to keep the foot short. */
+.vb-export .lv-field {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+/* A narrow dock (large UI scale) puts each label over its choice, so
+   "Keep aspect" stays on one line inside its button. */
+@container (max-width: 200px) {
+  .vb-export .lv-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+
+.vb-export .lv-seg-btn {
+  height: 24px;
+}
+
+.vb-dims {
+  margin: -4px 0 0;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
+.vb-renders {
+  display: grid;
+  gap: 6px;
+}
+
+.vb-dest {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 32px;
+}
+
+.vb-dest .cx-label {
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.vb-dest-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-dest-row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vb-dest-pick {
+  margin-left: auto;
+}
+
+.vb-issues {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vb-progress {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.vb-progress span {
+  display: block;
+  height: 100%;
+  background: var(--mg-primary);
+  transition: width 240ms var(--cx-ease);
+}
+
+.vb-export-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.vb-export-btn {
+  flex: 1;
+  height: 36px;
+}
+
+.vb-export-current {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+  margin-top: -4px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vb-export-current span {
+  flex-shrink: 0;
+}
+
+.vb-export-current .vb-export-current-name {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  color: var(--mg-fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-export-current:hover:not(:disabled) span {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.vb-export-current:focus-visible {
+  outline: none;
+  border-radius: 3px;
+  box-shadow: var(--cx-focus);
+}
+
+.vb-export-current:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.vb-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.vb-result svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+.vb-result span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.vb-result-path {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+}
+
+.vb-result.is-ok svg {
+  color: var(--cx-confirm);
+}
+
+.vb-result.is-error {
+  color: var(--mg-destructive);
+}
+
+/* ── Stage ── */
+.vb-stage-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.vb-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--mg-bg);
+  container-type: inline-size;
+}
+
+.vb-panes {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.vb-pane {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.vb-pane--model {
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.vb-pane--model:only-child {
+  flex: 1 1 0;
+}
+
+.vb-pane-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.vb-deck {
+  z-index: 3;
+}
+
+.vb-view-switch {
+  z-index: 4;
+}
+
+.vb-resizer {
+  position: relative;
+  z-index: 4;
+  flex-shrink: 0;
+  background: var(--mg-border);
+  touch-action: none;
+}
+
+.vb-resizer::after {
+  content: "";
+  position: absolute;
+  background: transparent;
+  transition: background-color 140ms var(--cx-ease);
+}
+
+.vb-resizer--h {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.vb-resizer--h::after {
+  inset: 0 -4px;
+}
+
+.vb-resizer--v {
+  height: 1px;
+  cursor: row-resize;
+}
+
+.vb-resizer--v::after {
+  inset: -4px 0;
+}
+
+.vb-resizer:hover::after,
+.vb-resizer:active::after {
+  background: color-mix(in srgb, var(--mg-primary) 45%, transparent);
+}
+
+.vb-pane-state {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(80%, 380px);
+  padding: 10px 14px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  transform: translate(-50%, -50%);
+}
+
+.vb-pane-state > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vb-pane-state small {
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.vb-pane-state svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.vb-pane-state.is-error svg {
+  color: var(--mg-destructive);
+}
+
+/* Lighting menu sits on the deck and opens upward. */
+.vb-light {
+  position: relative;
+}
+
+.vb-light-btn {
+  gap: 7px;
+  grid-auto-flow: column;
+}
+
+.vb-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 6;
+  display: grid;
+  min-width: 160px;
+  padding: 5px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+}
+
+.vb-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vb-menu-item:hover,
+.vb-menu-item:focus-visible {
+  outline: none;
+  background: var(--cx-wash);
+}
+
+.vb-menu-check {
+  width: 13px;
+  height: 13px;
+  color: var(--mg-primary);
+  visibility: hidden;
+}
+
+.vb-menu-item.is-active .vb-menu-check {
+  visibility: visible;
+}
+
+/* Texture pane: the composite on a transparency checker. */
+.vb-texture {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 64px 24px 80px;
+  background: var(--mg-bg);
+  container-type: size;
+}
+
+.vb-texture.is-panning {
+  cursor: grabbing;
+}
+
+.vb-texture.has-grid {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--mg-fg) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--mg-fg) 5%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: center;
+}
+
+.vb-texture-canvas {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  transform-origin: center center;
+}
+
+/* Fit the composite inside the pane at its own aspect ratio. */
+.vb-texture-frame {
+  position: relative;
+  width: min(100cqw, 100cqh * var(--ar));
+  aspect-ratio: var(--ar);
+  box-shadow:
+    0 0 0 1px var(--mg-border),
+    0 10px 30px rgba(0, 0, 0, 0.16);
+}
+
+.vb-texture-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.vb-texture.has-checker .vb-texture-img {
+  background-color: #f2f2f2;
+  background-image:
+    linear-gradient(45deg, #d8d8d8 25%, transparent 25%),
+    linear-gradient(-45deg, #d8d8d8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #d8d8d8 75%),
+    linear-gradient(-45deg, transparent 75%, #d8d8d8 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.vb-safe-area {
+  position: absolute;
+  inset: 5%;
+  border: 1px dashed color-mix(in srgb, var(--mg-primary) 80%, transparent);
+  pointer-events: none;
+}
+
+.vb-texture-meta {
+  position: absolute;
+  top: var(--lv-inset);
+  right: var(--lv-inset);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-texture-meta span {
+  color: var(--mg-muted);
+}
+
+.vb-texture-state {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  max-width: 340px;
+  text-align: center;
+}
+
+.vb-texture-state > svg {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 4px;
+  color: var(--mg-destructive);
+}
+
+.vb-texture-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.vb-texture-copy {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.vb-texture-state .cx-btn {
+  margin-top: 8px;
+}
+
+/* ── Empty stage ── */
+.vb-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  gap: 8px;
+  max-width: 440px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.vb-empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.vb-empty-copy {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mg-muted);
+}
+
+.vb-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ── Layers inspector ── */
+.vb-layers {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.vb-layers.is-docked {
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--mg-bg) 55%, var(--cx-frame));
+}
+
+.vb-layers-head {
+  display: grid;
+  gap: 12px;
+  padding: 18px 16px 0;
+  border-bottom: 1px solid var(--mg-border);
+}
+
+.vb-layers.is-docked .vb-layers-head {
+  grid-template-columns: auto minmax(160px, 260px) 1fr;
+  align-items: center;
+  padding-top: 10px;
+}
+
+.vb-layers-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.vb-layers-title h2 {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.vb-layers-editing {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-search {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.vb-search:focus-within {
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.vb-search-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--mg-muted);
+}
+
+.vb-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.vb-search input::placeholder {
+  color: color-mix(in srgb, var(--mg-muted) 80%, transparent);
+}
+
+.vb-search-clear {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-muted);
+  cursor: pointer;
+}
+
+.vb-search-clear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.vb-search-clear:hover {
+  background: var(--cx-wash-strong);
+  color: var(--mg-fg);
+}
+
+.vb-filters {
+  display: flex;
+  gap: 2px;
+  margin: 0 -10px;
+}
+
+.vb-filters .lv-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  font-size: 12.5px;
+}
+
+.vb-filter-num {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-layers-body {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 10px 24px;
+  overflow-y: auto;
+}
+
+.vb-layer-group + .vb-layer-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.vb-group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding-right: 4px;
+}
+
+.vb-group-head.is-static {
+  justify-content: space-between;
+  padding: 0 6px;
+}
+
+.vb-group-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vb-group-toggle:hover {
+  background: var(--cx-wash);
+}
+
+.vb-group-toggle:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.vb-group-toggle svg {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  color: var(--mg-muted);
+}
+
+.vb-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-group-count {
+  margin-left: auto;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-check {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--mg-muted) 70%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--cx-invert-fg);
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), border-color 120ms var(--cx-ease);
+}
+
+.vb-check svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+
+.vb-check:hover {
+  border-color: var(--mg-fg);
+}
+
+.vb-check.is-all {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+}
+
+.vb-check.is-some::after {
+  content: "";
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--mg-fg);
+}
+
+.vb-check:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.vb-layer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.vb-layer.is-child {
+  padding-left: 27px;
+}
+
+.vb-layer:hover {
+  background: var(--cx-wash);
+  color: var(--mg-fg);
+}
+
+.vb-layer:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.vb-layer.is-on {
+  color: var(--mg-fg);
+}
+
+.vb-layer-eye {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  opacity: 0.55;
+}
+
+.vb-layer.is-on .vb-layer-eye {
+  opacity: 1;
+}
+
+.vb-layer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-layer:not(.is-on) .vb-layer-name {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--mg-muted) 50%, transparent);
+}
+
+.vb-layer-lock {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--mg-muted);
+}
+
+.vb-layers-empty {
+  margin: 12px 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+}
+
+.vb-spinner {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--mg-fg) 18%, transparent);
+  border-top-color: var(--mg-primary);
+  border-radius: 999px;
+  animation: vb-spin 800ms linear infinite;
+}
+
+@keyframes vb-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Narrow stages ── */
+@container (max-width: 760px) {
+  .vb-stage.is-split .vb-panes {
+    flex-direction: column;
+  }
+  .vb-stage.is-split .vb-pane--model {
+    flex: 1 1 0 !important;
+  }
+  .vb-stage.is-split .vb-resizer--h {
+    display: none;
+  }
+  .vb-stage.is-split .vb-pane + .vb-pane {
+    border-top: 1px solid var(--mg-border);
+  }
+  .vb-light-btn span {
+    display: none;
+  }
+}
+
+
+/* Short windows: the pinned foot would bury the steps, so the dock scrolls
+   as one column and export follows the last step. */
+@media (max-height: 720px) {
+  .vb-root .lv-dock {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .vb-root .lv-dock-scroll {
+    flex: none;
+    overflow: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vb-variant,
+  .vb-variant::before,
+  .vb-variant-actions,
+  .vb-layer,
+  .vb-check,
+  .vb-progress span {
+    transition: none;
+  }
+  .vb-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+@media (forced-colors: active) {
+  .vb-variant.is-selected,
+  .vb-check.is-all {
+    outline: 2px solid Highlight;
+  }
+}

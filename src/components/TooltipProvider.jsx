@@ -140,7 +140,12 @@ export default function TooltipProvider() {
       hide();
     };
 
-    const handleFocusIn = (event) => show(findTooltipTarget(event.target), true);
+    // Keyboard focus only: a click or a script returning focus (Settings
+    // closing onto its gear) must not leave a tooltip standing.
+    const handleFocusIn = (event) => {
+      const target = findTooltipTarget(event.target);
+      if (target && event.target instanceof Element && event.target.matches(":focus-visible")) show(target, true);
+    };
     const handleFocusOut = (event) => {
       const target = activeTargetRef.current;
       if (!target) return;

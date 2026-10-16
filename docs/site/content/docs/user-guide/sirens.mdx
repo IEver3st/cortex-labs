@@ -1,0 +1,195 @@
+---
+title: Sirens
+description: A workspace for a vehicle's emergency lights. Edit its carcols.meta siren setting or its ELS VCF while it runs on the model, then save it back.
+---
+
+Sirens is its own workspace (**Alt + 9**, or **Sirens** on Home). Open a `.yft` vehicle and the workspace reads the carcols siren setting that carvariations `sirenSettings` links to it, starts the pattern, and opens the setting for editing. Every edit shows on the model as you make it. Nothing is written to disk until you save. Vehicles that use ELS switch to their VCF instead; see [ELS](#els).
+
+The vehicle loads the way it does in All: the whole model, with its own GTA textures (turn **Model's own textures** off under the vehicle for plain paint). Exterior only does not apply here. The **Workbench** and **Showroom** stages both work, and Night darkens either one.
+
+## Layout
+
+- **Dock.** Step 1 is the vehicle. Step 2 is the siren setting: its name, id and siren count, the carcols.meta it came from (**Open file** opens it in your editor), whether the model matches the file (**Status**), **Checks**, **Install to resource**, **Save to file…**, **Import…**, **Copy XML** and **Revert**. **Checks** stays folded to one row that counts the most serious kind (blocking, warnings or notes) in its colour; click it for the list. Under the actions, **Tempo** shows the bpm and loop length and sets the sequencer bpm and time multiplier. The refresh button reads the meta files again. When the model has siren lights but no setting, **New siren setting** starts one with a siren per `sirenN` bone, each aimed the way its bone faces, the model's name, and the id carvariations already links when no other setting uses it, and **Import from carcols.meta…** starts from a setting in another file. **Resource tools** at the bottom opens the [ULC builder](#ulc-builder) and [Rename vehicle](#rename-vehicle).
+- **Sequencer.** The centre column, the full height of the window. Siren rows grow to fill it when there is room and shrink to a scrolling list when there are many.
+- **Preview.** A small live view of the model at the top of the right column, with the pattern running and a marker on each siren. By default each light gets a dot and, on a short leader beside it, its number in the siren's colour; heads that sit together share one label, and lights on the far side of the body fade back. Click a number to select that siren (Ctrl-click adds it to the selection). The pin menu in the sequencer's bar switches between these callouts, the **Classic** chips (a dot per siren, numbered when selected) and **Off**. Cortex Studio remembers the style you pick. Drag the preview's bottom edge to make it taller or shorter (double-click for the default). **Expand** (top-right of the preview, or the focus key **\\**) fills the workspace with the preview and its camera controls, with play and the Sirens switch at hand; **Esc** or the same button comes back.
+- **Inspector.** Under the preview. **Siren** edits the selected sirens, **Setting** edits the rest of the setting, **Lights** holds the [Equipment](#equipment) list and switches the headlights, indicators, brakes, reverse, extra lights and a ULC config's buttons, with Glow, Light spill and Fog, **Mods** switches the vehicle's in-game livery and fits its mod kit parts as in [All](/docs/user-guide/viewer-modes#mod-kits) (lightbars, push bars and antennas often live there), and **Scene** holds the stage, backdrop, lighting and paint slots. The **Saved vehicle** row under the vehicle in step 1 keeps the mods, livery, paint, extras and plate as a [saved vehicle](/docs/user-guide/workspaces#saved-vehicles) you can reopen from Home.
+
+The dock and the right column start wider than in the other workspaces. Drag either inner edge to resize it, or focus the edge and use the arrow keys; double-click returns it to the default width. Sizes are remembered. Hiding the inspector from the frame gives the preview the whole right column.
+
+## The grid
+
+Each siren has a lane of 32 steps, first step on the left, drawn in the siren's colour. The row number is the `sirenN` bone it drives.
+
+- Click a step to switch it on or off. Drag across steps, or across sirens, to paint.
+- Sirens with `rotate` get a second, thinner lane for the rotation pattern.
+- The last four lanes are the head and tail light sequencers that wig-wag the lamps while sirens run.
+- A dimmed lane belongs to a siren with flash off. `∅` marks a siren with no light on the model.
+- **M** mutes a siren on the model. **Solo** lights only the selected sirens.
+
+The playing step is outlined down every lane, its number is lit on the ruler, and the steps firing at that moment brighten under the outline. The bar at the top shows the step number and, when the sequencer is wide enough, a strip with one lamp per siren, lit in its colour when that siren is on. Play, pause and step from the bar, or click a step number to jump there. **Sirens** and **Night** in the bar switch the preview.
+
+Click a row to select it, Ctrl-click to add rows, Shift-click for a range.
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| **Siren** | Adds a siren after the last one, in the opposite colour and phase. |
+| **Presets** | Restyles the selected sirens with a set, lowest number first and repeating as needed: red and blue pair, red and white pair, amber strobe, halogen rotator, corner strobes, or a 16-head lightbar. Each siren keeps its aim. With nothing selected, the set is added after the last siren. |
+| Duplicate, move, delete | Copies, reorders or removes the selected sirens. Moving or deleting changes which bone later sirens drive. |
+| **Pattern** | Sets the selected sirens' pattern. The alternating versions give every other selected siren the opposite phase, for wig-wags. **Traffic advisor** builds a pattern across two or more selected sirens, taken in siren number order as one row of heads: an arrow (first to last, last to first, or centre out) that builds over three quarters of a sweep, holds and goes dark; a chase that lights one head at a time; or a warning that alternates the two halves. Each loop of 32 steps holds two sweeps. |
+| `[` `]` (the arrows), invert | Shifts the pattern one step earlier or later, or swaps lit and dark steps. |
+| Copy, paste pattern | Copies the selected siren's pattern onto others. |
+| Colour swatches | Red, blue, amber, white, green and purple lenses. A click colours every selected siren; the swatch matching the selected siren is ringed. |
+
+Pattern tools edit the flash pattern, or the rotation pattern for a siren that only rotates. A setting holds up to 32 sirens.
+
+## Fields
+
+The **Siren** tab edits every carcols field for the selected sirens. When several are selected, a change applies to all of them.
+
+- **Light:** colour (with the alpha carcols stores as `0xAARRGGBB`), intensity, light group, casts light, spot light, cast shadows.
+- **Lens glow:** the colour the lit lens glows. **Texture** is the game's look (the lens texture's own colour), **Siren** follows the siren's carcols colour, and **Custom** takes a colour you pick. On its own this changes only the preview, because in game a lens glows in its texture's colour. **Reset all** returns every siren to Texture. The choice is kept with the tab for that model.
+- **Write to textures…** (desktop app) puts the lens colours in game. It recolours the parts of the lens textures the tinted sirens light, inside the vehicle's own texture dictionaries (`<vehicle>.ytd` and `<vehicle>+hi.ytd` beside the model). A texture that comes from a pack dictionary in the vehicle's own resource gets a recoloured copy in the vehicle's dictionaries, so other vehicles keep theirs. Textures from the game's files or another resource are never copied: the dialog lists the sirens that use them, and **Texture colour** leaves those lenses in the texture's own colour. Before anything is written, the dialog lists each texture it changes, other lights that use the same part of a texture (they change too), and BC7 textures it stores as DXT5. Sirens that light the same part of a texture must use one colour; the dialog groups them and lets you pick that colour (or the texture's own) in place, then checks again. Textures stored inside the `.yft`, and vehicles without a `.ytd` of their own, can't be written. Each file is first copied to a `.bak` named with the date and time, and the write is all or nothing. Afterwards the lens glow returns to Texture and the model reloads with the new colours; restart the resource in game to load them.
+- **Flash:** on or off, **Facing** (eight directions around a top-down vehicle, front at the top, which set the aim), the 32-step pattern as text, multiples, aim (`flashiness` delta), start, sync to bpm, speed and direction. Facing shows the direction the aim matches; an aim between two directions highlights none. As in game, changing the aim also turns the siren's meshes about their bone.
+- **Rotation:** on or off, and the same channel fields for the turn.
+- **Scale:** on or off and the scale factor the bone grows by while lit.
+- **Corona:** intensity, size (0 turns it off), pull and face camera.
+
+The **Setting** tab holds the name, id, texture, real lights, the light spill falloff and cone angles, light offset, and the head and tail light multiples. The bpm and time multiplier are under **Tempo** in the dock. Angles stored in radians (`delta`, `start`) are shown in degrees.
+
+## Checks
+
+**Checks** in the dock, under **Status**, counts problems with the setting; click it to list them.
+
+- the id is missing or used by another setting in the resource (these block saving);
+- carvariations links a different id, or no siren setting, to the model;
+- the bpm is 0, so patterns never advance;
+- a siren's pattern has no lit steps, or its multiples are below 1;
+- a siren has no bone on the model, or the model has siren bones past the last siren.
+
+## Installing
+
+**Install to resource** writes the setting into the resource in one step:
+
+1. It saves a copy of each file it is about to change beside it, named like `carcols.meta.20261008-143012.bak`.
+2. It updates the setting in the resource's own carcols.meta: the file the setting came from, or the first carcols.meta in the resource. Only the values you changed are rewritten, as in [Saving](#saving).
+3. It points the model's entry in carvariations.meta at the setting's id. An existing `sirenSettings` gets its value changed; a missing one is added after `lightSettings`. Nothing else in the file changes.
+
+The dock then lists each step. If the model has no carvariations entry the setting is still installed, and the dock says what to add. A step that fails is reported with the steps that did complete. Install is unavailable when the resource has no carcols.meta yet (use **Save to file…** to create one) or while a check blocks saving.
+
+## Importing
+
+**Import…** opens any carcols.meta and reads its siren settings into the editor. When the file holds several, pick one in the dock. The import replaces the pattern, sirens and setting fields but keeps the model's id, name and file, so Install and Save still write to the right place. Undo or **Revert** takes it back. On a model with no setting, the import starts a new setting with the id carvariations links (or the imported id when that is free). Importing the vehicle's own setting from its resource's carcols.meta opens that setting for editing instead, so **Install to resource** updates it rather than adding a copy under a new id.
+
+An id above 255 gets a note in **Checks**: singleplayer (LSPDFR) reads such ids only with SirenSetting Limit Adjuster installed.
+
+## Equipment
+
+The **Lights** tab starts with every extra on the model, what it carries (its siren numbers, a steady light, or the ULC button that switches it) and a switch. The list shows which extras the vehicle state turns on and why. A switch overrides that state for the extra until **Reset**. Parts bolt on and drop off the model as you switch them.
+
+## ULC builder
+
+**ULC builder…** writes the vehicle's Ultimate Lighting Controller (ULC) entry in the resource's `ulc.lua`, or creates the file in the resource folder.
+
+- **Vehicles**: the model names the config covers.
+- **Buttons**: one row per extra. Switch a row on to give the extra a button, with its label, number key and colour.
+- **Park pattern**, **Steady burn**, **Brakes**, **Reverse** and **Horn**: the extras each turns on, and for brakes, reverse and horn the extras each turns off.
+
+It opens on the existing config for the model, or with a button for every extra that carries lights. The right side previews the Lua. **Save** replaces this vehicle's config and keeps fields the builder does not edit (door, sync and speed settings, button flags), adds it to the file when another vehicle's config is there, and backs up the old file first. Comments in an existing `ulc.lua` are not kept in the new file; they stay in the backup. When `fxmanifest.lua` does not mention `ulc.lua`, the result says so. **Copy** copies the table without writing.
+
+## Rename vehicle
+
+**Rename vehicle…** changes the vehicle's spawn name across its resource. Type the new name and the dialog lists every change before anything is written:
+
+- meta files: elements whose whole text is the old name, such as `modelName`, `txdName`, `handlingId`, `gameName`, `handlingName` and texture dictionary relationships;
+- Lua scripts: strings that are exactly the old name, such as `ulc.lua` names and `AddTextEntry` keys (`fxmanifest.lua` is never changed, and scripts that are not plain text, such as escrowed files, are skipped and listed);
+- stream files: the model (`name.yft`, `name_hi.yft`) and its texture dictionaries (`name.ytd`, `name+hi.ytd`).
+
+Mod kits and mod parts whose names only start with the old name are left alone. Each match keeps its case, so `FPIU25` becomes `PD_FPIU`. Names use letters, digits and underscores, up to 32 characters, and cannot end in `_hi`. Names over 11 characters get a warning.
+
+**Rename** renames the stream files first, all of them or none. Then it saves a `.bak` of each text file and writes the changes. A file that fails is listed, and the rest stay renamed. The model then reopens under its new name. Save or revert siren edits before renaming; the dialog waits until you do.
+
+## Saving
+
+**Save to file…** in the dock asks where to write.
+
+- Pick an existing carcols.meta to update the setting with the same id, or add it to `<Sirens>` when the file has none. Only the values you changed are rewritten, each in the number format the file already uses; added sirens are inserted after the last one and removed sirens are taken out with their comments. Everything else in the file, including comments, spacing, line endings, other settings and tags the editor does not know, stays exactly as it was. A setting whose layout is too unusual to update value by value is rewritten as a whole, in the same place.
+- Pick a new file to create a carcols.meta holding only this setting.
+
+Saving the carcols.meta the setting came from replaces it in place, even after you change its id. If you change the id, update `sirenSettings` in carvariations.meta to match. After a save the workspace reads the meta files again.
+
+**Copy XML** copies the setting's `<Sirens>` Item, so you can paste it into a file yourself.
+
+**Undo** and **Redo** (Ctrl+Z, Ctrl+Y) cover every edit. **Revert** in the dock returns to the values in carcols.meta; for a new setting it is **Discard**. Unsaved edits stay on the model until you save or revert, but they are not kept when the tab or the app closes. The **Status** row in the dock opens to a list of what changed against the file, with sirens that changed the same way on one line.
+
+## Shortcuts
+
+With focus in the grid:
+
+| Keys | Action |
+| --- | --- |
+| Space | Play or pause |
+| Left, Right | Step back or forward |
+| Up, Down | Select the previous or next siren (Shift adds to the selection) |
+| Alt+Up, Alt+Down | Move the selected sirens |
+| Ctrl+A | Select every siren |
+| Ctrl+D | Duplicate |
+| Delete | Delete the selected sirens |
+| `[`, `]`, I | Shift earlier, shift later, invert |
+| Ctrl+C, Ctrl+V | Copy and paste a pattern |
+| Ctrl+Z, Ctrl+Y | Undo and redo |
+
+## ELS
+
+Vehicles built for ELS (LSPDFR's ELS V8, ELS-FiveM, ELS-Plus or MISS-ELS) switch their extras from a vehicle configuration file (VCF) instead of the carcols siren setting. Switch step 2 from **Carcols sirens** to **ELS** and the dock and the centre column edit the VCF. Cortex Studio remembers the choice for each vehicle, and switching back leaves the carcols setting as it was. Vehicles you never switch work exactly as before.
+
+### Finding the VCF
+
+ELS matches a VCF to the model by name: `police.yft` (or `police_hi.yft`) reads `police.xml`. Cortex Studio looks for that file beside the model, in the folder above it (a FiveM resource or a vehicle download), in subfolders there named `ELS`, `vcf`, `vcfs`, `xmlFiles` or `pack_default`, and then in your **ELS folders**. While a vehicle is still on carcols sirens, step 2 says when it has found a VCF.
+
+- **Add folder…** adds a folder of VCFs, such as `GTA V/ELS/pack_default` (LSPDFR), `resources/ELS-FiveM/vcf` or `resources/MISS-ELS/xmlFiles`. Only a folder that holds a VCF can be added, and Cortex Studio opens that folder only, not its subfolders.
+- **Open…** uses any VCF for this vehicle and remembers it.
+- **New ELS V8 VCF** and **New MISS-ELS VCF** start one from the model's extras.
+
+### Editing
+
+The bar runs the lights the way the script switches them in game, and a strip shows which ELS extras are lit.
+
+- **ELS V8:** **Stage** Off, 1, 2 or 3. Stage 1 runs the secondary lights. Stage 2 adds the primary extras named by **Stage 2 extras**. Stage 3 runs every primary extra and the warning lights; secondary lights stop at stage 3 when their **Off at stage 3** is on. With all three groups on the CHP format, each stage instead plays one CHP pattern across extras 1 to 10 (the warning pattern at stage 1, secondary at 2, primary at 3), as ELS-FiveM does. The vehicle's carcols siren lights run from the stage set under **Misc**. **Cruise**, **Takedowns** and **Scene** switch those lights.
+- **MISS-ELS:** **Primary**, **Secondary** and **Rear reds** play the file's patterns.
+
+The same switches are in the **Lights** tab here and in the Meta tab of Livery and All, where **Lighting** turns ELS on or off for the vehicle. An ELS vehicle's lights run there too, with the edits in this tab.
+
+Under the bar:
+
+- **Lights** (EOVERRIDE) has a row per extra: its role, whether ELS controls it (for MISS-ELS, whether it is listed), its environment light, colour, and the light's offset from the extra. `∅` marks an extra the model does not have. **Add a light** adds one the file does not list.
+- **Primary**, **Secondary** and **Warning** (ELS V8) set the lighting format, the pattern each stage starts with (a number or Scan), the stage 2 extras or Off at stage 3, and show a lane per extra with one loop of the pattern and the playing position. The arrows step through the imported patterns in the preview without changing the file; **Preset** goes back to the stage's pattern. **Stage**, **On** and **Off** force a group in the preview.
+- **Misc** and **Cruise** (ELS V8) set slicktop, steady burn (extra 10), the stage that also runs the carcols sirens, the arrowboard, takedowns (extra 11), scene lights (extra 12), and the extras cruise mode burns steady.
+- **Primary**, **Secondary** and **Rear reds** (MISS-ELS) are grids of flashes, one column per flash, wider for longer flashes. Click or drag across cells to switch lights in a flash. Select a column to set its duration, or to add, duplicate, move or delete a flash. **Statics** lists the lights on their own key, with their names, and shows them in the preview.
+
+With focus in the editor, Space plays or pauses, 0 to 3 pick the ELS V8 stage, and Ctrl+Z and Ctrl+Y undo and redo.
+
+### Pattern tables
+
+ELS V8 VCFs name patterns by number; the timing behind each number lives in the lighting script, and Cortex Studio does not ship it. **Import from ELS-FiveM…** under **Pattern tables** reads the tables from your own copy: pick the ELS-FiveM resource folder or its `client/_patternTypes` folder (`leds.lua`, `traf.lua`, `chp.lua`). Cortex Studio reads only those three files, as data; nothing in them runs. Without tables, and for a pattern or format the tables lack (`strb`, `rota`, `dro`, `arrw`, `marq`, `custom` or Scan), a group plays a plain alternating flash marked **Approximate**, with the reason. MISS-ELS VCFs carry their own timings, so they always play as written.
+
+### Saving the VCF
+
+The dock lists the VCF's status, format, how many extras ELS controls, the checks, pattern tables and ELS folders, one row each; rows with a list open on click.
+
+Cortex Studio watches the open VCF. When it changes on disk, from a text editor or a Save in another tab, the lights pick up the new values straight away. If you have unsaved edits here, they stay: the status reads **Changed on disk**, and **Load** swaps in the file (discarding the edits) while **Save as…** keeps them. A file that can't be read after a change leaves the last version that loaded playing, and says why. **Live reload** in the dock shows whether the watch is running. With unsaved edits, the **Status** row opens to a list of what they change in the file.
+
+**Save** writes the VCF back after keeping an exact copy beside it, named like `police.xml.20261015-143012.bak`. Only the values you edited change, and only the lines you added or removed come or go; comments, spacing, line endings, the file's text encoding and elements the editor does not know stay as they were. If the file changed on disk after Cortex Studio read it, Save stops instead of overwriting it, and **Save as…** keeps your edits in another file. Save as writes the same VCF, with its sounds, interface and everything else, and starts in the open file's folder, an ELS folder, or beside the model. **Open…** waits until unsaved edits are saved or discarded.
+
+A new VCF saved into ELS-FiveM's `vcf` folder is added to the `vcf_files` list in `vcf.lua` (after a backup), because ELS-FiveM loads only the files listed there. Saved anywhere an ELS script does not read, the dock says where to copy it. **Copy XML** copies the whole VCF. Unsaved VCF edits make the tab ask before it closes, as siren edits do.
+
+### ELS accuracy
+
+ELS switches whole extras, so the preview does too. Lit ELS extras glow at siren brightness, and their environment lights take the VCF colour and offset (read as metres from the extra). Imported tables play at ELS-FiveM's timing, one character every 15 ms. The preview applies the VCF as written; ELS-FiveM itself starts every group at pattern 1 rather than the stage presets, ignores **Off at stage 3** on light groups, and runs the carcols siren lights only at exactly the stage set under **Misc**. Miscs (MISS-ELS mod kit lights) are edited and saved but not shown on the model.
+
+## Accuracy
+
+The preview follows the game for timing, step order, colours, `scale` growth and which geometry each siren drives. As in game, a siren's colour tints its corona and the light it casts; its lit mesh glows in the colour its texture gives it, unless you pick another **Lens glow** to preview or write into the texture. Rotation speed, multiples, unsynced speed and brightness are close approximations; see [Meta Simulation](/docs/user-guide/meta-simulation#lights). The editor writes values exactly as entered.
+
+Sirens needs the desktop app: it reads and writes the resource's meta files, `ulc.lua`, VCFs and stream files. In the browser, ELS can still start a new VCF and copy it as XML.

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CVehicleModelInfo__InitDataList>
+  <residentTxd>vehshare</residentTxd>
+  <residentAnims />
+  <InitDatas>
+    <Item>
+      <modelName>mycar</modelName>
+      <txdName>mycar</txdName>
+      <handlingId>MYCAR</handlingId>
+      <gameName>MYCAR</gameName>
+      <vehicleMakeName>PFISTER</vehicleMakeName>
+      <expressionDictName>null</expressionDictName>
+      <expressionName>null</expressionName>
+      <layout>LAYOUT_LOW</layout>
+      <type>VEHICLE_TYPE_CAR</type>
+      <plateType>VPT_BACK_PLATES</plateType>
+      <dashboardType>VDT_RACE</dashboardType>
+      <vehicleClass>VC_SPORT</vehicleClass>
+      <wheelType>VWT_SPORT</wheelType>
+      <flags>FLAG_EXTRAS_SCRIPT FLAG_HAS_INTERIOR_EXTRAS FLAG_SPORTS</flags>
+    </Item>
+  </InitDatas>
+  <txdRelationships>
+    <Item>
+      <parent>mycar_shared</parent>
+      <child>mycar</child>
+    </Item>
+  </txdRelationships>
+</CVehicleModelInfo__InitDataList>

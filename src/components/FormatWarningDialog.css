@@ -1,0 +1,156 @@
+/* File warnings (FormatWarningDialog): the shared dialog grammar, raised
+   surface, display-caps title, Settings footer actions. */
+
+.fw-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: calc(24 * var(--u));
+  background: rgba(8, 9, 11, 0.6);
+}
+
+.fw-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(calc(480 * var(--u)), 100%);
+  max-height: 100%;
+  border: 1px solid var(--mg-border);
+  border-radius: calc(8 * var(--u));
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+  color: var(--mg-fg);
+  animation: fw-in 160ms var(--cx-ease);
+}
+
+@keyframes fw-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.fw-head {
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+  padding: calc(20 * var(--u)) calc(16 * var(--u)) calc(4 * var(--u)) calc(22 * var(--u));
+}
+
+.fw-icon {
+  flex-shrink: 0;
+  width: calc(20 * var(--u));
+  height: calc(20 * var(--u));
+}
+
+.fw-dialog.is-caution .fw-icon { color: var(--cx-caution); }
+.fw-dialog.is-error .fw-icon { color: var(--mg-destructive); }
+
+.fw-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: calc(28 * var(--u));
+  line-height: 1;
+}
+
+.fw-body {
+  display: grid;
+  gap: calc(10 * var(--u));
+  padding: calc(10 * var(--u)) calc(22 * var(--u)) calc(20 * var(--u));
+  overflow-y: auto;
+}
+
+.fw-text,
+.fw-note,
+.fw-status {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.fw-text {
+  font-size: calc(13 * var(--u));
+  line-height: 1.55;
+}
+
+.fw-text strong {
+  font-weight: 600;
+}
+
+.fw-note,
+.fw-status {
+  font-size: calc(12.5 * var(--u));
+  line-height: 1.5;
+  color: var(--mg-muted);
+}
+
+.fw-status {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+}
+
+.fw-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cx-caution);
+}
+
+.fw-code {
+  font-family: var(--font-hud);
+  font-size: calc(12 * var(--u));
+  color: var(--mg-fg);
+  white-space: nowrap;
+}
+
+.fw-facts {
+  display: grid;
+  gap: calc(4 * var(--u));
+  margin: calc(2 * var(--u)) 0 0;
+}
+
+.fw-facts dd {
+  margin: 0;
+  font-family: var(--font-hud);
+  font-size: calc(12 * var(--u));
+  line-height: 1.5;
+  color: var(--mg-muted);
+}
+
+.fw-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(10 * var(--u));
+  padding: calc(14 * var(--u)) calc(16 * var(--u)) calc(14 * var(--u)) calc(22 * var(--u));
+  border-top: 1px solid var(--cx-rule);
+}
+
+/* A quiet text action on the left; it sits on the body's text edge. */
+.fw-never {
+  margin-left: calc(-10 * var(--u));
+}
+
+.fw-actions {
+  display: flex;
+  gap: calc(8 * var(--u));
+  margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fw-dialog {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .fw-dialog {
+    border-color: CanvasText;
+  }
+  .fw-dot {
+    background: CanvasText;
+  }
+}

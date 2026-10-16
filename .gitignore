@@ -74,6 +74,12 @@ target/
 target-*/
 src-tauri/target*/
 src-tauri/target-codex-check/
+# Published CodeWalker bridge bundled as a Tauri resource (node tools/publish-bridge.mjs).
+# Only the placeholder README is tracked so the bundle resource glob always matches.
+src-tauri/bin/*
+!src-tauri/bin/codewalker-bridge/
+src-tauri/bin/codewalker-bridge/*
+!src-tauri/bin/codewalker-bridge/README.txt
 **/*.pdb
 **/*.rlib
 **/*.rmeta

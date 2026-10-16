@@ -4,8 +4,14 @@ import { TGALoader } from "three/examples/jsm/loaders/TGALoader";
 import { DFFLoader } from "dff-loader";
 import { invoke } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { parseYft } from "./yft";
-import { parseDDS } from "./dds";
+import { parseYftAsync } from "./yft-loader";
+import { userTextureUvAttribute } from "./clmesh-object.js";
+import { resolvePaintLayerSlot } from "./native-material-plan.js";
+import { diffusePointLights } from "./native-shader.js";
+import { normalizeVehiclePaint, paintDisplayColor } from "./vehicle-paint.js";
+import { parseDDSAsync } from "./dds";
+import { createWorkerClient } from "./worker-client.js";
+import { selectPdnImage } from "./pdn-reader.js";
 import {
   updateFlyLookQuaternion,
   updateFlyMovementVector,
@@ -204,7 +210,7 @@ export function maybeAutoFixYftUpAxis(object, initialSize) {
 
 export function setupLiveryShader(material) {
   material.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace(
+    shader.fragmentShader = diffusePointLights(shader.fragmentShader).replace(
       "#include <map_fragment>",
       `
       #ifdef USE_MAP
@@ -343,6 +349,13 @@ export function buildDrawableObject(drawable, options = {}) {
       if (mesh.textureRefs && Object.keys(mesh.textureRefs).length > 0) {
         threeMesh.userData.textureRefs = mesh.textureRefs;
       }
+      // Paint data for models parsed here rather than by the bridge; same
+      // shape as the manifest's nativeMaterial fields resolvePaintLayerSlot reads.
+      threeMesh.userData.gtaShader = {
+        shaderName: mesh.materialName || "",
+        paintLayer: mesh.paintLayer ?? null,
+        diffuseColor: mesh.diffuseColor ?? null,
+      };
 
       group.add(threeMesh);
     });
@@ -662,42 +675,6 @@ export function disposeCageOverlay(root) {
 
 const DUAL_DEFAULT_BODY = "#e7ebf0";
 
-function buildVehicleSlotColors(baseColor = DUAL_DEFAULT_BODY) {
-  const resolved = baseColor || DUAL_DEFAULT_BODY;
-  return {
-    primary: resolved,
-    secondary: resolved,
-    accent: resolved,
-    glass: resolved,
-  };
-}
-
-function normalizeVehicleSlotColors(slotColors, baseColor = DUAL_DEFAULT_BODY) {
-  const fallback = buildVehicleSlotColors(baseColor);
-  if (!slotColors || typeof slotColors !== "object") return fallback;
-  return {
-    primary: slotColors.primary || fallback.primary,
-    secondary: slotColors.secondary || fallback.secondary,
-    accent: slotColors.accent || fallback.accent,
-    glass: slotColors.glass || fallback.glass,
-  };
-}
-
-function getVehicleSlotColor(slotColors, slot) {
-  const fallbackOrder = {
-    primary: ["primary"],
-    secondary: ["secondary", "primary"],
-    accent: ["accent", "secondary", "primary"],
-    glass: ["glass", "primary"],
-  };
-  const keys = fallbackOrder[slot] || fallbackOrder.primary;
-  for (const key of keys) {
-    const value = slotColors?.[key];
-    if (typeof value === "string" && value.trim()) return value;
-  }
-  return DUAL_DEFAULT_BODY;
-}
-
 function getMaterialNames(material) {
   if (!material) return [];
   if (Array.isArray(material)) {
@@ -740,9 +717,9 @@ function matchesVehicleLiveryName(name) {
   );
 }
 
-function detectVehicleColorSlot(names, isGlass) {
-  if (isGlass) return "glass";
-
+// Paint slot by name for meshes without shader paint data. Lights, badges and
+// trim are not body paint.
+function detectVehicleColorSlot(names) {
   const raw = names
     .map((name) => (typeof name === "string" ? name.trim().toLowerCase() : ""))
     .filter(Boolean)
@@ -751,33 +728,27 @@ function detectVehicleColorSlot(names, isGlass) {
   if (!raw) return null;
 
   if (
-    /vehicle[_-]?paint[_-]?2\b/.test(raw) ||
-    /car[_-]?paint[_-]?2\b/.test(raw) ||
-    /\bcarpaint2\b/.test(raw) ||
-    /\bsecondary\b/.test(raw)
+    /vehicle[_-]?paint[_-]?2/.test(raw) ||
+    /car[_-]?paint[_-]?2/.test(raw) ||
+    /carpaint2/.test(raw) ||
+    /secondary/.test(raw)
   ) {
     return "secondary";
   }
 
   if (
-    /vehicle[_-]?paint[_-]?[3-9]\d*\b/.test(raw) ||
-    /car[_-]?paint[_-]?[3-9]\d*\b/.test(raw) ||
-    /\bcarpaint[3-9]\d*\b/.test(raw) ||
-    raw.includes("vehicle_lightsemissive") ||
-    raw.includes("vehicle_lights") ||
     raw.includes("lightsemissive") ||
+    raw.includes("vehicle_lights") ||
     raw.includes("lightbar") ||
     raw.includes("emissive") ||
     raw.includes("siren") ||
     raw.includes("beacon") ||
     raw.includes("vehicle_detail") ||
-    raw.includes("vehicle_badge") ||
-    raw.includes("vehicle_badges") ||
     raw.includes("badge") ||
     raw.includes("accent") ||
     raw.includes("trim")
   ) {
-    return "accent";
+    return null;
   }
 
   if (matchesVehicleLiveryName(raw)) {
@@ -824,9 +795,11 @@ function getDualMeshMeta(child) {
     );
   });
 
-  const slotRole = detectVehicleColorSlot(searchNames, isGlass);
+  const layerSlot = resolvePaintLayerSlot(child.userData?.nativeMaterial || child.userData?.gtaShader);
+  const slotLocked = layerSlot !== undefined;
+  const slotRole = isGlass ? null : slotLocked ? layerSlot : detectVehicleColorSlot(searchNames);
   const isLiveryTarget = searchNames.some((name) => matchesVehicleLiveryName(name));
-  const meta = { baseMaterial, materialNames, searchNames, isGlass, slotRole, isLiveryTarget };
+  const meta = { baseMaterial, materialNames, searchNames, isGlass, slotRole, slotLocked, isLiveryTarget };
   child.userData.dualTextureMeta = meta;
   return meta;
 }
@@ -881,30 +854,52 @@ function getOrCreateDualMaterial(mesh, color, texture, { isGlass = false, useLiv
   return material;
 }
 
-export function applyLiveryToModel(object, bodyColor, texture, slotColors) {
+const NEUTRAL_TINT = new THREE.Color(0xffffff);
+
+/**
+ * Paints a Multi vehicle: each mesh takes its game paint slot, the livery goes
+ * on primary paint and livery-named meshes, and glass keeps a clear tint.
+ * With `native`, meshes that have a game material (loadNativeMaterialView)
+ * wear it, tinted by their paint slot; the livery still wins on its meshes.
+ * Every mesh is assigned its material on each pass, so a later pass (glass
+ * designs) can layer over the result and restore it.
+ */
+export function applyLiveryToModel(object, bodyColor, texture, vehiclePaint, { native = false } = {}) {
   if (!object) return;
-  const resolvedSlotColors = normalizeVehicleSlotColors(slotColors, bodyColor || DUAL_DEFAULT_BODY);
+  const paint = normalizeVehiclePaint(vehiclePaint, bodyColor || DUAL_DEFAULT_BODY);
 
   object.traverse((child) => {
     if (!child.isMesh) return;
     if (!child.userData.baseMaterial) child.userData.baseMaterial = child.material;
 
     const meta = getDualMeshMeta(child);
-    const slotRole = meta.slotRole || (meta.isLiveryTarget ? "primary" : null);
-    const shouldTexture = Boolean(texture) && meta.isLiveryTarget && slotRole !== "secondary" && slotRole !== "accent" && slotRole !== "glass";
-    const shouldApply = Boolean(slotRole) || shouldTexture;
+    const slotRole = meta.slotRole || (meta.isLiveryTarget && !meta.slotLocked && !meta.isGlass ? "primary" : null);
+    const shouldTexture = Boolean(texture) && meta.isLiveryTarget && !meta.isGlass && (slotRole === "primary" || !slotRole);
+    const shouldApply = Boolean(slotRole) || shouldTexture || meta.isGlass;
 
-    if (!shouldApply) {
-      if (child.material === child.userData.dualMaterial) {
-        child.material = child.userData.baseMaterial;
-      }
+    const nativeMaterial = native ? child.userData.nativeMaterialObject : null;
+    if (nativeMaterial && !shouldTexture) {
+      // Same tint rule as the single viewer: a paint slot's colour, else the
+      // material's fixed diffuse colour (linear), else the texture as authored.
+      const profile = nativeMaterial.userData?.nativeProfile;
+      const nativeSlot = meta.isGlass ? null : meta.slotLocked ? meta.slotRole : meta.slotRole || (profile === "paint" ? "primary" : null);
+      const fixedColor = nativeSlot ? null : child.userData.nativeMaterial?.diffuseColor;
+      if (nativeSlot) nativeMaterial.color.set(paintDisplayColor(paint[nativeSlot]));
+      else if (fixedColor) nativeMaterial.color.setRGB(...fixedColor.slice(0, 3).map((value) => Math.min(1, Math.max(0, value))));
+      else nativeMaterial.color.copy(NEUTRAL_TINT);
+      if (child.material !== nativeMaterial) child.material = nativeMaterial;
       return;
     }
 
-    const color = new THREE.Color(getVehicleSlotColor(resolvedSlotColors, slotRole || "primary"));
+    if (!shouldApply) {
+      if (child.material !== child.userData.baseMaterial) child.material = child.userData.baseMaterial;
+      return;
+    }
+
+    const color = slotRole ? new THREE.Color(paintDisplayColor(paint[slotRole])) : NEUTRAL_TINT;
 
     if (shouldTexture) {
-      const liveryUv = chooseLiveryUvAttribute(child.geometry);
+      const liveryUv = userTextureUvAttribute(child.geometry, chooseLiveryUvAttribute(child.geometry));
       if (liveryUv && child.geometry.attributes.uv !== liveryUv) {
         child.geometry.setAttribute("uv", liveryUv);
         child.geometry.attributes.uv.needsUpdate = true;
@@ -912,30 +907,57 @@ export function applyLiveryToModel(object, bodyColor, texture, slotColors) {
     }
 
     const material = getOrCreateDualMaterial(child, color, shouldTexture ? texture : null, {
-      isGlass: slotRole === "glass",
+      isGlass: meta.isGlass,
       useLiveryShader: shouldTexture,
     });
     if (child.material !== material) child.material = material;
   });
 }
 
-export function applyTextureToAll(object, bodyColor, texture, slotColors) {
-  if (!object) return;
-  const resolvedSlotColors = normalizeVehicleSlotColors(slotColors, bodyColor || DUAL_DEFAULT_BODY);
+/**
+ * Decode an encoded image (PNG/JPG/WebP...) into a texture. createImageBitmap
+ * decodes off the main thread and bakes the vertical flip, so the texture is
+ * uploaded with flipY=false and tagged `flipBaked` for the settings passes.
+ * Falls back to TextureLoader (<img>) when ImageBitmap is unavailable.
+ */
+export async function loadBlobTexture(blob, { flipY = true, textureLoader = null } = {}) {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(blob, {
+        imageOrientation: flipY ? "flipY" : "none",
+        premultiplyAlpha: "none",
+        colorSpaceConversion: "none",
+      });
+      const texture = new THREE.Texture(bitmap);
+      texture.flipY = false;
+      texture.userData = {
+        flipBaked: true,
+        // Closed by the texture cache on final eviction; a plain dispose() keeps
+        // the bitmap so a hidden tab can re-upload it later.
+        releaseSource: () => {
+          try { bitmap.close?.(); } catch {}
+        },
+      };
+      texture.needsUpdate = true;
+      return texture;
+    } catch {
+      /* fall through to the <img> path */
+    }
+  }
+  const loader = textureLoader || new THREE.TextureLoader();
+  const url = URL.createObjectURL(blob);
+  try {
+    return await new Promise((resolve, reject) => loader.load(url, resolve, undefined, reject));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
-  object.traverse((child) => {
-    if (!child.isMesh) return;
-    if (!child.userData.baseMaterial) child.userData.baseMaterial = child.material;
-
-    const meta = getDualMeshMeta(child);
-    const slotRole = meta.slotRole || "primary";
-    const color = new THREE.Color(getVehicleSlotColor(resolvedSlotColors, slotRole));
-    const material = getOrCreateDualMaterial(child, color, texture || null, {
-      isGlass: slotRole === "glass",
-      useLiveryShader: false,
-    });
-    if (child.material !== material) child.material = material;
-  });
+/** Dispose a texture this caller owns outright (not shared through the viewer cache). */
+export function disposeTexture(texture) {
+  if (!texture) return;
+  try { texture.userData?.releaseSource?.(); } catch {}
+  texture.dispose?.();
 }
 
 export async function loadTextureFromPath(texturePath, textureLoader, renderer) {
@@ -950,7 +972,7 @@ export async function loadTextureFromPath(texturePath, textureLoader, renderer) 
 
   const applySettings = (texture) => {
     texture.colorSpace = THREE.SRGBColorSpace;
-    if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded) texture.flipY = true;
+    if (!texture.isCompressedTexture && !texture.userData?.ddsDecoded && !texture.userData?.flipBaked) texture.flipY = true;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.needsUpdate = true;
@@ -966,15 +988,11 @@ export async function loadTextureFromPath(texturePath, textureLoader, renderer) 
 
   const loadNative = async () => {
     const mime = signature.mime || getTextureMimeType(extension) || "application/octet-stream";
-    const blob = new Blob([bytes], { type: mime });
-    const url = URL.createObjectURL(blob);
-    try {
-      return await new Promise((resolve, reject) => textureLoader.load(url, resolve, undefined, reject));
-    } finally { URL.revokeObjectURL(url); }
+    return loadBlobTexture(new Blob([bytes], { type: mime }), { flipY: true, textureLoader });
   };
 
   const loadDdsCustom = async () => {
-    const tex = parseDDS(buffer);
+    const tex = await parseDDSAsync(buffer, { renderer });
     if (!tex) throw new Error("Custom DDS parser returned null");
     return tex;
   };
@@ -1021,15 +1039,20 @@ export async function loadTextureFromPath(texturePath, textureLoader, renderer) 
       import.meta.url
     ).href;
     const loadingTask = pdfjsLib.getDocument({ data: buffer });
-    const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: 2.0 });
-    const canvas = document.createElement("canvas");
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    const context = canvas.getContext("2d");
-    await page.render({ canvasContext: context, viewport }).promise;
-    return new THREE.CanvasTexture(canvas);
+    try {
+      const pdf = await loadingTask.promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2.0 });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const context = canvas.getContext("2d");
+      await page.render({ canvasContext: context, viewport }).promise;
+      return new THREE.CanvasTexture(canvas);
+    } finally {
+      // Each getDocument call starts its own pdf.js worker; this ends it.
+      await loadingTask.destroy().catch(() => {});
+    }
   };
 
   const loadPdn = async () => loadPdnTexture(bytes, texturePath);
@@ -1073,7 +1096,7 @@ export async function loadModelFile(modelPath) {
     const name = getFileNameWithoutExtension(modelPath) || `${extension}_model`;
     let drawable = null;
     try {
-      drawable = extension === "ydd" ? parseYft(bytes, name, YDD_SCAN_SETTINGS) : parseYft(bytes, name);
+      drawable = await parseYftAsync(bytes, name, extension === "ydd" ? YDD_SCAN_SETTINGS : undefined);
     } catch { return null; }
     if (!drawable?.models?.length) return null;
     const object = buildDrawableObject(drawable, { useVertexColors: false });
@@ -1458,6 +1481,34 @@ function createPsdTexture(imageData, bitsPerChannel) {
   return texture;
 }
 
+let psdWorkerClient = null;
+function getPsdWorkerClient() {
+  if (typeof Worker === "undefined") return null;
+  if (!psdWorkerClient) {
+    psdWorkerClient = createWorkerClient(
+      () => new Worker(new URL("./psd-worker.js", import.meta.url), { type: "module" }),
+      { label: "PSD worker", timeoutMs: 60_000 },
+    );
+  }
+  return psdWorkerClient;
+}
+
+async function decodePsdCompositeViaWorker(bytes) {
+  const client = getPsdWorkerClient();
+  if (!client) return null;
+  const copy = bytes.slice(0);
+  const result = await client.request({ bytes: copy }, [copy.buffer]);
+  if (result?.missingComposite) return { missingComposite: true };
+  const data = result?.data;
+  const width = Number(result?.width || 0);
+  const height = Number(result?.height || 0);
+  if (!data || width <= 0 || height <= 0) return null;
+  return {
+    imageData: { width, height, data: data instanceof Uint8ClampedArray ? data : new Uint8ClampedArray(data.buffer || data) },
+    bitsPerChannel: result.bitsPerChannel,
+  };
+}
+
 export async function loadPsdTexture(bytes) {
   const bitDepth = detectPsdBitDepth(bytes);
   if (bitDepth === 16 || bitDepth === 32) {
@@ -1466,8 +1517,29 @@ export async function loadPsdTexture(bytes) {
     error.bitDepth = bitDepth;
     throw error;
   }
+
+  // Preferred: only the merged composite, decoded in a worker.
+  try {
+    const workerResult = await decodePsdCompositeViaWorker(bytes);
+    if (workerResult?.imageData) {
+      const texture = createPsdTexture(workerResult.imageData, workerResult.bitsPerChannel);
+      if (texture) return texture;
+    }
+  } catch (error) {
+    console.warn("[PSD] Worker decode failed, decoding on the main thread:", error);
+  }
+
+  // Fallback: full read on the main thread (also covers a missing composite).
   const { readPsd } = await import("ag-psd");
-  const psd = readPsd(bytes, { skipThumbnail: true });
+  let psd = null;
+  try {
+    psd = readPsd(bytes, { skipThumbnail: true, skipLayerImageData: true });
+  } catch {
+    psd = null;
+  }
+  if (!psd?.canvas && !psd?.imageData) {
+    psd = readPsd(bytes, { skipThumbnail: true });
+  }
   const canvas = psd?.canvas;
   if (canvas && typeof canvas.getContext === "function") {
     const texture = new THREE.CanvasTexture(canvas);
@@ -1520,22 +1592,6 @@ function pdnLog(level, message, details) {
   else console.debug(`[PDN] ${message}`);
 }
 
-function hasVisiblePdnPixels(data) {
-  if (!data || data.length < 4) return false;
-  for (let index = 3; index < data.length; index += 4) {
-    if (data[index] !== 0) return true;
-  }
-  return false;
-}
-
-function isUsablePdnDecode(result, visiblePixels) {
-  if (!result || !result.data || result.width <= 0 || result.height <= 0) return false;
-  const expected = result.width * result.height * 4;
-  if (result.data.length < expected) return false;
-  if (typeof visiblePixels === "boolean") return visiblePixels;
-  return hasVisiblePdnPixels(result.data);
-}
-
 function isTauriRuntimeAvailable() {
   return (
     typeof window !== "undefined" &&
@@ -1571,62 +1627,76 @@ async function decodeBase64ToUint8Array(base64Value) {
   return bytes;
 }
 
+let pdnWorkerClient = null;
+function getPdnWorkerClient() {
+  if (typeof Worker === "undefined") return null;
+  if (!pdnWorkerClient) {
+    pdnWorkerClient = createWorkerClient(
+      () => new Worker(new URL("./pdn-worker.js", import.meta.url), { type: "module" }),
+      { label: "PDN worker", timeoutMs: 45_000 },
+    );
+  }
+  return pdnWorkerClient;
+}
+
 async function decodePdnViaWorker(bytes) {
-  if (typeof Worker === "undefined" || !bytes || bytes.length === 0) return null;
+  if (!bytes || bytes.length === 0) return null;
+  const client = getPdnWorkerClient();
+  if (!client) return null;
 
   const workerBytes = bytes.slice(0);
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL("./pdn-worker.js", import.meta.url), { type: "module" });
-    let settled = false;
+  const payload = await client.request({ bytes: workerBytes }, [workerBytes.buffer]);
+  const width = Number(payload?.width || 0);
+  const height = Number(payload?.height || 0);
+  const data = payload?.data instanceof Uint8Array
+    ? payload.data
+    : payload?.data instanceof ArrayBuffer
+      ? new Uint8Array(payload.data)
+      : null;
+  if (!data || width <= 0 || height <= 0) return null;
+  return {
+    width,
+    height,
+    data,
+    layerCount: payload.layerCount,
+    headerLayerCount: payload.headerLayerCount,
+    layerNames: payload.layerNames,
+  };
+}
 
-    const cleanUp = () => {
-      worker.onmessage = null;
-      worker.onerror = null;
-      worker.terminate();
-    };
+/**
+ * Native `decode_pdn` payload. New contract: raw bytes (ArrayBuffer/Uint8Array)
+ * with a little-endian u32 width, u32 height header followed by RGBA pixels.
+ * Legacy contract: `{ width, height, rgba_base64 }`. Both are accepted so the
+ * Rust and JS changes can land in either order.
+ */
+export async function parseNativePdnPayload(payload) {
+  if (!payload) return null;
 
-    const finish = (isError, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutId);
-      cleanUp();
-      if (isError) reject(value);
-      else resolve(value);
-    };
+  let bytes = null;
+  if (payload instanceof ArrayBuffer) bytes = new Uint8Array(payload);
+  else if (ArrayBuffer.isView(payload)) bytes = new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  else if (Array.isArray(payload)) bytes = Uint8Array.from(payload);
 
-    const timeoutId = setTimeout(() => {
-      finish(true, new Error("PDN worker decode timed out."));
-    }, 45_000);
+  if (bytes) {
+    if (bytes.length < 8) return null;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const width = view.getUint32(0, true);
+    const height = view.getUint32(4, true);
+    const expected = width * height * 4;
+    if (width <= 0 || height <= 0 || bytes.length < 8 + expected) return null;
+    return { width, height, data: bytes.subarray(8, 8 + expected) };
+  }
 
-    worker.onmessage = (event) => {
-      const payload = event?.data || {};
-      if (payload?.error) {
-        finish(true, new Error(payload.error));
-        return;
-      }
+  if (typeof payload === "object") {
+    const width = Number(payload.width || 0);
+    const height = Number(payload.height || 0);
+    const rgba = await decodeBase64ToUint8Array(payload.rgba_base64);
+    if (!rgba || width <= 0 || height <= 0) return null;
+    return { width, height, data: rgba };
+  }
 
-      const width = Number(payload?.width || 0);
-      const height = Number(payload?.height || 0);
-      const data = payload?.data instanceof Uint8Array
-        ? payload.data
-        : payload?.data instanceof ArrayBuffer
-          ? new Uint8Array(payload.data)
-          : null;
-
-      if (!data || width <= 0 || height <= 0) {
-        finish(false, null);
-        return;
-      }
-
-      finish(false, { width, height, data });
-    };
-
-    worker.onerror = (event) => {
-      finish(true, new Error(event?.message || "PDN worker decode failed."));
-    };
-
-    worker.postMessage({ bytes: workerBytes }, [workerBytes.buffer]);
-  });
+  return null;
 }
 
 async function decodePdnViaTauri(filePath) {
@@ -1642,18 +1712,15 @@ async function decodePdnViaTauri(filePath) {
 
   pdnLog("debug", "Attempting Tauri decode fallback", { filePath });
   const payload = await invoke("decode_pdn", { path: filePath });
-  const width = Number(payload?.width || 0);
-  const height = Number(payload?.height || 0);
-  const rgba = await decodeBase64ToUint8Array(payload?.rgba_base64);
+  const parsed = await parseNativePdnPayload(payload);
 
   pdnLog("debug", "Tauri decode response received", {
-    width,
-    height,
-    rgbaLength: rgba?.length || 0,
+    width: parsed?.width || 0,
+    height: parsed?.height || 0,
+    rgbaLength: parsed?.data?.length || 0,
   });
 
-  if (!rgba || width <= 0 || height <= 0) return null;
-  return { width, height, data: rgba };
+  return parsed;
 }
 
 /**
@@ -1669,116 +1736,27 @@ export async function loadPdnTexture(bytes, filePath) {
     typeof filePath === "string" &&
     filePath.length > 0;
 
-  let jsDecodeError = null;
-  let tauriDecodeError = null;
-  let workerDecodeError = null;
   pdnLog("debug", "Starting PDN texture load", {
     filePath: filePath || null,
     byteLength: bytes?.length || 0,
-    preferTauriDecode: isDesktopTauriDecode,
+    nativeDecoder: isDesktopTauriDecode,
     workerSupported: typeof Worker !== "undefined",
-    magic: bytes && bytes.length >= 4 ? String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) : null,
   });
 
   try {
-    const workerResult = await decodePdnViaWorker(bytes);
-    const workerVisiblePixels = hasVisiblePdnPixels(workerResult?.data);
-    pdnLog("debug", "Worker decode result", {
-      hasResult: Boolean(workerResult),
-      width: workerResult?.width || 0,
-      height: workerResult?.height || 0,
-      dataLength: workerResult?.data?.length || 0,
-      visiblePixels: workerVisiblePixels,
+    // The worker's JS decode wins only when its layer list checks out; the
+    // desktop app otherwise uses the native decoder, whose refusal is final.
+    const { image, source } = await selectPdnImage({
+      decodeInWorker: () => decodePdnViaWorker(bytes),
+      decodeNative: isDesktopTauriDecode ? () => decodePdnViaTauri(filePath) : null,
+      decodeOnMainThread: async () => (await import("./pdn")).decodePdn(bytes),
+      onFallback: (reason) => pdnLog("warn", "Worker PDN decode not used", { reason }),
     });
-
-    if (isUsablePdnDecode(workerResult, workerVisiblePixels)) {
-      pdnLog("debug", "Using worker PDN decode result", {
-        width: workerResult.width,
-        height: workerResult.height,
-      });
-      return createPdnDataTexture(workerResult, "pdn-js-worker");
-    }
-    if (workerResult && !workerVisiblePixels) {
-      workerDecodeError = new Error("Worker PDN decode produced a fully transparent image.");
-    }
+    pdnLog("debug", "Using PDN decode result", { source, width: image.width, height: image.height });
+    return createPdnDataTexture(image, source);
   } catch (error) {
-    workerDecodeError = error;
-    const message = error instanceof Error ? error.message : String(error);
-    pdnLog("warn", `Worker PDN decode failed: ${message}`, { message });
+    const reason = error instanceof Error ? error.message : String(error);
+    pdnLog("error", "PDN texture load failed", { filePath: filePath || null, reason });
+    throw new Error(`Failed to decode Paint.NET (.pdn) file (${reason}). Try re-saving in Paint.NET or exporting to PNG.`);
   }
-
-  if (isDesktopTauriDecode) {
-    try {
-      const tauriResult = await decodePdnViaTauri(filePath);
-      const tauriVisiblePixels = hasVisiblePdnPixels(tauriResult?.data);
-      pdnLog("debug", "Tauri decode result", {
-        hasResult: Boolean(tauriResult),
-        width: tauriResult?.width || 0,
-        height: tauriResult?.height || 0,
-        dataLength: tauriResult?.data?.length || 0,
-        visiblePixels: tauriVisiblePixels,
-      });
-
-      if (isUsablePdnDecode(tauriResult, tauriVisiblePixels)) {
-        pdnLog("debug", "Using Tauri PDN decode result", {
-          width: tauriResult.width,
-          height: tauriResult.height,
-        });
-        return createPdnDataTexture(tauriResult, "pdn-tauri");
-      }
-
-      if (tauriResult && !tauriVisiblePixels) {
-        tauriDecodeError = new Error("Tauri PDN decode produced a fully transparent image.");
-      }
-    } catch (error) {
-      tauriDecodeError = error;
-      pdnLog("warn", "Tauri decode failed after worker path", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  const { decodePdn } = await import("./pdn");
-  try {
-    const jsResult = decodePdn(bytes, { fast: true });
-    const jsVisiblePixels = hasVisiblePdnPixels(jsResult?.data);
-    pdnLog("debug", "JS main-thread decode result", {
-      hasResult: Boolean(jsResult),
-      width: jsResult?.width || 0,
-      height: jsResult?.height || 0,
-      dataLength: jsResult?.data?.length || 0,
-      visiblePixels: jsVisiblePixels,
-    });
-
-    if (isUsablePdnDecode(jsResult, jsVisiblePixels)) {
-      pdnLog("debug", "Using JS main-thread PDN decode result", {
-        width: jsResult.width,
-        height: jsResult.height,
-      });
-      return createPdnDataTexture(jsResult, "pdn-js");
-    }
-    if (jsResult && !jsVisiblePixels) {
-      jsDecodeError = new Error("PDN decode produced a fully transparent image.");
-      pdnLog("warn", "JS decode produced fully transparent image", {
-        width: jsResult.width,
-        height: jsResult.height,
-        dataLength: jsResult.data?.length || 0,
-      });
-    }
-  } catch (error) {
-    jsDecodeError = error;
-    pdnLog("warn", "JS decode threw error", {
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  const finalError = jsDecodeError || tauriDecodeError || workerDecodeError;
-  const detail = finalError instanceof Error && finalError.message
-    ? ` (${finalError.message})`
-    : "";
-  pdnLog("error", "PDN texture load failed", {
-    filePath: filePath || null,
-    reason: finalError instanceof Error ? finalError.message : "Unknown decode failure",
-  });
-  throw new Error(`Failed to decode Paint.NET (.pdn) file${detail}. Try re-saving in Paint.NET or exporting to PNG.`);
 }

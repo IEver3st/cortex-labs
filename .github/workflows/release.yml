@@ -15,33 +15,61 @@ jobs:
     name: Build, sign, and publish Windows release
     runs-on: windows-latest
     timeout-minutes: 45
+    # Releases are built from the private source repository only; the public
+    # mirror and forks carry this file but never run it.
+    if: github.repository == 'IEver3st/Cortex-Studio'
     permissions:
       contents: write
+    defaults:
+      run:
+        working-directory: cortex
 
     steps:
       - name: Checkout release source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          path: cortex
           fetch-depth: 0
+          persist-credentials: false
+
+      # tools/publish-bridge.mjs builds against ../external/CodeWalker.
+      - name: Checkout CodeWalker
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: dexyfex/CodeWalker
+          ref: 485d56bec00262ed7fa472261cce7bbc6202b96e
+          path: external/CodeWalker
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      # The source repository is private; releases publish to the public
+      # repository the updater reads (see tools/release.mjs).
       - name: Validate release metadata
         id: release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
         run: node tools/release.mjs --check
 
-      - name: Require updater signing secrets
+      - name: Require release secrets
         shell: pwsh
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:PUBLIC_RELEASE_TOKEN)) {
+            throw "Missing PUBLIC_RELEASE_TOKEN GitHub Actions secret (contents: write on the public release repository)."
+          }
           if ([string]::IsNullOrWhiteSpace($env:SIGNING_KEY)) {
             throw "Missing TAURI_SIGNING_PRIVATE_KEY GitHub Actions secret."
           }
@@ -60,7 +88,7 @@ jobs:
       - name: Rust build cache
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: "./cortex/src-tauri -> target"
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
@@ -85,29 +113,35 @@ jobs:
         id: tauri
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # The release lives in the public repository, which does not hold
+          # the source commit, so its tag is made on that repository's main branch.
+          owner: ${{ steps.release.outputs.release_owner }}
+          repo: ${{ steps.release.outputs.release_repo }}
           tagName: ${{ steps.release.outputs.tag }}
           releaseName: ${{ steps.release.outputs.name }}
           releaseBody: ${{ steps.release.outputs.notes }}
-          releaseCommitish: ${{ github.sha }}
+          releaseCommitish: main
           releaseDraft: ${{ steps.release.outputs.release_draft }}
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           retryAttempts: 2
+          projectPath: cortex
           tauriScript: bun tauri
           args: --target x86_64-pc-windows-msvc
 
       - name: Verify uploaded release assets
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_REPOSITORY: ${{ steps.release.outputs.release_repository }}
         run: |
-          $assets = @(gh release view $env:RELEASE_TAG --json assets --jq ".assets[].name")
+          $assets = @(gh release view $env:RELEASE_TAG --repo $env:RELEASE_REPOSITORY --json assets --jq ".assets[].name")
           if ($LASTEXITCODE -ne 0) { throw "Could not inspect release $env:RELEASE_TAG." }
 
           $required = @(
@@ -125,6 +159,7 @@ jobs:
         if: steps.release.outputs.release_draft == 'true'
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
-        run: gh release edit $env:RELEASE_TAG --draft=false --latest
+          RELEASE_REPOSITORY: ${{ steps.release.outputs.release_repository }}
+        run: gh release edit $env:RELEASE_TAG --repo $env:RELEASE_REPOSITORY --draft=false --latest

@@ -15,7 +15,7 @@ export function parseClmesh(bytes) {
 
   const version = view.getUint16(offset, true);
   offset += 2;
-  if (version !== 1 && version !== 2) {
+  if (version < 1 || version > 3) {
     throw new Error(`Unsupported mesh cache version ${version}.`);
   }
 
@@ -74,10 +74,30 @@ export function parseClmesh(bytes) {
       offset += vertexCount * 2 * 4;
     }
 
+    // v3: four skeleton bone indices and 0-255 weights per vertex, written only
+    // for meshes whose vertices blend several bones.
+    let skinIndices = null;
+    let skinWeights = null;
+    if (version >= 3 && (flags & 0x20)) {
+      skinIndices = readClmeshUint16Array(bytes, offset, vertexCount * 4);
+      offset += vertexCount * 4 * 2;
+      if (offset + vertexCount * 4 > bytes.length) {
+        throw new Error("Mesh cache is truncated.");
+      }
+      skinWeights = bytes.slice(offset, offset + vertexCount * 4);
+      offset += vertexCount * 4;
+    }
+
     const indices = readClmeshUintArray(bytes, offset, indexCount);
     offset += indexCount * 4;
+    // An index past the vertex data would read garbage attributes on the GPU.
+    for (let i = 0; i < indices.length; i += 1) {
+      if (indices[i] >= vertexCount) {
+        throw new Error(`Mesh cache is damaged: mesh "${name}" has index ${indices[i]} but ${vertexCount} vertices.`);
+      }
+    }
 
-    meshes.push({ name, materialName, positions, normals, uvs, uvs2, uvs3, uvs4, indices });
+    meshes.push({ name, materialName, positions, normals, uvs, uvs2, uvs3, uvs4, indices, skinIndices, skinWeights });
   }
 
   return meshes;
@@ -115,6 +135,16 @@ function readClmeshFloatArray(bytes, offset, count) {
   const copy = new Uint8Array(length);
   copy.set(bytes.subarray(offset, offset + length));
   return new Float32Array(copy.buffer, 0, count);
+}
+
+function readClmeshUint16Array(bytes, offset, count) {
+  const length = count * 2;
+  if (offset + length > bytes.length) {
+    throw new Error("Mesh cache is truncated.");
+  }
+  const copy = new Uint8Array(length);
+  copy.set(bytes.subarray(offset, offset + length));
+  return new Uint16Array(copy.buffer, 0, count);
 }
 
 function readClmeshUintArray(bytes, offset, count) {

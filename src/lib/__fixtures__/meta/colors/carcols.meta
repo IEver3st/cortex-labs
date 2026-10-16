@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CVehicleModelInfoVarGlobal>
+  <Kits />
+  <Lights />
+  <Sirens />
+  <Colors>
+    <Item>
+      <color value="0x0D1116" />
+      <metallicID value="EVehicleModelColorMetallic_normal" />
+      <audioColor>POLICE_SCANNER_COLOUR_black</audioColor>
+      <audioPrefix>POLICE_SCANNER_PREFIX_metallic</audioPrefix>
+      <audioColorHash>0x87B4E7F1</audioColorHash>
+    </Item>
+    <Item>
+      <color value="0x00123456" />
+      <metallicID value="EVehicleModelColorMetallic_normal" />
+      <audioColor>POLICE_SCANNER_COLOUR_black</audioColor>
+      <audioPrefix>POLICE_SCANNER_PREFIX_metallic</audioPrefix>
+      <audioColorHash>0x87B4E7F1</audioColorHash>
+    </Item>
+  </Colors>
+</CVehicleModelInfoVarGlobal>

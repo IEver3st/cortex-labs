@@ -39,6 +39,18 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// The source lives in a private repository (origin). Releases publish to the
+// public repository the in-app updater reads, taken from its endpoint so the
+// two cannot drift apart.
+function releaseRepository() {
+  const endpoints = JSON.parse(read("src-tauri/tauri.conf.json"))?.plugins?.updater?.endpoints || [];
+  for (const endpoint of endpoints) {
+    const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/releases\//i.exec(endpoint);
+    if (match) return { owner: match[1], repo: match[2], full: `${match[1]}/${match[2]}` };
+  }
+  return fail("tauri.conf.json has no GitHub releases updater endpoint to publish to.");
+}
+
 function loadRelease() {
   const packageVersion = JSON.parse(read("package.json")).version;
   const tauriVersion = JSON.parse(read("src-tauri/tauri.conf.json")).version;
@@ -75,6 +87,7 @@ function loadRelease() {
     tag: `v${packageVersion}`,
     name: `Cortex Studio v${packageVersion}`,
     notes,
+    repository: releaseRepository(),
   };
 }
 
@@ -83,15 +96,13 @@ function writeGithubOutput(release) {
   if (!outputPath) return;
 
   let releaseDraft = "true";
-  if (process.env.GITHUB_REPOSITORY) {
-    const result = spawnSync(
-      "gh",
-      ["release", "view", release.tag, "--repo", process.env.GITHUB_REPOSITORY, "--json", "isDraft"],
-      { cwd: ROOT, encoding: "utf8", stdio: "pipe" },
-    );
-    if (result.status === 0) {
-      releaseDraft = JSON.parse(result.stdout).isDraft ? "true" : "false";
-    }
+  const result = spawnSync(
+    "gh",
+    ["release", "view", release.tag, "--repo", release.repository.full, "--json", "isDraft"],
+    { cwd: ROOT, encoding: "utf8", stdio: "pipe" },
+  );
+  if (result.status === 0) {
+    releaseDraft = JSON.parse(result.stdout).isDraft ? "true" : "false";
   }
 
   const delimiter = `release_notes_${crypto.randomUUID()}`;
@@ -102,6 +113,9 @@ function writeGithubOutput(release) {
       `tag=${release.tag}`,
       `name=${release.name}`,
       `release_draft=${releaseDraft}`,
+      `release_repository=${release.repository.full}`,
+      `release_owner=${release.repository.owner}`,
+      `release_repo=${release.repository.repo}`,
       `notes<<${delimiter}`,
       release.notes,
       delimiter,
@@ -142,13 +156,14 @@ function dispatch(release) {
   const secretNames = JSON.parse(
     run("gh", ["api", `repos/${repository}/actions/secrets`, "--jq", "[.secrets[].name]"], { capture: true }),
   );
-  for (const required of ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"]) {
+  // PUBLIC_RELEASE_TOKEN: a token that can write releases in the public repository.
+  for (const required of ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "PUBLIC_RELEASE_TOKEN"]) {
     if (!secretNames.includes(required)) fail(`GitHub Actions secret ${required} is missing.`);
   }
 
   const existingRelease = spawnSync(
     "gh",
-    ["release", "view", release.tag, "--repo", repository, "--json", "isDraft,url"],
+    ["release", "view", release.tag, "--repo", release.repository.full, "--json", "isDraft,url"],
     { cwd: ROOT, encoding: "utf8", stdio: "pipe" },
   );
   if (existingRelease.status === 0 && !JSON.parse(existingRelease.stdout).isDraft) {
@@ -171,6 +186,7 @@ function dispatch(release) {
 
   run("gh", ["workflow", "run", "release.yml", "--repo", repository, "--ref", "main"]);
   console.log(`[release] ${release.tag} queued: https://github.com/${repository}/actions/workflows/release.yml`);
+  console.log(`[release] It publishes to https://github.com/${release.repository.full}/releases`);
 }
 
 const release = loadRelease();

@@ -1,0 +1,451 @@
+/* Prop Studio. Layout, dock, deck and inspector come from the viewer
+   workspace (workspace/workspace.css); this sheet only adds what a prop needs. */
+
+.ps-viewport {
+  position: absolute;
+  inset: 0;
+}
+
+.ps-viewport canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ── Empty stage ── */
+.ps-stage-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--mg-muted);
+}
+
+.ps-stage-empty > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ps-stage-empty .cx-btn {
+  margin-top: 6px;
+}
+
+.ps-empty-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--mg-fg);
+}
+
+.ps-empty-desc {
+  max-width: 320px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.ps-spin {
+  animation: ps-spin 0.8s linear infinite;
+}
+
+@keyframes ps-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Viewfinder slips ── */
+.ps-status {
+  position: absolute;
+  top: calc(var(--lv-inset) + 50px);
+  left: var(--lv-inset);
+  display: grid;
+  gap: 6px;
+  max-width: min(300px, 45%);
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+
+.ps-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ps-status-row svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.ps-dims {
+  gap: 6px;
+  font-family: var(--font-hud);
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
+.ps-dims span {
+  color: var(--mg-fg);
+}
+
+/* ── Dock ── */
+.ps-ytd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 7px;
+  background: var(--mg-input-bg);
+}
+
+.ps-ytd-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Inspector ── */
+.lv-inspector .lv-seg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ps-inspector-empty {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+}
+
+.ps-row-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--mg-muted);
+}
+
+.ps-is-disabled {
+  opacity: 0.45;
+}
+
+.ps-rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ps-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 0;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.ps-row:first-child {
+  border-top: 0;
+}
+
+.ps-row--stack {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0;
+}
+
+.ps-row-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ps-row.is-hidden .ps-row-label,
+.ps-row.is-hidden .ps-light-chip {
+  opacity: 0.45;
+}
+
+.ps-row-main {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ps-row-label {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-row-meta {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--cx-caution) 45%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cx-caution) 10%, transparent);
+  color: var(--cx-caution);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.ps-light-chip {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 1px solid color-mix(in srgb, var(--mg-fg) 25%, transparent);
+  border-radius: 50%;
+  background: var(--chip);
+}
+
+.ps-facts {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.ps-facts > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 40%) minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.ps-facts > div:first-child {
+  border-top: 0;
+}
+
+.ps-facts dt {
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.ps-facts dd {
+  margin: 0;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.ps-failures {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+  color: var(--mg-destructive);
+}
+
+.ps-failures li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-failures code {
+  font-family: var(--font-hud);
+  color: var(--mg-fg);
+}
+
+.ps-open-folder {
+  justify-self: start;
+}
+
+/* ── Export dialog ── */
+.ps-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 9, 11, 0.6);
+}
+
+.ps-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 100%);
+  max-height: 100%;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+  color: var(--mg-fg);
+  animation: ps-dialog-in 160ms var(--cx-ease);
+}
+
+@keyframes ps-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.ps-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 16px 6px 22px;
+}
+
+.ps-dialog-title {
+  margin: 0;
+  font-size: 28px;
+}
+
+.ps-dialog-body {
+  display: grid;
+  gap: 14px;
+  padding: 12px 22px 20px;
+  overflow-y: auto;
+}
+
+.ps-dialog-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.ps-dialog-label {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.ps-preview {
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: 192px;
+  height: 192px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  overflow: hidden;
+  color: var(--mg-muted);
+}
+
+/* Checkerboard behind a transparent export, so the cut-out reads. */
+.ps-preview.is-clear {
+  --ps-check: color-mix(in srgb, var(--mg-fg) 14%, transparent);
+  background-color: var(--mg-input-bg);
+  background-image:
+    linear-gradient(45deg, var(--ps-check) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--ps-check) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--ps-check) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--ps-check) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.ps-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.ps-preview svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ps-dialog-note,
+.ps-dialog-status,
+.ps-dialog-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.ps-dialog-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-fg);
+}
+
+.ps-dialog-status svg {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+}
+
+.ps-dialog-status.is-done svg {
+  color: var(--cx-confirm);
+}
+
+.ps-dialog-status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-dialog-error {
+  color: var(--mg-destructive);
+}
+
+.ps-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.ps-dialog-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ps-spin,
+  .ps-dialog {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .ps-badge,
+  .ps-light-chip {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+  }
+}

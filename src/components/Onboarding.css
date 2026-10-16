@@ -1,0 +1,519 @@
+/* First-run setup. One centred sheet (header, choices, actions) under the
+   window frame: it sits in the middle of any window, and on a short one only
+   the choices scroll so the actions stay on screen. Regions meet at hairlines,
+   display caps name the page once, selection is opposite ink. */
+
+.onb {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  grid-template-rows: calc(36 * var(--u)) minmax(0, 1fr);
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+}
+
+/* ── Window frame: drag strip and window controls, as in the Shell frame ── */
+.onb-frame {
+  display: flex;
+  justify-content: flex-end;
+  border-bottom: 1px solid var(--mg-border);
+  background: var(--cx-frame);
+  -webkit-app-region: drag;
+}
+
+.onb-window-controls {
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+
+/* ── Stage and sheet ── */
+.onb-stage {
+  display: flex;
+  min-height: 0;
+  padding: clamp(calc(20 * var(--u)), 5vh, calc(56 * var(--u))) calc(32 * var(--u));
+  overflow: hidden;
+}
+
+/* Auto margins centre the sheet both ways; max-height lets the body scroll
+   instead of the sheet growing past the stage. */
+.onb-sheet {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(calc(1040 * var(--u)), 100%);
+  max-height: 100%;
+  margin: auto;
+  container-type: inline-size;
+}
+
+.onb-head {
+  display: grid;
+  justify-items: center;
+  gap: calc(10 * var(--u));
+  padding-bottom: calc(28 * var(--u));
+  text-align: center;
+}
+
+.onb-brand {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  margin-bottom: calc(6 * var(--u));
+}
+
+.onb-brand-mark {
+  width: calc(22 * var(--u));
+  height: calc(22 * var(--u));
+}
+
+.onb-brand-name {
+  font-size: calc(18 * var(--u));
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.onb-brand-version {
+  font-family: var(--font-hud);
+  font-size: calc(11 * var(--u));
+  color: var(--mg-muted);
+}
+
+.onb-title {
+  margin: 0;
+  font-size: calc(48 * var(--u));
+  line-height: 0.95;
+}
+
+.onb-title:focus-visible {
+  outline: none;
+}
+
+.onb-head-desc {
+  max-width: calc(620 * var(--u));
+  margin: 0;
+  text-wrap: balance;
+  font-size: calc(13 * var(--u));
+  line-height: 1.5;
+  color: var(--mg-muted);
+}
+
+.onb-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(4 * var(--u)) calc(4 * var(--u)) calc(24 * var(--u));
+}
+
+.onb-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: calc(48 * var(--u));
+  align-items: start;
+}
+
+/* Short windows give the choices the height, not the header. */
+@media (max-height: 760px) {
+  .onb-head {
+    gap: calc(6 * var(--u));
+    padding-bottom: calc(18 * var(--u));
+  }
+
+  .onb-brand {
+    margin-bottom: 0;
+  }
+
+  .onb-title {
+    font-size: calc(38 * var(--u));
+  }
+}
+
+@container (max-width: 720px) {
+  .onb-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: calc(28 * var(--u));
+  }
+}
+
+.onb-start,
+.onb-look {
+  display: grid;
+  gap: calc(12 * var(--u));
+  min-width: 0;
+}
+
+/* ── Start in: rows like Home's start rail; the chosen one is opposite ink ── */
+.onb-options {
+  display: grid;
+  gap: calc(2 * var(--u));
+}
+
+.onb-group {
+  display: grid;
+  gap: calc(2 * var(--u));
+  margin-top: calc(10 * var(--u));
+}
+
+.onb-group-label {
+  padding: 0 calc(10 * var(--u)) calc(4 * var(--u));
+}
+
+.onb-option {
+  --cat: var(--cx-cat-all);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--u));
+  min-width: 0;
+  min-height: calc(44 * var(--u));
+  padding: calc(6 * var(--u)) calc(10 * var(--u));
+  border: 0;
+  border-radius: calc(6 * var(--u));
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.onb-option[data-cat="livery"] { --cat: var(--cx-cat-livery); }
+.onb-option[data-cat="eup"] { --cat: var(--cx-cat-eup); }
+.onb-option[data-cat="multi"] { --cat: var(--cx-cat-multi); }
+.onb-option[data-cat="variant"] { --cat: var(--cx-cat-variant); }
+.onb-option[data-cat="template"] { --cat: var(--cx-cat-template); }
+.onb-option[data-cat="prop"] { --cat: var(--cx-cat-prop); }
+.onb-option[data-cat="siren"] { --cat: var(--cx-cat-siren); }
+.onb-option[data-cat="photo"] { --cat: var(--cx-cat-photo); }
+
+.onb-option::before {
+  content: "";
+  position: absolute;
+  top: calc(10 * var(--u));
+  bottom: calc(10 * var(--u));
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--cat);
+  transform: scaleY(0);
+  transition: transform 160ms var(--cx-ease);
+}
+
+.onb-option:hover {
+  background: var(--cx-wash);
+}
+
+.onb-option:hover::before {
+  transform: scaleY(1);
+}
+
+.onb-option:active {
+  background: var(--cx-wash-strong);
+}
+
+.onb-option:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.onb-option-icon {
+  flex-shrink: 0;
+  width: calc(18 * var(--u));
+  height: calc(18 * var(--u));
+  color: var(--cat);
+}
+
+.onb-option-copy {
+  display: grid;
+  flex: 1;
+  gap: calc(2 * var(--u));
+  min-width: 0;
+}
+
+.onb-option-label {
+  overflow: hidden;
+  font-size: calc(13.5 * var(--u));
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onb-option-desc {
+  overflow: hidden;
+  font-size: calc(12 * var(--u));
+  line-height: 1.35;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onb-option.is-selected {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.onb-option.is-selected::before {
+  transform: scaleY(0);
+}
+
+.onb-option.is-selected .onb-option-icon {
+  color: var(--cx-invert-fg);
+}
+
+.onb-option.is-selected .onb-option-desc {
+  color: var(--cx-invert-muted);
+}
+
+/* Keycaps on the chosen row read against opposite ink. */
+.onb-option.is-selected .cx-keycap {
+  border-color: color-mix(in srgb, var(--cx-invert-fg) 35%, transparent);
+  background: transparent;
+  color: var(--cx-invert-fg);
+  box-shadow: none;
+}
+
+/* ── Appearance ── */
+.onb-field {
+  display: grid;
+  gap: calc(8 * var(--u));
+}
+
+.onb-look > .onb-field + .onb-field,
+.onb-look > .onb-toggle-row {
+  padding-top: calc(14 * var(--u));
+  border-top: 1px solid var(--cx-rule);
+}
+
+.onb-field-label {
+  font-size: calc(13 * var(--u));
+  font-weight: 600;
+}
+
+.onb-seg {
+  display: flex;
+  padding: calc(3 * var(--u));
+  border: 1px solid var(--mg-border);
+  border-radius: calc(6 * var(--u));
+  background: var(--mg-input-bg);
+}
+
+.onb-seg-btn {
+  flex: 1;
+  height: calc(28 * var(--u));
+  border: 0;
+  border-radius: calc(4 * var(--u));
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: calc(12.5 * var(--u));
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.onb-seg-btn:hover {
+  background: var(--cx-wash);
+  color: var(--mg-fg);
+}
+
+.onb-seg-btn.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.onb-seg-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.onb-themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(132 * var(--u)), 1fr));
+  gap: calc(6 * var(--u));
+}
+
+.onb-theme {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  min-width: 0;
+  height: calc(34 * var(--u));
+  padding: 0 calc(8 * var(--u)) 0 calc(6 * var(--u));
+  border: 1px solid var(--mg-border);
+  border-radius: calc(6 * var(--u));
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: calc(12.5 * var(--u));
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), border-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.onb-theme:hover {
+  background: var(--cx-wash);
+}
+
+.onb-theme.is-on {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.onb-theme:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* A miniature of the theme: its paper, a surface band, and its accent. */
+.onb-theme-swatch {
+  position: relative;
+  flex-shrink: 0;
+  width: calc(22 * var(--u));
+  height: calc(22 * var(--u));
+  overflow: hidden;
+  border-radius: calc(4 * var(--u));
+  background: linear-gradient(90deg, var(--sw-surface) 0 38%, var(--sw-bg) 38%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sw-ink) 22%, transparent);
+}
+
+.onb-theme-swatch > span {
+  position: absolute;
+  right: calc(4 * var(--u));
+  bottom: calc(4 * var(--u));
+  width: calc(7 * var(--u));
+  height: calc(7 * var(--u));
+  border-radius: 50%;
+  background: var(--sw-accent);
+}
+
+.onb-theme-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onb-theme-check {
+  flex-shrink: 0;
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+}
+
+.onb-scale-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.onb-scale-head output {
+  font-family: var(--font-hud);
+  font-size: calc(12 * var(--u));
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
+.onb-slider {
+  width: 100%;
+  height: calc(18 * var(--u));
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+
+.onb-slider::-webkit-slider-runnable-track {
+  height: calc(4 * var(--u));
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--mg-primary) var(--fill), var(--mg-border) var(--fill));
+}
+
+.onb-slider::-webkit-slider-thumb {
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  margin-top: calc(-5 * var(--u));
+  border: 2px solid var(--mg-bg);
+  border-radius: 50%;
+  background: var(--mg-fg);
+  appearance: none;
+}
+
+.onb-slider:focus-visible {
+  outline: none;
+}
+
+.onb-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 45%, transparent);
+}
+
+.onb-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(16 * var(--u));
+}
+
+.onb-toggle-row > span {
+  display: grid;
+  gap: calc(2 * var(--u));
+}
+
+.onb-toggle-hint {
+  font-size: calc(12 * var(--u));
+  color: var(--mg-muted);
+}
+
+/* ── Footer: the decision, always on screen ── */
+.onb-foot {
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+  padding-top: calc(16 * var(--u));
+  border-top: 1px solid var(--mg-border);
+}
+
+.onb-foot-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: calc(12.5 * var(--u));
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onb-skip,
+.onb-go {
+  flex-shrink: 0;
+}
+
+.onb-skip .cx-keys,
+.onb-go .cx-keys {
+  margin-left: calc(4 * var(--u));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onb-option,
+  .onb-option::before,
+  .onb-seg-btn,
+  .onb-theme {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .onb-option.is-selected,
+  .onb-seg-btn.is-on,
+  .onb-theme.is-on {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .onb-option:focus-visible,
+  .onb-seg-btn:focus-visible,
+  .onb-theme:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}

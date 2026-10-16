@@ -10,15 +10,36 @@ Cortex Studio treats each session as a **workspace**.
 Workspaces are saved locally and include:
 
 - Which page you were on (Viewer or Variants)
-- Key state (model path, texture paths, mode, and other viewer settings)
+- Key state (model path, texture paths, mode, the meshes picked under **Apply to**, and other viewer settings, including mod kit parts, the in-game livery, extras switched by hand, the plate, the front wheel angle, the light direction, the Lights panel switches and sliders, and the Materials panel)
 - Variant Builder state (PSD path, variants, export preferences)
 
-## Recents
+A workspace saves about a second after each change. Removing the model or texture is saved too, so it stays removed when you reopen the project. Settings defaults apply to new workspaces; a workspace that changed a value keeps its own when you save Settings.
 
-The Home screen can show recent workspaces.
+## Projects on Home
 
-- You can disable recents in Settings.
-- The list is capped to a small maximum so it stays fast.
+Home lists every saved workspace, most recently opened first.
+
+- Opening a project from Home, a hotkey, or the new-tab menu moves it to the top, and so does switching to a project tab that is already open.
+- Times in the list show when each project was last opened. The focus panel also shows when it was last saved and the files the project holds: model, livery or texture, windows, and body paint, or the first vehicles of a Multi lineup.
+- Sort by name or type from the list header, or choose the default order in **Settings > System > Projects on Home**.
+- Deleting a project asks for confirmation first (you can turn this off in Settings). Deleting removes the saved workspace state only; models, textures, and exports on disk are never touched.
+- To clear out several projects, choose **Select** in the list header (or **Select** on a row's right-click menu) and tick the projects. **Select all** ticks every project the current filter and search show, so filtering to **Livery** and choosing **Select all** picks every Livery project. **Delete** removes the ticked projects after one confirmation that lists them; it always asks when more than one project is ticked. **Esc** or **Done** leaves select mode.
+- You can hide the project list in Settings.
+
+## Saved vehicles
+
+A saved vehicle is a named setup for one vehicle model, separate from projects. Save one from Livery, All or Sirens with **Save** on the **Saved vehicle** row under the model in step 1, then type a name and press Enter (Escape closes the row). It keeps:
+
+- The model's path. The model itself is not copied, so a saved vehicle opens only while the model is on your PC.
+- Mod kit parts and the in-game livery picked in the Mods tab (All and Sirens).
+- Paint, extras switched by hand, and the plate shown, even when it still follows the Settings default.
+- The livery and window textures, the meshes picked under **Apply to**, and whether the window overlay is on (Livery and All).
+
+Saved vehicles are listed on Home under the focus panel. Opening one loads the model in the workspace it was saved from and applies the setup. If a tab already shows that saved vehicle, Home switches to it; if a project was already opened from it, that project reopens with the saved setup applied, keeping its own stage and lighting. Otherwise it starts a new project named after the saved vehicle. That tab's **Saved vehicle** row names it; open the row for **Update**, which saves the current setup over the same entry, and **Save as new**. Saving with a name that is already used replaces that saved vehicle; the button says **Replace** first. If the saved vehicle was pointed at another model since (with **Locate** or from another tab), **Update** asks for a name and saves a new vehicle instead of moving it back.
+
+Home keeps up to 200 saved vehicles. When the list is full, saving a new one says so and changes nothing; delete one first, or save under an existing name to replace it.
+
+When Home can't find a saved vehicle's model, the row says **Model not found** and can't be opened. **Locate** lets you pick the model's new location and keeps everything else. Deleting a saved vehicle removes the entry only and can be undone straight away from Home; nothing on disk is touched. If you saved another vehicle with the same name in the meantime, **Undo** keeps both and adds "(restored)" to the one it brings back.
 
 ## Tabs
 
@@ -27,3 +48,5 @@ Cortex Studio uses a browser-style tab bar.
 - Tabs stay mounted for instant switching (important for WebGL).
 - You can rename tabs, duplicate, and close them.
 - New viewer tabs can be opened via hotkeys (Alt + 1/2/3/4 by default).
+- Project tabs that were open when you closed Cortex Studio reopen at the next start, in the same order, with the same tab in front. Each one loads its model the first time you switch to it. Projects deleted in the meantime are skipped, and a file opened with Cortex Studio still opens in front.
+- Siren edits that aren't saved to a carcols.meta live only in their tab. Closing that tab, or the app, asks first; **Keep editing** cancels.

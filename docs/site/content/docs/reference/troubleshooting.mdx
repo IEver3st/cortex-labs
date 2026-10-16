@@ -38,6 +38,20 @@ Try:
 - Re-selecting the texture path.
 - Using PNG as a control test.
 - Ensuring the file extension is supported.
+- In Multi, a message names any livery that can't be watched; re-select it after saving.
+
+## The model's own textures don't match my `.ytd`
+
+- After saving a `.ytd`, open the model again: replace it with the same file (the folder button on its card), or open it in another tab. Cortex Studio reads the model's texture dictionaries again whenever one of them changed. A model already on screen keeps the textures it loaded with.
+- A `.ytd` your resource streams replaces the game's dictionary with the same name, as it does in game. If the vehicle uses a base-game name such as `police3` and you removed or renamed a texture in its `.ytd`, that texture shows as not found rather than the game's version. Parent dictionaries and `vehshare` still come from the game files.
+
+## A `.pdn` texture doesn't load
+
+Cortex Studio flattens a Paint.NET file the way Paint.NET shows it: visible layers with their opacity and blend mode (all 14 of Paint.NET's, such as Multiply, Overlay and Screen), hidden layers left out. When it can't do that, the error says why instead of showing a wrong image.
+
+- A visible layer uses a blend mode Paint.NET doesn't have, which can happen with a damaged file (the error names the layer): set the layer's blend mode to Normal in Paint.NET, or save a flattened PNG copy.
+- The file comes from an old Paint.NET version: open it in a current Paint.NET and save it again.
+- The file is damaged or was still being written: save it again, then reload.
 
 ## Glass/window targeting is wrong
 

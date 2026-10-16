@@ -1,369 +1,245 @@
-# Cortex Studio visual design language
+# Cortex Studio design language
 
-> A restrained, dense desktop developer workbench with subtle terminal influence.
+> Paper and ink. One accent. Condensed caps for identity, plain type for work, and selection that flips to the opposite ink.
 
-Cortex Studio should feel like an IDE, asset browser, and professional desktop utility for livery work. It should not feel like a SaaS dashboard, game HUD, marketing page, colourful launcher, or stock component-library demo.
+Cortex Studio 5 shares one brand grammar with the Cortex FiveM scripts: paper and ink surfaces, a single accent, condensed italic display caps, keycaps for shortcuts, and selection rendered as inverted ink. Studio keeps the desktop necessities the in-game rules forbid: hairline structure, visible keyboard focus, dense inspectors, and resizable layouts.
 
-This document defines the shared visual and interaction vocabulary for product UI. It is prescriptive about hierarchy, colour, density, and feedback, but it does not require every workflow to use the same layout. A model viewer, layer inspector, template builder, and Home page may need different structures while still clearly belonging to Cortex Studio.
+The product is a production workbench for livery and clothing artists. The user's model, texture, and output are the subject. The interface is a quiet, confident frame around that work. It should never read as a SaaS dashboard, a gaming HUD, a marketing page, or a terminal costume.
 
-## Authority and scope
+## Authority
 
-The rendered Home / Overview workbench is the canonical visual reference. When older UI, an earlier CSS declaration, a stock primitive, or an old comment conflicts with the rendered Home direction, follow Home and the rules in this document.
+The rendered **Home**, **Livery**, and **Settings** surfaces define this language. When older CSS, a stock primitive, a legacy block in `src/index.css`, or a previous version of this document conflicts with them, follow these surfaces and the rules below.
 
-The canonical Home treatment is the main workbench: Quick Start, Recent Projects, Context, filters and toolbar controls, empty states, and footer status. The later `HOME PAGE — unified desktop workbench` block in [`src/index.css`](src/index.css) intentionally refines earlier Home declarations. Source order and the rendered result matter; do not revive the older “monospace-only,” colourful, card-heavy treatment simply because those declarations remain in the file.
-
-Home is an implementation reference, not a layout template. Its current bounded side regions and fluid project browser demonstrate a principle: structural panels may have deliberate fixed or bounded widths while the primary workspace remains fluid.
-
-## Design principles
-
-1. **Utility before decoration.** Every visual treatment should clarify hierarchy, state, navigation, action, or system feedback.
-2. **Neutral by default.** Most surfaces, icons, text, borders, and controls use the neutral theme. Colour is the exception.
-3. **Accent with purpose.** Cortex orange identifies brand, active navigation, selection, focus, and genuinely primary actions. Scarcity gives it value.
-4. **Density is intentional.** This is a desktop production tool. Compact, readable information is preferable to marketing-page whitespace.
-5. **Hierarchy before containers.** Use alignment, type, spacing, and subtle surface shifts before adding a border or another rectangle.
-6. **One visual vocabulary.** Features can have workflow-specific arrangements, but their icon scale, type hierarchy, surfaces, feedback, and colour discipline must remain recognizably Cortex.
-7. **State is part of the design.** Hover, focus-visible, selected, disabled, loading, empty, error, overflow, and reduced-motion states are not optional finishing work.
-
-## Canonical reference: Home / Overview
-
-Study these sources before creating or materially restyling application UI:
-
-| Source | What it establishes |
+| Source | Establishes |
 | --- | --- |
-| [`src/components/HomePage.jsx`](src/components/HomePage.jsx) | Home structure, Quick Start and project rows, filters, search and sort controls, Context inspector, empty states, status footer, and semantic use of icons and category labels. |
-| [`src/index.css`](src/index.css) | Global theme variables and typography; the final `HOME PAGE — unified desktop workbench` block contains the canonical Home refinements, row states, dimensions, category tags, focus treatment, and resize behavior. |
-| [`src/Shell.jsx`](src/Shell.jsx) | Desktop chrome, tab strip, window controls, and the relationship between application chrome and workspace content. |
-| [`src/components/ContextMenu.jsx`](src/components/ContextMenu.jsx) | The shared Radix-based context-menu layer and its desktop interaction boundary. |
-| [`src/components/ui/`](src/components/ui/) | The current shadcn/Radix-style primitive layer for buttons, inputs, labels, selects, and toggles. |
-| [`tailwind.config.js`](tailwind.config.js) | Tailwind aliases for the Cortex palette, typography, surfaces, borders, and radii. |
-| [`src/lib/theme.js`](src/lib/theme.js) | System, light, and dark theme resolution. |
-| [`colorpalette.md`](colorpalette.md) | Broader Cortex brand-palette background. For Studio UI behavior, this document and the rendered Home page are more specific. |
+| [`src/studio.css`](src/studio.css) | Shared primitives and tokens: `--cx-*` roles, `.cx-display`, `.cx-label`, `.cx-keycap`, `.cx-btn`, `.cx-icon-btn`, the switch, and dialog actions. |
+| [`src/lib/theme.js`](src/lib/theme.js) | The `--mg-*` palette for every theme preset in light and dark. |
+| [`src/components/HomePage.jsx`](src/components/HomePage.jsx) + [`HomePage.css`](src/components/HomePage.css) | Start rail, focus slate (crop marks, display-caps name, file strip in pipeline order), project rows, filters, search, sort menu, status bar, modal. |
+| [`src/components/workspace/`](src/components/workspace/) | The viewer workspace family (Livery, All, Multi): dock, numbered asset pipeline, viewfinder slips, camera deck, inspector tabs and groups. `parts.jsx` is the shared building-block layer. |
+| [`src/components/SettingsMenu.jsx`](src/components/SettingsMenu.jsx) + [`SettingsMenu.css`](src/components/SettingsMenu.css) | Section rail, display-caps page title, label-left / control-right rows, callouts, segmented controls, save state. |
+| [`src/Shell.jsx`](src/Shell.jsx) + [`Shell.css`](src/Shell.css) | The 36px frame: tabs, context slot, frame actions, window controls. |
+| [`src/components/ui/keycaps.jsx`](src/components/ui/keycaps.jsx), [`toggle.jsx`](src/components/ui/toggle.jsx) | Keycap rendering from stored hotkeys; the shared switch. |
 
-On Home, pay particular attention to:
+`src/index.css` still holds legacy page styles. Its declarations are not precedent. New surfaces get their own stylesheet (see [Code organisation](#code-organisation)).
 
-- Quick Start and Recent Projects sharing a quiet row language instead of separate feature cards;
-- neutral, borderless icon slots with small Lucide glyphs;
-- orange used for the brand, active filter underline, selected-row indicator, focus, and primary action—not decoration;
-- category colour appearing only in small project tags;
-- the fluid middle workspace separated from bounded structural regions by hairline dividers;
-- primary label, secondary description, metadata, shortcut, and category-label type levels;
-- Context behaving as a structural inspector rather than a large card;
-- concise empty states and compact application status.
+## Decision order
 
-Neighboring screens such as [`src/components/VariantsPage.jsx`](src/components/VariantsPage.jsx), [`src/components/TemplateGenerationPage.jsx`](src/components/TemplateGenerationPage.jsx), [`src/components/SettingsMenu.jsx`](src/components/SettingsMenu.jsx), and [`src/App.jsx`](src/App.jsx) provide workflow and interaction context. They are not visual authority where their older or local styling conflicts with Home.
+Clarity, orientation, hierarchy, asset truth, robustness, polish, distinctiveness, decoration. A distinctive treatment that weakens the edit, preview, export loop does not ship.
 
-## Colour system
+- Each surface has one leading task. Keep selection, readiness, save, and export state legible at all times.
+- Show real assets and real output. Never fake a model, a preview, a terminal, or a successful export for appearance.
+- Every control changes real state. Remove a control rather than ship one that does nothing.
+- Containment must represent a real boundary: a file, a slip over the scene, a menu, a dialog.
 
-### Core theme
+## Signature
 
-Use semantic variables instead of scattering hex values or theme-specific opacity classes. The core palette is defined in [`src/index.css`](src/index.css) and mapped in [`tailwind.config.js`](tailwind.config.js).
+Three moves make a surface recognisably Cortex with the logo covered. Use them consistently and nowhere else.
 
-| Role | Token | Light | Dark | Guidance |
+1. **Opposite ink.** The selected row, active nav item, active segment, chosen chip, or chosen option flips to `--cx-invert-bg` / `--cx-invert-fg`. Not an accent wash, not a tinted fill. Secondary text inside it uses `--cx-invert-muted`.
+2. **Display caps for identity and figures.** `.cx-display` (Barlow Condensed, italic, 800, uppercase, tabular) names the thing you are working on: the brand, a page title, the focused project, the loaded model, a pipeline step number, an axis label, a keycap. It never sets body copy, labels, buttons, or descriptions.
+3. **Keycaps.** Shortcuts render as `.cx-keycap` from the stored hotkey via `<Keycaps>`. They stay outlined and quiet until their row is hovered, focused, or armed, then light up in opposite ink.
+
+The numbered asset pipeline (step disc, connecting hairline, dashed drop target, file card) is the workspace-level expression of the same grammar: work moves top to bottom, and a finished step fills with the accent.
+
+## Colour
+
+### Palette tokens
+
+All product colour comes from `--mg-*` (theme preset) and `--cx-*` (roles derived in `studio.css`). Never hard-code a theme colour in a component. Every surface must work in every preset in both light and dark.
+
+| Role | Token | Cortex light | Cortex dark | Use |
 | --- | --- | --- | --- | --- |
-| App canvas | `--mg-bg` | `#F3F1EC` | `#1F1E1D` | Default full-bleed workspace. |
-| Structural surface | `--mg-surface` | `#EAE7E0` | `#33312F` | Chrome, rails, panels, and controls that need separation. |
-| Primary text | `--mg-fg` | `#1F1E1D` | `#F3F1EC` | Labels and content that must lead. |
-| Secondary text/icons | `--mg-muted` | `#5A554F` | `#B0AAA3` | Descriptions, metadata, inactive icons, and subordinate chrome. |
-| Structural line | `--mg-border` | `#DCD7CE` | `#4A4744` | Hairline dividers and meaningful control boundaries. |
-| Cortex orange | `--mg-primary` | `#D97952` | `#D97952` | Brand and intentional interaction emphasis. |
-| Destructive | `--mg-destructive` | `#C2544A` | `#C2544A` | Destructive actions and critical errors only. |
-| Input surface | `--mg-input-bg` | `#FCFAF8` | `#2A2827` | Inputs and controls that require a distinct field surface. |
+| Paper | `--mg-bg` | `#f0f0e9` | `#121316` | Workspace canvas, main columns. |
+| Surface | `--mg-surface` | `#e5e5dc` | `#1b1d21` | Structural fills where a step is needed. |
+| Ink | `--mg-fg` | `#0f1012` | `#f0f0e9` | Primary text and icons that lead. |
+| Muted ink | `--mg-muted` | `#575b61` | `#a2a6ad` | Descriptions, metadata, idle icons, labels. |
+| Hairline | `--mg-border` | `#d2d2c7` | `#2c2f35` | Structural dividers, control outlines. |
+| Field | `--mg-input-bg` | `#fafaf6` | `#17191c` | Inputs, file cards, segmented tracks. |
+| Accent | `--mg-primary` | `#3462bd` | `#558bf6` | Primary action, focus, active indicator, progress, done steps. |
+| Destructive | `--mg-destructive` | `#b94842` | `#dc7c72` | Destructive actions and real errors only. |
 
-New UI must work in both light and dark themes. Prefer `color-mix()` or semantic variables for subtle theme-relative states. A hard-coded light or dark foreground is acceptable only when paired with a deliberately fixed surface, such as light text on the orange primary action.
+Derived roles in `studio.css`:
 
-### Cortex orange
+| Token | Meaning |
+| --- | --- |
+| `--cx-invert-bg`, `--cx-invert-fg`, `--cx-invert-muted` | Opposite ink for selection. |
+| `--cx-wash`, `--cx-wash-strong` | Hover and pressed tints (5% and 9% ink). |
+| `--cx-frame` | Frame and status-bar fill. Rails use `color-mix(in srgb, var(--mg-bg) 55%, var(--cx-frame))`. |
+| `--cx-raised` | Menus, popovers, dialogs. Pair with `--cx-shadow-pop`. |
+| `--cx-rule` | Softer hairline between rows inside a section. |
+| `--cx-focus` | Two-ring focus: paper gap then accent. |
+| `--cx-on-primary` | Text on a filled accent. |
+| `--cx-caution`, `--cx-confirm` | Warning/pending and success/live. They never follow the accent. |
+| `--cx-cat-*` | Project categories: livery, all, eup, multi, siren, variant, template, prop. |
 
-Cortex orange is the primary brand and interaction accent. Appropriate uses include:
+### Accent discipline
 
-- active navigation or filter indicators;
-- selected-state markers where a marker improves scanning;
-- focus treatment;
-- primary actions;
-- branding;
-- meaningful interaction emphasis, progress, or an actual warning/pending state.
+The accent is the only saturated hue on an ordinary screen. Appropriate: the primary action, focus rings, the active tab or filter underline, a rail item's hover bar, a done pipeline step, slider fill, progress, the brand mark. A region usually has one leading accent cue. Selection is ink, not accent.
 
-Do not scatter orange across ordinary icons, headings, borders, metadata, and backgrounds at the same time. A region should usually have one leading orange cue. Selection should not become a large orange wash.
+### Status and category
 
-### Category colour
-
-Home defines subdued, theme-aware category colours with page-scoped `--hp-tag-*` variables for Livery, All, EUP, Multi, Variant, and Template. The important pattern is not the exact hex value; it is the narrow semantic role:
-
-- feature and project icons remain neutral;
-- a small category label may carry the category hue;
-- the row background, icon, border, and tag do not all repeat that hue;
-- category colour never replaces selection, focus, warning, error, or disabled semantics.
-
-If another screen needs category recognition, use one small marker—usually text, a dot, or a narrow indicator. Do not create rainbow icon tiles. Do not promote Home's page-scoped tag variables into a global API without first deciding that the categories and contrast requirements are truly shared.
-
-### Semantic status colour
-
-Success, warning, error, and informational colours are reserved for states that carry those meanings. Do not use them for variety or feature branding.
-
-The repository does not yet have one complete, consistent global success/warning/info token set. Reuse an established workflow-owned semantic token when its meaning matches, or introduce a deliberately named token at the narrowest shared scope. Never repurpose a category hue as a status colour. Destructive and critical-error treatment uses `--mg-destructive`; orange remains the primary interaction accent and may represent warning or pending only when the state is genuinely warning or pending.
+- Caution, confirm, and destructive carry meaning only: a warning, a live or completed state, an error. A dot, an icon, or a tinted callout (`9-12%` mix with a `40-50%` border) is enough.
+- Category hue appears once: the Home rail icon, a 7px square marker before a tag (`.hp-tag`), or a 2px hover bar. Never fill a row, tile, or icon box with it, and never use it as a status.
+- Viewport axis colours (`--lv-axis-x/y/z`) label rotation controls only.
 
 ## Typography
 
-Studio uses two families:
+Three families, defined in `src/index.css` and bundled in `src/fonts.css`:
 
-- **Syne** via `--font-main` for primary application text, page identity, labels, and readable descriptions.
-- **DM Mono** via `--font-hud` for structural labels, shortcuts, file/path metadata, status, compact technical values, and restrained terminal cues.
+- `--font-display`: Barlow Condensed. Only through `.cx-display` or an explicit `italic 800` shorthand for figures.
+- `--font-main`: Segoe UI Variable Text. All interface text.
+- `--font-hud`: Consolas / Cascadia Mono. Paths, file folders, hex values, counts, dimensions, times, version strings.
 
-The system should feel technical without becoming a terminal parody. Use family, weight, size, spacing, and alignment before adding colour.
-
-| Level | Home reference | Use |
+| Role | Treatment | Reference |
 | --- | --- | --- |
-| Application identity | About `15px`, semibold, tracked uppercase | Product or major workspace identity. Use sparingly. |
-| Structural heading | About `10px`, semibold, tracked | `// QUICK START`, `// RECENT`, `// CONTEXT`, time groups, and compact panel headings. |
-| Primary content label | About `11–13px`, medium | Project names, mode names, selected-object identity. |
-| Secondary description | About `9–10px` | One-line supporting explanation. |
-| Metadata/status | About `8–9px`, often mono | Paths, times, counts, status-bar data, field labels, and compact technical values. |
-| Category label | About `8px`, compact and tracked | Small semantic classification, not a headline. |
-| Keyboard hint | About `8px`, mono and quiet | Trailing shortcuts such as `Alt+1`; usually not a decorative keycap. |
+| Page identity | `.cx-display`, `26-40px` | Settings rail title `26px`, Settings page title `40px`, modal title `28px`. |
+| Focus identity | `.cx-display`, `clamp(30px, 3.6vw, 50px)`, two-line clamp | Home focused project. |
+| Section title | Main, `14-15px`, `650` | "Start a session", pipeline step title, project list title. |
+| Structural label | `.cx-label`: `10.5px`, `700`, `0.14em`, uppercase, muted | Rail groups, inspector groups, fact keys, field labels. No `//` prefixes or brackets. |
+| Primary label | Main, `13-13.5px`, `600` | Rows, nav items, file names. |
+| Body / description | Main, `12-12.5px`, muted, `1.35-1.55` line height | One line under a row; hints in drop targets. |
+| Metadata | Mono, `11-12.5px`, muted, tabular | Paths, sizes, times, counts. |
+| Keycap | Display italic `11-12px` inside `.cx-keycap` | Shortcuts. |
 
-These are reference measurements, not universal minimums. Preserve the hierarchy and account for the application UI scale, content length, contrast, and reading context.
+Sentence case for everything except `.cx-display` and `.cx-label`. Truncate metadata before the primary label; long names get a `title` with the full value.
 
-Pseudo-code labels such as `// QUICK START` are appropriate for structural landmarks. Underscores, brackets, command prompts, all-caps tracking, monospace, and orange should not all be applied to the same content by default. Ordinary prose, actions, and object names should read naturally.
+## Units and scaling
 
-## Iconography
+UI Scaling sets `--u`. Size type, spacing, and control geometry as `calc(N * var(--u))` so the user's scale applies, as Home, Settings, and `studio.css` do. Hairlines stay `1px`. Workspace chrome that sits on the 3D scene may use fixed pixels when it must match the viewer.
 
-Use **Lucide** for new product UI. It is the dominant library across Home, Shell, viewers, settings, Variant Builder, and Template Generator. `react-icons/ri` is currently a narrow What's New exception, not permission to mix icon families in new work.
+## Layout topology
 
-Home demonstrates the preferred scale:
+Desktop-first. Structural columns are bounded with `clamp()`; the working column is `minmax(0, 1fr)` and owns its own scroll.
 
-- ordinary row glyphs are typically `16px` inside a `20px` alignment slot;
-- toolbar, metadata, and trailing-action glyphs are commonly `12–14px`;
-- empty-state glyphs remain small, generally around `16–20px`;
-- Shell chrome can be smaller, around `11–13px`, because it is persistent secondary chrome.
+| Surface type | Columns | Reference |
+| --- | --- | --- |
+| Launcher / settings | Rail `clamp(220-250px, 22-24vw, 272-310px)` + main | Home, Settings |
+| Viewer workspace | Dock `clamp(250px, 21vw, 300px)` + stage + inspector `clamp(280px, 23vw, 330px)` | Livery, All, Multi |
 
-Icon slots are alignment devices, not decorative containers. By default they are transparent, borderless, square, and neutral. Increase contrast on hover, focus, active, or selected states. Use orange only when the interaction semantics warrant it.
+- Rails and docks use the rail fill and a hairline on their inner edge. The main column sits on paper.
+- Rails scroll independently; utilities pin to the bottom behind a hairline.
+- The page has no outer padding frame, no floating islands, and no rounded panels around regions. Regions meet at hairlines.
+- Status bars are `28px`, `--cx-frame`, mono counts left, hairline-separated meta right.
+- A workspace can drop to focus mode (stage only) and close its inspector. Collapse columns to `0` in the grid; keep their state.
 
-Avoid coloured rounded-square icon containers, rainbow feature icons, a tinted background behind every glyph, oversized icons, mixed stroke languages, glows, and icon-only controls without accessible names or discoverable labels.
-
-## Surfaces, hierarchy, and containers
-
-Home's coherence comes from hierarchy rather than cardification. Quick Start, Recent Projects, and Context are regions separated by alignment, spacing, and hairline dividers. Their content does not float inside nested cards.
-
-Use this order of operations:
-
-1. establish hierarchy with layout, alignment, type, and spacing;
-2. add a subtle background change for hover, selection, or a distinct workspace region;
-3. add a border only when it communicates structure, grouping, input affordance, or another layer;
-4. use elevation only for overlays or content that genuinely sits above the workspace.
-
-Prefer rows for repeated, scan-oriented content. Use a card only when an item is independently movable, previewable, or conceptually self-contained enough to require a boundary. Do not put a card inside a card to express text hierarchy.
-
-Persistent panels may use structural dividers. Popovers, menus, and dialogs may use a stronger surface and border because they occupy another layer. Shadows are optional there and should remain tight and quiet; main workspace surfaces should generally have none.
-
-The faint masked grid on Home is a rare, low-contrast background texture. It does not justify decorative patterns on every screen. The scanline treatment is explicitly hidden by the canonical Home refinement.
-
-## Rows and list interfaces
-
-Quick Start and Recent Projects share `hp-workbench-row`, which establishes a reusable interaction language even though it is currently page-local rather than a shared React component.
+## State grammar
 
 | State | Treatment |
 | --- | --- |
-| Default | Transparent or base-surface background; neutral icon and secondary copy; no unnecessary outline. |
-| Hover | Subtle neutral surface change. Increase icon and trailing affordance contrast without moving the row. |
-| Selected | Slightly stronger neutral surface plus a restrained orange indicator when useful. Do not flood the row with category colour. |
-| Focus-visible | Clear keyboard outline; Home uses a `2px` orange/foreground mix with a small offset. Focus must remain visible in both themes. |
-| Disabled | Preserve legibility, reduce emphasis, suppress unavailable actions, and expose the disabled state semantically. Do not rely on low contrast alone. |
+| Rest | Transparent. Muted icon and secondary text. |
+| Hover | `--cx-wash`. Rail items also grow a 2px accent (or category) bar at the left edge via `scaleY`. Nothing moves. |
+| Pressed | `--cx-wash-strong`. |
+| Selected / active | Opposite ink. Inner muted text uses `--cx-invert-muted`; inner icon buttons hover with `10%` invert-fg. |
+| Focus-visible | `box-shadow: var(--cx-focus)` on free-standing controls; `inset 0 0 0 2px var(--mg-primary)` on full-bleed rows. Never `outline: none` without a replacement. |
+| Disabled | `opacity: 0.4-0.45`, `cursor: not-allowed`, real `disabled` attribute, and a reason nearby when the reason is not obvious. |
+| Armed | A row whose shortcut is live lights its keycaps (`.is-armed`). |
 
-A typical row may contain:
+Hover-only row actions also show on `:focus-within` and on the selected row.
 
-1. a small neutral icon or state marker;
-2. a primary label;
-3. one concise secondary line;
-4. metadata or a small category label;
-5. trailing time, status, or actions.
+## Controls
 
-Keep columns aligned across rows and reserve space for variable text and trailing actions. Truncate secondary metadata before obscuring the primary label. Hover-only actions must also appear on `focus-within`; on coarse pointers they should remain visible. Selection and activation are separate concepts where the workflow needs both, as Home uses single-click selection and double-click or Enter to open.
+Use the shared primitives before writing a local one. A local variant should change density, not grammar.
 
-The current Home composition is real code, not a proposed API:
+- **Buttons** `.cx-btn`: `32px`, radius `5px`, hairline outline, `12.5px/600`. Variants `.is-primary` (filled accent, one per region), `.is-quiet` (no outline, muted), `.is-danger`. Compact `28px` inside docks and slips. Icons `14px`.
+- **Icon buttons** `.cx-icon-btn`: `28px`, borderless, muted, `15px` glyph. Every one has an `aria-label` and a `title`.
+- **Switch**: the shared `<Toggle>` (`.settings-toggle`). Accent fill when on. Never a checkbox styled as a switch.
+- **Segmented control**: a track on `--mg-input-bg` with a hairline, `3px` padding, `26-28px` segments; the active segment is opposite ink (`.settings-seg`, `.lv-seg`).
+- **Tabs and filters**: text buttons with a `2px` accent underline that scales in on the active item (`.lv-tab`, `.hp-filter`). Counts follow in mono.
+- **Inputs and selects**: `32px`, `--mg-input-bg`, hairline, radius `5-6px`; focus turns the border accent with a `3px` `22%` accent halo. Hex and numeric fields use mono.
+- **Dropdowns**: always `Select` / `SelectTrigger` / `SelectContent` / `SelectItem` from `components/ui/select.jsx`, never a native `<select>` (its OS menu ignores the theme). Adjust width or density with a class on the trigger, not a new menu. Radix items cannot hold `""`, so map an empty choice to a sentinel value. `src/lib/ui-conventions.test.mjs` fails on a native `<select>`.
+- **Sliders**: `4px` track filled with the accent to the value, ink thumb with a paper ring; value in mono, right-aligned, tabular.
+- **Chips** (choice sets like capture angles): `30px` outlined; chosen chips are opposite ink.
+- **Menus and popovers**: `--cx-raised`, hairline, radius `7-8px`, `--cx-shadow-pop`, `30px` items, accent check for the current option.
+- **Dialogs**: `--cx-raised`, radius `8px`, display-caps title, `.settings-primary` / `.settings-secondary` footer actions, `rgba(8,9,11,0.6)` scrim.
 
-```jsx
-className={`hp-workbench-row hp-project-row ${
-  isSelected ? "is-selected" : ""
-}`}
-```
+## Workspace patterns
 
-Reuse its state model or extract it intentionally if multiple screens need it. Do not invent and advertise a `StudioRow` API until such a shared component actually exists.
+These come from the viewer workspace family and apply to any surface built around a 3D or 2D canvas.
 
-## Spacing and density
+### Asset pipeline (dock)
 
-Whitespace establishes relationships; it is not a goal by itself. Cortex should make productive use of a desktop viewport.
+- Steps are `AssetSlot`s: a `23px` step disc in display italic, a hairline joining it to the next step, a `14px/650` title, and an optional trailing switch.
+- An empty step shows a `DropButton`: dashed `1.5px` muted outline, radius `9px`, accent plus glyph, one-line hint, keycaps. Hover turns the outline accent with a `7%` wash.
+- A filled step shows a `FileCard` (name `13px/600`, folder in mono, on `--mg-input-bg`, radius `8px`) with Replace (folder) and Unload (close) as `28px` icon buttons at its right edge. Fact rows about the file follow the card; a row that acts (Saved vehicle) opens in place like a disclosure.
+- A finished step fills its disc with the accent and shows a check.
+- Status notes under a step use a `7px` dot plus one line: accent (ok), confirm (live), caution (warn), destructive (error), muted (idle).
 
-- Keep related labels, controls, and metadata close.
-- Use compact rows and control bars, with larger gaps only between distinct structural regions.
-- Prefer horizontal use of wide space when it improves comparison or keeps the primary workspace visible.
-- Use consistent local rhythm: very small gaps for items within a row, medium gaps within a section, and larger spacing at region boundaries.
-- Avoid hero-scale headers, oversized padding, giant vertical gaps, and empty columns that exist only to make the page look minimal.
+### Viewfinder and slips
 
-Reference measurements from Home—not global mandates—include `48–50px` launch/project rows, `30px` search/filter controls, mostly `6–10px` internal row gaps, `16–20px` region padding, and compact status chrome. Its `23px` trailing row action buttons with `12px` icons are a dense in-row exception, not a universal target-size minimum.
+- The stage fills its column. Anything drawn over the scene sits on a **slip** (`.lv-slip`): `--lv-slip` (frame at 90%), a `--lv-slip-line` hairline, a soft `0 6px 18px` shadow, radius `9-11px`, and no backdrop blur (blur re-samples WebGL every frame). The user picks the backdrop colour, so text never sits on the scene directly.
+- Layout of slips: stage or view switch top-left (opposite-ink segments), alerts top-centre (caution-tinted, with a dismiss or fix action), toasts top-right, camera deck bottom-centre. The stage carries no title; the tab names the file.
+- The camera deck groups shots (`Front`, `Rear`, `Side`, `3/4`, `Top`), framing, and axis rotation; groups split by a slip hairline. Active toggles get a `20%` accent fill. Axis buttons use display italic in axis colours.
+- A drop overlay is the only large accent wash: `10%` accent with a `2px` inset accent ring and a display-caps verb.
+- Container queries hide the legend and move the deck as the stage narrows.
 
-## Radius, borders, and shadows
+### Inspector
 
-- **Radius:** small and controlled. The global `--mg-radius` is `6px`; Home commonly refines rows and controls to `4px` and menus to about `5px`. Use the shape appropriate to the layer without drifting into large SaaS rounding.
-- **Borders:** quiet `1px` structural lines. A border should explain a panel boundary, input, group, selection, or layer—not outline every child.
-- **Shadows:** rare. Home's main workbench uses none. Menus, popovers, dialogs, and transient notices may use modest elevation when a border and surface alone are insufficient.
-- **Pills:** reserve fully rounded shapes for compact statuses, counts, toggles, or values whose shape has meaning. Ordinary buttons, tabs, and containers should not all become pills.
+- Tabs across the top (`InspectorTabs`), then a scroll region of groups separated by `28px`.
+- Each group: a `.cx-label` heading, optional trailing count or action, then rows. Rows are dense: a swatch or icon, a label, a value field, a hover-revealed reset.
+- Empty inspectors say what to select in one line.
 
-## Controls and toolbars
+## Page anatomy
 
-Buttons, search inputs, selects, toolbar actions, toggles, and shortcut hints should feel like one desktop control family.
-
-Controls in the same context should share:
-
-- height and vertical alignment;
-- icon scale;
-- restrained radius;
-- typography and label casing;
-- neutral border/background behavior;
-- hover, focus-visible, active, and disabled treatment.
-
-Home's search and sort controls are `30px` high with `4px` radii, small icons, compact text, subtle neutral surfaces, and orange only in focus/active treatment. Filters use an orange underline instead of filled pills. Secondary toolbar controls remain quieter than the content they operate on.
-
-Primary actions may use a solid orange fill with a fixed high-contrast foreground. Most actions should be neutral, outline, or ghost treatments. Destructive red appears on destructive action or hover—not on unrelated controls. Do not use oversized CTA styling for routine desktop actions.
-
-Keyboard hints should be compact, right-aligned where useful, and visually subordinate. A plain mono hint is usually preferable to a box around every shortcut.
-
-Toggles must communicate both current value and interactivity. Use a compact track/thumb or an established segmented treatment, preserve a visible focus state, and do not use success colour merely because a setting is on.
-
-## Panels and inspectors
-
-Inspectors are structural workspace regions, not giant cards. The Home Context region demonstrates the expected hierarchy:
-
-- a quiet structural heading;
-- selected-object identity with a small neutral icon and optional category label;
-- dense label/value fields;
-- subtle separators between summary, fields, and actions;
-- primary action at the natural edge of the workflow;
-- a minimal empty state when nothing is selected.
-
-Inspectors should normally be quieter than the main workspace. Give them stronger emphasis only for errors, required decisions, or a deliberate focused-editing mode. Use bounded widths for stable tools and leave the main canvas or list fluid. If a panel can collapse or move at narrower widths, preserve selection and context while it does so.
-
-An empty inspector should not contain a second dashboard, tutorial, illustration, or promotional panel. Say what must be selected and, only when useful, how to do it.
+- Launcher and settings pages name themselves once in display caps (Home focus name, Settings content title). Workspaces leave the name to the tab and give the space to the asset. Never add a header band, a kicker, or a `// PAGE NAME` eyebrow.
+- The frame context slot (`.shell-context`) carries panel toggles and, at most, page-level view switches. Workflow controls live in the page where the user is looking.
+- Tool surfaces open on the usable tool. An empty state lives inside the real layout (empty pipeline steps, an empty stage message) rather than replacing the page with a hero.
 
 ## Empty, loading, and error states
 
-Ordinary empty states should have low visual weight:
+- Empty: one short title, one line of help, one action. Muted icon at `16-20px` only if it helps recognition. No illustrations, rings, or icon tiles.
+- Loading: keep the layout; say what is happening ("Loading model…", "Building template…"). A thin accent progress bar for measurable work.
+- Error: name the failed operation and the file or format, use destructive colour for the text or icon only, and offer the recovery action. Partial writes are reported as partial.
+- Success after a write: a confirm-coloured check and the destination path in mono, so the user can open it.
 
-- one concise title;
-- one short explanation;
-- a small neutral icon only when it improves recognition;
-- one relevant next action, with secondary actions only when genuinely useful.
+## Frame and status
 
-Home's empty Recent area uses a small terminal icon, short copy, and compact actions; its empty Context uses a small information icon and two brief lines. These states do not need coloured icon boxes, illustrations, huge cards, or long onboarding prose.
-
-Loading states should preserve the surrounding layout and indicate what is happening. Errors should identify the failed operation, use destructive colour only for a real error, and provide a recovery action when possible. Avoid replacing a dense workspace with a dramatic full-page state for ordinary no-selection, no-results, or hidden-content conditions.
-
-## Desktop chrome and status bars
-
-Application chrome should resemble IDE and native-tool chrome, not website navigation or a footer. [`src/Shell.jsx`](src/Shell.jsx) demonstrates a compact `36px` unified toolbar with tabs, context actions, and window controls.
-
-- Keep persistent chrome compact, stable, and lower-emphasis than workspace content.
-- Use neutral icons and surfaces; orange may identify the active tab or meaningful active state.
-- Align status text, counts, and separators consistently.
-- Use tabular numerals for changing counts or time values when alignment matters.
-- Protect Tauri drag regions: interactive controls must remain explicitly non-draggable.
-- Do not turn the status bar into a collection of badges or a website footer.
-
-Home's footer status is a useful model: short mono status, compact project counts, hairline separators, and a quiet shortcut hint.
+The Shell frame is `36px` on `--cx-frame` with tabs, the context slot, feedback, settings, and window controls. Tauri drag regions stay on spacers; every control is `-webkit-app-region: no-drag`. Page status bars follow the Home footer: `28px`, mono, hairline separators, no badges.
 
 ## Motion
 
-Motion explains state, continuity, or layer changes. It is not decoration.
+- Default `140ms` with `--cx-ease` (`cubic-bezier(0.2, 0.8, 0.2, 1)`) on named properties. Indicators (underline, hover bar, switch thumb) `160-180ms`. Dialogs and menus `120-180ms`.
+- Motion explains a state change: an indicator arriving, a panel opening, a step completing. Nothing loops except a real recording or busy indicator.
+- No hover displacement on rows or controls. Small icon nudges on rail items are the only exception.
+- `prefers-reduced-motion: reduce` removes transitions and animations while keeping state visible.
+- `forced-colors: active` maps selection to `Highlight` outlines and keeps focus visible.
 
-Home's canonical row and control feedback is roughly `120–140ms` with explicit colour/opacity properties. Its sort menu opens in about `120ms`; the New Project modal uses about `180ms`. These are useful reference ranges for frequent desktop interactions. The slower first-empty-state entrance is an occasional introduction, not a default for every region.
+## Responsive behaviour
 
-- Prefer short, interruptible opacity, colour, and small transform transitions.
-- Do not move rows or controls on hover.
-- Use overlay entrance/exit motion to clarify layering and origin.
-- Avoid `transition: all`; name the properties that change.
-- Avoid bounce, large scale changes, animated gradients, perpetual decoration, and staggered entrances for routine content.
-- Respect `prefers-reduced-motion`. Home reduces transition duration to effectively immediate while preserving state meaning.
+Choose breakpoints from content. Reference behaviour:
 
-## Responsive desktop behavior
+- Home: under `1100px` the focus actions move below the file strip; under `700px` tall the slate tightens and drops file folders; under `900px` the rail narrows to `212px` and drops descriptions and keycaps.
+- Settings: sections pair side by side when each can be `460px` wide.
+- Workspaces: container queries on the stage hide the legend under `820px` and dock the deck left under `680px`.
 
-Cortex Studio is desktop-first, not mobile-first, but resize behavior is product behavior. Do not build for one screenshot-perfect viewport.
+At every supported size: no horizontal page overflow, primary controls visible, secondary metadata truncates first, selection and recovery paths survive reflow.
 
-Layouts should:
+## Code organisation
 
-- work at expected desktop dimensions and the supported minimum window size;
-- protect the primary workspace with `minmax(0, 1fr)`, deliberate overflow, and bounded secondary regions;
-- reflow before content collides or creates accidental horizontal scrolling;
-- move, collapse, or constrain secondary information before sacrificing the primary task;
-- preserve selection, controls, and recovery paths after reflow;
-- shorten or hide truly secondary metadata only when necessary.
-
-Home demonstrates the policy rather than prescribing global breakpoints: near `1120px` its Context inspector moves below the main columns; near `820px` project header controls reflow; near `740px` regions stack and the page scrolls; near `520px` secondary time/footer information is reduced. New screens should choose breakpoints from their content, using the same deliberate degradation.
-
-## shadcn/ui and shared primitives
-
-The components in [`src/components/ui/`](src/components/ui/) use shadcn/Radix composition patterns. They are an implementation foundation, not Cortex Studio's design language.
-
-- Reuse or compose an existing primitive when it cleanly supports the interaction.
-- Apply semantic Cortex tokens and local composition so the result matches Home.
-- Do not copy stock shadcn examples verbatim or let their default spacing, rounding, cards, and typography dictate the product.
-- Do not create a bespoke input, select, button, or toggle merely to avoid adapting an existing primitive.
-- Do not globally restyle a shared primitive without auditing every consumer; several current primitives still contain hard-coded dark/white defaults and rely on caller overrides.
-- Prefer a scoped variant or composed component when only one workflow needs a different density or surface.
-- Do not force an existing primitive onto an interaction it cannot represent accessibly or clearly.
-
-[`src/components/ContextMenu.jsx`](src/components/ContextMenu.jsx) is similarly a shared behavior layer: preserve its Radix semantics and portal positioning while matching the Cortex surface, density, and focus language.
-
-## Adding or changing UI
-
-Before inventing a visual pattern:
-
-1. inspect the rendered Home page;
-2. inspect `HomePage.jsx` and the final Home refinement block in `src/index.css`;
-3. inspect the closest existing Studio workflow and shared primitive;
-4. reuse an existing pattern if its interaction model fits;
-5. compose or add a scoped variant when the primitive fits but the presentation does not;
-6. create a new pattern only when the interaction genuinely requires one;
-7. verify desktop and narrow-window rendering, keyboard focus, theme behavior, overflow, and reduced motion.
-
-New UI must match the application's density, type hierarchy, icon scale, surface treatment, interaction feedback, colour discipline, radius, and spacing rhythm. Consistency means a shared vocabulary, not identical page layouts. Do not force rows onto a visual canvas, cards onto a dense list, or one panel arrangement onto every workflow.
-
-When a new pattern is justified, define its states and semantic role first. Keep page-specific tokens scoped. Promote a component or token to shared infrastructure only after at least two real consumers demonstrate the same contract.
+- Shared primitives and roles live in `src/studio.css`. Promote a pattern there only after two real consumers share its contract.
+- Each surface owns a stylesheet next to its component with its own class prefix: `hp-` Home, `settings-` Settings, `lv-` viewer workspaces. New surfaces follow suit and import their CSS from the component. Do not add new page styles to `src/index.css`.
+- Viewer-style surfaces should compose `src/components/workspace/parts.jsx` (`AssetSlot`, `FileCard`, `DropButton`, `DeckButton`, `InspectorTabs`, `Slider`, `SelectField`) rather than re-implement them.
+- Icons are Lucide, stroke-based, `14-16px` in rows and controls, `15-16px` in deck buttons, `18px` on Home rail modes.
+- Use Radix-based `ui/select` and `ContextMenu` for menus that need portals; style them with the raised-surface tokens.
 
 ## Avoid
 
-Do not introduce these patterns into new Cortex Studio UI:
-
-- decorative colour gradients, animated gradients, glassmorphism, glow, bloom, or neon effects;
-- excessive or layered shadows;
-- oversized rounded cards, nested cards, floating islands, and dashboard stat-card grids;
-- coloured rounded-square icon boxes, rainbow feature icons, or tinted backgrounds behind every icon;
-- giant headings, hero layouts, marketing whitespace, and unnecessarily tall controls;
-- large empty-state artwork, decorative illustrations, or dramatic layouts for ordinary empty conditions;
-- floating decorative bubbles, ambient particles, scanlines, or visual noise;
-- arbitrary entrance animation, bouncing controls, hover displacement, and excessive scaling;
-- excessive pills, badges, borders, and rounded containers;
-- terminal syntax on every label: prefixes, brackets, underscores, uppercase, tracking, monospace, and orange must not become one universal treatment;
-- semantic colours used as decoration or category colours used as status;
-- low-contrast text, invisible focus, hover-only actions, or placeholder-only labels;
-- generic SaaS layouts, generic AI dashboards, colourful launchers, gaming HUD styling, and marketing-site composition;
-- blindly copied shadcn examples or a different component-library aesthetic for each feature;
-- a new aesthetic per workflow.
-
-CSS gradients used only to draw a subtle hairline grid or mask are an implementation technique, not permission for gradient-filled surfaces. Existing legacy effects elsewhere in the stylesheet are not precedent.
+- Accent washes for selection, coloured icon tiles, rainbow categories, or status colours used for variety.
+- `// LABEL` eyebrows, bracketed or underscored pseudo-code labels, monospace prose.
+- Display caps on buttons, descriptions, or long text; uppercase sentences.
+- Cards inside cards, rounded panels around regions, dashboard stat grids, hero empty states.
+- Glow, gradients as fills, glassmorphism, backdrop blur over WebGL, scanlines, particles.
+- Fake controls: sliders, toggles, or menus not wired to real state.
+- Hard-coded theme colours, `transition: all`, hover-only actions with no keyboard path, invisible focus.
+- Copying stock shadcn spacing and radii, or inventing a new aesthetic per workflow.
 
 ## Review checklist
 
-Before merging visual work, confirm:
-
-- the primary task and focal region are obvious at a glance;
-- Home was used as the visual reference and any divergence is interaction-driven;
-- most of the interface remains neutral and orange has a specific job;
-- category colour appears once, not on icon, background, border, and label together;
-- repeated scan-oriented content uses rows rather than independent cards;
-- icons are Lucide, small, neutral, and not placed in coloured boxes;
-- primary, secondary, metadata, shortcut, and status text are visibly distinct without terminal decoration everywhere;
-- controls in the same toolbar share dimensions and feedback;
-- panels feel structural and empty inspectors remain minimal;
-- hover, selected, focus-visible, disabled, loading, empty, error, and overflow states are covered where relevant;
-- the layout reflows deliberately at narrower desktop widths without accidental horizontal overflow;
-- light and dark themes, keyboard navigation, contrast, and reduced motion have been checked;
-- no global primitive restyle creates unrelated regressions.
-
+- One leading task and focal region; display caps used for identity and figures only.
+- Selection is opposite ink everywhere on the surface; the accent appears only where it has a job.
+- `.cx-label` headings, sentence-case labels, mono metadata; no `//` eyebrows.
+- Shared primitives and workspace parts used where they fit; local CSS is scoped to the surface prefix.
+- Every control changes real state; disabled controls explain why.
+- Empty, loading, error, partial-write, and success states designed and reachable.
+- Light and dark in at least two presets; UI scaling via `--u`; reduced motion and forced colours.
+- Minimum window width checked: no horizontal overflow, nothing clipped.
+- Browser render is not Tauri proof: native dialogs, writes, and watches verified in `bun run tauri dev` when touched.

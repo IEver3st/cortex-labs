@@ -1,0 +1,170 @@
+---
+title: EUP Studio
+description: Preview clothing on the freemode peds, and stage any game ped or your own ped with its own props and animations.
+---
+
+Open **EUP Studio** from Home, the new-tab menu, or **Alt + 7**. Cortex reads the freemode assets from your installed GTA V files and dresses a freemode ped with your clothing.
+
+The page uses the same layout as Livery: a numbered pipeline on the left (**Clothing**, **Character**, **Pose**, **Addon pieces**, **Outfit**, with **Export** pinned below), the ped in the middle with the camera deck, and an inspector on the right with **Clothing**, **Body**, **Scene**, **Export** and **Issues** tabs. The frame buttons hide the panels or the inspector.
+
+## Clothing
+
+**Open an EUP folder** scans a resource, including subfolders. **Add files** accepts individual `.ydd` drawables and `.ytd` texture dictionaries. Addon names such as `mp_m_freemode_01_pack^task_004_u.ydd` and base names such as `task_004_u.ydd` are supported. Each gender keeps its own outfit selection.
+
+Several packs can be loaded at once, such as a server's hair pack and its clothing packs. Every pack numbers its files from `000`, so in each slot a pack's drawables follow the previous pack's, as they do on a server: files without a pack name first, then each pack in the order its folder was added (files inside a folder in name order). A drawable's tooltip shows its own file name.
+
+Select a drawable number in the **Clothing** tab, then choose its texture variant. Selecting the active drawable again returns that slot to the base outfit. Hats, glasses, earrings and wrist props attach to the ped's corresponding bones.
+
+## Addon pieces
+
+**Add addon pieces** takes any number of `.ydd` files, whatever they are named, and wears them together on the ped: a vest, a duty belt and a helmet from different resources, for example. Each piece:
+
+- Gets a slot from its name: a stream name (`jbib_003_u.ydd`), a slot code, or a common word such as *vest*, *pants* or *helmet*. Change it with the slot menu.
+- Uses a texture found next to it when one exists: the GTA texture name for a stream-named drawable, otherwise a `.ytd`, `.psd`, `.png` or `.dds` with the same name. **Choose** picks another `.ytd` or an image; a PSD or PNG is used as the diffuse, so you can paint it and watch it update.
+- Belongs to the ped named in its file or folder, or to the ped selected when you added it.
+
+A ped wears one piece per slot, as in game. Wearing a piece takes its slot from the pack and base clothing, and picking a pack drawable for that slot takes the piece off. The switch on each piece takes it on or off without removing it. Live reload covers pieces and their textures too. Saved outfits remember which pieces they wear, and the Lua copy writes a piece with the drawable number in its stream name; a piece without one is written as a commented line to fill in.
+
+## Player hair and clothing
+
+Addon packs you load also extend the **Base body** numbers in the **Body** tab, so a player's custom hair and clothes can be worn the way a server numbers them. After the game's own clothing, each loaded pack adds its drawables in the order above, and the slot shows the pack's name where a number comes from it. Custom hairstyles take the **Hair colour** and highlight like the game's hair, and hats crush them the same way.
+
+The numbers match a server that runs the same game build and loads the same packs in the same order. Add the clothing resources in your `server.cfg` order to line them up. Only addon-named files count: base names such as `hair_005_u.ydd` replace a game file in game rather than adding a drawable.
+
+## Character and skin tone
+
+Choose **Male** or **Female** in the **Character** step for the freemode peds your clothing is made for, or **Game ped** or **Ped files** for any other ped (see [Custom characters](#custom-characters)).
+
+**Skin tone** recolours the head and arms. The game's freemode body ships light-skin textures only and sets skin tone from the character's heritage in game, so each tone matches the skin colour of the game's own heritage faces rather than a separate game texture.
+
+**Race textures** appears when your clothing ships race variants (for example `_bla` or `_chi` textures for `_r` drawables) and picks which one to show.
+
+## Custom characters
+
+**Game ped** searches every ped in your GTA V files by name, such as `s_m_y_cop_01`, `a_f_y_hipster_01` or `player_zero`; pick one to put it on the stage. The first search indexes the game files and can take a minute. **Ped files** opens your own ped: a folder (subfolders are read too) or the files themselves. Cortex needs the ped's `.ymt` and `.yft`, and reads its drawables and textures whether they are one `.ydd` and `.ytd` for the whole ped, one file per drawable in a folder named after the ped, or FiveM stream names such as `my_ped^uppr_000_u.ydd`. When the files hold more than one ped, Cortex asks which one to use. When they hold two copies of one file, such as one in a `backup` folder, Cortex uses the copy nearest the folder you opened and the **Character** step names both. A subfolder Windows won't let Cortex open is left out with a note. Your files are only read.
+
+The **Body** tab then lists the ped's own components. Each one wears a drawable from the ped's variations file, numbered as there, and a texture letter when it has several. A drawable the variations list but your files don't include is marked **Not in the files**. **Character props** lists the hats, glasses, earrings, watches and other props the ped has, by the bone they hang from: each is off until you show one, then steps through the ped's props for that anchor. Hand-held props stay in the **Pose** step.
+
+Poses, custom clips and held props work on custom characters as on the freemode peds, since human peds share the freemode skeleton's bones. A clip made for another skeleton, such as a human walk on a dog, isn't played: the character keeps its rest pose and the **Pose** step says how many of the clip's bones the ped has. A dog or other animal plays clips made for it.
+
+EUP clothing, addon pieces, saved outfits, the Lua copy, colourway sheets and thumbnails are for the freemode peds and say so while a custom character is on stage; your loaded packs and worn pieces stay for when you switch back. Skin tone and hair colour apply to the freemode peds only, because other peds' textures carry their own colours. **Import character…** always switches back to the freemode ped.
+
+Each character remembers its choices for the last 16 peds it wore. A session restores the ped and its choices; if your ped's files moved or were deleted, the **Character** step says which are missing and offers **Locate…** to pick them again or **Remove** to go back to the freemode ped. After editing your ped's files, **read them again** in the same step.
+
+## Pose and props
+
+The **Pose** step picks how the ped stands: **A-pose** (the game's bind pose), **Idle**, **Walk**, **Hands on belt**, **Arms crossed**, **Hands clasped** or **Custom**. Poses are GTA V animations read from your game files, with the female versions where the game has them, and they play on every slot, including your clothing and the props. **Walk** plays in place while the floor moves underneath, as if the ped were walking straight ahead. The timeline under the pose plays or pauses the clip and shows the frame and time; **Space** and the pause button on the camera deck do the same. Drag the scrubber to pick a frame: the animation pauses there, and with two characters both move to that time. Play at **0.25×**, **0.5×**, **1×** or **2×**, and turn **Loop** off to stop on the last frame; play again starts from the beginning. The session remembers the speed, the loop setting and the frame you paused on. **Save this view**, shots, colourway sheets and thumbnails use the paused frame.
+
+**Custom** plays any clip you choose:
+
+- **Game files** searches every animation dictionary in your GTA V install by name (for example `cop_idles` or `cellphone@`). Pick a dictionary, then one of its clips. The first search indexes the game files and can take a minute.
+- **My .ycd** opens your own animation dictionary, such as one exported from Sollumz or taken from a resource, and lists its clips. With **Reload when files change** on, exporting a new version reloads the clip by itself on the frame you were watching; **Reload** reads the file again by hand. The file is only read, never changed.
+
+Clips that move the ped forward play in place with the floor scrolling underneath, like **Walk**. Animations play on the ped's skeleton only: facial animation, the game's helper-bone expressions and the clip's own prop tracks are not played.
+
+**Props** hangs up to four models from the ped's bones, the way a FiveM script attaches a phone or clipboard with `AttachEntityToEntity`. **Game prop** searches the drawables (`.ydr`) in your game files; **From file** opens your own `.ydr`, `.ydd` or `.yft`. Each prop picks a bone (the hand prop points `PH_R_Hand` 28422 and `PH_L_Hand` 60309, the hands, head, chest, pelvis, or any bone ID) and an offset in metres and rotation in degrees in that bone's space, so the numbers from an emote menu's `PropPlacement` or an `AttachEntityToEntity` call carry over. Props follow the animation and appear in shots and videos. They don't count toward the floor or camera framing.
+
+To place a held prop by eye, press the move button on its row, or click the prop in the viewfinder, and drag the gizmo; **G** switches it to moving and **R** to turning on any axis. Letting go writes the new offset and rotation into the prop's fields. The rotation can come back as different numbers that give the same angle. A prop whose bone isn't on the ped's skeleton is hidden and can't take the gizmo until you pick a bone the ped has.
+
+**Paste an emote line** under **Custom** reads an emote menu entry (`{"dict", "clip", "Label", AnimationOptions = { Prop = ..., PropBone = ..., PropPlacement = {...} }}`, including `SecondProp`), a `TaskPlayAnim` call or an `AttachEntityToEntity` call, and sets the clip and its props in one step. Prop placement matches the game's default rotation order; the preview does not run the game's collision or physics on props.
+
+## Two characters
+
+**Characters** at the top of the dock adds a second ped beside the first: pick **Male** or **Female**, then switch it to a game ped or your own in the **Character** step if you like. Characters A and B stand side by side on one stage and keep their own ped, pose, skin tone, hair, body preset, generated outfit, pack clothing, base overrides and worn addon pieces.
+
+Click a character's row, or click the character in the viewfinder, to edit it. The Character step, the Clothing, Body and Export tabs, saved outfits, the Lua copy and thumbnails all follow the character you are editing. The clothing folders, the addon piece files and the saved outfit list are shared, so either character can wear any piece or apply any outfit for its ped. Hide and solo apply to the edited character and reset when you switch.
+
+Camera presets frame both characters, except **Head**, which frames the edited character. Shots and videos capture the stage as framed. The floor only scrolls under a walk when both characters walk. Remove either character with its **×**; removing A moves B into its place.
+
+## Import a character
+
+**Import character…** in the **Character** step dresses the freemode ped as a character you saved in FiveM, so you can photograph your own character in the studio.
+
+- **FiveM saves on this PC** lists the custom characters and saved peds that vMenu keeps in FiveM's storage (`%AppData%\CitizenFX\kvs`), including admin menus that save in vMenu's format; each row names the resource it was saved under. Cortex only reads that storage. While FiveM is running it holds the newest saves open, so characters saved since it started may be missing until you close it and refresh.
+- **Code or file** takes a vMenu Enhanced transfer code (**Misc Settings, Import & Export, Show My Transfer Code**, starting `VME1`) or a saved character's JSON. A character with several outfits lets you pick one.
+
+Before you wear a character, the dialog lists what carries over and what doesn't. Wearing it sets the ped, its clothing and texture variants, its hat, glasses, earrings, watch and bracelet, the face of its closer heritage parent, the matching skin tone and the hair colours. It also takes off your pack clothing and addon pieces for that ped; pick them again to wear them over the character.
+
+Clothing numbers depend on the server's clothing packs. A save that records which DLC or server pack a piece came from (vMenu Enhanced does) is matched to that pack in your game files or your loaded packs, whatever order they load in. A plain number past the game's own clothing is looked up in your loaded packs in the order you added them, and the dialog says so. A number past those, or a pack you haven't loaded, stays on the base ped and the dialog says why, rather than showing a different drawable. To show a player's custom hair and clothes, open the server's clothing resources in the **Clothing** step before importing. Blended faces show one parent, and face shape sliders, beards, eyebrows, makeup and tattoos are not shown. Saved peds of other models are counted but not listed, because EUP Studio dresses the freemode peds only.
+
+### Menyoo outfits and LSPDFR characters
+
+**Open a file…** under **Code or file** reads a Menyoo outfit `.xml` (Menyoo saves them in `menyooStuff\Outfits` next to GTA V), a Menyoo Spooner `.xml` with peds in it, or a vMenu code or JSON saved as a file. A Menyoo outfit carries its clothing and props, its parent faces, and its hair style and colours.
+
+LSPDFR keeps characters in `lspdfr\chars` as `.ls` files, with a `.bak` backup copy. LSPDFR encrypts these and doesn't publish the format, so Cortex can't read them; opening or pasting one says so. To bring an LSPDFR character over, go on duty or off duty as that character in GTA V, save the outfit in Menyoo's wardrobe, and open that `.xml`.
+
+## Scene
+
+The **Scene** tab and the switch at the top-left of the viewer choose the stage. **Workbench** shows your backdrop colour with the ground grid and shadow from the deck. **Showroom** puts the ped in a dark studio on a reflective floor under one spotlight aimed at the chest: light the ped from the top, front, back or either side (directions are the ped's own), set its strength, the floor reflections and the visible beam, pick a **Concrete**, **Polished**, **Tiles**, **Marble**, **Checker**, **Epoxy**, **Asphalt**, **Wood** or **Tread plate** floor, and add a **Rim light** from behind to separate a dark uniform from the background. **Fill light** sets the overall light level on both stages.
+
+### Props on set
+
+**Props on set**, at the top of the **Scene** tab, stands props on the floor around the characters: cones, barriers or a desk. **Game prop** searches the drawables (`.ydr`) in your game files; **From file** opens your own `.ydr`, `.ydd` or `.yft`, which is only read, never changed. A new prop stands on the floor beside the characters with its textures, and the set holds up to 24.
+
+Click a prop in the list or in the viewfinder to select it, then drag the gizmo: **Move** (**G**) slides it across the floor or lifts it, and **Turn** (**R**) turns it about its upright axis, so it never tips over. **Placement** below the list takes exact numbers: **X** and **Z** across the floor and **Lift** above it in metres, and **Turn** in degrees. **Put on the floor** drops a lifted prop back down. **Esc** lets go of the prop. Each row can hide, duplicate or remove its prop; **Delete** removes the selected one, and **Undo** under the list, or **Ctrl + Z**, brings back the last prop you removed.
+
+The session remembers the set. If a prop's file has moved when the session opens, its row says so: **Locate…** points it at the file and keeps its spot, **Remove** takes it off the set. A prop that fails to load says why, with a retry button, and **Locate…** for your own files. With **Reload when files change** on, saving a prop's file reloads it in place.
+
+Props on set appear in **Save this view**, shots, colourway sheets and videos, but not in batch thumbnails, and the gizmo never appears in a capture. The camera presets and the stage frame the characters only, so a prop far from them can sit outside a shot, the Showroom floor and spotlight, and the key light's shadow, which reach about 3 m around the characters. While any prop is visible the floor stays still under **Walk** and other moving clips, so the props don't slide. Props have no collision or physics.
+
+## Live reload
+
+With **Reload when files change** on, Cortex watches the folders and files you added, a custom `.ycd` in use, and the files of props on set. Saving a `.ydd` or `.ytd` in another tool reloads that slot in place; the previous version stays on screen until the new one is ready. New or deleted files update the component list. The refresh button on the Clothing step reloads everything manually.
+
+## Inspecting a slot
+
+A loaded pack drawable shows its triangle, vertex and mesh counts, the size, format and mip count of its diffuse and normal textures, and the `.ydd` and `.ytd` file sizes. Cortex warns when a texture is larger than 2048 px, not a power of two, has no mipmaps, or is uncompressed. These are streaming advisories; the game still loads the file.
+
+Use the eye button to hide a slot and the focus button to show only that slot. Hiding or showing only one slot never reloads anything; a note on the viewfinder shows what is hidden, with a button to show everything again.
+
+## Keyboard
+
+The focused component has a blue marker. Click a component to focus it, then:
+
+| Key | Action |
+| --- | --- |
+| Left / Right | Previous or next drawable. Stepping past either end returns the slot to base. |
+| Up / Down | Previous or next texture variant |
+| H | Hide or show the slot |
+| S | Show only the slot |
+| F | Frame the current camera shot |
+
+For props on set and held props, selected in the list or the viewfinder:
+
+| Key | Action |
+| --- | --- |
+| G | Move the prop with the gizmo |
+| R | Turn the prop with the gizmo |
+| Delete | Remove the selected prop on set |
+| Esc | Let go of the prop |
+| Ctrl + Z | Bring back the last prop removed from the set |
+
+## Base body
+
+The **Body** tab dresses the ped underneath your clothing. **Body presets** set a game face, the matching skin tone, a base-game hairstyle and a hair colour in one click. The **Outfit generator** dresses the slots under your clothing in base-game clothing for a style, for the male or female ped. Everyday styles (Casual, Streetwear, Smart casual, Business, Workwear, Athletic, Cold weather) mix a top, bottoms and shoes, sometimes with a hat, glasses or a watch, and every top brings the arms and undershirt the game pairs with it. Service styles (LSPD patrol, Sheriff, Highway Patrol, Park Ranger, SWAT, Corrections, Detective, FIB agent, Security, Military, Coast Guard, Pilot) start from the game's own uniform outfits and vary the season, tie and hat. GTA V has no sheriff patches, so the Sheriff uniform is plain, and the game's ranger trousers and cap exist only in GTA V Enhanced, so rangers wear the game's Moss Cargo without a cap. Press a style again for another outfit. The generator uses only clothing your install has and needs the desktop app. Your clothing still wins in any slot it fills, and you can change any slot afterwards. **Hair colour** sets the hair and highlight colours, like the game's hair colour options; pick a swatch or a custom colour. A hat flattens the hair under it the way the game does, using the game's own hair crush for base-game hats; pack metadata isn't read, so every hat in the hat slot crushes the hair the same way, including headsets placed there. Each slot below, such as arms, undershirt, trousers or hair, shows the game drawable it wears: step through with the arrows (or the Up and Down keys in the number field) or type a number, and pick a texture letter when the drawable has several. Numbers match the game, including DLC clothing: Cortex counts the base ped's drawables first and then each DLC pack in the order the game loads them, skips numbers without a drawable, and shows which pack a number comes from. Clothing authors choose compatible torso and undershirt combinations; Cortex does not infer them. **Game props** below adds a base-game hat, glasses, earrings, watch or bracelet: each is off until you show it, then steps through like the slots above; your pack props and addon pieces still win. **Reset outfit** in the Clothing tab restores the base ped for the selected gender.
+
+## Outfits
+
+Type a name in the **Outfit** step and save to keep the current pack selection, base slots and worn addon pieces for this ped; saving with an empty name after generating an outfit uses the style and outfit name. Saving with an existing name replaces that outfit. Saved outfits belong to the app, not the session: every EUP Studio session lists them, and outfits saved in sessions from earlier versions are gathered the first time this version opens. Up to 64 outfits are kept per ped. Click an outfit to wear it. Pack clothing is found by its file, so an outfit still finds a drawable when the pack loads in a different order; slots whose file isn't loaded fall back to base, and Cortex names the missing files.
+
+The copy button turns an outfit into Lua using `SetPedComponentVariation` and `SetPedPropIndex`. Head and hair base slots are left out so the player's character keeps them. Pack drawables use their number in the **Clothing** step: in game, addon drawables come after the ones the game and earlier clothing packs register for that slot, so add that offset before using the ids on a server. Base slots worn from a loaded pack are written with their in-game number and the pack's name; they hold on a server that loads the same packs in the same order.
+
+## Export
+
+**Export…** below the pipeline opens the **Export** tab. Shots, videos and colourway sheets render the live scene: the stage you picked (Workbench or Showroom), its lights, the pose, skin tone, hair and props on set. While the tab is open, a frame on the viewfinder shows what **This view** captures for the chosen format: 4:5 (1080 × 1350), 1:1, 16:9 or 9:16. Name the files in **File name**; it defaults to the outfit.
+
+- **Shots** saves one PNG per angle into a folder: **This view** as framed on the viewfinder, plus **Front**, **3/4**, **Side**, **Back** and **Head**, which frame the ped automatically. All shots use the same frame of the pose. **Double size** renders up to 4096 px on the long edge. **Transparent background** drops the floor and backdrop on the Workbench; the Showroom always keeps its room. Cortex asks before replacing files that already exist.
+- **Video** records 4, 8 or 12 seconds at 30 fps in real time. **Turntable** circles the ped once from the current view; **Fixed** holds it. A playing pose keeps playing, and **Walk** moves the floor. Videos save as MP4 where the system can encode it, otherwise WebM.
+- **Colourways** renders every texture of one pack drawable you are wearing, in the current view, into a single PNG sheet, optionally labelled with each texture letter. The drawable list shows worn pack drawables with two or more textures.
+
+**Batch thumbnails…** in the same tab renders each drawable on its own into PNG files named like `male_jbib_003_a.png`. Choose all components or the focused one, the first texture or every variant, 256, 512 or 1024 px, a three-quarter or front angle, and a transparent or viewport-coloured background. Props use the ped skeleton for their anchor bone, so let the ped finish loading first. When the export finishes, the dialog shows the folder and can open it.
+
+Cortex asks before replacing files that already exist in the chosen folder. A drawable that fails to render is listed at the end without stopping the batch; a folder that refuses writes stops it.
+
+**Save this view** saves a PNG of the viewfinder exactly as framed. Camera shots include front, back, sides, head and full body.
+
+## Issues
+
+**Issues** lists naming problems, duplicates, missing drawable or texture pairs, skipped texture variant letters (in-game texture ids are contiguous), and texture dictionaries over 16 MB.
+
+EUP Studio previews game animations, geometry and textures. Cloth physics, the game's helper-bone expressions, face customization and FiveM scripts are not simulated, so tight sleeves can crease slightly differently than in game. The desktop app and readable GTA V files are required for the base ped and for poses. Standalone uniform texture editing remains available in the **EUP** workspace.

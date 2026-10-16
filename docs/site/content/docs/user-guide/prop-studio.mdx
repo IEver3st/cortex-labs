@@ -1,0 +1,67 @@
+---
+title: Prop Studio
+description: Preview props with their textures, emissives and their own lights, and export images of them.
+---
+
+Open **Prop Studio** from Home, the new-tab menu, or **Alt + 8**. Opening a `.ydr` with Cortex Studio from Windows also opens it here. Prop Studio needs the desktop app: it reads models through the CodeWalker bridge.
+
+The page uses the same layout as the other viewers: the files on the left (**Model**, **Textures**, with **Export** pinned below), the prop in the middle with the camera deck, and an inspector on the right with **Model**, **Light**, **Scene** and **Info** tabs.
+
+## Opening a prop
+
+**Open a prop** takes a `.ydr` (a single drawable, the usual prop), a `.ydd` (a drawable dictionary) or a `.yft` (a fragment, including breakable props and vehicles). You can also drop the file on the viewfinder. Dropping a `.ytd` adds it as a texture dictionary.
+
+Textures are found the way the game finds them:
+
+- a `.ytd` next to the model with the same name (`prop.ytd`, `prop+hi.ytd`);
+- the texture dictionary named by the prop's archetype in a `.ytyp` in the same resource, which is how most prop packs share one `.ytd` between many props;
+- that dictionary's parents and the same names in your GTA V files;
+- textures embedded in the model.
+
+**Add a texture dictionary** covers anything still missing: Cortex fills textures the model couldn't find from it by name. It never replaces a texture that was found.
+
+If the bridge can't read a model, Prop Studio falls back to its built-in parser and shows the geometry only, without textures, lights or LODs, and says so under the model.
+
+With **Live reload** on, saving the model, a `.ytd` or a `.ytyp` in its folder reloads the prop and keeps the camera where it is. The reload button on the Model step does the same by hand.
+
+## Model tab
+
+- **Shading**: **Textured** shows the prop's own materials. **Clay** shows the form without textures. **Normals** colours surfaces by direction, which shows flipped faces. **UV check** lays a checker over the first UV set; a red ramp runs along U and a green ramp along V, so mirrored or rotated islands stand out.
+- **Level of detail**: shows the High, Medium, Low or Very low LOD. A drawable without the chosen LOD shows its nearest more detailed one.
+- **Drawable**: for a `.ydd` or a fragment with several drawables, shows one or all of them.
+- **Materials**: one row per shader and colour texture, with a switch to hide it. Emissive materials are marked.
+- **Presentation**: the turntable and its speed, the GTA origin with its axes (X red, Y green, Z blue, in the game's own space, useful for attach offsets), and a bounding box with the prop's size in the viewfinder.
+
+The **X**, **Y** and **Z** buttons on the deck turn the prop a quarter turn for viewing; the reset button returns it to its authored orientation. Turning never changes the file or the sizes shown.
+
+## Light tab
+
+**Emissives** lists every emissive material. Each has a switch and a level, and the group has an overall **Brightness** and **Glow**. With **Use the game's multipliers** on, each material starts from its shader's `emissiveMultiplier`, compressed to between 0.25× and 4× so a strong lamp reads brighter than a dim panel without washing out. Materials on `emissivenight` shaders, which the game lights only at night, have their own switch.
+
+**Prop lights** are the lights authored into the model: a flashlight's cone, a lamp's bulb. Each shows its type, intensity, range and cone, and can be switched off. **Strength** scales them all and **Beam haze** shows the cone of each spotlight in the air. Up to 16 lights are previewed, the strongest first. Range and cone follow the file; the falloff is an approximation of the game's light shader.
+
+## Scene tab
+
+**Workbench** shows your backdrop colour with a ground grid sized to the prop and a shadow. **Showroom** is a dark product studio scaled to the prop, with a reflective floor and a spotlight you can aim from the top, front, back or either side, a rim light, and **Concrete**, **Polished**, **Tiles**, **Marble**, **Checker**, **Epoxy**, **Asphalt**, **Wood** or **Tread plate** floors. In the showroom the prop's four strongest lights also light the floor.
+
+**Dark room** (the moon on the deck, or **N**) dims the studio lights so the emissives and the prop's own lights carry the shot. **Fill light** sets the overall light level.
+
+## Export
+
+- **Export image** saves a square PNG of the prop alone, 128 to 2048 pixels, framed as you have it or from the front, top or a three-quarter angle, with adjustable padding and a transparent or backdrop-coloured background. It suits inventory icons and store images. Emissives render; glow and beam haze stay in the viewfinder.
+- **Save this view** saves the viewfinder exactly as it looks, including the stage, glow and haze.
+
+Both ask where to save first.
+
+## Keys
+
+| Key | Action |
+| --- | --- |
+| F | Frame the prop |
+| Space | Turntable on or off |
+| W | Wireframe |
+| E | Emissives on or off |
+| L | Prop lights on or off |
+| N | Dark room |
+
+Left drag orbits, right drag pans and the wheel zooms.

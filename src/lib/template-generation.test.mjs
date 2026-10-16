@@ -12,14 +12,8 @@ import {
   isSupportedTemplateModel,
   normalizeTemplateViewMode,
 } from "./template-model.js";
-import { selectTemplateMeshes } from "./template-psd.js";
-import {
-  buildMarkerSelectionDraft,
-  buildResetMarkerVisibility,
-  isMarkerPlacementDecisionRequired,
-  reconcileMarkerVisibility,
-  resolveTemplateMarkerVisible,
-} from "./template-marker-utils.js";
+import { buildAutoTemplatePsd, resolveAutoTemplateColors, selectTemplateMeshes } from "./template-psd.js";
+import { initializeCanvas, readPsd } from "ag-psd";
 
 function createMesh({
   name,
@@ -206,30 +200,132 @@ test("explicit part selection fails closed when no selected mesh matches", () =>
   assert.deepEqual(selected, []);
 });
 
-test("detected marker candidates stay off until the user explicitly places them", () => {
-  const markers = [
-    { key: "door-handle", defaultVisible: true },
-    { key: "badge", defaultVisible: false },
-  ];
+// Node has no canvas. This stand-in paints solid rectangles and round-trips
+// pixels exactly, which is all the background layer needs; path drawing is a
+// no-op, so fill, wireframe and annotation layers stay blank.
+function parseSolidHex(style) {
+  if (typeof style !== "string") return null;
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(style.trim());
+  if (!match) return null;
+  const hex = match[1].length === 3 ? match[1].replace(/./g, "$&$&") : match[1];
+  return [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+}
 
-  assert.deepEqual(buildMarkerSelectionDraft(markers), {
-    "door-handle": false,
-    badge: false,
+class SolidFillCanvas {
+  constructor(width, height = width) {
+    this.width = width;
+    this.height = height;
+    this.data = new Uint8ClampedArray(width * height * 4);
+  }
+
+  getContext() {
+    const canvas = this;
+    const rect = (x, y, w, h, paint) => {
+      const x0 = Math.max(0, Math.floor(x));
+      const y0 = Math.max(0, Math.floor(y));
+      const x1 = Math.min(canvas.width, Math.ceil(x + w));
+      const y1 = Math.min(canvas.height, Math.ceil(y + h));
+      for (let row = y0; row < y1; row += 1) {
+        for (let col = x0; col < x1; col += 1) paint((row * canvas.width + col) * 4);
+      }
+    };
+    const context = {
+      canvas,
+      fillStyle: "#000000",
+      clearRect: (x, y, w, h) => rect(x, y, w, h, (i) => canvas.data.fill(0, i, i + 4)),
+      fillRect(x, y, w, h) {
+        const rgb = parseSolidHex(this.fillStyle);
+        if (rgb) rect(x, y, w, h, (i) => canvas.data.set([...rgb, 255], i));
+      },
+      createImageData: (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+      getImageData: (x, y, w, h) => {
+        const data = new Uint8ClampedArray(w * h * 4);
+        for (let row = 0; row < h; row += 1) {
+          const start = ((y + row) * canvas.width + x) * 4;
+          data.set(canvas.data.subarray(start, start + w * 4), row * w * 4);
+        }
+        return { width: w, height: h, data };
+      },
+      putImageData: (image, x = 0, y = 0) => {
+        for (let row = 0; row < image.height; row += 1) {
+          const start = ((y + row) * canvas.width + x) * 4;
+          canvas.data.set(image.data.subarray(row * image.width * 4, (row + 1) * image.width * 4), start);
+        }
+      },
+      createLinearGradient: () => ({ addColorStop() {} }),
+      measureText: () => ({ width: 0 }),
+    };
+    return new Proxy(context, {
+      get: (target, key) => (key in target ? target[key] : () => {}),
+    });
+  }
+
+  toDataURL() {
+    return "data:image/png;base64,";
+  }
+}
+
+async function buildBackgroundPixel(options) {
+  const root = createRoot([createMesh({ name: "body_shell", materialName: "vehicle_paint3" })]);
+  const policy = getTemplateModelPolicy("vehicle.yft");
+  const templateMap = buildModelTemplateMap({ object: root, modelPath: "vehicle.yft", fileType: "yft" });
+  const templatePsdSource = buildModelTemplatePsdSource({
+    object: root,
+    modelPath: "vehicle.yft",
+    fileType: "yft",
+    preferUv2: policy.preferUv2,
   });
-  assert.deepEqual(buildResetMarkerVisibility(markers), {
-    "door-handle": false,
-    badge: false,
+
+  const previous = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = SolidFillCanvas;
+  let result;
+  try {
+    result = await buildAutoTemplatePsd(templateMap, {
+      size: 256,
+      modelPath: "vehicle.yft",
+      modelFileName: "vehicle.yft",
+      templatePsdSource,
+      sourceFormat: policy.format,
+      meshSelectionMode: "all",
+      includeVehicleLayers: false,
+      ...options,
+    });
+  } finally {
+    if (previous === undefined) delete globalThis.OffscreenCanvas;
+    else globalThis.OffscreenCanvas = previous;
+  }
+
+  // Reading layer pixels back asks ag-psd for blank ImageData.
+  initializeCanvas((width, height) => new SolidFillCanvas(width, height), (width, height) => new SolidFillCanvas(1).getContext().createImageData(width, height));
+  const psd = readPsd(result.bytes, { useImageData: true, skipCompositeImageData: true, skipThumbnail: true });
+  const background = psd.children.find((layer) => layer.name === "_BG_BLACK");
+  assert.ok(background?.imageData, "the template keeps its background layer");
+  const { data, width, height } = background.imageData;
+  assert.equal(width, 256);
+  assert.equal(height, 256);
+  const last = (width * height - 1) * 4;
+  // Solid colour: the first and last pixel match.
+  assert.deepEqual([...data.subarray(last, last + 4)], [...data.subarray(0, 4)]);
+  return [...data.subarray(0, 4)];
+}
+
+test("Settings template colours resolve from prefs and reject malformed values", () => {
+  assert.deepEqual(resolveAutoTemplateColors({ autoTemplateColor: "#AABBCC", autoTemplateBackgroundColor: " #1e90ff " }), {
+    fillColor: "#AABBCC",
+    backgroundColor: "#1e90ff",
   });
-  assert.equal(resolveTemplateMarkerVisible(markers[0], {}), false);
-  assert.equal(resolveTemplateMarkerVisible(markers[0], { "door-handle": true }), true);
-  assert.equal(isMarkerPlacementDecisionRequired(markers, false), true);
-  assert.equal(isMarkerPlacementDecisionRequired(markers, true), false);
-  assert.equal(isMarkerPlacementDecisionRequired([], false), false);
-  assert.deepEqual(
-    reconcileMarkerVisibility({
-      markers,
-      previousVisibility: { "door-handle": true },
-    }),
-    { "door-handle": true, badge: false },
-  );
+  assert.deepEqual(resolveAutoTemplateColors(null), { fillColor: "#c9d8ee", backgroundColor: "#000000" });
+  assert.deepEqual(resolveAutoTemplateColors({ autoTemplateBackgroundColor: "blue", autoTemplateColor: 7 }), {
+    fillColor: "#c9d8ee",
+    backgroundColor: "#000000",
+  });
+});
+
+test("Auto Template Background from Settings paints the exported template's background layer", async () => {
+  const { backgroundColor } = resolveAutoTemplateColors({ autoTemplateBackgroundColor: "#1e90ff" });
+  assert.deepEqual(await buildBackgroundPixel({ backgroundColor }), [0x1e, 0x90, 0xff, 255]);
+  assert.deepEqual(await buildBackgroundPixel({ backgroundColor: "#fff" }), [255, 255, 255, 255]);
+  // Without the option, or with a malformed one, the background stays black.
+  assert.deepEqual(await buildBackgroundPixel({}), [0, 0, 0, 255]);
+  assert.deepEqual(await buildBackgroundPixel({ backgroundColor: "#12345" }), [0, 0, 0, 255]);
 });

@@ -1,8 +1,9 @@
 [package]
 name = "cortex-studio"
-version = "4.1.0"
+version = "5.1.1"
 description = "Cortex Studio — Livery Development Environment"
-authors = ["you"]
+authors = ["Ever3st"]
+license = "LicenseRef-Cortex-Studio-Source-Available-1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -32,4 +33,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 notify = "6"
 flate2 = "1"
-base64 = "0.22"
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
+panic = "abort"

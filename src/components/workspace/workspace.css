@@ -1,0 +1,2739 @@
+/* Livery workspace.
+   Three columns: the asset pipeline (model, livery, glass) on the left, the
+   viewfinder in the middle, the inspector on the right. Everything that sits
+   on top of the 3D scene uses a slip, because the user picks the backdrop
+   colour and light-on-light or dark-on-dark text must never happen. No
+   backdrop blur: it would re-sample the WebGL canvas every frame. */
+
+.lv-root {
+  /* vw ignores the body zoom of UI scaling, so the second term measures the
+     window in scaled pixels: when a large scale leaves a narrow window, the
+     panes give way (down to the resize floors) before the viewfinder does. */
+  --lv-dock: min(clamp(250px, 21vw, 300px), max(220px, calc(24.4vw / var(--es-ui-scale, 1))));
+  --lv-insp: min(clamp(280px, 23vw, 330px), max(260px, calc(27.4vw / var(--es-ui-scale, 1))));
+  --lv-slip: color-mix(in srgb, var(--cx-frame) 90%, transparent);
+  --lv-slip-line: color-mix(in srgb, var(--mg-fg) 12%, transparent);
+  --lv-inset: 22px;
+  --lv-axis-x: #ef7070;
+  --lv-axis-y: #62c785;
+  --lv-axis-z: #6ea2f8;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: var(--lv-dock) minmax(0, 1fr) var(--lv-insp);
+  overflow: hidden;
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+}
+
+.lv-root.is-inspector-closed {
+  grid-template-columns: var(--lv-dock) minmax(0, 1fr) 0;
+}
+
+.lv-root.is-focus {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+.lv-dock,
+.lv-inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--mg-bg) 55%, var(--cx-frame));
+}
+
+.lv-dock {
+  border-right: 1px solid var(--mg-border);
+}
+
+.lv-inspector {
+  border-left: 1px solid var(--mg-border);
+}
+
+/* Drag handles on the inner edge of a resizable dock or inspector
+   (PaneResizer); the panes anchor them. */
+.lv-root > .lv-dock,
+.lv-root > .lv-inspector {
+  position: relative;
+}
+
+.lv-pane-resizer {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.lv-pane-resizer.is-dock {
+  right: 0;
+}
+
+.lv-pane-resizer.is-insp {
+  left: 0;
+}
+
+.lv-pane-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--mg-primary);
+  opacity: 0;
+  transition: opacity 140ms var(--cx-ease);
+}
+
+.lv-pane-resizer.is-dock::after {
+  right: 0;
+}
+
+.lv-pane-resizer.is-insp::after {
+  left: 0;
+}
+
+.lv-pane-resizer:hover::after,
+.lv-pane-resizer.is-dragging::after,
+.lv-pane-resizer:focus-visible::after {
+  opacity: 1;
+}
+
+.lv-pane-resizer:focus-visible {
+  outline: none;
+}
+
+.lv-root.is-focus .lv-pane-resizer,
+.lv-root.is-dock-closed .lv-pane-resizer.is-dock,
+.lv-root.is-inspector-closed .lv-pane-resizer.is-insp {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-pane-resizer::after {
+    transition: none;
+  }
+}
+
+.lv-root.is-focus .lv-dock,
+.lv-root.is-focus .lv-inspector,
+.lv-root.is-inspector-closed .lv-inspector {
+  border: 0;
+}
+
+/* ── Context bar (portaled into the frame) ── */
+.lv-ctx {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 6px;
+}
+
+.lv-ctx-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-muted);
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.lv-ctx-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lv-ctx-btn:hover {
+  background: var(--cx-wash-strong);
+  color: var(--mg-fg);
+}
+
+.lv-ctx-btn.is-on {
+  color: var(--mg-fg);
+}
+
+.lv-ctx-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* ── Asset pipeline ── */
+.lv-dock-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 22px 16px 24px 14px;
+  overflow-y: auto;
+}
+
+.lv-slot {
+  position: relative;
+  padding: 0 0 26px 36px;
+}
+
+/* The pipeline line joins each step to the next. */
+.lv-slot::before {
+  content: "";
+  position: absolute;
+  top: 28px;
+  bottom: 4px;
+  left: 11px;
+  width: 1px;
+  background: var(--mg-border);
+}
+
+.lv-slot:last-of-type::before {
+  display: none;
+}
+
+.lv-step {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border: 1.5px solid color-mix(in srgb, var(--mg-muted) 70%, transparent);
+  border-radius: 999px;
+  color: var(--mg-muted);
+  font: italic 800 13px / 1 var(--font-display);
+  transition: background-color 200ms var(--cx-ease), border-color 200ms var(--cx-ease), color 200ms var(--cx-ease);
+}
+
+.lv-step.is-done {
+  border-color: var(--mg-primary);
+  background: var(--mg-primary);
+  color: var(--cx-on-primary);
+}
+
+.lv-step svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 3;
+}
+
+.lv-slot-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 23px;
+}
+
+.lv-slot-title {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.lv-slot.is-disabled .lv-slot-title {
+  color: var(--mg-muted);
+}
+
+.lv-slot-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.lv-file {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--mg-input-bg);
+}
+
+.lv-file-name,
+.lv-file-folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-file-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lv-file-folder {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+/* A pipeline step's card carries its own Replace and Unload. */
+.lv-file.has-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding-right: 6px;
+}
+
+.lv-file-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lv-file-acts {
+  display: flex;
+  gap: 2px;
+}
+
+.lv-file-act {
+  width: 28px;
+  height: 28px;
+}
+
+.lv-file-act:hover {
+  background: var(--cx-wash-strong);
+}
+
+.lv-slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lv-btn-sm {
+  height: 28px;
+  padding: 0 11px;
+  font-size: 12px;
+}
+
+.lv-drop {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  width: 100%;
+  padding: 14px;
+  border: 1.5px dashed color-mix(in srgb, var(--mg-muted) 45%, transparent);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms var(--cx-ease), background-color 140ms var(--cx-ease);
+}
+
+.lv-drop:hover,
+.lv-drop:focus-visible {
+  outline: none;
+  border-color: var(--mg-primary);
+  background: color-mix(in srgb, var(--mg-primary) 7%, transparent);
+}
+
+.lv-drop-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lv-drop-title svg {
+  width: 15px;
+  height: 15px;
+  color: var(--mg-primary);
+}
+
+.lv-drop-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.lv-drop--inline {
+  padding: 12px 14px;
+}
+
+.lv-slot-note {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+/* A path in a message breaks across lines instead of widening the dock;
+   actions beside it keep their words whole. */
+.lv-slot-note > span {
+  overflow-wrap: anywhere;
+}
+
+.lv-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translateY(-1px);
+}
+
+.lv-slot-note.is-ok .lv-dot { background: var(--mg-primary); }
+.lv-slot-note.is-warn { color: var(--cx-caution); }
+.lv-slot-note.is-live .lv-dot { background: var(--cx-confirm); }
+.lv-slot-note.is-error { color: var(--mg-destructive); }
+.lv-slot-note.is-idle .lv-dot { background: color-mix(in srgb, var(--mg-muted) 60%, transparent); }
+
+.lv-slot-time {
+  margin-left: auto;
+  font-family: var(--font-hud);
+  font-size: 11px;
+}
+
+/* One bounded column: a bare grid track grows to its widest nowrap child
+   (a long file name or path) and pushes the whole step off the dock. */
+.lv-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+
+/* ── Viewfinder ── */
+.lv-finder {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--mg-bg);
+  container-type: inline-size;
+}
+
+.lv-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.lv-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.lv-hud button,
+.lv-hud input,
+.lv-alert {
+  pointer-events: auto;
+}
+
+.lv-guides span {
+  position: absolute;
+  background: #ffffff;
+  mix-blend-mode: difference;
+  opacity: 0.28;
+}
+
+.lv-guides span:nth-child(1) { top: 0; bottom: 0; left: 33.333%; width: 1px; }
+.lv-guides span:nth-child(2) { top: 0; bottom: 0; left: 66.666%; width: 1px; }
+.lv-guides span:nth-child(3) { top: 33.333%; right: 0; left: 0; height: 1px; }
+.lv-guides span:nth-child(4) { top: 66.666%; right: 0; left: 0; height: 1px; }
+
+.lv-guides i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  mix-blend-mode: difference;
+  opacity: 0.6;
+  background:
+    linear-gradient(#fff, #fff) center / 1px 100% no-repeat,
+    linear-gradient(#fff, #fff) center / 100% 1px no-repeat;
+}
+
+.lv-slip,
+.lv-stage-switch,
+.lv-help,
+.lv-deck,
+.lv-toast,
+.lv-capturing-pill {
+  border: 1px solid var(--lv-slip-line);
+  background: var(--lv-slip);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.lv-stage-switch {
+  position: absolute;
+  top: var(--lv-inset);
+  left: var(--lv-inset);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: calc(100% - 2 * var(--lv-inset));
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.lv-stage-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.lv-stage-switch button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.lv-stage-switch button:hover {
+  color: var(--mg-fg);
+}
+
+.lv-stage-switch button.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.lv-stage-switch button:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* Solid wireframe readout, under the stage switch when there is one. */
+.lv-mesh-stats {
+  position: absolute;
+  top: var(--lv-inset);
+  left: var(--lv-inset);
+  width: 216px;
+  max-width: calc(100% - 2 * var(--lv-inset));
+  padding: 11px 12px 10px;
+  border-radius: 10px;
+  color: var(--mg-fg);
+  pointer-events: auto;
+}
+
+.lv-mesh-stats.is-below-switch {
+  top: calc(var(--lv-inset) + 48px);
+}
+
+.lv-mesh-stats h3 {
+  margin: 0 0 9px;
+}
+
+.lv-mesh-stats dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.lv-mesh-stats dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.lv-mesh-stats dt {
+  flex-shrink: 0;
+  color: var(--mg-muted);
+  font-size: 12px;
+}
+
+.lv-mesh-stats dd {
+  overflow: hidden;
+  margin: 0;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-help {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 230px;
+  padding: 10px 14px;
+  border-radius: 10px;
+}
+
+.lv-help dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.lv-help dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.lv-help dt {
+  display: flex;
+  gap: 3px;
+  color: var(--mg-muted);
+}
+
+.lv-help dd {
+  margin: 0;
+  color: var(--mg-fg);
+}
+
+.lv-help .cx-keycap {
+  min-width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+
+/* Capture is the dock's exit, pinned under the pipeline. */
+.lv-dock-foot {
+  flex-shrink: 0;
+  padding: 14px 16px 16px;
+  border-top: 1px solid var(--mg-border);
+  background: color-mix(in srgb, var(--mg-bg) 30%, var(--cx-frame));
+}
+
+.lv-capture .lv-slot-head {
+  position: relative;
+  min-height: 0;
+}
+
+.lv-dock-foot:has(> .lv-capture.is-collapsed) {
+  padding-block: 12px;
+}
+
+/* The title is the disclosure, stretched over the header; links on the
+   header sit above it. */
+.lv-capture-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.lv-capture-toggle::after {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
+
+.lv-capture-toggle[aria-disabled="true"] {
+  cursor: default;
+}
+
+.lv-capture-toggle:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: var(--cx-focus);
+}
+
+.lv-capture-chev {
+  width: 15px;
+  height: 15px;
+  color: var(--mg-muted);
+  transition: transform 140ms var(--cx-ease);
+}
+
+.lv-capture.is-open .lv-capture-chev {
+  transform: rotate(180deg);
+}
+
+.lv-capture-toggle[aria-disabled="true"] .lv-capture-chev {
+  opacity: 0.4;
+}
+
+.lv-capture .lv-slot-head .lv-link {
+  position: relative;
+  z-index: 1;
+}
+
+.lv-capture-meta {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-capture-chev {
+    transition: none;
+  }
+}
+
+.lv-capture .lv-slot-body {
+  margin-top: 10px;
+}
+
+.lv-capture.is-disabled .lv-slot-title {
+  color: var(--mg-muted);
+}
+
+.lv-alerts {
+  position: absolute;
+  top: var(--lv-inset);
+  left: 50%;
+  display: grid;
+  gap: 8px;
+  width: min(520px, 46%);
+  transform: translateX(-50%);
+}
+
+.lv-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 8px 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--cx-caution) 50%, transparent);
+  border-radius: 9px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--cx-caution) 12%, transparent), color-mix(in srgb, var(--cx-caution) 12%, transparent)),
+    var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+}
+
+.lv-alert-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--cx-caution);
+}
+
+.lv-alert-copy {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+  overflow-wrap: anywhere;
+}
+
+.lv-alert-copy strong {
+  font-size: 13px;
+  color: var(--mg-fg);
+}
+
+.lv-toasts {
+  position: absolute;
+  top: var(--lv-inset);
+  right: var(--lv-inset);
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.lv-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 340px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.lv-toast svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--cx-confirm);
+}
+
+.lv-dropzone {
+  position: absolute;
+  inset: 30px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--mg-primary) 10%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mg-primary) 70%, transparent);
+  font-size: 13px;
+  color: var(--mg-fg);
+}
+
+.lv-dropzone .cx-display {
+  font-size: 34px;
+}
+
+/* ── Camera deck ──
+   Centred on the viewfinder at its natural width; on a narrow stage it wraps
+   to more rows instead of running off the viewfinder. */
+.lv-deck {
+  position: absolute;
+  z-index: 2;
+  right: var(--lv-inset);
+  bottom: var(--lv-inset);
+  left: var(--lv-inset);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: fit-content;
+  margin-inline: auto;
+  padding: 5px;
+  border-radius: 11px;
+}
+
+.lv-deck-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.lv-deck-group + .lv-deck-group {
+  padding-left: 5px;
+  border-left: 1px solid var(--lv-slip-line);
+}
+
+.lv-deck-btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: color-mix(in srgb, var(--mg-fg) 88%, transparent);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.lv-deck-btn.is-icon {
+  width: 34px;
+  padding: 0;
+}
+
+.lv-deck-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lv-deck-btn:hover:not(:disabled) {
+  background: var(--cx-wash-strong);
+  color: var(--mg-fg);
+}
+
+.lv-deck-btn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.lv-deck-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.lv-deck-btn.is-on {
+  background: color-mix(in srgb, var(--mg-primary) 20%, transparent);
+  color: var(--mg-primary);
+}
+
+.lv-deck-btn.is-axis {
+  font: italic 800 15px / 1 var(--font-display);
+}
+
+.lv-deck-btn.is-x { color: var(--lv-axis-x); }
+.lv-deck-btn.is-y { color: var(--lv-axis-y); }
+.lv-deck-btn.is-z { color: var(--lv-axis-z); }
+
+.lv-deck--inline {
+  position: static;
+  justify-content: flex-start;
+  width: auto;
+  margin-inline: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.lv-deck--inline .lv-deck-group {
+  justify-content: flex-start;
+}
+
+.lv-deck--inline .lv-deck-group + .lv-deck-group {
+  padding-left: 0;
+  border-left: 0;
+}
+
+/* ── Capture step ── */
+.lv-capture-setup {
+  display: grid;
+  gap: 14px;
+}
+
+.lv-capture-btn {
+  width: 100%;
+  height: 34px;
+}
+
+.lv-done {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--cx-confirm) 40%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--cx-confirm) 8%, transparent);
+}
+
+.lv-slot.is-disabled .lv-step {
+  opacity: 0.6;
+}
+
+.lv-sheet-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--mg-bg);
+  box-shadow: inset 0 0 0 1px var(--mg-border);
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.lv-sheet-angles {
+  display: grid;
+  gap: 9px;
+}
+
+.lv-sheet-angles-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lv-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lv-chip-btn {
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--mg-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), border-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.lv-chip-btn:hover {
+  background: var(--cx-wash);
+}
+
+.lv-chip-btn.is-on {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.lv-chip-btn:focus-visible,
+.lv-link:focus-visible,
+.lv-swatch:focus-visible,
+.lv-seg-btn:focus-visible,
+.lv-tab:focus-visible,
+.lv-color:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.lv-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mg-primary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lv-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.lv-sheet-dest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.lv-sheet-dest svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.lv-sheet-dest span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-done-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.lv-done-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.lv-done-head strong {
+  font-size: 14px;
+}
+
+.lv-done-head span {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-done-check {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cx-confirm) 20%, transparent);
+  color: var(--cx-confirm);
+}
+
+.lv-done-check svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 3;
+}
+
+.lv-done-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--mg-destructive);
+}
+
+/* Capture in progress: the viewfinder records and refuses input. */
+.lv-capturing {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  cursor: progress;
+}
+
+.lv-capturing-pill {
+  position: absolute;
+  top: var(--lv-inset);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  transform: translateX(-50%);
+}
+
+.lv-rec {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--mg-destructive);
+  animation: lv-rec 1s steps(2, jump-none) infinite;
+}
+
+.lv-capturing-count {
+  font-family: var(--font-hud);
+  font-weight: 400;
+  color: var(--mg-muted);
+}
+
+.lv-capturing-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.lv-capturing-bar span {
+  display: block;
+  height: 100%;
+  background: var(--mg-primary);
+  transition: width 300ms var(--cx-ease);
+}
+
+@keyframes lv-rec {
+  50% { opacity: 0.25; }
+}
+
+/* ── Inspector ── */
+.lv-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 14px 0;
+  border-bottom: 1px solid var(--mg-border);
+}
+
+.lv-tab {
+  position: relative;
+  height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 140ms var(--cx-ease);
+}
+
+.lv-tab::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  bottom: -1px;
+  left: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--mg-primary);
+  transform: scaleX(0);
+  transition: transform 180ms var(--cx-ease);
+}
+
+.lv-tab:hover,
+.lv-tab.is-active {
+  color: var(--mg-fg);
+}
+
+.lv-tab.is-active::after {
+  transform: scaleX(1);
+}
+
+.lv-inspector-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 28px;
+  min-height: 0;
+  padding: 20px 16px 30px;
+  overflow-y: auto;
+}
+
+.lv-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 13px;
+}
+
+.lv-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lv-group-title {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+}
+
+.lv-colors {
+  display: grid;
+  gap: 2px;
+}
+
+.lv-color {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 82px 28px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px 6px 6px;
+  border-radius: 8px;
+  transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.lv-color[role="button"] {
+  cursor: pointer;
+}
+
+.lv-color[role="button"]:hover {
+  background: var(--cx-wash);
+}
+
+.lv-color.is-selected,
+.lv-color.is-selected:hover {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.lv-chip {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 20%, transparent);
+  cursor: pointer;
+}
+
+.lv-color.is-selected .lv-chip {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cx-invert-fg) 30%, transparent);
+}
+
+.lv-chip input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.lv-chip:focus-within {
+  box-shadow: var(--cx-focus);
+}
+
+.lv-color-label {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-hex {
+  width: 82px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 12px;
+  text-transform: uppercase;
+  outline: none;
+}
+
+.lv-hex:focus {
+  border-color: var(--mg-primary);
+}
+
+.lv-color.is-selected .lv-hex {
+  border-color: color-mix(in srgb, var(--cx-invert-fg) 25%, transparent);
+  background: transparent;
+  color: var(--cx-invert-fg);
+}
+
+.lv-color-reset {
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+}
+
+.lv-color-reset svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lv-color:hover .lv-color-reset,
+.lv-color:focus-within .lv-color-reset,
+.lv-color.is-selected .lv-color-reset {
+  opacity: 1;
+}
+
+.lv-color.is-selected .lv-color-reset {
+  color: var(--cx-invert-muted);
+}
+
+.lv-color.is-selected .lv-color-reset:hover {
+  background: color-mix(in srgb, var(--cx-invert-fg) 10%, transparent);
+  color: var(--cx-invert-fg);
+}
+
+.lv-swatches {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.lv-swatch {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 18%, transparent);
+  cursor: pointer;
+  transition: transform 120ms var(--cx-ease);
+}
+
+.lv-swatch:hover {
+  transform: translateY(-2px);
+}
+
+/* Vehicle paint slots: a row per game colour, then the carcols palette. */
+.lv-paint-text {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.lv-paint-detail {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name gives way first; the palette number stays readable. */
+.lv-paint-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-paint-index {
+  flex-shrink: 0;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-paint.is-selected .lv-paint-detail {
+  color: var(--cx-invert-muted);
+}
+
+.lv-palette {
+  display: grid;
+  gap: 12px;
+}
+
+.lv-palette-group {
+  display: grid;
+  gap: 7px;
+}
+
+.lv-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20px, 1fr));
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.lv-pal {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 18%, transparent);
+  cursor: pointer;
+  transition: box-shadow 120ms var(--cx-ease);
+}
+
+.lv-pal:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 18%, transparent), 0 0 0 2px var(--cx-wash-strong);
+}
+
+.lv-pal.is-on {
+  box-shadow: 0 0 0 2px var(--mg-bg), 0 0 0 4px var(--cx-invert-bg);
+}
+
+.lv-pal:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.lv-seg {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--mg-input-bg);
+}
+
+/* A wrapping segmented control for longer choice sets. */
+.lv-seg-grid {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lv-seg-btn {
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
+}
+
+.lv-seg-btn:hover {
+  color: var(--mg-fg);
+}
+
+.lv-seg-btn.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.lv-slider {
+  display: grid;
+  /* A range input is 129px wide by default; the track must not grow to it. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 9px;
+}
+
+.lv-slider-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lv-slider-label {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.lv-slider-value {
+  font-family: var(--font-hud);
+  font-size: 12px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-slider input {
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+
+.lv-slider input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--mg-primary) var(--fill), var(--mg-border) var(--fill));
+}
+
+.lv-slider input::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--mg-bg);
+  border-radius: 999px;
+  background: var(--mg-fg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  appearance: none;
+  transition: transform 120ms var(--cx-ease);
+}
+
+.lv-slider input:hover::-webkit-slider-thumb,
+.lv-slider input:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.lv-slider input:focus-visible {
+  outline: none;
+}
+
+.lv-slider input:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--cx-focus);
+}
+
+.lv-maps {
+  display: grid;
+  gap: 9px;
+}
+
+.lv-maps-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lv-map {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--mg-input-bg);
+}
+
+.lv-map img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lv-map-ext {
+  font: italic 800 15px / 1 var(--font-display);
+  color: var(--mg-muted);
+}
+
+.lv-map-name {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  padding: 3px 6px;
+  background: var(--lv-slip);
+  font-family: var(--font-hud);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-map-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--lv-slip);
+  color: var(--mg-fg);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.lv-map-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+.lv-map:hover .lv-map-remove,
+.lv-map-remove:focus-visible {
+  opacity: 1;
+}
+
+.lv-map-add {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  border-style: dashed;
+  border-width: 1.5px;
+  border-color: color-mix(in srgb, var(--mg-muted) 45%, transparent);
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.lv-map-add svg {
+  width: 18px;
+  height: 18px;
+}
+
+.lv-map-add:hover,
+.lv-map-add:focus-visible {
+  outline: none;
+  border-color: var(--mg-primary);
+  color: var(--mg-fg);
+}
+
+.lv-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.lv-backdrop-file {
+  display: grid;
+  gap: 10px;
+}
+
+/* Light dome, restyled for the inspector. */
+.lv-lighting .cs-light-control {
+  display: grid;
+  gap: 12px;
+}
+
+.lv-lighting .cs-light-dome-surface {
+  fill: var(--mg-input-bg);
+  stroke: var(--mg-border);
+}
+
+.lv-lighting .cs-light-dome-axis {
+  stroke: color-mix(in srgb, var(--mg-fg) 10%, transparent);
+}
+
+.lv-lighting .cs-light-dome-vector {
+  stroke: var(--mg-primary);
+}
+
+.lv-lighting .cs-light-dome-source-core {
+  fill: var(--mg-primary);
+}
+
+.lv-lighting .cs-light-dome-source-ring {
+  fill: none;
+  stroke: var(--mg-primary);
+}
+
+.lv-lighting .cs-light-preset.is-active {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.lv-meta {
+  margin: -4px -4px 0;
+}
+
+/* ── All: mod kits ── */
+.lv-mod-slot {
+  display: grid;
+  gap: 6px;
+}
+
+.lv-mod-slot-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lv-mod-slot-head .cx-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-mod-slot-head .lv-mod-meta {
+  flex-shrink: 0;
+}
+
+.lv-mod-kit {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.lv-mod-meta {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--mg-muted);
+}
+
+.lv-link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+/* ── Smaller viewfinders ── */
+@container (max-width: 680px) {
+  .lv-deck {
+    justify-content: flex-start;
+    margin-inline: 0 auto;
+  }
+}
+
+/* Only a large UI scale on a small window gets this narrow: slips move
+   closer to the edges and the deck flows as one set of rows. */
+@container (max-width: 420px) {
+  .lv-mesh-stats {
+    display: none;
+  }
+}
+
+@container (max-width: 320px) {
+  .lv-stage-switch,
+  .lv-deck {
+    --lv-inset: 12px;
+  }
+  .lv-deck-group {
+    display: contents;
+  }
+  .lv-deck-btn {
+    padding: 0 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-rec {
+    animation: none;
+  }
+  .lv-step,
+  .lv-drop,
+  .lv-deck-btn,
+  .lv-chip-btn,
+  .lv-tab::after,
+  .lv-swatch,
+  .lv-pal,
+  .lv-seg-btn,
+  .lv-color,
+  .lv-capturing-bar span {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .lv-deck-btn.is-on,
+  .lv-seg-btn.is-on,
+  .lv-chip-btn.is-on,
+  .lv-color.is-selected,
+  .lv-pal.is-on {
+    outline: 2px solid Highlight;
+  }
+}
+
+.lv-sheet-dest .is-path {
+  font-family: var(--font-hud);
+}
+
+/* ── All: game textures ── */
+/* An option inside a pipeline step, separated by a hairline. */
+.lv-option {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.lv-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lv-option-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.lv-native-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.lv-native-stats b {
+  font-family: var(--font-hud);
+  font-weight: 400;
+  color: var(--mg-fg);
+}
+
+.lv-failures {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--cx-wash);
+  list-style: none;
+}
+
+.lv-failures li {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.lv-failure-reason {
+  font-weight: 600;
+}
+
+.lv-failure-names {
+  overflow-wrap: anywhere;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+.lv-option > .lv-link {
+  justify-self: start;
+}
+
+.lv-native-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.lv-native-retry svg {
+  width: 12px;
+  height: 12px;
+}
+
+.lv-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--mg-border);
+}
+
+.lv-progress span {
+  display: block;
+  height: 100%;
+  background: var(--mg-primary);
+  transition: width 200ms var(--cx-ease);
+}
+
+/* ── Dock fact rows ── */
+/* Label left, value right, hairlines between, so a step's counts read down
+   one column. Help text is the row's tooltip. */
+.lv-facts {
+  --lv-fact-h: 30px;
+  display: grid;
+  margin: 0;
+}
+
+.lv-fact {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.lv-fact > dt {
+  min-width: 0;
+  min-height: var(--lv-fact-h);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.lv-fact > dd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: var(--lv-fact-h);
+  margin: 0;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-fg);
+  white-space: nowrap;
+}
+
+.lv-fact > dd.is-warn { color: var(--cx-caution); }
+.lv-fact > dd.is-error { color: var(--mg-destructive); }
+.lv-fact > dd.is-live { color: var(--cx-confirm); }
+.lv-fact > dd.is-info { color: var(--mg-muted); }
+
+.lv-fact > dd .lv-link {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lv-fact > dd .lv-link svg {
+  width: 12px;
+  height: 12px;
+}
+
+.lv-fact > dd .settings-toggle {
+  position: relative;
+  z-index: 1;
+}
+
+/* Text values (a status, a file name) read in the UI face. */
+.lv-fact > dd.is-text {
+  font-family: var(--font-main);
+  font-size: 12.5px;
+}
+
+.lv-fact > dd .lv-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.lv-fact > .lv-fact-note,
+.lv-fact > .lv-fact-more {
+  grid-column: 1 / -1;
+  display: block;
+  min-height: 0;
+  font-family: var(--font-main);
+  white-space: normal;
+}
+
+.lv-fact > .lv-fact-note {
+  margin-top: -4px;
+  padding-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.lv-fact > .lv-fact-more {
+  display: grid;
+  justify-content: normal;
+  gap: 8px;
+  padding: 2px 0 10px;
+}
+
+/* The label is the button, stretched over the whole row. */
+.lv-fact-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.lv-fact-toggle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--lv-fact-h);
+}
+
+.lv-fact-toggle:focus-visible {
+  outline: none;
+}
+
+/* The global press shrink (button:active) would make a stretched toggle the
+   containing block of its own ::after, pulling the hit area back to the label
+   mid-press, so a press on the value lost its click. These rows don't shrink. */
+.lv-fact-toggle:active:not(:disabled),
+.lv-capture-toggle:active:not(:disabled) {
+  transform: none;
+}
+
+.lv-fact.is-disclosure:has(.lv-fact-toggle:focus-visible) {
+  border-radius: 4px;
+  box-shadow: var(--cx-focus);
+}
+
+.lv-fact.is-disclosure:hover > dt {
+  color: var(--mg-fg);
+}
+
+.lv-fact-chev {
+  width: 14px;
+  height: 14px;
+  margin-right: -2px;
+  color: var(--mg-muted);
+  transition: transform 140ms var(--cx-ease);
+}
+
+.lv-fact.is-open .lv-fact-chev {
+  transform: rotate(90deg);
+}
+
+.lv-fact-meter {
+  width: 56px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--mg-border);
+}
+
+.lv-fact-meter span {
+  display: block;
+  height: 100%;
+  background: var(--mg-primary);
+  transition: width 200ms var(--cx-ease);
+}
+
+.lv-fact-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  margin: 0;
+  padding: 0 4px 0 0;
+  overflow-y: auto;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.lv-fact-list .is-warn { color: var(--cx-caution); }
+.lv-fact-list .is-error { color: var(--mg-destructive); }
+.lv-fact-list .is-info { color: var(--mg-muted); }
+
+.lv-fact-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+/* Saved vehicle: the label keeps its width and a long name truncates. */
+.lv-fact.lv-vehicle-row {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.lv-vehicle-row > dd:not(.lv-fact-more) {
+  min-width: 0;
+}
+
+.lv-vehicle-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-vehicle-none {
+  color: var(--mg-muted);
+}
+
+.lv-vehicle-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--mg-primary);
+  font-weight: 600;
+}
+
+.lv-vehicle-cta svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lv-vehicle-row:hover .lv-vehicle-cta {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.lv-vehicle-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.lv-vehicle-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.lv-vehicle-acts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.lv-vehicle-form .cx-btn,
+.lv-vehicle-acts .cx-btn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-fact-chev,
+  .lv-fact-meter span {
+    transition: none;
+  }
+}
+
+.lv-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.lv-seg-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* ── Multi ── */
+.mw-lineup {
+  display: grid;
+  /* A bare grid track sizes to min-content, and a long model path would push
+     the dock's content past its edge. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--mg-border);
+}
+
+.mw-lineup-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mw-lineup-head .lv-slot-title {
+  flex: 1;
+}
+
+.mw-lineup-head .cx-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mw-count {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
+.mw-rows {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mw-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 7px;
+  transition: background-color 140ms var(--cx-ease);
+}
+
+.mw-row:hover {
+  background: var(--cx-wash);
+}
+
+.mw-row.is-selected {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.mw-row-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 4px 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mw-row-main:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.mw-letter {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--cx-wash-strong);
+  font-size: 16px;
+}
+
+.mw-row.is-selected .mw-letter {
+  background: var(--mg-primary);
+  color: var(--cx-on-primary);
+}
+
+.mw-row-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.mw-row-name,
+.mw-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mw-row-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mw-row-name.is-empty {
+  font-weight: 500;
+  color: var(--mg-muted);
+}
+
+.mw-row-sub {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+.mw-row.is-selected .mw-row-name.is-empty,
+.mw-row.is-selected .mw-row-sub {
+  color: var(--cx-invert-muted);
+}
+
+.mw-row.is-hidden .mw-row-text {
+  opacity: 0.55;
+}
+
+.mw-row-state {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.mw-row-state.is-busy {
+  color: var(--mg-primary);
+  animation: lv-spin 900ms linear infinite;
+}
+
+.mw-row-state.is-error {
+  color: var(--mg-destructive);
+}
+
+.mw-row-eye {
+  flex-shrink: 0;
+  margin-right: 2px;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.mw-row.is-selected .mw-row-eye:hover {
+  background: color-mix(in srgb, var(--cx-invert-fg) 10%, transparent);
+}
+
+.mw-tip {
+  margin: 0;
+}
+
+.mw-tip .cx-keys {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 2px;
+  vertical-align: -3px;
+}
+
+.mw-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mw-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.mw-detail-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.mw-copy-all {
+  display: block;
+  margin-top: -16px;
+  text-align: left;
+}
+
+@keyframes lv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mw-row,
+  .mw-row-state.is-busy {
+    transition: none;
+    animation: none;
+  }
+}
+
+/* ── All: saved builds and kit shoot ── */
+.lv-build-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lv-build-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  border-bottom: 1px solid var(--cx-rule);
+}
+
+.lv-build-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-build-delete {
+  width: 26px;
+  height: 26px;
+}
+
+.lv-build-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lv-build-save {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.lv-text-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.lv-text-input.is-mono {
+  font-family: var(--font-hud);
+  font-size: 12px;
+}
+
+.lv-text-input::placeholder {
+  color: var(--mg-muted);
+}
+
+.lv-text-input:focus {
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.lv-text-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lv-chip-btn:disabled,
+.lv-seg-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lv-shoot-paints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.lv-shoot-paint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.lv-shoot-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 20%, transparent);
+}
+
+.lv-shoot-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.lv-shoot-preview .lv-sheet-preview {
+  max-height: 260px;
+  padding: 0 12px;
+  text-align: center;
+}
+
+.lv-shoot-preview .lv-sheet-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.lv-shoot-preview .lv-slot-note {
+  justify-content: space-between;
+}
+
+.lv-shoot-icon {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  transform: translateY(2px);
+}
+
+.lv-shoot-run {
+  display: grid;
+  gap: 8px;
+}
+
+.lv-shoot-count {
+  flex-shrink: 0;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-shoot-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-done.is-partial {
+  border-color: color-mix(in srgb, var(--cx-caution) 45%, transparent);
+  background: color-mix(in srgb, var(--cx-caution) 9%, transparent);
+}
+
+.lv-done.is-partial .lv-done-check {
+  background: color-mix(in srgb, var(--cx-caution) 20%, transparent);
+  color: var(--cx-caution);
+}
+
+.lv-shoot-issues {
+  display: grid;
+  gap: 6px;
+}
+
+.lv-shoot-issues ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lv-shoot .lv-chip-btn {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-shoot {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lv-shoot .lv-chips,
+.lv-shoot .lv-sheet-angles {
+  min-width: 0;
+}
+
+/* ── Kit shoot: live frame and the finished run ── */
+.lv-shot-live {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  max-height: 260px;
+  border-radius: 8px;
+  background: var(--cx-frame);
+  box-shadow: inset 0 0 0 1px var(--mg-border);
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.lv-shot-live img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lv-shot-live-count {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 7px;
+  border: 1px solid var(--lv-slip-line, var(--mg-border));
+  border-radius: 6px;
+  background: var(--lv-slip, var(--cx-raised));
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-shot-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: 9px;
+  background: var(--mg-input-bg);
+}
+
+.lv-shot-card.is-partial {
+  border-color: color-mix(in srgb, var(--cx-caution) 45%, transparent);
+}
+
+.lv-shot-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lv-shot-card-head strong {
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.lv-shot-dismiss {
+  width: 24px;
+  height: 24px;
+  margin: -4px -4px -4px 0;
+}
+
+.lv-shot-dismiss svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lv-shot-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lv-shot-strip:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.lv-shot-strip:disabled {
+  cursor: default;
+}
+
+.lv-shot-thumb {
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: 4px;
+  background: var(--cx-frame);
+  box-shadow: inset 0 0 0 1px var(--mg-border);
+}
+
+.lv-shot-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 160ms var(--cx-ease);
+}
+
+.lv-shot-strip:hover .lv-shot-thumb img {
+  transform: scale(1.04);
+}
+
+.lv-shot-findings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+}
+
+.lv-shot-path {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.lv-shot-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.lv-shot-actions .cx-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lv-shot-previous {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 6px;
+}
+
+.lv-shot-previous svg {
+  width: 13px;
+  height: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-shot-thumb img {
+    transition: none;
+  }
+}
+
+/* Livery picker: the select with prev/next steppers beside it. */
+.lv-livery-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lv-livery-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.lv-livery-row .cx-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}

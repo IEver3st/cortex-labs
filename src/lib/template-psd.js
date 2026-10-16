@@ -1,3 +1,18 @@
+import {
+  DEFAULT_TEMPLATE_MARKER_COLOR,
+  buildTemplateMarkerMask,
+  normalizeTemplateMarkers,
+} from "./template-markers.js";
+import {
+  colorizeMask,
+  dilateMaskEuclidean,
+  dilateMaskWithinRadius,
+  findLogoPlacement,
+  normalizeOpaqueHexColor,
+  normalizeVehicleOverlayColor,
+  rasterizeCoverageMask,
+} from "./template-overlay.js";
+
 let writePsdUint8ArrayLoader = null;
 async function getWritePsdUint8Array() {
   if (!writePsdUint8ArrayLoader) {
@@ -37,6 +52,18 @@ function normalizeAutoTemplateBackgroundColor(value) {
   return DEFAULT_AUTO_TEMPLATE_BACKGROUND_COLOR;
 }
 
+/**
+ * The template fill and background colours from Settings > Appearance >
+ * Studio Defaults (`prefs.defaults`), as the build options expect them.
+ */
+export function resolveAutoTemplateColors(defaults) {
+  const source = defaults && typeof defaults === "object" ? defaults : {};
+  return {
+    fillColor: normalizeAutoTemplateFillColor(source.autoTemplateColor),
+    backgroundColor: normalizeAutoTemplateBackgroundColor(source.autoTemplateBackgroundColor),
+  };
+}
+
 function sanitizeStem(value) {
   if (!value) return "template";
   const stem = value
@@ -53,16 +80,16 @@ function getModelFileName(path) {
   return parts[parts.length - 1] || "";
 }
 
-function createCanvas(size) {
+function createCanvas(size, height = size) {
   if (typeof document !== "undefined" && typeof document.createElement === "function") {
     const canvas = document.createElement("canvas");
     canvas.width = size;
-    canvas.height = size;
+    canvas.height = height;
     return canvas;
   }
 
   if (typeof OffscreenCanvas !== "undefined") {
-    return new OffscreenCanvas(size, size);
+    return new OffscreenCanvas(size, height);
   }
 
   throw new Error("Canvas API is unavailable in this runtime.");
@@ -92,9 +119,6 @@ const SMALL_SHELL_PLACEHOLDER_MARGIN_PX = 20;
 const SMALL_SHELL_PLACEHOLDER_PADDING_PX = 6;
 const SMALL_SHELL_PLACEHOLDER_TARGET_U = 0.88;
 const SMALL_SHELL_PLACEHOLDER_TARGET_V = 0.58;
-const SMALL_SHELL_DETECTION_MARKER_SCALE = 1.5;
-const DEFAULT_SMALL_SHELL_DETECTION_FILL = "#00FF00";
-const DEFAULT_SMALL_SHELL_DETECTION_BORDER = "#FFFFFF";
 
 
 /* ── Per-island palette + gradient helpers ───────────────────────── */
@@ -120,13 +144,6 @@ const ISLAND_PALETTES = [
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
-}
-
-function normalizeHexColor(value, fallback) {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  if (/^#(?:[0-9a-fA-F]{3}){1,2}$/.test(trimmed)) return trimmed.toUpperCase();
-  return fallback;
 }
 
 function stableHash64(value) {
@@ -1843,332 +1860,7 @@ function buildRenderShellsWithCleanWire(shells, size) {
   });
 }
 
-function getSmallShellDetectionMarkerRect(bounds) {
-  if (!bounds) return;
-  const width = bounds.maxX - bounds.minX;
-  const height = bounds.maxY - bounds.minY;
-  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
-
-  const centerX = (bounds.minX + bounds.maxX) * 0.5;
-  const centerY = (bounds.minY + bounds.maxY) * 0.5;
-  const shellSize = Math.max(width, height);
-  const markerSize = Math.max(
-    26 * SMALL_SHELL_DETECTION_MARKER_SCALE,
-    Math.min(68 * SMALL_SHELL_DETECTION_MARKER_SCALE, (shellSize + 26) * SMALL_SHELL_DETECTION_MARKER_SCALE),
-  );
-  const half = markerSize * 0.5;
-  const x = centerX - half;
-  const y = centerY - half;
-  return {
-    x,
-    y,
-    size: markerSize,
-    minX: x,
-    minY: y,
-    maxX: x + markerSize,
-    maxY: y + markerSize,
-  };
-}
-
-function drawSmallShellDetectionMarkerRect(
-  ctx,
-  markerRect,
-  baseWidth,
-  fillColor = DEFAULT_SMALL_SHELL_DETECTION_FILL,
-) {
-  if (!markerRect) return;
-  const outerX = markerRect.x;
-  const outerY = markerRect.y;
-  const markerSize = markerRect.size;
-
-  ctx.save();
-  ctx.fillStyle = normalizeHexColor(fillColor, DEFAULT_SMALL_SHELL_DETECTION_FILL);
-  ctx.fillRect(outerX, outerY, markerSize, markerSize);
-  ctx.strokeStyle = DEFAULT_SMALL_SHELL_DETECTION_BORDER;
-  ctx.lineWidth = Math.max(baseWidth * 3.2, 2.2);
-  ctx.strokeRect(outerX, outerY, markerSize, markerSize);
-  ctx.restore();
-}
-
-function rectsOverlap(a, b, gap = 0) {
-  const safeGap = Number.isFinite(gap) ? Math.max(0, gap) : 0;
-  return !(
-    a.maxX + safeGap < b.minX - safeGap ||
-    a.minX - safeGap > b.maxX + safeGap ||
-    a.maxY + safeGap < b.minY - safeGap ||
-    a.minY - safeGap > b.maxY + safeGap
-  );
-}
-
-function buildCombinedMarkerRect(markerRects) {
-  if (!Array.isArray(markerRects) || markerRects.length === 0) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const markerRect of markerRects) {
-    if (!markerRect) continue;
-    minX = Math.min(minX, markerRect.minX);
-    minY = Math.min(minY, markerRect.minY);
-    maxX = Math.max(maxX, markerRect.maxX);
-    maxY = Math.max(maxY, markerRect.maxY);
-  }
-  if (![minX, minY, maxX, maxY].every((value) => Number.isFinite(value))) return null;
-
-  const combinedWidth = maxX - minX;
-  const combinedHeight = maxY - minY;
-  const side = (Math.max(combinedWidth, combinedHeight) + 2) * SMALL_SHELL_DETECTION_MARKER_SCALE;
-  const centerX = (minX + maxX) * 0.5;
-  const centerY = (minY + maxY) * 0.5;
-  const half = side * 0.5;
-  return {
-    x: centerX - half,
-    y: centerY - half,
-    size: side,
-    minX: centerX - half,
-    minY: centerY - half,
-    maxX: centerX + half,
-    maxY: centerY + half,
-  };
-}
-
-const DOOR_SHUT_STRONG_PATTERN =
-  /\b(?:door[\s_-]*(?:shut|jamb|jam|seam|gap|edge)|(?:shut|jamb|jam|seam)[\s_-]*door|dshut|drshut|doorshut)\b/i;
-const DOOR_SHUT_HINT_PATTERN =
-  /\b(?:door|bodyshell|body|frame|jamb|jam|seal|seam|pillar|panel|cab|chassis)\b/i;
-const DOOR_SHUT_NOISE_PATTERN =
-  /\b(?:wheel|rim|tyre|tire|badge|logo|decal|emblem|plate|light|lamp|mirror|glass|window|wiper|grille|grill|exhaust|engine|interior|seat|dash|antenna|roofrack|spoiler)\b/i;
-const GEOM_FRAGMENT_PATTERN = /(?:^|[\s:_-])geom\d+(?:::?\d+)?(?:$|[\s:_-])/i;
-const ISLAND_LABEL_PATTERN = /\b\d+\s+islands?\b/i;
-
-function scoreDetectionMarkerName(text) {
-  if (!text || typeof text !== "string") return 0;
-  const normalized = text.toLowerCase();
-  let score = 0;
-
-  if (DOOR_SHUT_STRONG_PATTERN.test(normalized)) score += 132;
-  if (DOOR_SHUT_HINT_PATTERN.test(normalized)) score += 24;
-  if (/\bdoor\b/.test(normalized)) score += 16;
-  if (ISLAND_LABEL_PATTERN.test(normalized)) score += 28;
-  if (DOOR_SHUT_NOISE_PATTERN.test(normalized)) score -= 42;
-  if (GEOM_FRAGMENT_PATTERN.test(normalized)) score -= 24;
-  if (normalized.includes("::") && !/\bdoor\b/.test(normalized)) score -= 8;
-
-  return score;
-}
-
-function scoreDetectionMarkerGeometry(marker) {
-  const size = Number.isFinite(marker?.size) ? marker.size : 0;
-  const width = Number.isFinite(marker?.width) ? marker.width : size;
-  const height = Number.isFinite(marker?.height) ? marker.height : size;
-  const minDim = Math.max(UV_EPSILON, Math.min(width, height));
-  const maxDim = Math.max(width, height);
-  const aspect = maxDim / minDim;
-  const memberCount = Number.isFinite(marker?.memberCount) ? marker.memberCount : 1;
-  const islandCount = Number.isFinite(marker?.islandCount) ? marker.islandCount : memberCount;
-  const averageShellSize = Number.isFinite(marker?.averageShellSize) ? marker.averageShellSize : size;
-  const minShellSize = Number.isFinite(marker?.minShellSize) ? marker.minShellSize : averageShellSize;
-  const maxShellSize = Number.isFinite(marker?.maxShellSize) ? marker.maxShellSize : averageShellSize;
-  const area = Math.max(0, size * size);
-
-  let score = 0;
-
-  if (islandCount >= 2) score += 36 + Math.min(52, islandCount * 6);
-  if (islandCount >= 8) score += 16;
-  if (islandCount === 1) score -= 14;
-
-  if (memberCount >= 2) score += Math.min(24, memberCount * 3);
-  if (memberCount > 12) score -= 8;
-
-  if (averageShellSize >= 6 && averageShellSize <= 28) score += 12;
-  if (averageShellSize > 36) score -= 10;
-
-  if (minShellSize <= 4.5 && maxShellSize >= 20) score += 12;
-
-  const looksLikeSeamStrip = aspect >= 5 && minDim <= 6 && maxDim >= 20;
-  if (looksLikeSeamStrip) score += 28;
-  if (aspect < 2 && maxDim <= 26) score -= 18;
-
-  if (size >= 26 && size <= 150) score += 12;
-  if (area < 16 * 16) score -= 22;
-  if (area > 260 * 260) score -= 18;
-
-  return score;
-}
-
-function compareDetectionMarkers(a, b) {
-  const scoreDiff = b.confidenceScore - a.confidenceScore;
-  if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
-  const islandCountA = Number.isFinite(a?.islandCount) ? a.islandCount : 1;
-  const islandCountB = Number.isFinite(b?.islandCount) ? b.islandCount : 1;
-  const islandDiff = islandCountB - islandCountA;
-  if (islandDiff !== 0) return islandDiff;
-  const yDiff = b.y - a.y;
-  if (Math.abs(yDiff) > 0.01) return yDiff;
-  return a.x - b.x;
-}
-
-function rankDetectionMarkers(markers) {
-  if (!Array.isArray(markers) || markers.length === 0) return [];
-
-  let minCenterY = Infinity;
-  let maxCenterY = -Infinity;
-  for (const marker of markers) {
-    const centerY = marker.y + marker.size * 0.5;
-    minCenterY = Math.min(minCenterY, centerY);
-    maxCenterY = Math.max(maxCenterY, centerY);
-  }
-  const centerSpanY = Math.max(1, maxCenterY - minCenterY);
-
-  const scored = markers
-    .map((marker) => {
-      const centerY = marker.y + marker.size * 0.5;
-      const yBias = ((centerY - minCenterY) / centerSpanY) * 8;
-      const confidenceScore =
-        scoreDetectionMarkerName(marker.searchText) +
-        scoreDetectionMarkerGeometry(marker) +
-        yBias;
-      return {
-        ...marker,
-        confidenceScore,
-      };
-    })
-    .sort(compareDetectionMarkers);
-
-  return scored.map((marker) => ({
-    ...marker,
-    // Detection only proposes locations. Placement is an explicit user choice.
-    defaultVisible: false,
-  }));
-}
-
-function buildDetectionMarkerClusters(shells, mapper) {
-  const markerCandidates = [];
-
-  shells.forEach((shell, index) => {
-    const bounds = mapper.mapBounds(index);
-    const shellWidth = Math.max(0, bounds.maxX - bounds.minX);
-    const shellHeight = Math.max(0, bounds.maxY - bounds.minY);
-    const shellSize = Math.max(shellWidth, shellHeight);
-    const shellMinDim = Math.min(shellWidth, shellHeight);
-    const shellAspect = shellSize / Math.max(UV_EPSILON, shellMinDim);
-    const isNeedleCandidate =
-      shellMinDim <= SMALL_SHELL_MARKER_NEEDLE_MIN_DIM_PX + 1 &&
-      shellSize >= 16 &&
-      shellSize <= 220 &&
-      shellAspect >= 4.5;
-    const needsDetectionMarker =
-      shellSize <= 20 ||
-      (shell?.isSmallShell && shellSize <= 34) ||
-      isNeedleCandidate;
-    if (!needsDetectionMarker) return;
-
-    const markerRect = getSmallShellDetectionMarkerRect(bounds);
-    if (!markerRect) return;
-
-    const islandId = buildIslandKey(shell, index);
-    markerCandidates.push({
-      ...markerRect,
-      islandId,
-      label: shell?.shellName || islandId,
-      meshName: shell?.meshName || "",
-      shellSize,
-      shellWidth,
-      shellHeight,
-      shellMinDim,
-      shellAspect,
-      triangleCount: Number.isFinite(shell?.triangleCount) ? shell.triangleCount : 0,
-    });
-  });
-
-  if (markerCandidates.length === 0) return [];
-
-  const parent = markerCandidates.map((_, index) => index);
-  const findRoot = (index) => {
-    while (parent[index] !== index) {
-      parent[index] = parent[parent[index]];
-      index = parent[index];
-    }
-    return index;
-  };
-  const unite = (a, b) => {
-    const ra = findRoot(a);
-    const rb = findRoot(b);
-    if (ra !== rb) parent[ra] = rb;
-  };
-
-  for (let i = 0; i < markerCandidates.length; i += 1) {
-    for (let j = i + 1; j < markerCandidates.length; j += 1) {
-      if (!rectsOverlap(markerCandidates[i], markerCandidates[j], 3)) continue;
-      unite(i, j);
-    }
-  }
-
-  const clusters = new Map();
-  for (let i = 0; i < markerCandidates.length; i += 1) {
-    const root = findRoot(i);
-    if (!clusters.has(root)) clusters.set(root, []);
-    clusters.get(root).push(markerCandidates[i]);
-  }
-
-  const result = [];
-  for (const clusterRects of clusters.values()) {
-    const combined = buildCombinedMarkerRect(clusterRects);
-    if (!combined) continue;
-
-    const islandIds = clusterRects
-      .map((entry) => entry.islandId)
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
-    const uniqueIslandIds = [...new Set(islandIds)];
-    const key = uniqueIslandIds.join("|");
-    const label =
-      uniqueIslandIds.length === 1
-        ? clusterRects[0]?.label || uniqueIslandIds[0]
-        : `${uniqueIslandIds.length} islands`;
-    const combinedWidth = Math.max(0, combined.maxX - combined.minX);
-    const combinedHeight = Math.max(0, combined.maxY - combined.minY);
-    const searchText = clusterRects
-      .map((entry) => `${entry.label || ""} ${entry.meshName || ""}`)
-      .join(" ")
-      .trim();
-    const combinedSearchText = `${label} ${searchText}`.trim();
-    const shellSizes = clusterRects
-      .map((entry) => entry.shellSize)
-      .filter((value) => Number.isFinite(value));
-    const averageShellSize =
-      shellSizes.length > 0
-        ? shellSizes.reduce((sum, value) => sum + value, 0) / shellSizes.length
-        : combined.size;
-    const minShellSize = shellSizes.length > 0 ? Math.min(...shellSizes) : averageShellSize;
-    const maxShellSize = shellSizes.length > 0 ? Math.max(...shellSizes) : averageShellSize;
-    const triangleCount = clusterRects.reduce(
-      (sum, entry) => sum + (Number.isFinite(entry.triangleCount) ? entry.triangleCount : 0),
-      0,
-    );
-
-    result.push({
-      ...combined,
-      key,
-      label,
-      islandIds: uniqueIslandIds,
-      islandCount: uniqueIslandIds.length,
-      defaultColor: DEFAULT_SMALL_SHELL_DETECTION_FILL,
-      searchText: combinedSearchText,
-      width: combinedWidth,
-      height: combinedHeight,
-      memberCount: clusterRects.length,
-      averageShellSize,
-      minShellSize,
-      maxShellSize,
-      triangleCount,
-    });
-  }
-
-  return rankDetectionMarkers(result);
-}
-
-function paintWireframeLayer(canvas, shells, mapper, options = {}) {
+function paintWireframeLayer(canvas, shells, mapper) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.lineJoin = "round";
@@ -2176,28 +1868,9 @@ function paintWireframeLayer(canvas, shells, mapper, options = {}) {
   ctx.strokeStyle = "rgba(16, 20, 42, 0.52)";
 
   const baseWidth = Math.max(0.52, canvas.width * 0.00042);
-  const markerColorMap =
-    options?.markerColorMap && typeof options.markerColorMap === "object"
-      ? options.markerColorMap
-      : {};
-  const markerVisibilityMap =
-    options?.markerVisibilityMap && typeof options.markerVisibilityMap === "object"
-      ? options.markerVisibilityMap
-      : {};
-  const markerClusters = buildDetectionMarkerClusters(shells, mapper);
-  const markedIslandIds = new Set();
-  markerClusters.forEach((cluster) => {
-    for (const islandId of cluster.islandIds || []) {
-      markedIslandIds.add(islandId);
-    }
-  });
 
   shells.forEach((shell, index) => {
-    const islandId = buildIslandKey(shell, index);
-    if (markedIslandIds.has(islandId)) return;
-
     const shellSegments = Array.isArray(shell?.wireSegments) ? shell.wireSegments : [];
-
     if (shellSegments.length < 4) return;
 
     const bounds = mapper.mapBounds(index);
@@ -2225,40 +1898,8 @@ function paintWireframeLayer(canvas, shells, mapper, options = {}) {
     }
   });
 
-  for (const marker of markerClusters) {
-    const explicitVisibility = markerVisibilityMap[marker.key];
-    const isVisible = explicitVisibility === true;
-    if (!isVisible) continue;
-    const markerColor = normalizeHexColor(
-      markerColorMap[marker.key],
-      marker.defaultColor || DEFAULT_SMALL_SHELL_DETECTION_FILL,
-    );
-    drawSmallShellDetectionMarkerRect(ctx, marker, baseWidth, markerColor);
-  }
-
-  return {
-    canvas,
-    detectionMarkers: markerClusters.map((marker) => ({
-      key: marker.key,
-      label: marker.label,
-      islandIds: marker.islandIds,
-      islandCount: marker.islandCount,
-      defaultColor: marker.defaultColor || DEFAULT_SMALL_SHELL_DETECTION_FILL,
-      defaultVisible: marker.defaultVisible !== false,
-      confidenceScore: marker.confidenceScore,
-      x: marker.x,
-      y: marker.y,
-      size: marker.size,
-      width: marker.width || marker.size,
-      height: marker.height || marker.size,
-      minX: marker.minX,
-      minY: marker.minY,
-      maxX: marker.maxX,
-      maxY: marker.maxY,
-    })),
-  };
+  return canvas;
 }
-
 
 function paintAnnotationLayer(canvas, modelName, targetCount, meshCount) {
   const ctx = canvas.getContext("2d");
@@ -2375,22 +2016,21 @@ function paintLicencePlateLayer(canvas) {
   return canvas;
 }
 
-/* ── Preview compositing ─────────────────────────────────────────── */
+/* ── Compositing and encoding ────────────────────────────────────── */
 
-function renderPreview(size, layers) {
-  const preview = createCanvas(size);
-  const ctx = preview.getContext("2d");
-
+/**
+ * Flattens the visible layers. The result is both the PSD's merged image
+ * (ag-psd does not composite children itself, so without it readers that
+ * use the flattened image see black) and the source of the PNG preview.
+ */
+function compositeLayers(size, layers) {
+  const composite = createCanvas(size);
+  const ctx = composite.getContext("2d");
   for (const layer of layers) {
-    if (layer?.hidden) continue;
-    ctx.drawImage(layer.canvas, 0, 0);
+    if (layer?.hidden || !layer?.canvas) continue;
+    ctx.drawImage(layer.canvas, layer.left || 0, layer.top || 0);
   }
-
-  if (typeof preview.toDataURL === "function") {
-    return preview.toDataURL("image/png");
-  }
-
-  throw new Error("Synchronous preview export is unavailable.");
+  return composite;
 }
 
 function bytesToBase64(bytes) {
@@ -2407,27 +2047,101 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
-async function renderPreviewAsync(size, layers) {
-  const preview = createCanvas(size);
-  const ctx = preview.getContext("2d");
-
-  for (const layer of layers) {
-    if (layer?.hidden) continue;
-    ctx.drawImage(layer.canvas, 0, 0);
+function base64ToBytes(base64) {
+  if (typeof atob !== "function") {
+    throw new Error("Base64 decoding is unavailable.");
   }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
-  if (typeof preview.toDataURL === "function") {
-    return preview.toDataURL("image/png");
+async function canvasToPngBytes(canvas) {
+  if (typeof canvas.convertToBlob === "function") {
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return new Uint8Array(await blob.arrayBuffer());
   }
-
-  if (typeof preview.convertToBlob === "function") {
-    const blob = await preview.convertToBlob({ type: "image/png" });
-    const buffer = await blob.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    return `data:image/png;base64,${bytesToBase64(bytes)}`;
+  if (typeof canvas.toDataURL === "function") {
+    const dataUrl = canvas.toDataURL("image/png");
+    return base64ToBytes(dataUrl.slice(dataUrl.indexOf(",") + 1));
   }
+  throw new Error("PNG export is unavailable in this runtime.");
+}
 
-  throw new Error("Preview export is unavailable in this runtime.");
+async function canvasToPngDataUrl(canvas) {
+  if (typeof canvas.toDataURL === "function") {
+    return canvas.toDataURL("image/png");
+  }
+  const bytes = await canvasToPngBytes(canvas);
+  return `data:image/png;base64,${bytesToBase64(bytes)}`;
+}
+
+/* ── Vehicle overlay and logo ────────────────────────────────────── */
+
+// The whole app icon at 512 px; the loader's split faces are only 320 px.
+const TEMPLATE_LOGO_URL = new URL("../../src-tauri/icons/icon.png", import.meta.url);
+
+/**
+ * Decodes the Cortex Studio mark for the template. Returns
+ * { image, error }; image is null when this runtime cannot decode images
+ * (plain Node) or the bundled asset failed to load.
+ */
+async function loadTemplateLogo() {
+  if (typeof fetch !== "function" || typeof createImageBitmap !== "function") {
+    return { image: null, error: "This runtime cannot decode the Cortex logo." };
+  }
+  try {
+    const response = await fetch(TEMPLATE_LOGO_URL);
+    if (!response.ok) {
+      return { image: null, error: `The Cortex logo asset failed to load (HTTP ${response.status}).` };
+    }
+    return { image: await createImageBitmap(await response.blob()), error: "" };
+  } catch (error) {
+    return {
+      image: null,
+      error: `The Cortex logo asset failed to load. ${error instanceof Error ? error.message : ""}`.trim(),
+    };
+  }
+}
+
+function collectPixelTriangles(shells, mapper) {
+  let count = 0;
+  for (const shell of shells) {
+    const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
+    count += Math.floor(triangles.length / 6) * 6;
+  }
+  const out = new Float64Array(count);
+  let offset = 0;
+  shells.forEach((shell, index) => {
+    const triangles = Array.isArray(shell?.triangles) ? shell.triangles : [];
+    for (let i = 0; i + 5 < triangles.length; i += 6) {
+      for (let v = 0; v < 3; v += 1) {
+        const [x, y] = mapper.toPoint(index, triangles[i + v * 2], triangles[i + v * 2 + 1]);
+        out[offset] = x;
+        out[offset + 1] = y;
+        offset += 2;
+      }
+    }
+  });
+  return out;
+}
+
+function paintMaskLayer(canvas, mask, color) {
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.createImageData(canvas.width, canvas.height);
+  colorizeMask(mask, imageData.data, color);
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+function paintLogoLayer(placement, image) {
+  const canvas = createCanvas(placement.size);
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(image, 0, 0, placement.size, placement.size);
+  return canvas;
 }
 
 /* ── Validation ──────────────────────────────────────────────────── */
@@ -2464,6 +2178,9 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
   const includeWireframe = options.includeWireframe !== false;
   const includeWorldSpaceNormals = options.includeWorldSpaceNormals === true;
   const useWorldSpaceNormalsAsBase = options.useWorldSpaceNormalsAsBase === true;
+  const includeVehicleOverlay = options.includeVehicleOverlay === true;
+  const vehicleOverlayColor = normalizeVehicleOverlayColor(options.vehicleOverlayColor);
+  const includeLogo = options.includeLogo === true;
   const sourceFormat =
     options.sourceFormat || templateMap?.fileType || templatePsdSource?.fileType || "yft";
   const includeVehicleLayers =
@@ -2500,12 +2217,9 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
 
   const backgroundCanvas = paintBackgroundLayer(createCanvas(size), backgroundColor);
   const fillCanvas = paintMeshFillLayer(createCanvas(size), renderMeshes, mapper, fillColor);
-  const wireLayer = paintWireframeLayer(createCanvas(size), renderMeshes, mapper, {
-    markerColorMap: options.detectedIslandColors,
-    markerVisibilityMap: options.detectedIslandVisibility,
-  });
-  const wireCanvas = wireLayer.canvas;
-  const detectedIslands = Array.isArray(wireLayer.detectionMarkers) ? wireLayer.detectionMarkers : [];
+  const wireCanvas = paintWireframeLayer(createCanvas(size), renderMeshes, mapper);
+  const templateMarkers = normalizeTemplateMarkers(options.templateMarkers);
+  const markerColor = normalizeOpaqueHexColor(options.templateMarkerColor, DEFAULT_TEMPLATE_MARKER_COLOR);
   const annotationCanvas = paintAnnotationLayer(createCanvas(size), modelName, targetCount, renderMeshes.length);
   const plateCanvas = includeVehicleLayers ? paintLicencePlateLayer(createCanvas(size)) : null;
   const worldSpaceNormals = includeWorldSpaceNormals
@@ -2517,10 +2231,58 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
     ? { name: "_WS_NORMAL_WORLD_BASE", canvas: worldSpaceNormals.canvas }
     : { name: "_UV_FILL", canvas: fillCanvas };
 
+  // One coverage pass feeds the overlay, the markers and the logo's
+  // clear-space search, so the logo also stays out of the overlay's bleed.
+  let overlayCanvas = null;
+  let markerCanvas = null;
+  let markerPixelCounts = {};
+  let logoLayer = null;
+  let logoStatus = includeLogo ? "unavailable" : "off";
+  let logoMessage = includeLogo ? options.logoError || "" : "";
+  if (includeVehicleOverlay || includeLogo || templateMarkers.length > 0) {
+    const coverage = rasterizeCoverageMask(collectPixelTriangles(renderMeshes, mapper), size);
+    if (templateMarkers.length > 0) {
+      // A couple of pixels of bleed keeps marked pieces solid through mip filtering in game.
+      const markerBleed = Math.max(1.5, size / 2048);
+      const pieceMask = templateMarkers.some((marker) => marker.fill === "pieces")
+        ? dilateMaskWithinRadius(coverage, size, size, markerBleed)
+        : coverage;
+      const markers = buildTemplateMarkerMask(templateMarkers, pieceMask, size);
+      markerPixelCounts = markers.counts;
+      if (markers.painted > 0) {
+        markerCanvas = paintMaskLayer(createCanvas(size), markers.mask, markerColor);
+      }
+    }
+    const bleedMask =
+      includeVehicleOverlay || includeLogo ? dilateMaskEuclidean(coverage, size) : null;
+    if (includeVehicleOverlay) {
+      overlayCanvas = paintMaskLayer(createCanvas(size), bleedMask, vehicleOverlayColor);
+    }
+    if (includeLogo && options.logoImage) {
+      const placement = findLogoPlacement(bleedMask, size);
+      if (placement) {
+        logoLayer = {
+          name: "Cortex Studio",
+          canvas: paintLogoLayer(placement, options.logoImage),
+          left: placement.x,
+          top: placement.y,
+        };
+        logoStatus = "placed";
+        logoMessage = "";
+      } else {
+        logoStatus = "no-space";
+        logoMessage = "No clear space on this layout, so the Cortex logo was left out.";
+      }
+    }
+  }
+
   const layers = [
     { name: "_BG_BLACK", canvas: backgroundCanvas },
     baseLayer,
+    ...(overlayCanvas ? [{ name: "_VEHICLE_OVERLAY", canvas: overlayCanvas }] : []),
+    ...(logoLayer ? [logoLayer] : []),
     { name: "_UV_WIREFRAME", canvas: wireCanvas, hidden: !includeWireframe },
+    ...(markerCanvas ? [{ name: "_MARKERS", canvas: markerCanvas }] : []),
     ...(hasWorldSpaceNormals && !useWorldNormalsBase
       ? [{ name: "_WS_NORMAL_WORLD", canvas: worldSpaceNormals.canvas, hidden: true }]
       : []),
@@ -2529,9 +2291,11 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
     ...(plateCanvas ? [{ name: "_LICENCE_PLATES", canvas: plateCanvas, hidden: true }] : []),
   ];
 
+  const composite = compositeLayers(size, layers);
   const psd = {
     width: size,
     height: size,
+    canvas: composite,
     children: layers,
   };
 
@@ -2540,37 +2304,48 @@ function buildAutoTemplateArtifacts(templateMap, options = {}, writePsdUint8Arra
     bytes,
     size,
     layerCount: layers.length,
-    layers,
+    composite,
+    overlayCanvas,
     fileName: `${modelName}_auto_template.psd`,
+    overlayFileName: `${modelName}_vehicle_overlay.png`,
     targetCount,
-    detectedIslands,
+    markerPixelCounts,
+    logoStatus,
+    logoMessage,
   };
+}
+
+async function buildAutoTemplateWithAssets(templateMap, options = {}) {
+  const writePsdUint8Array = await getWritePsdUint8Array();
+  const logo = options.includeLogo === true ? await loadTemplateLogo() : { image: null, error: "" };
+  try {
+    const result = buildAutoTemplateArtifacts(
+      templateMap,
+      { ...options, logoImage: logo.image, logoError: logo.error },
+      writePsdUint8Array,
+    );
+    return {
+      bytes: result.bytes,
+      size: result.size,
+      layerCount: result.layerCount,
+      previewDataUrl: await canvasToPngDataUrl(result.composite),
+      overlayPngBytes: result.overlayCanvas ? await canvasToPngBytes(result.overlayCanvas) : null,
+      fileName: result.fileName,
+      overlayFileName: result.overlayFileName,
+      targetCount: result.targetCount,
+      markerPixelCounts: result.markerPixelCounts,
+      logoStatus: result.logoStatus,
+      logoMessage: result.logoMessage,
+    };
+  } finally {
+    logo.image?.close?.();
+  }
 }
 
 export async function buildAutoTemplatePsd(templateMap, options = {}) {
-  const writePsdUint8Array = await getWritePsdUint8Array();
-  const result = buildAutoTemplateArtifacts(templateMap, options, writePsdUint8Array);
-  return {
-    bytes: result.bytes,
-    size: result.size,
-    layerCount: result.layerCount,
-    previewDataUrl: renderPreview(result.size, result.layers),
-    fileName: result.fileName,
-    targetCount: result.targetCount,
-    detectedIslands: result.detectedIslands,
-  };
+  return buildAutoTemplateWithAssets(templateMap, options);
 }
 
 export async function buildAutoTemplatePsdAsync(templateMap, options = {}) {
-  const writePsdUint8Array = await getWritePsdUint8Array();
-  const result = buildAutoTemplateArtifacts(templateMap, options, writePsdUint8Array);
-  return {
-    bytes: result.bytes,
-    size: result.size,
-    layerCount: result.layerCount,
-    previewDataUrl: await renderPreviewAsync(result.size, result.layers),
-    fileName: result.fileName,
-    targetCount: result.targetCount,
-    detectedIslands: result.detectedIslands,
-  };
+  return buildAutoTemplateWithAssets(templateMap, options);
 }

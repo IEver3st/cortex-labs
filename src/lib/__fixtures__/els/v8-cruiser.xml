@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cortex test VCF: ELS V8 layout -->
+<vcfroot Description="Test cruiser" Author="Cortex">
+	<INTERFACE>
+		<LstgActivationType>manual</LstgActivationType>
+		<DefaultSirenMode>standby</DefaultSirenMode>
+		<InfoPanelHeaderColor>grey</InfoPanelHeaderColor>
+		<InfoPanelButtonLightColor>orange</InfoPanelButtonLightColor>
+	</INTERFACE>
+	<EOVERRIDE>
+		<!-- front bar -->
+		<Extra01 IsElsControlled="true" AllowEnvLight="true" Color="red" OffsetX="-0.60" OffsetY="0.10" OffsetZ="0.40" />
+		<Extra02 IsElsControlled="true" AllowEnvLight="false" Color="red" OffsetX="0.00" OffsetY="0.00" OffsetZ="0.00" />
+		<Extra03 IsElsControlled="true" AllowEnvLight="false" Color="blue" OffsetX="0.00" OffsetY="0.00" OffsetZ="0.00" />
+		<Extra04 IsElsControlled="true" AllowEnvLight="true" Color="blue" OffsetX="0.60" OffsetY="0.10" OffsetZ="0.40" />
+		<Extra05 IsElsControlled="true" AllowEnvLight="false" Color="white" OffsetX="0.00" OffsetY="0.00" OffsetZ="0.00" />
+		<Extra06 IsElsControlled="true" AllowEnvLight="false" Color="white" OffsetX="0.00" OffsetY="0.00" OffsetZ="0.00" />
+		<Extra07 IsElsControlled="true" AllowEnvLight="true" Color="amber" OffsetX="-0.30" OffsetY="-1.00" OffsetZ="0.30" />
+		<Extra08 IsElsControlled="true" AllowEnvLight="true" Color="amber" OffsetX="0.00" OffsetY="-1.00" OffsetZ="0.30" />
+		<Extra09 IsElsControlled="true" AllowEnvLight="true" Color="amber" OffsetX="0.30" OffsetY="-1.00" OffsetZ="0.30" />
+		<Extra10 IsElsControlled="false" />
+		<Extra11 IsElsControlled="true" AllowEnvLight="false" Color="white" OffsetX="0.00" OffsetY="0.00" OffsetZ="0.00" />
+		<Extra12 IsElsControlled="false" />
+	</EOVERRIDE>
+	<MISC>
+		<VehicleIsSlicktop>false</VehicleIsSlicktop>
+		<ArrowboardType>off</ArrowboardType>
+		<UseSteadyBurnLights>false</UseSteadyBurnLights>
+		<DfltSirenLtsActivateAtLstg>3</DfltSirenLtsActivateAtLstg>
+		<Takedowns AllowUse="true" Mirrored="true" />
+		<SceneLights AllowUse="true" IlluminateSidesOnly="true" />
+		<LadderControl enabled="false" />
+	</MISC>
+	<CRUISE>
+		<DisableAtLstg3>true</DisableAtLstg3>
+		<UseExtras Extra1="true" Extra2="false" Extra3="false" Extra4="true" />
+	</CRUISE>
+	<SOUNDS>
+		<MainHorn InterruptsSiren="true" AudioString="SIRENS_AIRHORN" />
+		<SrnTone1 AllowUse="true" AudioString="VEHICLES_HORNS_SIREN_1" />
+	</SOUNDS>
+	<WRNL LightingFormat="leds">
+		<PresetPatterns>
+			<Lstg3 Enabled="true" Pattern="2" />
+		</PresetPatterns>
+		<ForcedPatterns>
+			<MainHorn Enabled="false" Pattern="0" />
+		</ForcedPatterns>
+	</WRNL>
+	<PRML LightingFormat="leds" ExtrasActiveAtLstg2="2and3">
+		<PresetPatterns>
+			<Lstg2 Enabled="true" Pattern="1" />
+			<Lstg3 Enabled="true" Pattern="3" />
+		</PresetPatterns>
+		<ScanPatternCustomPool Enabled="false" Sequential="true">
+			<Pattern>1</Pattern>
+			<Pattern>2</Pattern>
+		</ScanPatternCustomPool>
+	</PRML>
+	<SECL LightingFormat="traf" DisableAtLstg3="true">
+		<PresetPatterns>
+			<Lstg1 Enabled="true" Pattern="1" />
+			<Lstg2 Enabled="true" Pattern="2" />
+			<Lstg3 Enabled="false" Pattern="1" />
+		</PresetPatterns>
+	</SECL>
+</vcfroot>

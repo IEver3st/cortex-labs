@@ -1,0 +1,346 @@
+/* Vehicle light preview inside the Meta inspector. Rows follow the Settings
+   grammar (label left, control right); the pattern grid shows each siren's
+   32-step sequencer in its own light colour, the one place colour is the
+   asset's data rather than decoration. */
+
+.vl-root {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 22px;
+  font-family: var(--font-main);
+  color: var(--mg-fg);
+}
+
+.vl-head,
+.vl-pattern-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vl-title,
+.vl-subtitle {
+  flex: 1;
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+}
+
+.vl-count {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vl-muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.vl-rows {
+  display: grid;
+}
+
+.vl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 6px 0;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.vl-row:first-child {
+  border-top: 0;
+}
+
+/* A row whose control is a set of chips: the chips sit under the label. */
+.vl-row.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.vl-row-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vl-row-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vl-row-hint {
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+}
+
+.vl-seg {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.vl-seg .lv-seg-btn {
+  padding: 0 8px;
+}
+
+.vl-seg .lv-seg-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.vl-pattern {
+  display: grid;
+  gap: 10px;
+}
+
+.vl-pattern > .vl-seg {
+  justify-self: start;
+}
+
+.vl-grid {
+  position: relative;
+  display: grid;
+  gap: 2px;
+}
+
+.vl-siren {
+  display: grid;
+  grid-template-columns: 18px 8px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-fg);
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), opacity 120ms var(--cx-ease);
+}
+
+.vl-siren:hover {
+  background: var(--cx-wash);
+}
+
+.vl-siren:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.vl-siren.is-muted {
+  opacity: 0.35;
+}
+
+.vl-siren.is-unbound .vl-siren-index {
+  text-decoration: line-through;
+}
+
+.vl-siren-index {
+  font-family: var(--font-hud);
+  font-size: 10.5px;
+  color: var(--mg-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.vl-siren-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 18%, transparent);
+}
+
+.vl-steps {
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  gap: 1px;
+  height: 10px;
+}
+
+.vl-step {
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--mg-fg) 8%, transparent);
+}
+
+/* The playhead spans the steps column of every row: index 18px + swatch 8px +
+   two 6px gaps + 4px row padding on each side. */
+.vl-track {
+  position: absolute;
+  inset: 0 4px 0 42px;
+  pointer-events: none;
+}
+
+.vl-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 0;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--mg-fg);
+  opacity: 0.75;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vl-siren {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .vl-step.is-on {
+    forced-color-adjust: none;
+  }
+  .vl-siren:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* License plate (VehiclePlatePanel shares this stylesheet). */
+.vl-plate-text {
+  display: grid;
+  gap: 6px;
+}
+
+.vl-plate-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vl-plate-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 14px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.vl-plate-input:focus-visible {
+  outline: none;
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.vl-plate-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.vl-plate-hint {
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.vl-plate-hint.is-warn {
+  color: var(--cx-caution);
+}
+
+.vl-plate-error {
+  color: var(--mg-destructive);
+}
+
+.vl-plate-image {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.vl-plate-image .lv-drop:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Extras: lighting controller buttons. Pressed buttons are opposite ink. */
+.vl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease), border-color 120ms var(--cx-ease);
+}
+
+.vl-chip:hover {
+  background: var(--cx-wash);
+}
+
+.vl-chip:disabled {
+  background: transparent;
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.vl-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.vl-chip.is-on {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.vl-chip-key {
+  min-width: 16px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 800;
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.vl-extras-on {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vl-chip {
+    transition: none;
+  }
+}

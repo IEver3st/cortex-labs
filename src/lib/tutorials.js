@@ -43,7 +43,7 @@ export const HOME_TUTORIAL_STEPS = [
   {
     id: "home-settings-nav",
     title: "5. Settings Navigation",
-    description: "Use the left sidebar to browse between System, Viewer, Shortcuts, Design, Experimental features, and About — each section has dedicated controls.",
+    description: "Use the left sidebar to move between System, Viewer, Studio, Appearance, Watermark, Shortcuts, and About.",
     icon: Layers,
     target: ".settings-nav",
     position: "right",
@@ -67,10 +67,10 @@ export const EVERYTHING_TUTORIAL_STEPS = [
 ];
 
 export const MULTI_TUTORIAL_STEPS = [
-  { id: "multi-welcome", title: "Multi-Viewer", description: "Welcome to Multi Mode. Load two models side-by-side to compare topology, scale, or textures instantly.", icon: Link2, target: null, position: "center" },
-  { id: "multi-settings", title: "1. Viewer Layout Structure", description: "Adjust layout constraints here to view models top/bottom, side/side, or split evenly.", icon: Eye, target: "#panel-multi-settings", position: "right" },
-  { id: "multi-model1", title: "2. Primary Subject", description: "Load your first model here into Viewer A.", icon: MousePointerClick, target: "#panel-multi-model-1", position: "right" },
-  { id: "multi-model2", title: "3. Secondary Subject", description: "Load your second model here into Viewer B to directly compare it against the primary subject.", icon: Gem, target: "#panel-multi-model-2", position: "right" }
+  { id: "multi-welcome", title: "Multi", description: "Line up to six vehicles in one scene, each with its own model, livery, glass design and paint.", icon: Link2, target: null, position: "center" },
+  { id: "multi-lineup", title: "1. The lineup", description: "Add, select, hide and reorder vehicles here. Dropping several models on the viewfinder adds them all.", icon: Eye, target: "#panel-multi-lineup", position: "right" },
+  { id: "multi-model", title: "2. Selected vehicle", description: "Load the selected vehicle's model. Duplicate a vehicle to compare liveries on the same model.", icon: MousePointerClick, target: "#panel-multi-model", position: "right" },
+  { id: "multi-livery", title: "3. Livery", description: "Each vehicle takes its own livery, or use one on all of them. Liveries reload when you save them.", icon: Gem, target: "#panel-multi-livery", position: "right" }
 ];
 
 export const EUP_TUTORIAL_STEPS = [

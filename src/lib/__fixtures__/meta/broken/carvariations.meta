@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CVehicleModelInfoVariation>
+  <variationData>
+    <Item>
+      <modelName>sheriff3</modelName>
+      <colors>
+        <Item>
+          <indices content="char_array">
+            111
+            0
+            0
+            156
+          </indices>
+          <liveries>
+            <Item value="true" />
+            <Item value="true" />
+          </liveries>
+        </Item>
+      </colors>
+      <kits>
+        <Item>0_default_modkit</Item>
+      </kits>
+      <windowsWithExposedEdges />
+      <plateProbabilities />
+      <lightSettings value="0" />
+      <sirenSettings value="300" />
+    </Item>
+  </variationData>
+</CVehicleModelInfoVariation>

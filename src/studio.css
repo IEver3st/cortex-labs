@@ -1,0 +1,747 @@
+/* Cortex Studio 5 primitives.
+   The Cortex scripts and Studio share one brand grammar: paper and ink, one
+   accent, condensed italic display caps for identity, keycaps for shortcuts,
+   and selection that flips a row to the opposite ink. Studio keeps desktop
+   necessities the in-game rules forbid: hairline structure and visible focus. */
+
+:root {
+  --cx-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --cx-on-primary: #ffffff;
+  /* Selection flips to the opposite ink, in every theme and preset. */
+  --cx-invert-bg: var(--mg-fg);
+  --cx-invert-fg: var(--mg-bg);
+  --cx-invert-muted: color-mix(in srgb, var(--mg-bg) 66%, var(--mg-fg));
+  --cx-wash: color-mix(in srgb, var(--mg-fg) 5%, transparent);
+  --cx-wash-strong: color-mix(in srgb, var(--mg-fg) 9%, transparent);
+  --cx-rule: color-mix(in srgb, var(--mg-border) 70%, transparent);
+  --cx-frame: var(--mg-surface);
+  --cx-raised: var(--mg-input-bg);
+  --cx-shadow-pop:
+    0 12px 32px rgba(15, 16, 18, 0.16),
+    0 2px 6px rgba(15, 16, 18, 0.08);
+  --cx-focus: 0 0 0 2px var(--mg-bg), 0 0 0 4px var(--mg-primary);
+
+  /* Semantic colours from the Cortex scripts; they never follow the accent. */
+  --cx-caution: #9a7330;
+  --cx-confirm: #2f6e62;
+
+  /* Project categories: one small marker each, never a fill. */
+  --cx-cat-livery: #3767c7;
+  --cx-cat-all: #6b6f75;
+  --cx-cat-eup: #7a5fb0;
+  --cx-cat-multi: #2f6e62;
+  --cx-cat-variant: #9a7330;
+  --cx-cat-template: #a24f7e;
+  --cx-cat-prop: #6d7a27;
+  --cx-cat-siren: #b4532a;
+  --cx-cat-photo: #2b7891;
+}
+
+html.dark {
+  --cx-on-primary: #0f1012;
+  --cx-frame: color-mix(in srgb, var(--mg-bg) 70%, #000);
+  --cx-raised: color-mix(in srgb, var(--mg-surface) 88%, var(--mg-fg));
+  --cx-shadow-pop:
+    0 14px 36px rgba(0, 0, 0, 0.5),
+    0 2px 6px rgba(0, 0, 0, 0.3);
+  --cx-caution: #d8ba82;
+  --cx-confirm: #9bc2ae;
+  --cx-cat-livery: #80aaf7;
+  --cx-cat-all: #a2a6ad;
+  --cx-cat-eup: #bea9de;
+  --cx-cat-multi: #8fcbbf;
+  --cx-cat-variant: #d8ba82;
+  --cx-cat-template: #e3a6c8;
+  --cx-cat-prop: #c3cf86;
+  --cx-cat-siren: #eda07c;
+  --cx-cat-photo: #8cc8db;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--mg-primary) 34%, transparent);
+  color: var(--mg-fg);
+}
+
+input,
+textarea {
+  caret-color: var(--mg-primary);
+}
+
+/* ── Display: condensed italic caps, for identity and figures only ── */
+.cx-display {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  line-height: 0.92;
+}
+
+/* ── Small tracked caps for structural labels ── */
+.cx-label {
+  font-family: var(--font-main);
+  font-size: calc(10.5 * var(--u));
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+  line-height: 1;
+}
+
+/* ── Keycaps: quiet until their row is armed ── */
+.cx-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(3 * var(--u));
+  flex-shrink: 0;
+}
+
+.cx-keycap {
+  display: inline-grid;
+  place-items: center;
+  min-width: calc(18 * var(--u));
+  height: calc(18 * var(--u));
+  padding: 0 calc(5 * var(--u));
+  border-radius: calc(3 * var(--u));
+  border: 1px solid var(--mg-border);
+  background: transparent;
+  color: var(--mg-muted);
+  font: italic 800 calc(12 * var(--u)) / 1 var(--font-display);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  transition:
+    background-color 140ms var(--cx-ease),
+    border-color 140ms var(--cx-ease),
+    color 140ms var(--cx-ease);
+}
+
+.cx-keycap.is-lit,
+.is-armed .cx-keycap,
+:hover > .cx-keys .cx-keycap,
+:focus-visible > .cx-keys .cx-keycap {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--mg-bg) 60%, #000);
+}
+
+/* ── Buttons ── */
+.cx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(7 * var(--u));
+  height: calc(32 * var(--u));
+  padding: 0 calc(14 * var(--u));
+  border: 1px solid var(--mg-border);
+  border-radius: calc(5 * var(--u));
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: calc(12.5 * var(--u));
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 140ms var(--cx-ease),
+    border-color 140ms var(--cx-ease),
+    color 140ms var(--cx-ease);
+}
+
+.cx-btn svg {
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  flex-shrink: 0;
+}
+
+.cx-btn:hover {
+  background: var(--cx-wash);
+  border-color: color-mix(in srgb, var(--mg-fg) 22%, var(--mg-border));
+}
+
+.cx-btn:focus-visible,
+.cx-icon-btn:focus-visible,
+.settings-toggle:focus-visible,
+.settings-primary:focus-visible,
+.settings-secondary:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.cx-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.cx-btn.is-primary {
+  border-color: var(--mg-primary);
+  background: var(--mg-primary);
+  color: var(--cx-on-primary);
+}
+
+.cx-btn.is-primary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--mg-primary) 86%, var(--mg-fg));
+  background: color-mix(in srgb, var(--mg-primary) 86%, var(--mg-fg));
+}
+
+.cx-btn.is-quiet {
+  border-color: transparent;
+  color: var(--mg-muted);
+}
+
+.cx-btn.is-quiet:hover {
+  color: var(--mg-fg);
+}
+
+.cx-btn.is-danger {
+  border-color: transparent;
+  color: var(--mg-destructive);
+}
+
+.cx-btn.is-danger:hover {
+  border-color: color-mix(in srgb, var(--mg-destructive) 40%, transparent);
+  background: color-mix(in srgb, var(--mg-destructive) 10%, transparent);
+}
+
+.cx-btn .cx-keys {
+  margin-left: calc(2 * var(--u));
+  margin-right: calc(-4 * var(--u));
+}
+
+.cx-btn.is-primary .cx-keycap {
+  border-color: color-mix(in srgb, var(--cx-on-primary) 45%, transparent);
+  background: transparent;
+  color: var(--cx-on-primary);
+  box-shadow: none;
+}
+
+.cx-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: calc(28 * var(--u));
+  height: calc(28 * var(--u));
+  border: 0;
+  border-radius: calc(5 * var(--u));
+  background: transparent;
+  color: var(--mg-muted);
+  cursor: pointer;
+  transition:
+    background-color 140ms var(--cx-ease),
+    color 140ms var(--cx-ease);
+}
+
+.cx-icon-btn svg {
+  width: calc(15 * var(--u));
+  height: calc(15 * var(--u));
+}
+
+.cx-icon-btn:hover {
+  background: var(--cx-wash);
+  color: var(--mg-fg);
+}
+
+.cx-icon-btn.is-danger:hover {
+  background: color-mix(in srgb, var(--mg-destructive) 12%, transparent);
+  color: var(--mg-destructive);
+}
+
+/* ── Switch (shared Toggle primitive) ── */
+.settings-toggle {
+  position: relative;
+  flex-shrink: 0;
+  width: calc(34 * var(--u));
+  height: calc(20 * var(--u));
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--mg-muted) 60%, var(--mg-border));
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--cx-ease),
+    border-color 160ms var(--cx-ease);
+}
+
+.settings-toggle-dot {
+  position: absolute;
+  top: 50%;
+  left: calc(3 * var(--u));
+  width: calc(12 * var(--u));
+  height: calc(12 * var(--u));
+  border-radius: 999px;
+  background: var(--mg-muted);
+  transform: translateY(-50%);
+  transition:
+    transform 180ms var(--cx-ease),
+    background-color 160ms var(--cx-ease);
+}
+
+.settings-toggle:hover {
+  border-color: var(--mg-fg);
+}
+
+.settings-toggle.is-on {
+  border-color: var(--mg-primary);
+  background: var(--mg-primary);
+}
+
+.settings-toggle.is-on .settings-toggle-dot {
+  background: var(--cx-on-primary);
+  transform: translate(calc(14 * var(--u)), -50%);
+}
+
+.settings-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* ── Portalled popper content under UI scaling ──
+   UI scale is `zoom` on body. Radix/Floating UI positions the popper wrapper
+   from on-screen rects, and body zoom would scale that translate a second
+   time, pushing menus away from their trigger in proportion to its distance
+   from the window origin. Cancel the zoom on the wrapper and reapply it to
+   the content so position is exact and the menu still scales. */
+[data-radix-popper-content-wrapper] {
+  zoom: calc(1 / var(--es-ui-scale, 1));
+}
+
+[data-radix-popper-content-wrapper] > * {
+  zoom: var(--es-ui-scale, 1);
+}
+
+/* ── Select (ui/select.jsx) ── */
+.cx-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  min-width: 0;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease), background-color 140ms var(--cx-ease);
+}
+
+.cx-select-trigger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--mg-fg) 28%, var(--mg-border));
+}
+
+.cx-select-trigger:focus-visible,
+.cx-select-trigger[data-state="open"] {
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+  outline: none;
+}
+
+.cx-select-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cx-select-trigger[data-placeholder] .cx-select-value {
+  color: var(--mg-muted);
+}
+
+.cx-select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cx-select-chevron {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--mg-muted);
+  transition: transform 160ms var(--cx-ease);
+}
+
+.cx-select-trigger[data-state="open"] .cx-select-chevron {
+  transform: rotate(180deg);
+}
+
+/* Sizes come from Radix in on-screen pixels; the content carries the UI zoom. */
+.cx-select-content {
+  position: relative;
+  /* Above modal scrims (dialogs, Settings, bug report); level with context menus. */
+  z-index: 10020;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--radix-select-trigger-width) / var(--es-ui-scale, 1));
+  max-width: max(calc(var(--radix-select-trigger-width) / var(--es-ui-scale, 1)), 360px);
+  max-height: min(380px, calc(var(--radix-select-content-available-height) / var(--es-ui-scale, 1)));
+  overflow: hidden;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--cx-raised);
+  color: var(--mg-fg);
+  box-shadow: var(--cx-shadow-pop);
+  font-family: var(--font-main);
+  transform-origin: var(--radix-select-content-transform-origin);
+}
+
+.cx-select-content[data-state="open"] {
+  animation: cx-select-in 140ms var(--cx-ease);
+}
+
+@keyframes cx-select-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+.cx-select-viewport {
+  padding: 4px;
+}
+
+.cx-select-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 5px 8px 5px 10px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  color: var(--mg-fg);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.cx-select-item[data-highlighted] {
+  background: var(--cx-wash);
+}
+
+.cx-select-item[data-state="checked"] {
+  font-weight: 600;
+}
+
+.cx-select-item[data-disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cx-select-item-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+
+.cx-select-item-text > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cx-select-item-desc {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mg-muted);
+}
+
+.cx-select-check {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--mg-primary);
+}
+
+.cx-select-check svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cx-select-label {
+  padding: 8px 10px 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+}
+
+.cx-select-separator {
+  height: 1px;
+  margin: 4px -4px;
+  background: var(--cx-rule);
+}
+
+.cx-select-scroll {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  color: var(--mg-muted);
+  cursor: default;
+}
+
+.cx-select-scroll svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Context menus (ContextMenu.jsx) ──
+   The raised-surface menu grammar of the select: 30px rows, a 2px accent bar
+   on the highlighted row, keycap shortcuts that light with their row. Content
+   carries the UI zoom (see the popper note above), so sizes are plain px. */
+.ctx-menu-content {
+  z-index: 10020;
+  min-width: 208px;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 5px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  line-height: 1.3;
+  transform-origin: var(--radix-context-menu-content-transform-origin);
+}
+
+.ctx-menu-content[data-state="open"] {
+  animation: cx-menu-in 120ms var(--cx-ease);
+}
+
+@keyframes cx-menu-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.ctx-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 0 8px 0 10px;
+  border-radius: 5px;
+  color: var(--mg-fg);
+  font-weight: 500;
+  cursor: default;
+  outline: none;
+  user-select: none;
+}
+
+.ctx-menu-item::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--mg-primary);
+  transform: scaleY(0);
+  transition: transform 140ms var(--cx-ease);
+}
+
+.ctx-menu-item > svg {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  color: var(--mg-muted);
+}
+
+.ctx-menu-item > span:not(.cx-keys) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-menu-item[data-highlighted] {
+  background: var(--cx-wash);
+}
+
+.ctx-menu-item[data-highlighted]::before {
+  transform: scaleY(1);
+}
+
+.ctx-menu-item[data-highlighted] > svg {
+  color: var(--mg-fg);
+}
+
+.ctx-menu-keys {
+  margin-left: auto;
+  padding-left: 18px;
+}
+
+.ctx-menu-item[data-highlighted] .cx-keycap {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.ctx-menu-item.is-destructive,
+.ctx-menu-item.is-destructive > svg {
+  color: var(--mg-destructive);
+}
+
+.ctx-menu-item.is-destructive::before {
+  background: var(--mg-destructive);
+}
+
+.ctx-menu-item.is-destructive[data-highlighted] {
+  background: color-mix(in srgb, var(--mg-destructive) 10%, transparent);
+}
+
+.ctx-menu-item[data-disabled] {
+  opacity: 0.4;
+}
+
+.ctx-menu-item[data-disabled]::before {
+  transform: scaleY(0);
+}
+
+.ctx-menu-separator {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--cx-rule);
+}
+
+.ctx-menu-label {
+  padding: 8px 10px 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-menu-content[data-state="open"] { animation: none; }
+  .ctx-menu-item::before { transition: none; }
+}
+
+:root[data-motion="reduce"] .ctx-menu-content[data-state="open"] {
+  animation: none;
+}
+
+@media (forced-colors: active) {
+  .ctx-menu-content {
+    border-color: CanvasText;
+    forced-color-adjust: none;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .ctx-menu-item[data-highlighted] {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .ctx-menu-separator {
+    background: CanvasText;
+  }
+}
+
+/* ── Shared dialog actions (Settings footer, feedback modal) ── */
+.settings-primary,
+.settings-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(6 * var(--u));
+  height: calc(32 * var(--u));
+  padding: 0 calc(16 * var(--u));
+  border-radius: calc(5 * var(--u));
+  font-family: var(--font-main);
+  font-size: calc(12.5 * var(--u));
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 140ms var(--cx-ease),
+    border-color 140ms var(--cx-ease),
+    color 140ms var(--cx-ease),
+    opacity 140ms var(--cx-ease);
+}
+
+.settings-primary {
+  border: 1px solid var(--mg-primary);
+  background: var(--mg-primary);
+  color: var(--cx-on-primary);
+}
+
+.settings-primary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--mg-primary) 86%, var(--mg-fg));
+  background: color-mix(in srgb, var(--mg-primary) 86%, var(--mg-fg));
+}
+
+.settings-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.settings-secondary {
+  border: 1px solid var(--mg-border);
+  background: transparent;
+  color: var(--mg-fg);
+}
+
+.settings-secondary:hover:not(:disabled) {
+  background: var(--cx-wash);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cx-keycap,
+  .cx-btn,
+  .cx-icon-btn,
+  .settings-toggle,
+  .settings-toggle-dot,
+  .cx-select-trigger,
+  .cx-select-chevron {
+    transition: none;
+  }
+  .cx-select-content[data-state="open"] {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .settings-toggle.is-on {
+    background: Highlight;
+  }
+  .cx-btn:focus-visible,
+  .cx-icon-btn:focus-visible,
+  .settings-toggle:focus-visible,
+  .cx-select-trigger:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  .cx-select-item[data-highlighted] {
+    outline: 1px solid Highlight;
+  }
+}
+
+/* Settings > Reduce motion: Always. Same effect as the OS setting, app-wide. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}
+
+/* Settings > Show shortcut keys: off. Shortcuts still work; only the keycaps hide. */
+:root[data-keycaps="off"] .cx-keys {
+  display: none !important;
+}

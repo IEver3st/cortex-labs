@@ -1,0 +1,2169 @@
+/* Siren sequencer. A step grid (one lane per siren, its 32-step sequencer in
+   the siren's own colour) that fills the Sirens workspace's centre column.
+   Lane colours are the asset's data; selection is opposite ink on the row
+   head, and the accent marks only the playing step, focus and the primary
+   action. */
+
+.se-sheet {
+  container: se-sheet / inline-size;
+  --se-head: 96px;
+  --se-tail: 24px;
+  --se-gap: 6px;
+  --se-cell-off: color-mix(in srgb, var(--mg-fg) 8%, transparent);
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+}
+
+/* ── Bar ── */
+/* One row down to a narrow sheet: the live strip gives way first. Below
+   that the groups wrap as units. */
+.se-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-height: 46px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--mg-border);
+}
+
+.se-bar .se-actions {
+  margin-left: auto;
+}
+
+/* Step counter: the playing step as a display figure. */
+.se-counter {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 64px;
+}
+
+.se-counter-step {
+  font-size: 26px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.se-counter-total {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+/* Live strip: one lamp per siren, lit in its colour at the current step. */
+.se-strip {
+  display: flex;
+  flex: 1 1 160px;
+  gap: 2px;
+  min-width: 80px;
+  max-width: 420px;
+  height: 18px;
+  padding: 3px;
+  border: 1px solid var(--mg-border);
+  border-radius: 5px;
+  background: var(--mg-input-bg);
+}
+
+.se-strip-cell {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--se-cell-off);
+}
+
+.se-strip-cell.is-selected:not(.is-on) {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 45%, transparent);
+}
+
+.se-meta {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.se-transport,
+.se-switches,
+.se-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.se-switches {
+  gap: 10px;
+}
+
+.se-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mg-muted);
+}
+
+.se-seg {
+  margin: 0 4px;
+}
+
+.se-seg .lv-seg-btn {
+  height: 24px;
+  padding: 0 7px;
+}
+
+/* The inspector's lens glow choice fills its field. */
+.se-seg.se-lens-seg {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.se-lens-seg .lv-seg-btn {
+  padding: 0 4px;
+}
+
+.se-lens-write {
+  justify-self: start;
+  margin-top: 4px;
+}
+
+.se-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-muted);
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.se-icon-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.se-icon-btn:hover:not(:disabled) {
+  background: var(--cx-wash);
+  color: var(--mg-fg);
+}
+
+.se-icon-btn.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.se-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.se-icon-btn:focus-visible,
+.se-head-cell:focus-visible,
+.se-mute:focus-visible,
+.se-marker:focus-visible,
+.se-menu-item:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.se-glyph {
+  font-family: var(--font-hud);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.se-actions .cx-btn svg,
+.se-tools .cx-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.se-actions .cx-btn,
+.se-tools .cx-btn {
+  gap: 6px;
+}
+
+/* ── Status line ── */
+.se-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--cx-rule);
+  font-size: 12px;
+}
+
+.se-status-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.se-status.is-ok .lv-dot { background: var(--cx-confirm); }
+.se-status.is-busy { color: var(--mg-muted); }
+.se-status.is-busy .lv-dot { background: var(--mg-primary); }
+.se-status.is-error { color: var(--mg-destructive); }
+
+.se-path {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+/* ── Body ── */
+.se-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.se-tracks {
+  flex: 1;
+}
+
+.se-tracks {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.se-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 12px;
+}
+
+.se-tools {
+  column-gap: 8px;
+}
+
+/* Tool groups wrap as units, split by a hairline. */
+.se-tools-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.se-tools-group + .se-tools-group {
+  padding-left: 8px;
+  border-left: 1px solid var(--mg-border);
+}
+
+.se-solo.is-on {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.se-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 12px;
+  user-select: none;
+}
+
+.se-row {
+  display: grid;
+  grid-template-columns: var(--se-head) minmax(160px, 1fr) var(--se-tail);
+  align-items: center;
+  gap: var(--se-gap);
+}
+
+.se-ruler {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  height: 24px;
+  background: color-mix(in srgb, var(--mg-bg) 55%, var(--cx-frame));
+}
+
+.se-ruler-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+}
+
+.se-ruler-cells {
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.se-ruler-cell {
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.se-ruler-cell:hover:not(:disabled) {
+  background: var(--cx-wash);
+  color: var(--mg-fg);
+}
+
+.se-ruler-cell:disabled {
+  cursor: default;
+}
+
+/* The playing step's number, in accent; between beats it shows only here. */
+.se-ruler-cell.is-now {
+  color: var(--mg-primary);
+  font-weight: 700;
+}
+
+.se-ruler-cell.is-now:not(.is-beat)::after {
+  content: attr(data-label);
+}
+
+.se-rows {
+  position: relative;
+  /* Keeps the playhead under the sticky ruler when the lanes scroll. */
+  z-index: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.se-siren {
+  display: grid;
+  gap: 2px;
+}
+
+.se-head-cell {
+  min-width: 0;
+}
+
+.se-siren-head {
+  display: grid;
+  grid-template-columns: 20px 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  height: calc(var(--se-lane, 16px) + 2px);
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+}
+
+.se-siren-head:hover {
+  background: var(--cx-wash);
+}
+
+.se-siren.is-selected .se-siren-head {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.se-siren-index {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.se-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mg-fg) 22%, transparent);
+}
+
+.se-siren-tags {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 10.5px;
+  color: var(--mg-muted);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.se-unbound {
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+.se-siren.is-selected .se-siren-tags,
+.se-siren.is-selected .se-unbound {
+  color: var(--cx-invert-muted);
+}
+
+.se-siren.is-muted .se-lane {
+  opacity: 0.3;
+}
+
+.se-sub-label {
+  overflow: hidden;
+  padding-left: 32px;
+  font-size: 11px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.se-lane {
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  gap: 2px;
+  /* Lanes grow to fill the column (set from the measured height). */
+  height: var(--se-lane, 16px);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.se-subrow .se-lane,
+.se-lamp .se-lane {
+  height: 13px;
+}
+
+.se-lane.is-dim {
+  opacity: 0.4;
+}
+
+.se-cell {
+  border-radius: 2px;
+  background: var(--se-cell-off);
+}
+
+.se-cell.is-beat {
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--mg-fg) 18%, transparent);
+}
+
+/* Beats of four read as bars: a wider gap before each fifth step. */
+.se-lane .se-cell.is-beat:not(:first-child),
+.se-ruler-cell.is-beat:not(:first-child) {
+  margin-left: 3px;
+}
+
+.se-cell.is-on {
+  background: var(--se-cell);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mg-fg) 16%, transparent);
+}
+
+.se-lane:hover .se-cell:not(.is-on):hover {
+  background: color-mix(in srgb, var(--mg-fg) 18%, transparent);
+}
+
+.se-mute {
+  width: 22px;
+  height: calc(var(--se-lane, 16px) + 2px);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.se-mute:hover {
+  border-color: var(--mg-border);
+  color: var(--mg-fg);
+}
+
+.se-mute.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.se-step-track {
+  position: absolute;
+  z-index: 2;
+  top: -2px;
+  right: calc(var(--se-tail) + var(--se-gap));
+  bottom: -2px;
+  left: calc(var(--se-head) + var(--se-gap));
+  pointer-events: none;
+}
+
+/* The playing step: an accent ring over its column. It lights what it covers
+   instead of tinting over it, so the cells firing now read brightest. JS sets
+   its x and width from the ruler cell. */
+.se-step-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(100% / 32);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--mg-fg) 6%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--mg-primary);
+  backdrop-filter: brightness(1.55) saturate(1.1);
+}
+
+.se-step-band[hidden] {
+  display: none;
+}
+
+.se-siren {
+  position: relative;
+  z-index: 1;
+}
+
+.se-lamps {
+  display: grid;
+  gap: 2px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.se-lamps-title {
+  margin-bottom: 4px;
+}
+
+.se-lamp .se-sub-label {
+  padding-left: 6px;
+}
+
+.se-empty,
+.se-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.se-empty {
+  padding: 14px 6px;
+}
+
+/* ── Inspector panels (Siren and Setting tabs) ── */
+.se-panel {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+}
+
+.se-panel-title {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.se-panel-title .cx-display {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.se-group {
+  display: grid;
+  gap: 4px;
+}
+
+.se-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 2px;
+}
+
+.se-group-head .cx-label {
+  margin: 0;
+}
+
+.se-field {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.se-field-label {
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--mg-fg);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.se-field-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.se-num,
+.se-text {
+  height: 28px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--mg-border);
+  border-radius: 5px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 12px;
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.se-num {
+  flex: 0 0 64px;
+  width: 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.se-text {
+  flex: 1;
+  width: 100%;
+}
+
+.se-pattern {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.se-hex {
+  flex: 1;
+  min-width: 104px;
+}
+
+.se-num:focus,
+.se-text:focus {
+  outline: none;
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.se-text.is-invalid {
+  border-color: var(--mg-destructive);
+}
+
+.se-unit {
+  margin-left: -4px;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.se-color {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--mg-border);
+  border-radius: 5px;
+  background: var(--mg-input-bg);
+  cursor: pointer;
+}
+
+.se-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.se-color::-webkit-color-swatch {
+  border: 0;
+  border-radius: 3px;
+}
+
+.se-range {
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+
+.se-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--mg-primary) var(--fill), var(--mg-border) var(--fill));
+}
+
+.se-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--mg-bg);
+  border-radius: 999px;
+  background: var(--mg-fg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  appearance: none;
+}
+
+.se-range:focus-visible {
+  outline: none;
+}
+
+.se-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--cx-focus);
+}
+
+/* ── Menus (portaled to the body) ── */
+.se-menu-trigger svg:last-child {
+  width: 12px;
+  height: 12px;
+  margin-left: -2px;
+  color: var(--mg-muted);
+}
+
+.se-menu {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  min-width: 200px;
+  max-height: min(420px, 70vh);
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+  font-family: var(--font-main);
+}
+
+.se-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.se-menu-item:hover:not(:disabled),
+.se-menu-item:focus-visible {
+  background: var(--cx-wash-strong);
+}
+
+.se-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.se-menu-hint {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+.se-menu-rule {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--mg-border);
+}
+
+/* ── Markers over the stage ── */
+.se-markers {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.se-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 14px;
+  min-width: 14px;
+  margin: -7px 0 0 -7px;
+  padding: 0 3px;
+  border: 1px solid var(--lv-slip-line);
+  border-radius: 5px;
+  background: var(--lv-slip);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.se-marker-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--mg-muted);
+}
+
+.se-marker.is-selected {
+  z-index: 1;
+  height: 20px;
+  margin-top: -10px;
+  padding: 0 6px 0 5px;
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.se-marker.is-unset {
+  border-style: dashed;
+  color: var(--mg-muted);
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* Callouts: a dot on each light and its numbers on a slip at the end of a
+   hairline leader. Leaders and dots sit on the scene, whose colour the user
+   picks, so they carry a dark halo instead of following the theme. */
+.se-callout-leads {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.se-callout-halo {
+  stroke: rgba(8, 9, 11, 0.55);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.se-callout-lead {
+  stroke: rgba(246, 246, 240, 0.8);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+
+.se-callout-lead.is-far {
+  stroke: rgba(246, 246, 240, 0.5);
+  stroke-dasharray: 2 3;
+}
+
+.se-callout-lead.is-selected {
+  stroke: #f6f6f0;
+  stroke-width: 1.5;
+}
+
+.se-callout-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--se-dot, var(--mg-muted));
+  box-shadow: 0 0 0 1px rgba(8, 9, 11, 0.85), 0 0 0 2px rgba(246, 246, 240, 0.4);
+}
+
+.se-callout-dot.is-far {
+  opacity: 0.45;
+}
+
+.se-callout {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 2px;
+  border: 1px solid var(--lv-slip-line);
+  border-radius: 5px;
+  background: var(--lv-slip);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.se-callout.is-far {
+  opacity: 0.6;
+}
+
+/* Each number takes its siren's colour, lightened or darkened just enough to
+   read on the slip (and on opposite ink when selected). */
+.se-callout-num {
+  height: 16px;
+  min-width: 15px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--se-num, var(--mg-fg));
+  color: oklch(from var(--se-num, var(--mg-fg)) min(l, 0.52) c h);
+  font: italic 800 14px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+html.dark .se-callout-num,
+.se-callout-num.is-selected {
+  color: oklch(from var(--se-num, var(--mg-fg)) max(l, 0.74) c h);
+}
+
+html.dark .se-callout-num.is-selected {
+  color: oklch(from var(--se-num, var(--mg-fg)) min(l, 0.52) c h);
+}
+
+.se-callout-num:hover:not(:disabled) {
+  background: var(--cx-wash-strong);
+}
+
+.se-callout-num.is-selected {
+  background: var(--cx-invert-bg);
+}
+
+.se-callout-num:disabled {
+  color: var(--mg-muted);
+  cursor: default;
+}
+
+.se-callout-num:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* The marker menu trigger sits among the header's icon buttons. */
+.se-menu-trigger.se-marker-menu {
+  gap: 2px;
+  padding: 0 4px 0 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--mg-muted);
+}
+
+.se-menu-trigger.se-marker-menu svg:first-child {
+  width: 15px;
+  height: 15px;
+}
+
+.se-menu-trigger.se-marker-menu:hover:not(:disabled) {
+  background: var(--cx-wash);
+  color: var(--mg-fg);
+}
+
+.se-menu-trigger.se-marker-menu.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.se-menu-trigger.se-marker-menu.is-on svg:last-child {
+  color: var(--cx-invert-muted);
+}
+
+.se-menu-check {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  color: var(--mg-primary);
+}
+
+@container se-sheet (max-width: 1000px) {
+  .se-strip,
+  .se-tools-count {
+    display: none;
+  }
+}
+
+/* Narrow sheet: the row heads and gutters give their width to the steps.
+   Kind tags are in the head's title; the counter names the playing step, so
+   the ruler keeps only its beat numbers, which would otherwise collide. */
+@container se-sheet (max-width: 660px) {
+  .se-bar,
+  .se-tools {
+    padding-inline: 8px;
+  }
+
+  /* The sheet is the container, so its own variables cannot change here. */
+  .se-grid {
+    --se-head: 62px;
+    --se-gap: 4px;
+    padding: 0 8px 8px;
+  }
+
+  .se-siren-head {
+    grid-template-columns: 18px 10px minmax(0, 1fr) auto;
+    gap: 4px;
+    padding: 0 4px;
+  }
+
+  .se-siren-tags {
+    display: none;
+  }
+
+  .se-sub-label {
+    padding-left: 4px;
+  }
+
+  .se-ruler-cell.is-now:not(.is-beat)::after {
+    content: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .se-sheet *,
+  .se-menu * {
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .se-siren.is-selected .se-siren-head,
+  .se-marker.is-selected,
+  .se-callout-num.is-selected,
+  .se-icon-btn.is-on,
+  .se-mute.is-on {
+    outline: 2px solid Highlight;
+  }
+
+  .se-cell.is-on {
+    forced-color-adjust: none;
+  }
+
+  .se-step-band {
+    outline: 2px solid Highlight;
+    backdrop-filter: none;
+  }
+}
+
+.se-sheet:focus {
+  outline: none;
+}
+
+
+/* ── Sirens workspace ── */
+
+/* About a fifth wider than the other viewer workspaces; both drag wider. */
+/* Dock | sequencer | preview over inspector. The preview row's height and
+   the right column's width drag; focus mode re-places the preview over the
+   whole grid, so the viewer is never remounted. */
+.lv-root.sw-root {
+  --lv-dock: clamp(270px, 24vw, 380px);
+  --lv-insp: clamp(320px, 28vw, 460px);
+  /* The sequencer's 32 steps stop reading under this width, so the preview
+     column gives way first (down to the inspector's resize floor). Keep in
+     step with SEQUENCER_MIN in SirenWorkspace.jsx. */
+  --sw-main-min: 560px;
+  grid-template-rows: var(--sw-preview-h, clamp(220px, 38%, 480px)) minmax(0, 1fr);
+}
+
+.lv-root.sw-root:not(.is-focus) {
+  grid-template-columns: var(--lv-dock) minmax(0, 1fr) max(260px, min(var(--lv-insp), calc(100% - var(--lv-dock) - var(--sw-main-min))));
+}
+
+/* Five inspector tabs: tighter spacing so they fit the narrowest inspector,
+   and a scroll fallback when UI scaling still pushes them past it. */
+.sw-root .lv-tabs {
+  gap: 0;
+  padding-inline: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sw-root .lv-tab {
+  flex-shrink: 0;
+  padding: 0 6px;
+}
+
+.sw-root > .lv-dock {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.sw-root > .sw-main {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.sw-root > .sw-preview {
+  position: relative;
+  grid-column: 3;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--mg-border);
+  border-left: 1px solid var(--mg-border);
+}
+
+.sw-root > .lv-inspector {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+/* Inspector hidden: the preview keeps the whole column. */
+.lv-root.sw-root.is-inspector-closed {
+  grid-template-rows: minmax(0, 1fr) 0;
+}
+
+.sw-root.is-inspector-closed > .sw-preview {
+  grid-row: 1 / span 2;
+  border-bottom: 0;
+}
+
+/* Expanded: the preview covers the workspace. */
+.sw-root.is-focus > .sw-preview {
+  z-index: 5;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  border: 0;
+}
+
+.sw-root.is-focus > .sw-main {
+  visibility: hidden;
+}
+
+.sw-preview > .lv-finder {
+  position: absolute;
+  inset: 0;
+}
+
+/* The small preview keeps the stage switch and alerts; the camera deck
+   belongs to the expanded view. */
+.sw-root:not(.is-focus) .sw-preview .lv-deck {
+  display: none;
+}
+
+.sw-preview-tools {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 9px;
+}
+
+.sw-preview-tools .cx-icon-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.sw-preview-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mg-muted);
+}
+
+.sw-preview-rule {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--lv-slip-line);
+}
+
+.sw-preview-resize {
+  position: absolute;
+  z-index: 6;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 7px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.sw-preview-resize::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--mg-primary);
+  opacity: 0;
+  transition: opacity 140ms var(--cx-ease);
+}
+
+.sw-preview-resize:hover::after,
+.sw-preview-resize.is-dragging::after,
+.sw-preview-resize:focus-visible::after {
+  opacity: 1;
+}
+
+.sw-preview-resize:focus-visible {
+  outline: none;
+}
+
+.sw-empty {
+  display: grid;
+  flex: 1;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.sw-empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.sw-empty-hint {
+  max-width: 44ch;
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mg-muted);
+}
+
+.sw-root .lv-dock,
+.sw-root .lv-inspector {
+  position: relative;
+}
+
+.lv-pane-resizer {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.lv-pane-resizer.is-dock {
+  right: 0;
+}
+
+.lv-pane-resizer.is-insp {
+  left: 0;
+}
+
+.lv-pane-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--mg-primary);
+  opacity: 0;
+  transition: opacity 140ms var(--cx-ease);
+}
+
+.lv-pane-resizer.is-dock::after {
+  right: 0;
+}
+
+.lv-pane-resizer.is-insp::after {
+  left: 0;
+}
+
+.lv-pane-resizer:hover::after,
+.lv-pane-resizer.is-dragging::after,
+.lv-pane-resizer:focus-visible::after {
+  opacity: 1;
+}
+
+.lv-pane-resizer:focus-visible {
+  outline: none;
+}
+
+.lv-root.is-focus .lv-pane-resizer,
+.lv-root.is-inspector-closed .lv-pane-resizer.is-insp {
+  display: none;
+}
+
+.sw-identity {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sw-name {
+  overflow: hidden;
+  font-size: 24px;
+  line-height: 1.05;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sw-meta {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sw-meta.is-error {
+  color: var(--mg-destructive);
+}
+
+.sw-save {
+  width: 100%;
+  gap: 8px;
+}
+
+.sw-save svg,
+#panel-siren-setting .lv-slot-actions .cx-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+#panel-siren-setting .lv-slot-actions {
+  flex-wrap: wrap;
+}
+
+#panel-siren-setting .lv-slot-actions .cx-btn {
+  gap: 6px;
+}
+
+.sw-status {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.sw-status .lv-dot {
+  margin-top: 5px;
+  transform: none;
+}
+
+.sw-status .cx-icon-btn {
+  width: 22px;
+  height: 22px;
+  margin: -3px -4px 0 0;
+}
+
+.sw-status.is-ok .lv-dot { background: var(--cx-confirm); }
+.sw-status.is-busy { color: var(--mg-muted); }
+.sw-status.is-busy .lv-dot { background: var(--mg-primary); }
+.sw-status.is-error { color: var(--mg-destructive); }
+
+.sw-path {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sw-group {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.sw-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sw-group-head .cx-label {
+  margin: 0;
+}
+
+.sw-tempo {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.sw-bpm {
+  font-size: 44px;
+  line-height: 0.95;
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-bpm-unit {
+  font-family: var(--font-hud);
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+.se-tools-count {
+  margin-left: auto;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Palette (sequencer toolbar) ── */
+.se-palette {
+  gap: 3px;
+}
+
+.se-palette-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--mg-fg) 22%, transparent);
+  border-radius: 4px;
+  background: var(--se-swatch);
+  cursor: pointer;
+  transition: box-shadow 140ms var(--cx-ease);
+}
+
+.se-palette-swatch:hover:not(:disabled) {
+  box-shadow: 0 0 0 2px var(--cx-wash-strong);
+}
+
+.se-palette-swatch.is-on {
+  box-shadow: 0 0 0 2px var(--mg-bg), 0 0 0 3px var(--cx-invert-bg);
+}
+
+.se-palette-swatch:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.se-palette-swatch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.se-menu-label {
+  padding: 6px 10px 2px;
+}
+
+/* ── Facing picker (Siren tab) ── */
+.se-facing {
+  display: grid;
+  grid-template-columns: repeat(3, 26px);
+  grid-template-rows: repeat(3, 26px);
+  gap: 2px;
+}
+
+.se-facing-cell {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--mg-border);
+  border-radius: 5px;
+  background: var(--mg-input-bg);
+  color: var(--mg-muted);
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.se-facing-cell:hover {
+  background: var(--cx-wash-strong);
+  color: var(--mg-fg);
+}
+
+.se-facing-cell.is-on {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.se-facing-cell:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* An arrow pointing the way the light faces; up is the vehicle's front. */
+.se-facing-dot {
+  width: 9px;
+  height: 9px;
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 80%, 50% 60%, 0 80%);
+  transform: rotate(var(--se-facing, 0deg));
+}
+
+.se-facing-car {
+  justify-self: center;
+  align-self: center;
+  width: 12px;
+  height: 22px;
+  border: 1.5px solid var(--mg-muted);
+  border-top-width: 4px;
+  border-radius: 4px;
+}
+
+/* ── Equipment (Lights tab) ── */
+.se-equipment {
+  margin-bottom: 22px;
+}
+
+.se-equipment .se-group-head .sw-meta {
+  margin-left: auto;
+}
+
+.se-equipment-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.se-equipment-list li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border-bottom: 1px solid var(--cx-rule);
+}
+
+.se-equipment-index {
+  font-size: 16px;
+  color: var(--mg-muted);
+  text-align: center;
+}
+
+.se-equipment-list li.is-on .se-equipment-index {
+  color: var(--mg-fg);
+}
+
+.se-equipment-text {
+  display: grid;
+  min-width: 0;
+}
+
+.se-equipment-label,
+.se-equipment-reason {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.se-equipment-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.se-equipment-reason {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+
+/* ── Dock: tool results and import picker ── */
+.sw-tool-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+}
+
+.sw-tool-status .cx-icon-btn {
+  width: 22px;
+  height: 22px;
+  margin: -3px -4px 0 0;
+}
+
+.se-dialog-lines {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.se-dialog-lines li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  min-height: 22px;
+}
+
+.se-line-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.se-line-text {
+  min-width: 0;
+}
+
+/* The file a step touched: its name in mono; written files open their folder. */
+.se-line-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--cx-rule);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.se-line-path > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.se-line-path svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.se-line-path.is-link {
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.se-line-path.is-link:hover {
+  background: var(--cx-wash);
+  color: var(--mg-fg);
+}
+
+.se-line-path.is-link:focus-visible {
+  box-shadow: var(--cx-focus);
+  outline: none;
+}
+
+.se-dialog-lines .is-ok .se-line-icon { color: var(--cx-confirm); }
+.se-dialog-lines .is-busy { color: var(--mg-muted); }
+.se-dialog-lines .is-busy .se-line-icon { color: var(--mg-primary); animation: se-line-spin 900ms linear infinite; }
+.se-dialog-lines .is-warn { color: var(--mg-muted); }
+.se-dialog-lines .is-warn .se-line-icon { color: var(--cx-caution); }
+.se-dialog-lines .is-error .se-line-text,
+.se-dialog-lines .is-error .se-line-icon { color: var(--mg-destructive); }
+
+@keyframes se-line-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .se-dialog-lines .is-busy .se-line-icon { animation: none; }
+}
+
+.se-note.is-error { color: var(--mg-destructive); }
+.se-note.is-warn { color: var(--cx-caution); }
+
+.sw-import {
+  display: grid;
+  gap: 6px;
+}
+
+.sw-import-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.sw-import-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--mg-fg);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sw-import-item:hover {
+  background: var(--cx-wash);
+}
+
+.sw-import-item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.sw-import-name {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ── Tool dialogs ── */
+.se-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 9, 11, 0.6);
+}
+
+.se-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  /* 100% does not resolve inside the scrim's auto grid row, so tall dialogs ran off screen. */
+  max-height: calc(100vh - 48px);
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  animation: se-dialog-in 160ms var(--cx-ease);
+}
+
+.se-dialog.is-wide {
+  width: min(980px, 100%);
+}
+
+@keyframes se-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.se-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 16px 6px 22px;
+}
+
+.se-dialog-title {
+  margin: 0;
+  font-size: 28px;
+}
+
+.se-dialog-body {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  padding: 12px 22px 20px;
+  overflow-y: auto;
+}
+
+.se-dialog-split {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 22px;
+  overflow: hidden;
+  padding-bottom: 12px;
+}
+
+.se-dialog-form {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-height: 0;
+  max-height: min(62vh, 640px);
+  padding-right: 6px;
+  overflow-y: auto;
+}
+
+.se-dialog-preview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  min-height: 0;
+  max-height: min(62vh, 640px);
+}
+
+.se-dialog-preview .sw-meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.se-code {
+  min-height: 0;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+.se-dialog-foot {
+  display: grid;
+  gap: 10px;
+  padding: 12px 22px 20px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+/* Results sit beside the actions so the dialog does not grow after a save. */
+.se-dialog-foot.is-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+}
+
+.se-dialog-foot-status {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.se-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.se-dialog-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+.se-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.se-chip {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--mg-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.se-chip:hover:not(:disabled) {
+  background: var(--cx-wash);
+}
+
+.se-chip.is-on {
+  border-color: var(--cx-invert-bg);
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.se-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.se-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.se-ulc-buttons {
+  display: grid;
+}
+
+.se-ulc-button {
+  display: grid;
+  grid-template-columns: auto 92px minmax(0, 1fr) 52px 92px;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border-bottom: 1px solid var(--cx-rule);
+}
+
+.se-ulc-button .se-num {
+  flex: none;
+  width: 52px;
+}
+
+.se-ulc-button:not(.is-on) .se-ulc-extra {
+  color: var(--mg-muted);
+}
+
+.se-ulc-extra {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.se-ulc-extra .cx-display {
+  font-size: 16px;
+}
+
+.se-ulc-carries {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.se-rename-names {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.se-rename-names > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--mg-muted);
+}
+
+.se-rename-from {
+  font-size: 22px;
+}
+
+.se-rename-input {
+  height: 32px;
+  font-size: 13px;
+}
+
+.se-rename-plan {
+  display: grid;
+  margin: 0;
+  padding: 4px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  list-style: none;
+}
+
+.se-rename-plan li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  font-size: 12px;
+}
+
+.se-rename-plan svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cx-confirm);
+}
+
+.se-rename-path {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Lens write: conflicts the user must settle, then one row per texture. */
+.se-lens-fix {
+  display: grid;
+  gap: 12px;
+  padding: 10px 12px 12px;
+  border: 1px solid color-mix(in srgb, var(--mg-destructive) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--mg-destructive) 9%, transparent);
+}
+
+.se-lens-fix .cx-label {
+  margin: 0;
+  color: var(--mg-destructive);
+}
+
+.se-lens-conflict {
+  display: grid;
+  gap: 7px;
+}
+
+.se-lens-conflict strong {
+  color: var(--mg-fg);
+  font-weight: 600;
+}
+
+.se-lens-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.se-lens-choice {
+  gap: 7px;
+}
+
+.se-lens-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 25%, transparent);
+}
+
+.se-lens-hex {
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+}
+
+.se-lens-plan {
+  display: grid;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  list-style: none;
+}
+
+.se-lens-plan li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 7px 0;
+}
+
+.se-lens-plan li + li {
+  border-top: 1px solid var(--cx-rule);
+}
+
+.se-lens-plan svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cx-confirm);
+}
+
+.se-lens-plan li.is-error svg {
+  color: var(--mg-destructive);
+}
+
+.se-lens-name {
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.se-lens-tags {
+  display: flex;
+  gap: 4px;
+}
+
+.se-lens-tag {
+  padding: 0 5px;
+  border: 1px solid var(--mg-border);
+  border-radius: 3px;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.se-lens-sirens {
+  grid-column: 2 / -1;
+  color: var(--mg-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.se-lens-also {
+  color: var(--cx-caution);
+}
+
+.se-lens-notes {
+  display: grid;
+  gap: 6px;
+}
+
+@media (max-width: 860px) {
+  .se-dialog-split {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .se-dialog-form,
+  .se-dialog-preview {
+    max-height: none;
+  }
+
+  .se-code {
+    max-height: 280px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .se-dialog {
+    animation: none;
+  }
+}
+
+:root[data-motion="reduce"] .se-dialog {
+  animation: none;
+}
+
+@media (forced-colors: active) {
+  .se-chip.is-on,
+  .se-facing-cell.is-on,
+  .se-palette-swatch.is-on {
+    outline: 2px solid Highlight;
+  }
+}
