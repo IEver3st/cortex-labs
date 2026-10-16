@@ -10,6 +10,10 @@ All notable changes to Cortex Studio are documented here.
 
 - **Source code is public** - Cortex Studio's source is published in the public repository under the Cortex Studio Source-Available License 1.0. You can use the app for anything, including commercial work, and build or modify it for your own use. Redistributing, reselling, or rebranding it is not allowed. See `LICENSE` and `SECURITY.md`.
 
+### Security
+
+- **Tauri 2.12** - The desktop runtime and its plugins move to Tauri 2.12, which fixes an origin check that could let a remote page call app commands meant only for local pages. Patched Rust crates (rustls, rustls-webpki, quinn-proto, tar, time, serde_with) and Next.js 16.3.8 for the documentation site ship with it.
+
 ---
 
 ## [5.1.1] - 2026-10-15
