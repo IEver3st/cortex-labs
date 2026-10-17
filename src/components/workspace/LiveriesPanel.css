@@ -209,6 +209,21 @@
   background: color-mix(in srgb, var(--cx-invert-fg) 10%, transparent);
 }
 
+/* A livery the write removes: struck through, with its undo always shown. */
+.lv-liv-row.is-removed .lv-liv-name {
+  text-decoration: line-through;
+}
+
+.lv-liv-row.is-removed .lv-liv-thumb {
+  opacity: 0.45;
+}
+
+.lv-liv-row.is-removed .lv-liv-remove {
+  opacity: 0.75;
+}
+
+.lv-liv-sub.is-remove .lv-dot { background: var(--mg-destructive); }
+
 /* Dropping below the rows adds; the add target shows it. */
 .lv-liveries.is-drop-end .lv-drop {
   border-color: var(--mg-primary);

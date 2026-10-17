@@ -1,3 +1,13 @@
+version: 5.3.0
+date: 2026-10-16
+> Open a folder of vehicles to see a whole pack as snapshots and go through it car by car, and remove liveries a vehicle came with.
+
+## New
+- Folder of vehicles | Open a folder of vehicles on the Model step shows a pack's vehicles as snapshots on the new Pack view. Click one to work on it in Vehicle, and step through the rest with the arrows or Alt + PageUp and Alt + PageDown. Mod kit parts kept beside a car stay out of the list.
+- Remove liveries | The bin on a livery already in the vehicle marks it for removal. The next write takes it out of every .ytd that holds it, after a .bak, together with your new liveries.
+
+---
+
 version: 5.2.0
 date: 2026-10-16
 > Vehicle mode brings Livery and All together, and its new Liveries tab writes a whole set of liveries into a vehicle at once.

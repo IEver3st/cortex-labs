@@ -6,7 +6,9 @@ import {
   dxt5Bytes,
   fittedLiverySize,
   liverySlots,
+  liveryWriteLabel,
   naturalCompare,
+  normalizeLiverySet,
   parseLiveryPattern,
   planLiveryWrite,
   stageLiveryFiles,
@@ -158,6 +160,66 @@ test("writes stop before an unwritable or missing dictionary", () => {
   assert.match(planLiveryWrite({ modelPath: MODEL, dictionaries: [], pattern: "fpiu_sign_#", items, sources }).blocked, /no texture dictionary/);
   assert.match(planLiveryWrite({ modelPath: MODEL, dictionaries: [HI], pattern: "fpiu", items, sources }).blocked, /#/);
   assert.match(planLiveryWrite({ modelPath: MODEL, dictionaries: [HI], pattern: "fpiu_sign_#", items: [], sources }).blocked, /Add liveries/);
+});
+
+test("a livery marked for removal leaves every dictionary that holds it", () => {
+  const four = (width, levels) => ["fpiu_sign_1", "fpiu_sign_2", "fpiu_sign_3", "fpiu_sign_4"].map((name) => sign(name, width, levels));
+  const hi = { ...HI, textures: [...four(4096), sign("fpiu_badge", 512)] };
+  const base = { ...BASE, textures: four(1024, 11) };
+  const slots = liverySlots({ dictionaries: [hi, base], pattern: "fpiu_sign_#", removed: [4, 9] });
+  assert.deepEqual(slots.map((slot) => [slot.number, slot.removed]), [[1, false], [2, false], [3, false], [4, true]]);
+
+  const plan = planLiveryWrite({ modelPath: MODEL, dictionaries: [hi, base], pattern: "fpiu_sign_#", removed: [4, 9], signPrefix: "fpiu" });
+  assert.equal(plan.blocked, null);
+  assert.ok(canWriteLiveries(plan));
+  assert.deepEqual(plan.removals, [4]);
+  assert.deepEqual(plan.files.map((file) => [file.name, file.removed, file.textures.map((t) => [t.name, t.mode, t.itemId])]), [
+    ["GSDSS24Explorer+hi.ytd", 1, [["fpiu_sign_4", "delete", null]]],
+    ["GSDSS24Explorer.ytd", 1, [["fpiu_sign_4", "delete", null]]],
+  ]);
+  assert.ok(plan.checks.some((check) => check.tone === "confirm" && check.text === "Liveries run 1 to 3 with no gaps; this removes 4."), plan.checks.map((check) => check.text).join("\n"));
+
+  // Replacing 1 to 3 and removing 4 leaves three liveries, removals listed last.
+  const items = [1, 2, 3].map((number) => ({ id: `n${number}`, path: `C:\\l\\${number}.png`, number }));
+  const sources = Object.fromEntries(items.map((item) => [item.id, { width: 4096, height: 4096 }]));
+  const swap = planLiveryWrite({ modelPath: MODEL, dictionaries: [hi, base], pattern: "fpiu_sign_#", items, removed: [4], sources, signPrefix: "fpiu" });
+  assert.ok(canWriteLiveries(swap));
+  assert.deepEqual(swap.files[1].textures.map((t) => t.mode), ["replace", "replace", "replace", "delete"]);
+  assert.ok(swap.checks.some((check) => check.text === "Liveries run 1 to 3 with no gaps; this writes 1 to 3 and removes 4."));
+
+  // A staged image on a marked livery replaces it; removing a middle one leaves a gap.
+  const staged = planLiveryWrite({ modelPath: MODEL, dictionaries: [hi, base], pattern: "fpiu_sign_#", items: [{ id: "x", path: "C:\\l\\x.png", number: 4 }], removed: [2, 4], sources: { x: { width: 4096, height: 4096 } } });
+  assert.deepEqual(staged.removals, [2]);
+  assert.deepEqual(staged.files[0].textures.map((t) => [t.name, t.mode]), [["fpiu_sign_4", "replace"], ["fpiu_sign_2", "delete"]]);
+  assert.match(staged.checks.map((check) => check.text).join("\n"), /Livery 2 is missing/);
+});
+
+test("a new livery is modelled on one that stays", () => {
+  const items = [{ id: "a", path: "C:\\l\\a.png", number: 3 }];
+  const plan = planLiveryWrite({ modelPath: MODEL, dictionaries: [HI, BASE], pattern: "fpiu_sign_#", items, removed: [1], sources: { a: { width: 4096, height: 4096 } } });
+  assert.deepEqual(plan.files[0].textures.map((t) => [t.name, t.mode, t.like]), [["fpiu_sign_3", "insert", "FPIU_SIGN_2"], ["fpiu_sign_1", "delete", null]]);
+});
+
+test("a removal that would empty a dictionary is refused", () => {
+  const plan = planLiveryWrite({ modelPath: MODEL, dictionaries: [HI, BASE], pattern: "fpiu_sign_#", removed: [1, 2] });
+  assert.match(plan.blocked, /leaves GSDSS24Explorer\.ytd with no textures/);
+  assert.ok(!canWriteLiveries(plan));
+  assert.ok(plan.checks.some((check) => /removes every livery/.test(check.text)));
+  // The +hi dictionary keeps its badge, so it alone may lose every livery.
+  assert.equal(planLiveryWrite({ modelPath: MODEL, dictionaries: [HI], pattern: "fpiu_sign_#", removed: [1, 2] }).blocked, null);
+});
+
+test("saved sets keep their removals, never on a staged number", () => {
+  const set = normalizeLiverySet({ pattern: "fpiu_sign_#", items: [{ id: "a", path: "C:\\l\\a.png", number: 2 }], removed: [4, "3", 2, 0, 100, 4, 1.5] });
+  assert.deepEqual(set.removed, [3, 4]);
+  assert.deepEqual(normalizeLiverySet({ items: [] }).removed, []);
+});
+
+test("the write action names what it does", () => {
+  assert.equal(liveryWriteLabel(3, 0), "Write 3 liveries");
+  assert.equal(liveryWriteLabel(1, 0), "Write 1 livery");
+  assert.equal(liveryWriteLabel(3, 1), "Write 3, remove 1");
+  assert.equal(liveryWriteLabel(0, 2), "Remove 2 liveries");
 });
 
 test("sizes for a dictionary without liveries round to powers of two up to 4096", () => {

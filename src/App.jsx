@@ -39,6 +39,10 @@ import { normalizeSavedLightPreview, normalizeSavedMaterials, normalizeSavedStee
 import { setUnsavedChanges } from "./lib/unsaved-changes";
 import { normalizeLightDefaults, normalizePlateDefault, normalizeShowroomSubject, normalizeSteeringDefault, resolveDefaultSteering } from "./lib/studio-defaults";
 import { readModelResourceMeta } from "./lib/resource-meta-files";
+import { filterVehicles, stepVehicle, vehicleIndexOf } from "./lib/vehicle-folder";
+import { SNAPSHOT_HEIGHT, SNAPSHOT_PRESET, SNAPSHOT_QUALITY, SNAPSHOT_WIDTH, SNAPSHOT_ZOOM } from "./lib/vehicle-snapshots";
+import useVehicleFolder from "./components/workspace/useVehicleFolder";
+import usePackSnapshots from "./components/workspace/usePackSnapshots";
 import { simulateVehicle } from "./lib/vehicle-meta";
 import {
   VEHICLE_PAINT_KEYS,
@@ -68,6 +72,10 @@ const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
 const MAX_BACKGROUND_IMAGE_BLUR = 32;
 const MIN_LOADER_MS = 650;
+// Pack view snapshots wait this long after a vehicle settles, and a Take
+// snapshots pass gives up on a vehicle that has not settled after the second.
+const SNAPSHOT_SETTLE_MS = 350;
+const SNAPSHOT_SKIP_MS = 120000;
 
 const SUPPORTED_TEXTURE_EXTS = [
   "png",
@@ -490,15 +498,37 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const setGameLivery = useCallback((number) => {
     setGameLiveryEntry(Number.isInteger(number) && modelPath ? { path: modelPath, number } : null);
   }, [modelPath]);
+  // The folder of vehicles the Pack view lists (Vehicle mode), or "".
+  const [vehicleFolder, setVehicleFolder] = useState("");
+  const folderScan = useVehicleFolder(vehicleFolder, isTauriRuntime && textureMode === "vehicle", modelSourcePath || modelPath);
+  // The Pack view's filter; stepping goes through the vehicles it leaves listed.
+  const [vehicleFilter, setVehicleFilter] = useState("");
+  const folderVehicles = useMemo(() => filterVehicles(folderScan.vehicles, vehicleFilter), [folderScan.vehicles, vehicleFilter]);
+  // With a folder open, "pack" shows its vehicles in place of the workspace and
+  // "vehicle" the workspace for the open one.
+  const [folderView, setFolderView] = useState("vehicle");
+  const hasFolder = isTauriRuntime && textureMode === "vehicle" && Boolean(vehicleFolder);
+  const packShown = hasFolder && folderView === "pack";
+  const packSnapshots = usePackSnapshots(folderScan.status === "scanning" ? null : folderScan.vehicles, hasFolder);
+  // A Take snapshots pass: { queue, total, done, failed, current, returnTo }.
+  const [snapshotRun, setSnapshotRun] = useState(null);
+  // How the last pass ended, until the next one or the folder closes: { done, failed }.
+  const [snapshotResult, setSnapshotResult] = useState(null);
   // Images staged in the Liveries tab to write as the model's texture
   // liveries: { path, pattern, items: [{ id, path, number }] }, per model.
-  const [liverySetEntry, setLiverySetEntry] = useState(null);
-  const liverySet = liverySetEntry && liverySetEntry.path === modelPath ? liverySetEntry : null;
+  // Keyed by model path, so stepping through a folder of vehicles keeps each
+  // one's unwritten liveries for the session.
+  const [liverySetEntries, setLiverySetEntries] = useState({});
+  const liverySet = (modelPath && liverySetEntries[modelPath]) || null;
   const setLiverySet = useCallback((update) => {
-    setLiverySetEntry((current) => {
-      const base = current && current.path === modelPath ? current : { path: modelPath, pattern: "", items: [] };
+    if (!modelPath) return;
+    setLiverySetEntries((entries) => {
+      const current = entries[modelPath];
+      const base = current || { path: modelPath, pattern: "", items: [], removed: [] };
       const next = typeof update === "function" ? update(base) : update;
-      return next && modelPath ? { pattern: next.pattern || "", items: next.items || [], path: modelPath } : null;
+      const rest = { ...entries };
+      delete rest[modelPath];
+      return next ? { ...rest, [modelPath]: { pattern: next.pattern || "", items: next.items || [], removed: next.removed || [], path: modelPath } } : rest;
     });
   }, [modelPath]);
   // Reported by the viewer for the model it shows, which lags modelPath while
@@ -851,11 +881,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         licensePlate: plateOverride,
         savedVehicle,
         gameLivery: gameLivery != null ? { path: modelPath, number: gameLivery } : null,
-        liverySet: liverySet && (liverySet.items.length || liverySet.pattern)
-          ? { path: modelPath, pattern: liverySet.pattern, items: liverySet.items.map(({ id, path, number }) => ({ id, path, number })) }
+        liverySet: liverySet && (liverySet.items.length || liverySet.removed?.length || liverySet.pattern)
+          ? { path: modelPath, pattern: liverySet.pattern, items: liverySet.items.map(({ id, path, number }) => ({ id, path, number })), removed: liverySet.removed || [] }
           : null,
         // Front wheel angle, for the model it was set on.
         steering: modelPath && steering.path === modelPath ? { path: modelPath, angle: steering.angle } : null,
+        vehicleFolder: textureMode === "vehicle" && vehicleFolder ? vehicleFolder : null,
+        vehicleFolderView: textureMode === "vehicle" && vehicleFolder ? folderView : null,
         // Lights panel choices; the siren setting itself is reread from the model's files.
         vehicleLights: {
           switches: lightPreview.switches,
@@ -899,7 +931,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     lightIntensity, lightAzimuth, lightElevation, glossiness, liveryExteriorOnly, nativeMaterialsEnabled,
     stage, stageSpot, stageReflect, stageBeam, stageLight, stageFloor, turntable, turntableSpeed,
     multi.lineup, multi.gizmoVisible, multi.showroom, multi.slots,
-    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, liverySet, steering,
+    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, liverySet, steering, vehicleFolder, folderView,
     lightPreview.switches, lightPreview.muted, lightPreview.speed, lightPreview.spill, lightPreview.spillStrength, lightPreview.glow, lightPreview.haze, lightPreview.lens,
     materialType, matLightIntensity, matGlossiness, matRoughness, matClearcoat, materialTextures,
     shellTab,
@@ -1208,6 +1240,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [panelOpen.colors]);
 
   const selectModelRef = useRef(null);
+  // Set while a folder lists vehicles; the step hotkeys call it.
+  const stepFolderVehicleRef = useRef(null);
   const selectTextureRef = useRef(null);
   const selectWindowTextureRef = useRef(null);
 
@@ -1281,6 +1315,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     // Restore file paths (best effort). Some environments can report false negatives
     // on fs existence checks for previously approved paths.
     autoTexturePathRef.current = state.textureAuto === true && typeof state.texturePath === "string" ? state.texturePath : "";
+    if (typeof state.vehicleFolder === "string" && state.vehicleFolder) {
+      setVehicleFolder(state.vehicleFolder);
+      setFolderView(state.vehicleFolderView === "pack" ? "pack" : "vehicle");
+    }
     const initialModelPath = [state.modelSourcePath, state.modelPath, state.openFile].find((path) => typeof path === "string" && path) || "";
     if (initialModelPath) {
       // A tab opened from a saved vehicle keeps the vehicle's name.
@@ -1306,7 +1344,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         setGameLiveryEntry({ path: initialModelPath, number: state.gameLivery.number });
       }
       const restoredLiveries = state.liverySet?.path === initialModelPath ? normalizeLiverySet(state.liverySet) : null;
-      if (restoredLiveries) setLiverySetEntry({ path: initialModelPath, ...restoredLiveries });
+      if (restoredLiveries) setLiverySetEntries({ [initialModelPath]: { path: initialModelPath, ...restoredLiveries } });
       if (state.savedVehicle?.id && state.savedVehicle.path === initialModelPath) {
         setSavedVehicleEntry({ id: state.savedVehicle.id, name: String(state.savedVehicle.name || ""), path: initialModelPath });
       }
@@ -1355,6 +1393,62 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       setDialogError("Dialog permission blocked. Check Tauri capabilities.");
       console.error(error);
     }
+  };
+
+  // A folder of vehicles for the Pack view. The picker grants the folder and
+  // everything under it for this session.
+  const openVehicleFolder = async () => {
+    if (!isTauriRuntime) {
+      setDialogError("Tauri runtime required for file dialog.");
+      return;
+    }
+    try {
+      const openedFrom = (modelSourcePath || modelPath).replace(/[\\/][^\\/]*$/, "");
+      const selected = await open({ directory: true, recursive: true, title: "Open a folder of vehicles", defaultPath: vehicleFolder || openedFrom || undefined });
+      setDialogError("");
+      if (typeof selected !== "string") return;
+      if (selected === vehicleFolder) folderScan.rescan();
+      else {
+        setSnapshotRun(null);
+        setSnapshotResult(null);
+        setVehicleFolder(selected);
+        setVehicleFilter("");
+      }
+      setFolderView("pack");
+    } catch (error) {
+      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      console.error(error);
+    }
+  };
+
+  // Opens a vehicle from the folder to work on, in the Vehicle view. A pass
+  // taking snapshots stops there: the user picked where to be.
+  const openFolderVehicle = (vehicle) => {
+    if (!vehicle?.path) return;
+    setSnapshotRun(null);
+    setFolderView("vehicle");
+    // The open vehicle reloads only after its load failed.
+    if (vehicle.path === (modelSourcePath || modelPath) && modelPath) return;
+    loadModel(vehicle.path, { autoTexture: true });
+  };
+
+  const stepFolderVehicle = (delta) => {
+    const next = stepVehicle(folderVehicles, modelSourcePath || modelPath, delta);
+    if (next) openFolderVehicle(next);
+  };
+
+  // Opens each listed vehicle without a snapshot in turn, behind the Pack
+  // view, so the capture below takes its snapshot; then reopens the vehicle
+  // that was open before. With none missing, it retakes them all.
+  const takeSnapshots = () => {
+    const missing = folderScan.vehicles.filter((vehicle) => packSnapshots.taken[vehicle.path] == null);
+    const queue = (missing.length ? missing : folderScan.vehicles).map((vehicle) => vehicle.path);
+    setSnapshotResult(null);
+    if (!queue.length) return;
+    setSnapshotRun({ queue, total: queue.length, done: 0, failed: 0, current: queue[0], returnTo: modelSourcePath || modelPath });
+  };
+  const stopSnapshots = () => {
+    setSnapshotRun((run) => (run ? { ...run, queue: [], current: "" } : run));
   };
 
   const selectTexture = async () => {
@@ -1566,6 +1660,100 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   };
 
   selectModelRef.current = selectModel;
+  stepFolderVehicleRef.current = folderVehicles.length ? stepFolderVehicle : null;
+
+  // Moves a pass past `path`, whether its snapshot was saved or not.
+  const advanceSnapshotRun = useCallback((path, saved) => {
+    setSnapshotRun((run) => {
+      if (!run || run.current !== path) return run;
+      const queue = run.queue.slice(1);
+      return { ...run, queue, current: queue[0] || "", done: run.done + (saved ? 1 : 0), failed: run.failed + (saved ? 0 : 1) };
+    });
+  }, []);
+
+  // Loads the pass's next vehicle, or ends the pass. A vehicle that never
+  // settles (its load failed or hangs) is skipped after a while.
+  const snapshotRunning = snapshotRun != null;
+  const snapshotCurrent = snapshotRun?.current;
+  useEffect(() => {
+    const run = snapshotRun;
+    if (!run) return undefined;
+    if (!run.current) {
+      setSnapshotRun(null);
+      setSnapshotResult({ done: run.done, failed: run.failed });
+      if (run.returnTo && run.returnTo !== (modelSourcePath || modelPath)) loadModel(run.returnTo);
+      return undefined;
+    }
+    if (run.current !== (modelSourcePath || modelPath)) loadModel(run.current, { rename: false });
+    const timer = setTimeout(() => advanceSnapshotRun(run.current, false), SNAPSHOT_SKIP_MS);
+    return () => clearTimeout(timer);
+    // Runs once per vehicle of the pass, not on every change to the run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshotRunning, snapshotCurrent]);
+
+  // A failed load moves the pass on at once. Only an error that appears while
+  // a vehicle loads counts: the one already showing when the pass moves on
+  // belongs to the vehicle before, and loading the next one clears it.
+  const snapshotCurrentRef = useRef("");
+  snapshotCurrentRef.current = snapshotCurrent || "";
+  useEffect(() => {
+    const current = snapshotCurrentRef.current;
+    if (current && dialogError) advanceSnapshotRun(current, false);
+  }, [dialogError, advanceSnapshotRun]);
+
+  // A pass ends with the folder, Vehicle mode or this tab leaving the screen.
+  useEffect(() => {
+    if (!hasFolder || !isActive) setSnapshotRun(null);
+    if (!hasFolder) setSnapshotResult(null);
+  }, [hasFolder, isActive]);
+
+  // The first time this session a folder vehicle is on screen with its own
+  // textures settled (or it is the pass's current vehicle), the viewer takes
+  // its snapshot from the camera shot every other one uses. Turning the
+  // model's own textures on or off counts as a new look, worth a new one.
+  const snapshotSessionRef = useRef(new Set());
+  // The vehicle whose snapshot is being encoded and saved, so a rerun of the
+  // effect meanwhile doesn't take a second one.
+  const snapshotSavingRef = useRef("");
+  const saveSnapshot = packSnapshots.save;
+  useEffect(() => {
+    if (!hasFolder || folderScan.status !== "ready" || !isActive || modelLoading || !modelPath) return undefined;
+    const at = vehicleIndexOf(folderScan.vehicles, modelPath);
+    if (at < 0) return undefined;
+    const path = folderScan.vehicles[at].path;
+    const look = `${path}|${nativeMaterialsEnabled ? "own" : "plain"}`;
+    const wanted = snapshotCurrent ? snapshotCurrent === path : !snapshotSessionRef.current.has(look);
+    if (!wanted) return undefined;
+    const shown = viewerApiRef.current?.getShownModel?.();
+    if (!shown?.settled || shown.path !== modelPath) return undefined;
+    let cancelled = false;
+    // A beat for the first frames with the model's textures to reach the GPU.
+    const timer = setTimeout(async () => {
+      const api = viewerApiRef.current;
+      if (cancelled || snapshotSavingRef.current === path || api?.getShownModel?.()?.id !== shown.id) return;
+      snapshotSessionRef.current.add(look);
+      snapshotSavingRef.current = path;
+      let saved = false;
+      try {
+        const [canvas] = api.captureShots({
+          width: SNAPSHOT_WIDTH,
+          height: SNAPSHOT_HEIGHT,
+          shots: [{ pose: { type: "preset", presetKey: SNAPSHOT_PRESET, zoomFactor: SNAPSHOT_ZOOM } }],
+        }) || [];
+        const blob = canvas ? await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", SNAPSHOT_QUALITY)) : null;
+        saved = blob ? await saveSnapshot(path, blob) : false;
+      } catch (error) {
+        console.warn("[pack] snapshot not taken:", path, error);
+      } finally {
+        snapshotSavingRef.current = "";
+      }
+      advanceSnapshotRun(path, saved);
+    }, SNAPSHOT_SETTLE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [hasFolder, folderScan.status, folderScan.vehicles, isActive, modelLoading, modelPath, nativeMaterialsEnabled, nativeMaterialsStatus, snapshotCurrent, saveSnapshot, advanceSnapshotRun]);
   selectTextureRef.current = selectTexture;
   selectWindowTextureRef.current = selectWindowTexture;
 
@@ -1642,6 +1830,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           return textureMode === "multi" || (singleLayout && textureMode !== "eup" && windowTemplateEnabled);
         case HOTKEY_ACTIONS.CAPTURE_VIEW:
           return textureMode !== "sirens" && viewerReady && !event.repeat;
+        case HOTKEY_ACTIONS.PREVIOUS_VEHICLE:
+        case HOTKEY_ACTIONS.NEXT_VEHICLE:
+          return textureMode === "vehicle" && Boolean(stepFolderVehicleRef.current) && !event.repeat;
         default:
           return true;
       }
@@ -1709,6 +1900,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
           break;
         case HOTKEY_ACTIONS.SWAP_DUAL_SLOT:
           multi.selectNext();
+          break;
+        case HOTKEY_ACTIONS.PREVIOUS_VEHICLE:
+          stepFolderVehicleRef.current?.(-1);
+          break;
+        case HOTKEY_ACTIONS.NEXT_VEHICLE:
+          stepFolderVehicleRef.current?.(1);
           break;
         default:
           break;
@@ -2369,7 +2566,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     extrasPlan={extrasPlan}
     onLicensePlateStatus={setLicensePlateStatus}
     onVehicleModsStatus={handleVehicleModsStatus}
-    isActive={isActive}
+    isActive={isActive && (!packShown || snapshotRun != null)}
   />
   );
 
@@ -2555,6 +2752,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       panelCollapsed, setPanelCollapsed,
       modelPath, modelSourcePath, modelLoading, viewerReady, modelDropLabel,
       selectModel,
+      vehicleFolder, folderScan, folderVehicles, vehicleFilter, setVehicleFilter, openVehicleFolder, openFolderVehicle, stepFolderVehicle,
+      closeVehicleFolder: () => {
+        setVehicleFolder("");
+        setVehicleFilter("");
+        setFolderView("vehicle");
+      },
+      hasFolder, folderView, setFolderView, packShown, packSnapshots, liverySetEntries,
+      snapshotRun, snapshotResult, takeSnapshots, stopSnapshots,
       unloadModel: () => {
         setModelPath("");
         setModelSourcePath("");

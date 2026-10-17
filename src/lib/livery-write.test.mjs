@@ -69,6 +69,20 @@ test("a write begins, stages every texture, then commits with a backup stamp", a
   assert.equal(progress.at(-1), 3);
 });
 
+test("a write that only removes liveries stages nothing and commits the removals", async () => {
+  const removal = {
+    blocked: null,
+    files: [{ path: "C:\\r\\car.ytd", textures: [{ itemId: null, number: 4, name: "car_sign_4", mode: "delete", like: null, width: 0, height: 0, levels: 0 }] }],
+  };
+  assert.deepEqual(liveryBuildJobs(removal, []), []);
+  const host = fakeHost();
+  const progress = [];
+  await writeLiveries({ invoke: host.invoke, plan: removal, items: [], modelPath: "m.yft", build, onProgress: (p) => progress.push([p.done, p.total]) });
+  assert.deepEqual(host.calls.map(([command]) => command), ["livery_write_begin", "livery_write_commit"]);
+  assert.deepEqual(host.calls.at(-1)[1].request.ytds[0].textures, [{ name: "car_sign_4", mode: "delete" }]);
+  assert.deepEqual(progress, [[0, 0]]);
+});
+
 test("a failure or cancel before the commit drops the session and says nothing changed", async () => {
   const host = fakeHost({ failStage: true });
   await assert.rejects(

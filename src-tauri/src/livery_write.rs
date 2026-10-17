@@ -194,15 +194,18 @@ pub struct CommitYtd {
 #[derive(serde::Deserialize)]
 pub struct CommitTexture {
     pub name: String,
+    /// "replace" or "insert" a staged texture, or "delete" one the dictionary holds.
     pub mode: String,
-    pub id: String,
+    /// The staged texture; none for "delete".
+    #[serde(default)]
+    pub id: Option<String>,
     /// For "insert": a texture in the same dictionary whose use it takes.
     #[serde(default)]
     pub like: Option<String>,
 }
 
 /// Checks a commit against what was staged: valid names, known modes, every
-/// texture staged, and no name twice in one dictionary. The dictionaries'
+/// new texture staged, and no name twice in one dictionary. The dictionaries'
 /// places are checked by the caller (validate_sibling_ytd).
 pub fn check_commit(
     request: &CommitRequest,
@@ -234,7 +237,7 @@ pub fn check_commit(
                 ));
             }
             match (texture.mode.as_str(), texture.like.as_deref()) {
-                ("replace", None) | ("insert", None) => {}
+                ("replace" | "insert" | "delete", None) => {}
                 ("insert", Some(like)) => {
                     if !valid_texture_name(like) || like.eq_ignore_ascii_case(&texture.name) {
                         return Err(format!(
@@ -243,16 +246,24 @@ pub fn check_commit(
                         ));
                     }
                 }
-                ("replace", Some(_)) => {
+                ("replace" | "delete", Some(_)) => {
                     return Err(format!(
-                        "{} replaces a texture, so it is modelled on none.",
+                        "{} is not a new texture, so it is modelled on none.",
                         texture.name
                     ))
                 }
                 (other, _) => return Err(format!("Unknown texture write mode \"{other}\".")),
             }
-            if !staged.contains_key(&texture.id) {
-                return Err(format!("{} was never staged.", texture.name));
+            match (texture.mode.as_str(), texture.id.as_deref()) {
+                ("delete", None) => {}
+                ("delete", Some(_)) => {
+                    return Err(format!(
+                        "{} is removed, so nothing is staged for it.",
+                        texture.name
+                    ))
+                }
+                (_, Some(id)) if staged.contains_key(id) => {}
+                _ => return Err(format!("{} was never staged.", texture.name)),
             }
         }
     }
@@ -494,6 +505,22 @@ mod tests {
         }
         let replace = r#"{"token":"t","stamp":"20261016-101500","ytds":[{"path":"C:/r/car.ytd","textures":[{"name":"car_sign_1","mode":"replace","id":"a"}]}]}"#;
         assert!(check_commit(&request(replace), &staged).is_ok());
+    }
+
+    #[test]
+    fn a_removed_texture_names_nothing_staged_or_modelled_on() {
+        let none = HashMap::new();
+        let remove = r#"{"token":"t","stamp":"20261016-101500","ytds":[{"path":"C:/r/car.ytd","textures":[{"name":"car_sign_4","mode":"delete"}]}]}"#;
+        assert!(check_commit(&request(remove), &none).is_ok());
+        let staged: HashMap<String, PathBuf> = [("a".to_string(), PathBuf::from("a.dds"))].into();
+        for json in [
+            remove.replace(r#""delete""#, r#""delete","id":"a""#),
+            remove.replace(r#""delete""#, r#""delete","like":"car_sign_1""#),
+            remove.replace(r#""delete""#, r#""replace""#),
+            remove.replace(r#""delete""#, r#""insert""#),
+        ] {
+            assert!(check_commit(&request(&json), &staged).is_err(), "{json}");
+        }
     }
 
     #[test]

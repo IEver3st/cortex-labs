@@ -1,8 +1,9 @@
 // Sends a livery plan (livery-set.js planLiveryWrite) to the desktop host:
 // one session, each texture built and staged on its own (a batch of 4K
 // liveries is too large for one message), then a commit that rebuilds every
-// dictionary before it backs up and replaces any of them. Until the commit
-// nothing beside the model changes, so a failure or cancel before it says so.
+// dictionary, with its removed liveries left out, before it backs up and
+// replaces any of them. Until the commit nothing beside the model changes, so
+// a failure or cancel before it says so.
 
 import { backupStamp } from "./siren-install.js";
 
@@ -31,6 +32,7 @@ export function liveryBuildJobs(plan, items) {
   const jobs = new Map(items.map((item) => [item.id, { item, targets: [] }]));
   for (const file of plan.files) {
     for (const texture of file.textures) {
+      if (texture.mode === "delete") continue;
       const job = jobs.get(texture.itemId);
       if (!job) throw new Error(`Livery ${texture.number} has no image.`);
       const id = stageId(texture.itemId, texture);
@@ -49,7 +51,7 @@ export function liveryCommitRequest(plan, token, stamp) {
     stamp,
     ytds: plan.files.map((file) => ({
       path: file.path,
-      textures: file.textures.map((texture) => ({
+      textures: file.textures.map((texture) => (texture.mode === "delete" ? { name: texture.name, mode: "delete" } : {
         name: texture.name,
         mode: texture.mode,
         id: stageId(texture.itemId, texture),
@@ -92,6 +94,8 @@ export async function writeLiveries({ invoke, plan, items, modelPath, build, onP
       }
     }
     if (isCancelled()) throw new Error("The write was cancelled.");
+    // A write that only removes liveries stages nothing and goes straight to the commit.
+    if (!total) onProgress({ done: 0, total: 0, item: 0, items: 0, label: "" });
   } catch (error) {
     await Promise.resolve(invoke("livery_write_cancel", { token })).catch(() => {});
     throw withNothingChanged(error);

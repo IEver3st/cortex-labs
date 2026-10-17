@@ -304,7 +304,9 @@ export function DropButton({ title, hint, hotkey, onClick }) {
 
 /* ─── Frame ─── */
 
-export function WorkspaceFrame({ s, inspectorOpen, setInspectorOpen, children, className = "", style = null }) {
+// `viewSwitch` leads the frame's context slot; `panelControls` false hides the
+// panel toggles while something else (the Pack view) covers the panels.
+export function WorkspaceFrame({ s, inspectorOpen, setInspectorOpen, children, className = "", style = null, viewSwitch = null, panelControls = true }) {
   const focusMode = s.panelCollapsed;
   const hk = s.hotkeys || {};
   return (
@@ -318,6 +320,9 @@ export function WorkspaceFrame({ s, inspectorOpen, setInspectorOpen, children, c
       {s.isActive && s.contextBarTarget
         ? createPortal(
             <div className="ctx-bar-inner lv-ctx">
+              {viewSwitch}
+              {panelControls ? (
+              <>
               <button
                 type="button"
                 className={`lv-ctx-btn ${focusMode ? "" : "is-on"}`}
@@ -342,6 +347,8 @@ export function WorkspaceFrame({ s, inspectorOpen, setInspectorOpen, children, c
               >
                 <PanelRight aria-hidden="true" />
               </button>
+              </>
+              ) : <div className="ctx-bar-drag-pad" aria-hidden="true" />}
             </div>,
             s.contextBarTarget,
           )

@@ -22,6 +22,7 @@ mod livery_write;
 mod model_resource_scope;
 mod pdn;
 mod photo_assets;
+mod vehicle_snapshots;
 
 const BRIDGE_EXE_NAME: &str = if cfg!(target_os = "windows") {
     "CodeWalkerBridge.exe"
@@ -2250,7 +2251,8 @@ async fn livery_write_stage(
     .map_err(|error| format!("Staging a livery texture stopped: {error}"))?
 }
 
-/// Writes the staged liveries: every dictionary is rebuilt first, then the
+/// Writes the staged liveries and removes the ones the request deletes: every
+/// dictionary is rebuilt first, then the
 /// user's files are replaced, each after a stamped backup beside it. Resolves
 /// `{ files: [{ path, backup, textures }] }`; rejects with a message that says
 /// whether anything changed.
@@ -2294,9 +2296,10 @@ fn commit_livery_write(
             .textures
             .iter()
             .map(|texture| {
+                // check_commit made sure every id is staged; a removal has none.
                 serde_json::json!({
                     "name": texture.name,
-                    "path": staged.files[&texture.id],
+                    "path": texture.id.as_ref().map(|id| &staged.files[id]),
                     "mode": texture.mode,
                     "like": texture.like,
                 })
@@ -3596,6 +3599,9 @@ pub fn run() {
             search_game_props,
             export_game_prop,
             photo_assets::list_game_vehicles,
+            vehicle_snapshots::vehicle_snapshot_index,
+            vehicle_snapshots::read_vehicle_snapshot,
+            vehicle_snapshots::save_vehicle_snapshot,
             photo_assets::export_game_vehicle,
             photo_assets::export_game_vehicle_mods,
             photo_assets::lookup_game_text,

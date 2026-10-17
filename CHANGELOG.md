@@ -8,6 +8,18 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [5.3.0] - 2026-10-16
+
+Open a folder of vehicles to see a whole pack as snapshots and go through it car by car, and remove liveries a vehicle came with.
+
+### Added
+
+- **Go through a folder of vehicles** - **Open a folder of vehicles** on Vehicle mode's Model step shows every vehicle in a pack, or a folder of packs, on a new **Pack** view: a snapshot of each car, the liveries staged for it and any meta errors. Click one to work on it in the **Vehicle** view, which keeps the folder at the top of the dock; step through them with its arrows or **Alt + PageUp** and **Alt + PageDown**. Snapshots are taken as you open each car and kept in Cortex's cache, and **Take snapshots** fills in the rest in one go, or retakes them all once none are missing. A resource's `vehicles.meta` decides what counts as a vehicle, so mod kit parts kept beside the car stay out, even when you pick the resource's `stream` folder; **Filter vehicles** narrows the pack by model name, display name or resource. Liveries staged but not yet written stay with each vehicle while you move between them. Desktop app only.
+
+- **Remove liveries** - In the **Liveries** tab, the bin on a livery already in the vehicle marks it for removal, so a vehicle that came with four liveries can be left with your three without opening OpenIV. Its name is struck through until you write, and the undo arrow keeps it. The write removes it from every texture dictionary that holds it, in the same all-or-nothing write as your new liveries and after the same `.bak` backups; **Remove N liveries…** writes removals on their own. **Checks** warns about gaps in the numbers, and a write that would leave a dictionary with no textures is refused.
+
+---
+
 ## [5.2.0] - 2026-10-16
 
 Vehicle mode brings Livery and All together, and its new Liveries tab writes a whole set of liveries into a vehicle at once.

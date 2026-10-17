@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { stat } from "@tauri-apps/plugin-fs";
-import { CircleAlert, Download, ImageOff, RefreshCw, X } from "lucide-react";
+import { CircleAlert, Download, ImageOff, RefreshCw, Trash2, Undo2, X } from "lucide-react";
 import { DropButton } from "./parts";
 import LiveryWriteDialog from "./LiveryWriteDialog";
 import { inspectLiveryImage } from "../../lib/livery-image.js";
@@ -14,6 +14,7 @@ import {
   largestCopy,
   LIVERY_IMAGE_EXTENSIONS,
   liverySlots,
+  liveryWriteLabel,
   MAX_LIVERY_NUMBER,
   parseLiveryPattern,
   planLiveryWrite,
@@ -22,10 +23,11 @@ import {
 import "./LiveriesPanel.css";
 
 /* Liveries inspector (Vehicle mode): the vehicle's texture liveries as the
-   game numbers them, with images staged to replace or add to them. Picking a
-   livery previews it as the Livery step's texture. Writing goes through
-   LiveryWriteDialog, which backs up and rewrites the vehicle's own texture
-   dictionaries; nothing is written until the user confirms there. */
+   game numbers them, with images staged to replace or add to them and
+   existing ones marked for removal. Picking a livery previews it as the
+   Livery step's texture. Writing goes through LiveryWriteDialog, which backs
+   up and rewrites the vehicle's own texture dictionaries; nothing is written
+   until the user confirms there. */
 
 // Image sizes and thumbnails, read once per file version and shared by the
 // panel and the dialog. Keyed by path; `stamp` is the file's mtime and size.
@@ -116,6 +118,7 @@ function thumbPathOf(slot) {
 function slotDetail(slot, image) {
   const copy = largestCopy(slot);
   const size = copy?.texture.width ? `${copy.texture.width}` : "";
+  if (slot.removed) return { tone: "remove", text: "Removed on write" };
   if (!slot.item) return { tone: "", text: ["In the vehicle", size].filter(Boolean).join(" · ") };
   const name = fileNameOf(slot.item.path);
   if (image?.status === "error") return { tone: "error", text: `${name} could not be read` };
@@ -128,12 +131,15 @@ export default function LiveriesPanel({ s, head = null }) {
   const isYft = /\.yft$/i.test(modelPath || "");
   const enabled = Boolean(s.isTauriRuntime && modelPath && isYft);
   const dictionaries = useLiveryDictionaries(modelPath, enabled);
-  const set = s.liverySet || { pattern: "", items: [] };
+  const set = s.liverySet || { pattern: "", items: [], removed: [] };
+  const removed = set.removed || [];
   const signPrefix = s.gameLiveries ? s.gameLiveries.signPrefix ?? null : null;
   const pattern = set.pattern || defaultLiveryPattern({ signPrefix, dictionaries: dictionaries.list, modelPath });
   const parsed = parseLiveryPattern(pattern);
-  const slots = liverySlots({ dictionaries: dictionaries.list, pattern: parsed, items: set.items });
-  const existingNumbers = slots.filter((slot) => slot.existing.length).map((slot) => slot.number);
+  const slots = liverySlots({ dictionaries: dictionaries.list, pattern: parsed, items: set.items, removed });
+  // New images follow the liveries that stay, so one added after removing the
+  // last livery takes its number and replaces it.
+  const existingNumbers = slots.filter((slot) => slot.existing.length && !slot.removed).map((slot) => slot.number);
   const imageOf = useLiveryImages(enabled ? slots.map(thumbPathOf).filter(Boolean) : []);
 
   const [notes, setNotes] = useState([]);
@@ -143,16 +149,23 @@ export default function LiveriesPanel({ s, head = null }) {
 
   const stage = (paths, at = null) => {
     const { items, skipped } = stageLiveryFiles(set.items, paths, { taken: existingNumbers, at, makeId: makeItemId });
-    s.setLiverySet((current) => ({ ...current, items }));
+    // An image staged on a livery marked for removal replaces it instead.
+    s.setLiverySet((current) => ({ ...current, items, removed: (current.removed || []).filter((number) => !items.some((item) => item.number === number)) }));
     setNotes(skipped.map((entry) => `${fileNameOf(entry.path)} ${entry.reason}.`));
   };
 
   const unstage = (id) => s.setLiverySet((current) => ({ ...current, items: current.items.filter((item) => item.id !== id) }));
+  const toggleRemoved = (number) => s.setLiverySet((current) => {
+    const marked = current.removed || [];
+    return { ...current, removed: marked.includes(number) ? marked.filter((value) => value !== number) : [...marked, number].sort((a, b) => a - b) };
+  });
   const clearStaged = () => {
-    s.setLiverySet((current) => ({ ...current, items: [] }));
+    s.setLiverySet((current) => ({ ...current, items: [], removed: [] }));
     setNotes([]);
   };
-  const setPattern = (value) => s.setLiverySet((current) => ({ ...current, pattern: value }));
+  // A removal names one texture, so a new pattern drops the marks rather than
+  // moving them to another texture of that number.
+  const setPattern = (value) => s.setLiverySet((current) => ({ ...current, pattern: value, removed: [] }));
 
   const pickImages = async () => {
     try {
@@ -224,7 +237,7 @@ export default function LiveriesPanel({ s, head = null }) {
     if (image.status === "error") return [item.id, { error: image.error }];
     return [item.id, null];
   }).filter(([, value]) => value));
-  const plan = planLiveryWrite({ modelPath, dictionaries: dictionaries.list, pattern, items: set.items, sources, signPrefix });
+  const plan = planLiveryWrite({ modelPath, dictionaries: dictionaries.list, pattern, items: set.items, removed, sources, signPrefix });
 
   const preview = (slot) => {
     const path = slot.item ? slot.item.path : largestCopy(slot)?.texture.path;
@@ -240,11 +253,14 @@ export default function LiveriesPanel({ s, head = null }) {
     && !slots.some((slot) => isShown(slot)) && !/[\\/]ytd-cache[\\/]/i.test(s.texturePath)
     ? s.texturePath
     : "";
-  const highest = Math.max(0, ...slots.map((slot) => slot.number));
+  const highest = Math.max(0, ...slots.filter((slot) => !slot.removed).map((slot) => slot.number));
   const nextNumber = highest + 1;
   const count = set.items.length;
+  const removals = plan.removals.length;
+  const changes = count + removals;
+  const kept = slots.filter((slot) => !slot.removed).length;
   const targets = plan.files.map((file) => file.name);
-  const backupNote = !count ? "Add images to write them into the vehicle's own texture dictionaries."
+  const backupNote = !changes ? "Add images to write them into the vehicle's own texture dictionaries."
     : targets.length === 2 ? "Both .ytd files are backed up first."
       : targets.length ? `${targets.join(", ")} ${targets.length === 1 ? "is" : "are"} backed up first.` : "";
 
@@ -255,7 +271,7 @@ export default function LiveriesPanel({ s, head = null }) {
         <div className="lv-group-head">
           <h3 className="lv-group-title">In game</h3>
           <span className="lv-liv-count">
-            {count ? `${slots.length} after write` : `${slots.length} ${slots.length === 1 ? "livery" : "liveries"}`}
+            {changes ? `${kept} after write` : `${slots.length} ${slots.length === 1 ? "livery" : "liveries"}`}
           </span>
         </div>
 
@@ -296,7 +312,7 @@ export default function LiveriesPanel({ s, head = null }) {
               return (
                 <li
                   key={slot.number}
-                  className={`lv-liv-row ${shown ? "is-selected" : ""} ${dropTarget === slot.number ? "is-drop" : ""}`}
+                  className={`lv-liv-row ${shown ? "is-selected" : ""} ${slot.removed ? "is-removed" : ""} ${dropTarget === slot.number ? "is-drop" : ""}`}
                   data-livery-number={slot.number}
                 >
                   <button type="button" className="lv-liv-main" onClick={() => preview(slot)} aria-pressed={shown}
@@ -320,7 +336,13 @@ export default function LiveriesPanel({ s, head = null }) {
                       aria-label={`Don't write ${fileNameOf(slot.item.path)}`} title={`Don't write ${fileNameOf(slot.item.path)}`}>
                       <X aria-hidden="true" />
                     </button>
-                  ) : null}
+                  ) : (
+                    <button type="button" className="cx-icon-btn lv-liv-remove" onClick={() => toggleRemoved(slot.number)} aria-pressed={slot.removed}
+                      aria-label={slot.removed ? `Keep livery ${slot.number}` : `Remove livery ${slot.number}`}
+                      title={slot.removed ? `Keep livery ${slot.number}` : `Remove livery ${slot.number} from the vehicle when you write`}>
+                      {slot.removed ? <Undo2 aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                    </button>
+                  )}
                 </li>
               );
             })}
@@ -350,13 +372,13 @@ export default function LiveriesPanel({ s, head = null }) {
       </section>
 
       <div className="lv-liv-foot">
-        <button type="button" className="cx-btn is-primary lv-liv-write" disabled={!count || dictionaries.status !== "ready"}
+        <button type="button" className="cx-btn is-primary lv-liv-write" disabled={!changes || dictionaries.status !== "ready"}
           onClick={() => setDialogOpen(true)}
-          title={!count ? "Stage images to write first" : `Check and write ${count} ${count === 1 ? "livery" : "liveries"}`}>
+          title={!changes ? "Stage images or mark liveries to remove first" : `Check, then ${liveryWriteLabel(count, removals).toLowerCase()}`}>
           <Download aria-hidden="true" />
-          {count ? `Write ${count} ${count === 1 ? "livery" : "liveries"}…` : "Write liveries…"}
+          {changes ? `${liveryWriteLabel(count, removals)}…` : "Write liveries…"}
         </button>
-        {count ? (
+        {changes ? (
           <div className="lv-liv-foot-row">
             <p className="lv-liv-foot-note">{backupNote}</p>
             <button type="button" className="lv-link" onClick={clearStaged}>Clear</button>
@@ -371,7 +393,7 @@ export default function LiveriesPanel({ s, head = null }) {
           items={set.items}
           onClose={() => setDialogOpen(false)}
           onWritten={() => {
-            s.setLiverySet((current) => ({ ...current, items: [] }));
+            s.setLiverySet((current) => ({ ...current, items: [], removed: [] }));
             setNotes([]);
             dictionaries.reload();
             return s.reloadModel?.();

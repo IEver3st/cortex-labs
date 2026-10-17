@@ -15,6 +15,8 @@ namespace CodeWalkerBridge;
 //   insert:  a new texture made from the user's own image, such as another
 //            livery; `like` names a texture already in the dictionary whose
 //            use it takes, so a new livery is used as the others are.
+//   delete:  removes a texture the dictionary holds, such as a livery the
+//            user no longer wants; it has no `path`.
 public static partial class Program
 {
     private const uint ResourceMagic = 0x37435352; // "RSC7"
@@ -56,10 +58,20 @@ public static partial class Program
         foreach (var item in list.EnumerateArray())
         {
             var name = RequireString(item, "name").Trim();
-            var path = RequireString(item, "path");
             var mode = RequireString(item, "mode");
             if (!names.Add(name)) throw new BridgeException($"{name} is listed twice for {fileName}.");
 
+            if (mode == "delete")
+            {
+                // As CodeWalker's Remove does: the dictionary is rebuilt without it.
+                var held = textures.FindIndex(existing => string.Equals(GetTextureName(existing), name, StringComparison.OrdinalIgnoreCase));
+                if (held < 0) throw new BridgeException($"{fileName} no longer holds {name}, so it cannot be removed.");
+                written.Add(new { name = GetTextureName(textures[held]), removed = true });
+                textures.RemoveAt(held);
+                continue;
+            }
+
+            var path = RequireString(item, "path");
             Texture? texture;
             try
             {
@@ -130,6 +142,7 @@ public static partial class Program
             written.Add(new { name = texture.Name, replaced = mode == "replace", width = (int)texture.Width, height = (int)texture.Height, levels = (int)texture.Levels, format = texture.Format.ToString() });
         }
 
+        if (textures.Count == 0) throw new BridgeException($"Removing these would leave {fileName} with no textures, so it is not written.");
         ytd.TextureDict!.BuildFromTextureList(textures);
         byte[] saved;
         try
