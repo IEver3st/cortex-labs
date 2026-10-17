@@ -354,7 +354,7 @@ export function planOpenTabs(saved, workspaces) {
       workspaceId,
       type,
       name: typeof ws.name === "string" && ws.name.trim() ? ws.name : "Untitled",
-      defaultMode: type === "viewer" ? normalizeTextureMode(state?.textureMode) || "livery" : null,
+      defaultMode: type === "viewer" ? normalizeTextureMode(state?.textureMode) || "vehicle" : null,
       state,
     });
   }

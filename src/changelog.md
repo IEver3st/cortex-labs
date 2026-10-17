@@ -1,3 +1,21 @@
+version: 5.2.0
+date: 2026-10-16
+> Vehicle mode brings Livery and All together, and its new Liveries tab writes a whole set of liveries into a vehicle at once.
+
+## New
+- Vehicle mode | One workspace for a vehicle replaces Livery and All: Paint, Liveries, Mods, Scene and Meta tabs, Kit shoot, saved builds and the model's own textures. Apply to keeps the livery on the paint or puts it on all meshes or one material or mesh. Your Livery and All projects and saved vehicles open in it, and Alt + 1 opens a new one.
+- Write liveries in bulk | The Liveries tab lists the vehicle's liveries as the game numbers them. Add or drop your images, check the plan in Write N liveries…, and they go into the vehicle's own .ytd files after a .bak, at the size its liveries use. Restart the resource in game to load them.
+
+## Improved
+- Livery switcher in Liveries | The in-game livery switcher moved from Mods to the top of the Liveries tab.
+- Clearer texture write errors | When a texture dictionary changed after Cortex read it, Write to textures… says the texture can no longer be replaced or added.
+- Source code is public | Cortex Studio's source is published under the Cortex Studio Source-Available License 1.0: use it for anything, including commercial work, but don't redistribute, resell or rebrand it.
+
+## Fixed
+- Desktop security update | Tauri 2.12 fixes an origin check that could let a remote page call commands meant only for the app's own pages.
+
+---
+
 version: 5.1.1
 date: 2026-10-15
 > Write to textures now copies lens textures only from the vehicle's own resource.

@@ -47,7 +47,7 @@ import {
      is, Save, tempo and the checks that gate saving.
    - The centre is the sequencer, the full height of the window.
    - The right column is a small live preview of the vehicle (loaded whole with
-     its own textures, as in All) over the inspector. The preview's height and
+     its own textures, as in Vehicle) over the inspector. The preview's height and
      the column's width drag; Expand (or the focus key) fills the workspace
      with it, and Esc comes back. The viewer is never remounted: expanding only
      re-places the preview in the grid.

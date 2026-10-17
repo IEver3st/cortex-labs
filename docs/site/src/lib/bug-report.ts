@@ -84,8 +84,9 @@ export const BUG_REPORT_MAX_LOG_ENTRIES = 200;
 const PRIORITIES = new Set<BugPriority>(["normal", "high"]);
 // Optional triage context added by app builds after 4.1; older payloads omit it.
 // Keep in sync with BUG_REPORT_AREAS / BUG_REPORT_FREQUENCIES in the app's bug-report-core.js.
+// "livery" is Vehicle mode (Livery before it); "all-textures" still arrives from builds before Vehicle mode.
 const AREA_LABELS = new Map<BugArea, string>([
-  ["livery", "Livery"],
+  ["livery", "Vehicle"],
   ["all-textures", "All Textures"],
   ["eup", "EUP"],
   ["eup-studio", "EUP Studio"],

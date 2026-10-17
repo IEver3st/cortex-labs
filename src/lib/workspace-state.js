@@ -5,15 +5,41 @@
 
 import { DEFAULT_HAZE, normalizeLensTints, normalizeLightSwitches } from "./emergency-lights.js";
 
-export const VIEWER_TEXTURE_MODES = Object.freeze(["livery", "everything", "eup", "multi", "sirens"]);
+export const VIEWER_TEXTURE_MODES = Object.freeze(["vehicle", "eup", "multi", "sirens"]);
 export const MATERIAL_SURFACES = Object.freeze(["paint", "chrome", "plastic", "metal", "glass"]);
 export const MAX_MATERIAL_TEXTURES = 6;
 // Wider than any handling.meta steering lock; the Meta panel caps the shown angle at the lock.
 export const SAVED_STEERING_LIMIT = 90;
+// Vehicle mode's texture target for the paint material the model is detected to use.
+export const PAINT_TARGET = "auto";
+
+// Vehicle mode replaced the Livery ("livery") and All ("everything") modes;
+// what they saved opens in it.
+const LEGACY_VEHICLE_MODES = new Set(["livery", "everything"]);
 
 /** A viewer mode, or "" when the value is not one. */
 export function normalizeTextureMode(value) {
+  if (LEGACY_VEHICLE_MODES.has(value)) return "vehicle";
   return VIEWER_TEXTURE_MODES.includes(value) ? value : "";
+}
+
+/**
+ * The texture and glass targets a saved workspace or vehicle meant, in Vehicle
+ * mode's terms. Livery ignored `textureTarget` (the livery always went on the
+ * detected paint) and kept its glass pick in `liveryWindowOverride`; All
+ * defaulted to every mesh; Vehicle stores both targets as they are. ""
+ * leaves the workspace default.
+ */
+export function savedVehicleTargets(state) {
+  const text = (value) => (typeof value === "string" ? value : "");
+  const mode = state?.textureMode || state?.mode;
+  if (mode === "livery") {
+    return { textureTarget: PAINT_TARGET, windowTextureTarget: text(state.liveryWindowOverride) || text(state.windowTextureTarget) };
+  }
+  if (mode === "everything") {
+    return { textureTarget: text(state.textureTarget) || "all", windowTextureTarget: text(state.windowTextureTarget) };
+  }
+  return { textureTarget: text(state?.textureTarget), windowTextureTarget: text(state?.windowTextureTarget) };
 }
 
 function clampNumber(value, min, max, fallback) {

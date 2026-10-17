@@ -19,6 +19,7 @@ import {
   savedVehicleWorkspaceState,
   upsertSavedVehicle,
 } from "./saved-vehicles.js";
+import { PAINT_TARGET } from "./workspace-state.js";
 
 const MODEL = "D:\\Resources\\lspd\\stream\\police4_hi.yft";
 
@@ -60,7 +61,7 @@ test("capture keeps mods, paint, extras and plate, and normalizes them", () => {
 test("the game livery is kept where mods are, and only as a livery number", () => {
   assert.equal(capture().livery, 3);
   assert.deepEqual(savedVehicleWorkspaceState(capture()).gameLivery, { path: MODEL, number: 3 });
-  assert.equal(capture({ mode: "livery" }).livery, null);
+  assert.equal(capture({ mode: "vehicle" }).livery, 3);
   assert.equal(capture({ livery: "3" }).livery, null);
   assert.equal(capture({ livery: -1 }).livery, null);
   assert.equal("gameLivery" in savedVehicleWorkspaceState(capture({ livery: null })), false);
@@ -71,11 +72,17 @@ test("capture drops a mod selection that belongs to another model", () => {
   assert.equal(entry.mods, null);
 });
 
-test("livery mode keeps textures but never mods", () => {
-  const entry = capture({ mode: "livery", windowTexturePath: "D:\\liveries\\glass.png" });
-  assert.equal(entry.mods, null);
+test("Vehicle keeps textures and mods, and Livery and All entries open in it", () => {
+  const entry = capture({ mode: "vehicle", windowTexturePath: "D:\\liveries\\glass.png" });
+  assert.equal(entry.mode, "vehicle");
+  assert.deepEqual(entry.mods, { kitName: "police4_modkit", mods: { VMT_SPOILER: 2, VMT_ROOF: 0 } });
   assert.equal(entry.texturePath, "D:\\liveries\\lspd.psd");
   assert.equal(entry.windowTexturePath, "D:\\liveries\\glass.png");
+  for (const mode of ["livery", "everything"]) {
+    const old = normalizeSavedVehicles({ vehicles: [{ ...entry, mode }] }).vehicles[0];
+    assert.equal(old.mode, "vehicle", mode);
+    assert.equal(savedVehicleWorkspaceState(old).textureMode, "vehicle", mode);
+  }
 });
 
 test("capture rejects entries that could not be reopened", () => {
@@ -143,23 +150,27 @@ test("normalize drops malformed and duplicate entries and caps the library", () 
   assert.equal(capped.vehicles[0].name, `Car ${MAX_SAVED_VEHICLES + 4}`);
 });
 
-test("Livery and All keep the hand-picked mesh targets and window overlay switch, Sirens does not", () => {
+test("Vehicle keeps the hand-picked mesh targets and window overlay switch, Sirens does not", () => {
   const picks = {
     textureTarget: "material:livery_paint",
     windowTextureTarget: "mesh:windscreen_f",
     windowTemplateEnabled: true,
-    liveryWindowOverride: "material:glass_tint",
   };
-  const everything = capture({ mode: "everything", ...picks });
-  assert.equal(everything.textureTarget, "material:livery_paint");
-  assert.equal(everything.windowTextureTarget, "mesh:windscreen_f");
-  assert.equal(everything.windowTemplateEnabled, true);
-  assert.equal(everything.liveryWindowOverride, "material:glass_tint");
-  const state = savedVehicleWorkspaceState(everything);
+  const vehicle = capture({ mode: "vehicle", ...picks });
+  assert.equal(vehicle.textureTarget, "material:livery_paint");
+  assert.equal(vehicle.windowTextureTarget, "mesh:windscreen_f");
+  assert.equal(vehicle.windowTemplateEnabled, true);
+  const state = savedVehicleWorkspaceState(vehicle);
   assert.equal(state.textureTarget, "material:livery_paint");
   assert.equal(state.windowTextureTarget, "mesh:windscreen_f");
   assert.equal(state.windowTemplateEnabled, true);
-  assert.equal(state.liveryWindowOverride, "material:glass_tint");
+  assert.equal("liveryWindowOverride" in state, false);
+
+  // Livery always painted the detected paint and kept its glass pick apart.
+  const livery = normalizeSavedVehicles({ vehicles: [{ ...vehicle, mode: "livery", liveryWindowOverride: "material:glass_tint" }] }).vehicles[0];
+  assert.equal(livery.textureTarget, PAINT_TARGET);
+  assert.equal(livery.windowTextureTarget, "material:glass_tint");
+  assert.equal("liveryWindowOverride" in livery, false);
 
   const sirens = capture({ mode: "sirens", ...picks });
   assert.equal(sirens.textureTarget, "");
@@ -168,16 +179,21 @@ test("Livery and All keep the hand-picked mesh targets and window overlay switch
   for (const key of Object.keys(picks)) assert.equal(key in sirenState, false, key);
 });
 
-test("entries saved before targets existed leave the workspace defaults alone", () => {
-  const old = normalizeSavedVehicles({
-    vehicles: [{ id: "old", name: "Old", modelPath: MODEL, mode: "livery", savedAt: 5, texturePath: "D:\\a.png" }],
-  }).vehicles[0];
-  assert.equal(old.windowTemplateEnabled, null);
-  const state = savedVehicleWorkspaceState(old);
+test("entries saved before targets existed keep the target their mode used", () => {
+  const [livery, all] = normalizeSavedVehicles({
+    vehicles: [
+      { id: "old", name: "Old", modelPath: MODEL, mode: "livery", savedAt: 5, texturePath: "D:\\a.png" },
+      { id: "older", name: "Older", modelPath: MODEL, mode: "everything", savedAt: 4, texturePath: "D:\\b.png" },
+    ],
+  }).vehicles;
+  assert.equal(livery.windowTemplateEnabled, null);
+  const state = savedVehicleWorkspaceState(livery);
   assert.equal(state.texturePath, "D:\\a.png");
-  for (const key of ["textureTarget", "windowTextureTarget", "liveryWindowOverride", "windowTemplateEnabled"]) {
+  assert.equal(state.textureTarget, PAINT_TARGET);
+  for (const key of ["windowTextureTarget", "liveryWindowOverride", "windowTemplateEnabled"]) {
     assert.equal(key in state, false, key);
   }
+  assert.equal(savedVehicleWorkspaceState(all).textureTarget, "all");
 });
 
 test("a full library refuses a new save instead of dropping the oldest, but still replaces", () => {
@@ -280,7 +296,7 @@ test("link status tells Update whether the entry still points at this tab's mode
 });
 
 test("reopening over a linked project applies the saved setup and keeps the scene", () => {
-  const entry = capture({ mode: "everything", texturePath: "", livery: null, plate: null });
+  const entry = capture({ mode: "vehicle", texturePath: "", livery: null, plate: null });
   const project = {
     textureMode: "livery",
     modelPath: "D:\\old\\police4_hi.yft",
@@ -292,7 +308,7 @@ test("reopening over a linked project applies the saved setup and keeps the scen
     lightAzimuth: 120,
   };
   const merged = applySavedVehicleToState(project, entry);
-  assert.equal(merged.textureMode, "everything");
+  assert.equal(merged.textureMode, "vehicle");
   assert.equal(merged.modelPath, MODEL);
   assert.equal(merged.stage, "showroom");
   assert.equal(merged.lightAzimuth, 120);

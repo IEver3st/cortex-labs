@@ -64,7 +64,7 @@ test("listProjects ignores recents for deleted workspaces and malformed input", 
 
 test("markWorkspaceOpened moves an already-open project to the front", async () => {
   resetStorage();
-  const first = createWorkspace("All Textures", "viewer", { textureMode: "everything" });
+  const first = createWorkspace("Vehicle", "viewer", { textureMode: "vehicle" });
   await new Promise((resolve) => setTimeout(resolve, 5));
   const second = createWorkspace("EUP Studio", "eupstudio");
   assert.equal(loadRecent()[0].workspaceId, second);
@@ -73,7 +73,7 @@ test("markWorkspaceOpened moves an already-open project to the front", async () 
   markWorkspaceOpened(first);
   const projects = listProjects(loadWorkspaces(), loadRecent());
   assert.equal(projects[0].workspaceId, first);
-  assert.equal(projects[0].name, "All Textures");
+  assert.equal(projects[0].name, "Vehicle");
 });
 
 test("markWorkspaceOpened ignores unknown workspaces", () => {
@@ -129,19 +129,22 @@ test("planOpenTabs reopens only workspaces that still exist", () => {
   const workspaces = {
     v: { id: "v", name: "Charger", page: "viewer", state: { textureMode: "sirens", modelPath: "D:\c_hi.yft" } },
     odd: { id: "odd", name: "", page: "viewer", state: { textureMode: "bogus" } },
+    old: { id: "old", name: "All Textures", page: "viewer", state: { textureMode: "everything" } },
     e: { id: "e", name: "EUP Studio", page: "eupstudio", state: { pieces: [] } },
     w: { id: "w", name: "Weird", page: "unknown", state: "nope" },
   };
-  const plan = planOpenTabs({ ids: ["e", "missing", "v", "odd", "w"], active: "v" }, workspaces);
-  assert.deepEqual(plan.tabs.map((tab) => tab.workspaceId), ["e", "v", "odd", "w"]);
+  const plan = planOpenTabs({ ids: ["e", "missing", "v", "odd", "w", "old"], active: "v" }, workspaces);
+  assert.deepEqual(plan.tabs.map((tab) => tab.workspaceId), ["e", "v", "odd", "w", "old"]);
   assert.equal(plan.activeWorkspaceId, "v");
   assert.deepEqual(plan.tabs[1], { workspaceId: "v", type: "viewer", name: "Charger", defaultMode: "sirens", state: workspaces.v.state });
   assert.equal(plan.tabs[0].type, "eupstudio");
   assert.equal(plan.tabs[0].defaultMode, null);
   assert.equal(plan.tabs[2].name, "Untitled");
-  assert.equal(plan.tabs[2].defaultMode, "livery");
+  assert.equal(plan.tabs[2].defaultMode, "vehicle");
   assert.equal(plan.tabs[3].type, "viewer");
   assert.equal(plan.tabs[3].state, null);
+  // An All (or Livery) tab from before Vehicle mode reopens in it.
+  assert.equal(plan.tabs[4].defaultMode, "vehicle");
 
   assert.equal(planOpenTabs({ ids: ["v"], active: "missing" }, workspaces).activeWorkspaceId, null);
   assert.deepEqual(planOpenTabs(null, null), { tabs: [], activeWorkspaceId: null });

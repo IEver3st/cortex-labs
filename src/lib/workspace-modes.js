@@ -1,5 +1,6 @@
-import { Aperture, Car, Flashlight, Layers, Link2, Palette, Shirt, Siren, Zap } from "lucide-react";
+import { Aperture, Car, Flashlight, Link2, Palette, Shirt, Siren, Zap } from "lucide-react";
 import { HOTKEY_ACTIONS } from "./hotkeys.js";
+import { normalizeTextureMode } from "./workspace-state.js";
 
 // The workspaces a session can start in, in the order Home lists them. Home's
 // Start rail, the new-tab menu, the new-tab hotkeys and the first-run
@@ -8,24 +9,14 @@ import { HOTKEY_ACTIONS } from "./hotkeys.js";
 // `page` is the Shell tab type (viewer modes share the viewer page).
 export const WORKSPACE_MODES = Object.freeze([
   {
-    id: "livery",
+    id: "vehicle",
     page: "viewer",
-    label: "Livery",
-    desc: "Paint and preview vehicle liveries",
+    label: "Vehicle",
+    desc: "Paint, liveries, mods and textures on a vehicle",
     icon: Car,
     cat: "livery",
     group: "vehicles",
     action: HOTKEY_ACTIONS.NEW_TAB_LIVERY,
-  },
-  {
-    id: "everything",
-    page: "viewer",
-    label: "All",
-    desc: "Every mesh and texture in a model",
-    icon: Layers,
-    cat: "all",
-    group: "vehicles",
-    action: HOTKEY_ACTIONS.NEW_TAB_ALL,
   },
   {
     id: "eup",
@@ -121,7 +112,8 @@ const MODE_BY_ID = new Map(WORKSPACE_MODES.map((mode) => [mode.id, mode]));
 const MODE_BY_ACTION = new Map(WORKSPACE_MODES.map((mode) => [mode.action, mode]));
 
 export function getWorkspaceMode(id) {
-  return MODE_BY_ID.get(id) || null;
+  // Livery and All tabs saved before Vehicle mode open in it.
+  return MODE_BY_ID.get(normalizeTextureMode(id) || id) || null;
 }
 
 /** The workspace a new-tab hotkey action opens, or null. */
@@ -138,6 +130,6 @@ export function workspaceModeRoute(id) {
 
 /** The canonical name for a Shell page (and viewer mode): new projects and tabs use it. */
 export function workspaceLabel(page, textureMode) {
-  const mode = getWorkspaceMode(page === "viewer" ? textureMode || "livery" : page);
+  const mode = getWorkspaceMode(page === "viewer" ? textureMode || "vehicle" : page);
   return mode?.label || "Preview";
 }

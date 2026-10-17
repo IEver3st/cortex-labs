@@ -129,7 +129,7 @@ export default function HomeSavedVehicles({ isActive, onOpen }) {
       {vehicles.length ? (
         <ul className="hp-saved-list custom-scrollbar">
           {vehicles.map((entry) => {
-            const mode = MODE_BY_ID.get(entry.mode) || MODE_BY_ID.get("everything");
+            const mode = MODE_BY_ID.get(entry.mode) || MODE_BY_ID.get("vehicle");
             const Icon = mode.icon;
             const parts = entry.mods ? Object.keys(entry.mods.mods).length : 0;
             const lost = missing.has(entry.id);

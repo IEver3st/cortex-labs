@@ -4,7 +4,7 @@ import { FactDisclosure } from "./DockFacts";
 import { defaultSavedVehicleName, findSavedVehicleByName, loadSavedVehicles, savedVehicleFileName, savedVehicleLinkStatus } from "../../lib/saved-vehicles";
 
 /* Saves the loaded vehicle's setup (mod kit parts, paint, extras, plate and,
-   in Livery and All, the livery) under a name Home lists as a saved vehicle.
+   in Vehicle, the livery) under a name Home lists as a saved vehicle.
    A fact row in the model step's <Facts>: closed it names the saved vehicle
    or offers Save, open it holds the name field or Update / Save as new. App
    owns the write and the link back to the entry this tab came from, so a
@@ -17,10 +17,10 @@ function plural(count, word) {
 function contents(s) {
   const list = [];
   const parts = Object.keys(s.modkits?.savedSelection?.mods || {}).length;
-  const modsShown = s.mode === "everything" || s.mode === "sirens";
+  const modsShown = s.mode === "vehicle" || s.mode === "sirens";
   if (modsShown && parts) list.push(plural(parts, "mod part"));
   list.push("paint", "extras", "plate");
-  if ((s.mode === "livery" || s.mode === "everything") && s.texturePath) list.push("livery");
+  if (s.mode === "vehicle" && s.texturePath) list.push("livery");
   const text = `${list.join(", ")} and the model path`;
   return text[0].toUpperCase() + text.slice(1);
 }

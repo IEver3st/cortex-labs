@@ -2,7 +2,7 @@
   "name": "cortex-studio",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
-  "version": "5.1.1",
+  "version": "5.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,6 +17,7 @@
     "test:multi": "node --test src/lib/multi-lineup.test.mjs src/lib/viewer-stage.test.mjs",
     "test:els": "node --test src/lib/els.test.mjs src/lib/emergency-light-rig.test.mjs",
     "test:lens": "node --test src/lib/lens-texture.test.mjs src/lib/lens-texture-write.test.mjs",
+    "test:liveries": "node --test src/lib/livery-set.test.mjs src/lib/livery-texture.test.mjs src/lib/livery-write.test.mjs",
     "test:eup": "node --test src/lib/character-import.test.mjs src/lib/eup.test.mjs src/lib/eup-pieces.test.mjs src/lib/eup-export.test.mjs src/lib/eup-cast.test.mjs src/lib/eup-playback.test.mjs src/lib/eup-scene.test.mjs src/lib/eup-outfit-generator.test.mjs src/lib/eup-outfit-library.test.mjs src/lib/ped-assembly.test.mjs src/lib/ped-character.test.mjs src/lib/ped-pose.test.mjs src/lib/yft.test.mjs",
     "test:updater": "node --test src/lib/updater-state.test.mjs",
     "test:feedback": "node --test src/lib/bug-report.test.mjs",

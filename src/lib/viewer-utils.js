@@ -1554,6 +1554,42 @@ export async function loadPsdTexture(bytes) {
   throw new Error("PSD parsed but no image data found.");
 }
 
+/**
+ * A PSD's merged image as 8-bit RGBA, top row first: `{ width, height, data }`.
+ * The composite is decoded in the PSD worker; the main thread reads the file
+ * only when the worker cannot.
+ */
+export async function decodePsdRgba(bytes) {
+  const bitDepth = detectPsdBitDepth(bytes);
+  if (bitDepth === 16 || bitDepth === 32) throw new Error(`${bitDepth}-bit PSD files are not supported; save it as 8-bit`);
+  let imageData = null;
+  let bitsPerChannel;
+  try {
+    const workerResult = await decodePsdCompositeViaWorker(bytes);
+    if (workerResult?.imageData) ({ imageData, bitsPerChannel } = workerResult);
+  } catch (error) {
+    console.warn("[PSD] Worker decode failed, decoding on the main thread:", error);
+  }
+  if (!imageData) {
+    const { readPsd } = await import("ag-psd");
+    let psd = null;
+    try {
+      psd = readPsd(bytes, { skipThumbnail: true, skipLayerImageData: true });
+    } catch {
+      psd = null;
+    }
+    if (!psd?.canvas && !psd?.imageData) psd = readPsd(bytes, { skipThumbnail: true });
+    bitsPerChannel = psd?.bitsPerChannel;
+    imageData = psd?.imageData
+      || psd?.canvas?.getContext?.("2d")?.getImageData(0, 0, psd.canvas.width, psd.canvas.height)
+      || null;
+  }
+  const normalized = normalizePsdImageData(imageData, bitsPerChannel);
+  if (!normalized) throw new Error("the PSD holds no merged image; save it with Maximize Compatibility on");
+  const { data } = normalized;
+  return { width: normalized.width, height: normalized.height, data: new Uint8Array(data.buffer, data.byteOffset, normalized.width * normalized.height * 4) };
+}
+
 export function detectPsdBitDepth(bytes) {
   if (!bytes || bytes.length < 26) return 8;
   if (bytes[0] !== 0x38 || bytes[1] !== 0x42 || bytes[2] !== 0x50 || bytes[3] !== 0x53) {
@@ -1721,6 +1757,22 @@ async function decodePdnViaTauri(filePath) {
   });
 
   return parsed;
+}
+
+/**
+ * A Paint.NET image as RGBA, top row first: `{ width, height, data }`, chosen
+ * from the worker, native and main-thread decoders as loadPdnTexture does.
+ */
+export async function decodePdnRgba(bytes, filePath) {
+  const native = isTauriRuntimeAvailable() && typeof filePath === "string" && filePath.length > 0;
+  const { image } = await selectPdnImage({
+    decodeInWorker: () => decodePdnViaWorker(bytes),
+    decodeNative: native ? () => decodePdnViaTauri(filePath) : null,
+    decodeOnMainThread: async () => (await import("./pdn")).decodePdn(bytes),
+    onFallback: (reason) => pdnLog("warn", "Worker PDN decode not used", { reason }),
+  });
+  const data = image.data instanceof Uint8Array ? image.data : new Uint8Array(image.data.buffer || image.data);
+  return { width: image.width, height: image.height, data };
 }
 
 /**

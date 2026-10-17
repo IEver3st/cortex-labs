@@ -167,6 +167,19 @@ fn sibling_ytd_names(stem: &str) -> Vec<String> {
     }
 }
 
+/// The model's own texture dictionaries that exist: regular files beside the
+/// `.yft`, in the order the bridge reads them.
+pub fn model_sibling_ytds(model: &Path) -> Vec<PathBuf> {
+    let Some(stem) = model.file_stem().and_then(|value| value.to_str()) else {
+        return Vec::new();
+    };
+    sibling_ytd_names(stem)
+        .into_iter()
+        .map(|name| model.with_file_name(name))
+        .filter(|path| std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()))
+        .collect()
+}
+
 /// Checks that `ytd` is one of the model's own texture dictionaries: a regular
 /// file beside the `.yft`, named as the bridge pairs them. Pack-wide and game
 /// dictionaries are never write targets.
@@ -184,7 +197,7 @@ pub fn validate_sibling_ytd(model: &Path, ytd: &Path) -> Result<(), String> {
                     .and_then(|value| value.to_str())
                     .is_some_and(|value| value.eq_ignore_ascii_case("yft"))
         })
-        .ok_or("Lens textures are written for a .yft model.")?;
+        .ok_or("Textures are written only for a .yft model.")?;
     let regular = std::fs::symlink_metadata(ytd).is_ok_and(|meta| meta.is_file());
     let target = ytd
         .canonicalize()

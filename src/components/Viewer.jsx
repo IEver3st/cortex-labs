@@ -84,7 +84,7 @@ import {
   summarizeNativeMaterialMeshes,
 } from "../lib/native-material-plan.js";
 import { loadNativeMaterialView, loadNativeTextureSource, setNativeOverlayTexture } from "../lib/native-materials.js";
-import { createLiveryOverride, findLiveryModTexturePath, listTextureLiveries } from "../lib/vehicle-livery.js";
+import { createLiveryOverride, findLiveryModTexturePath, findLiverySignPrefix, listTextureLiveries } from "../lib/vehicle-livery.js";
 import { applyFrontWheelSteering, getSteerableWheelMeshes } from "../lib/vehicle-steering.js";
 import { createVehicleRig, normalizeManifestSkeleton } from "../lib/vehicle-rig.js";
 import { isHiddenByBones } from "../lib/vehicle-modkits.js";
@@ -2900,6 +2900,8 @@ function ViewerComponent({
     const state = getLiveryState(model);
     state.path = model.userData?.sourceModelPath || "";
     state.list = listTextureLiveries(meshes, root.userData?.parentTextures || null);
+    // The sign the paint samples, even with fewer than two liveries to switch.
+    state.signPrefix = findLiverySignPrefix(meshes);
     state.error = "";
     onGameLiveryStatusRef.current?.(describeLiveryState(state));
   }, [modelVersion, sceneReady]);
@@ -4083,7 +4085,7 @@ const liveryStates = new WeakMap();
 function getLiveryState(model) {
   let state = liveryStates.get(model);
   if (!state) {
-    state = { override: createLiveryOverride(setNativeOverlayTexture), path: "", list: null, signs: new Map(), signNumber: null, signRequest: 0, mods: new Map(), activeModPath: "", error: "" };
+    state = { override: createLiveryOverride(setNativeOverlayTexture), path: "", list: null, signPrefix: null, signs: new Map(), signNumber: null, signRequest: 0, mods: new Map(), activeModPath: "", error: "" };
     liveryStates.set(model, state);
   }
   return state;
@@ -4104,6 +4106,7 @@ function describeLiveryState(state) {
     path: state.path,
     numbers: state.list ? state.list.numbers.slice() : [],
     prefix: state.list?.prefix || "",
+    signPrefix: state.signPrefix ?? null,
     shown: state.signNumber,
     error: state.error,
   };
@@ -4582,6 +4585,13 @@ function setMaterialWireframe(material, enabled) {
 
 function getBaseUVs(geometry) {
   if (!geometry) return { uv0: null, uv1: null, uv2: null, uv3: null };
+  // GTA models keep their UV sets by index. The attribute names can't be
+  // trusted: native materials move set 1 from uv2 to uv1 and set 2 onto uv2,
+  // so a cache taken after they load would put a livery on the wrong set.
+  const gtaUvSets = geometry.userData?.gtaUvSets;
+  if (Array.isArray(gtaUvSets)) {
+    return { uv0: gtaUvSets[0] || null, uv1: gtaUvSets[1] || null, uv2: gtaUvSets[2] || null, uv3: gtaUvSets[3] || null };
+  }
   if (!geometry.userData.baseUv) {
     geometry.userData.baseUv = geometry.attributes.uv || null;
   }

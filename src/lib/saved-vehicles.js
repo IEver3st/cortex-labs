@@ -1,7 +1,7 @@
 // Saved vehicles: named setups the user can reopen from Home as long as the
 // model is still on disk. An entry points at the user's model file and keeps
 // what the workspace layered on top of it: the mod kit parts, game livery,
-// paint, extras, plate, and (in Livery and All) the livery texture and its
+// paint, extras, plate, and (in Vehicle mode) the livery texture and its
 // mesh targets. Nothing
 // here touches the model or its resource; reopening rebuilds the setup through the workspace's
 // own restore path. Pure apart from the localStorage helpers at the bottom.
@@ -10,18 +10,19 @@ import { normalizeModChoices } from "./kit-shoot.js";
 import { normalizeVehiclePaint } from "./vehicle-paint.js";
 import { normalizeExtrasState } from "./vehicle-extras.js";
 import { normalizePlateDefault } from "./studio-defaults.js";
+import { normalizeTextureMode, savedVehicleTargets } from "./workspace-state.js";
 
 export const SAVED_VEHICLES_KEY = "cortex-studio:saved-vehicles.v1";
 export const SAVED_VEHICLES_EVENT = "cortex-studio:saved-vehicles-updated";
 export const SAVED_VEHICLES_VERSION = 1;
-export const SAVED_VEHICLE_MODES = Object.freeze(["livery", "everything", "sirens"]);
+export const SAVED_VEHICLE_MODES = Object.freeze(["vehicle", "sirens"]);
 export const MAX_SAVED_VEHICLES = 200;
 export const SAVED_VEHICLE_NAME_MAX = 60;
 
 const MODEL_EXTENSION = /\.(yft|clmesh|dff)$/i;
 // Only the modes whose viewer previews mod kit parts keep a kit selection.
-const MOD_MODES = new Set(["everything", "sirens"]);
-const LIVERY_MODES = new Set(["livery", "everything"]);
+const MOD_MODES = new Set(["vehicle", "sirens"]);
+const LIVERY_MODES = new Set(["vehicle"]);
 
 function text(value, max = 2048) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -54,7 +55,10 @@ export function normalizeSavedVehicle(value) {
   const name = text(value.name, SAVED_VEHICLE_NAME_MAX);
   const modelPath = text(value.modelPath);
   if (!id || !name || !modelPath || !MODEL_EXTENSION.test(modelPath)) return null;
-  const mode = SAVED_VEHICLE_MODES.includes(value.mode) ? value.mode : "everything";
+  // Livery and All entries open in Vehicle mode, with the targets they meant.
+  const normalizedMode = normalizeTextureMode(value.mode);
+  const mode = SAVED_VEHICLE_MODES.includes(normalizedMode) ? normalizedMode : "vehicle";
+  const targets = savedVehicleTargets(value);
   const bodyColor = /^#[0-9a-f]{6}$/i.test(value.bodyColor || "") ? value.bodyColor.toLowerCase() : undefined;
   const entry = {
     id,
@@ -73,9 +77,8 @@ export function normalizeSavedVehicle(value) {
     windowTexturePath: LIVERY_MODES.has(mode) ? text(value.windowTexturePath) : "",
     // Mesh targets picked by hand; "" leaves the workspace's default. Entries
     // saved before these existed have none.
-    textureTarget: LIVERY_MODES.has(mode) ? text(value.textureTarget, 512) : "",
-    windowTextureTarget: LIVERY_MODES.has(mode) ? text(value.windowTextureTarget, 512) : "",
-    liveryWindowOverride: LIVERY_MODES.has(mode) ? text(value.liveryWindowOverride, 512) : "",
+    textureTarget: LIVERY_MODES.has(mode) ? text(targets.textureTarget, 512) : "",
+    windowTextureTarget: LIVERY_MODES.has(mode) ? text(targets.windowTextureTarget, 512) : "",
     // null when unknown (older entries), so the workspace default stays.
     windowTemplateEnabled: LIVERY_MODES.has(mode) && typeof value.windowTemplateEnabled === "boolean" ? value.windowTemplateEnabled : null,
   };
@@ -138,7 +141,6 @@ export function captureSavedVehicle({
   textureTarget,
   windowTextureTarget,
   windowTemplateEnabled,
-  liveryWindowOverride,
 } = {}) {
   const mods = vehicleMods && vehicleMods.path === modelPath ? vehicleMods : null;
   return normalizeSavedVehicle({
@@ -159,7 +161,6 @@ export function captureSavedVehicle({
     textureTarget,
     windowTextureTarget,
     windowTemplateEnabled,
-    liveryWindowOverride,
   });
 }
 
@@ -287,13 +288,13 @@ export function savedVehicleWorkspaceState(entry) {
   if (vehicle.windowTexturePath) state.windowTexturePath = vehicle.windowTexturePath;
   if (vehicle.textureTarget) state.textureTarget = vehicle.textureTarget;
   if (vehicle.windowTextureTarget) state.windowTextureTarget = vehicle.windowTextureTarget;
-  if (vehicle.liveryWindowOverride) state.liveryWindowOverride = vehicle.liveryWindowOverride;
   if (vehicle.windowTemplateEnabled != null) state.windowTemplateEnabled = vehicle.windowTemplateEnabled;
   return state;
 }
 
 // What a saved vehicle decides in a workspace. Opening it over a project
 // already linked to it replaces these and keeps the rest (stage, light, backdrop).
+// `liveryWindowOverride` is Livery mode's old glass pick, cleared so it can't linger.
 const SAVED_VEHICLE_STATE_KEYS = [
   "textureMode", "modelPath", "modelSourcePath", "openFile", "vehiclePaint", "vehicleSlotColors", "bodyColor",
   "extras", "vehicleMods", "savedVehicle", "gameLivery", "licensePlate", "texturePath", "windowTexturePath",

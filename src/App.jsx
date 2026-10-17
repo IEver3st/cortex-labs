@@ -33,8 +33,9 @@ import { SHOWROOM_FLOORS, SHOWROOM_LIGHT_KEYS } from "./lib/viewer-stage";
 import { TURNTABLE_DEFAULT_SPEED, normalizeTurntableSpeed } from "./lib/turntable.js";
 import { DEFAULT_HAZE, DEFAULT_LIGHT_SWITCHES } from "./lib/emergency-lights";
 import { DEFAULT_EXTRAS_STATE, normalizeExtrasState, planExtras } from "./lib/vehicle-extras";
+import { normalizeLiverySet } from "./lib/livery-set";
 import { captureSavedVehicle, generateSavedVehicleId, loadSavedVehicles, MAX_SAVED_VEHICLES, moveSavedVehicleModel, upsertSavedVehicle, writeSavedVehicles } from "./lib/saved-vehicles";
-import { normalizeSavedLightPreview, normalizeSavedMaterials, normalizeSavedSteering, normalizeTextureMode } from "./lib/workspace-state";
+import { normalizeSavedLightPreview, normalizeSavedMaterials, normalizeSavedSteering, normalizeTextureMode, PAINT_TARGET, savedVehicleTargets } from "./lib/workspace-state";
 import { setUnsavedChanges } from "./lib/unsaved-changes";
 import { normalizeLightDefaults, normalizePlateDefault, normalizeShowroomSubject, normalizeSteeringDefault, resolveDefaultSteering } from "./lib/studio-defaults";
 import { readModelResourceMeta } from "./lib/resource-meta-files";
@@ -61,7 +62,7 @@ import { Input } from "./components/ui/input";
 import { CyberButton } from "./components/CyberUI";
 
 // Workspaces whose vehicle lights an ELS VCF can drive.
-const ELS_MODES = new Set(["sirens", "livery", "everything"]);
+const ELS_MODES = new Set(["sirens", "vehicle"]);
 
 const DEFAULT_BODY = "#e7ebf0";
 const DEFAULT_BG = "#141414";
@@ -117,7 +118,7 @@ function clampBackgroundImageBlur(value) {
 }
 
 const BUILT_IN_DEFAULTS = {
-  textureMode: "everything",
+  textureMode: "vehicle",
   liveryExteriorOnly: false,
   windowTemplateEnabled: false,
   windowTextureTarget: "auto",
@@ -174,7 +175,7 @@ function UnloadButton({ onClick, title, className }) {
   );
 }
 
-function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "livery", initialState = null, contextBarTarget = null }) {
+function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "vehicle", initialState = null, contextBarTarget = null }) {
 
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef({ primary: null, window: null });
@@ -457,10 +458,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const reloadModel = useCallback(() => setModelReloadToken((token) => token + 1), []);
   const [windowTextureReloadToken, setWindowTextureReloadToken] = useState(0);
   const [textureTargets, setTextureTargets] = useState([]);
-  const [textureMode, setTextureMode] = useState(() => normalizeTextureMode(defaultTextureMode) || "livery");
-  const modkits = useVehicleModkits({ modelPath, enabled: isTauriRuntime && (textureMode === "everything" || textureMode === "sirens") });
-  // ELS lighting (the vehicle workspaces: Sirens edits the VCF, Livery and
-  // All switch it from the Lights panel): a vehicle switched to ELS has its
+  const [textureMode, setTextureMode] = useState(() => normalizeTextureMode(defaultTextureMode) || "vehicle");
+  // loadModel outlives renders, so it reads the mode here.
+  const textureModeRef = useRef(textureMode);
+  textureModeRef.current = textureMode;
+  const modkits = useVehicleModkits({ modelPath, enabled: isTauriRuntime && (textureMode === "vehicle" || textureMode === "sirens") });
+  // ELS lighting (the vehicle workspaces: Sirens edits the VCF, Vehicle
+  // switches it from the Lights panel): a vehicle switched to ELS has its
   // VCF drive the extras, and the carcols sirens follow its light stage.
   const elsModelExtras = useMemo(
     () => [...new Set((metaModelInfo?.extras || []).map((extra) => extra.index))].sort((a, b) => a - b),
@@ -479,19 +483,31 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   // It only applies while that model is loaded.
   const [savedVehicleEntry, setSavedVehicleEntry] = useState(null);
   const savedVehicle = savedVehicleEntry && savedVehicleEntry.path === modelPath ? savedVehicleEntry : null;
-  // The game texture livery (`_sign_N`) shown in All or Sirens: { path, number }.
+  // The game texture livery (`_sign_N`) shown in Vehicle or Sirens: { path, number }.
   // Like the mods, it belongs to the model it was chosen on.
   const [gameLiveryEntry, setGameLiveryEntry] = useState(null);
   const gameLivery = gameLiveryEntry && gameLiveryEntry.path === modelPath ? gameLiveryEntry.number : null;
   const setGameLivery = useCallback((number) => {
     setGameLiveryEntry(Number.isInteger(number) && modelPath ? { path: modelPath, number } : null);
   }, [modelPath]);
+  // Images staged in the Liveries tab to write as the model's texture
+  // liveries: { path, pattern, items: [{ id, path, number }] }, per model.
+  const [liverySetEntry, setLiverySetEntry] = useState(null);
+  const liverySet = liverySetEntry && liverySetEntry.path === modelPath ? liverySetEntry : null;
+  const setLiverySet = useCallback((update) => {
+    setLiverySetEntry((current) => {
+      const base = current && current.path === modelPath ? current : { path: modelPath, pattern: "", items: [] };
+      const next = typeof update === "function" ? update(base) : update;
+      return next && modelPath ? { pattern: next.pattern || "", items: next.items || [], path: modelPath } : null;
+    });
+  }, [modelPath]);
   // Reported by the viewer for the model it shows, which lags modelPath while
   // the next model loads.
   const [gameLiveriesReport, setGameLiveries] = useState(null);
   const gameLiveries = gameLiveriesReport && gameLiveriesReport.path === modelPath ? gameLiveriesReport : null;
   const [vehicleModsStatus, setVehicleModsStatus] = useState(null);
-  const [textureTarget, setTextureTarget] = useState("all");
+  // Vehicle mode starts on the detected paint; the other modes on every mesh.
+  const [textureTarget, setTextureTarget] = useState(() => (textureMode === "vehicle" ? PAINT_TARGET : "all"));
   const [liveryTarget, setLiveryTarget] = useState("");
   const [liveryLabel, setLiveryLabel] = useState("");
   const [windowTextureTarget, setWindowTextureTarget] = useState(() => getInitialDefaults().windowTextureTarget || "auto");
@@ -502,7 +518,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   const [ambientOcclusion, setAmbientOcclusion] = useState(() => Boolean(getInitialDefaults().ambientOcclusion));
   const [windowLiveryTarget, setWindowLiveryTarget] = useState("");
   const [windowLiveryLabel, setWindowLiveryLabel] = useState("");
-  const [liveryWindowOverride, setLiveryWindowOverride] = useState(""); // Manual override for glass material in livery mode
   const [liveryExteriorOnly, setLiveryExteriorOnly] = useState(() => Boolean(getInitialDefaults().liveryExteriorOnly));
   const [lastUpdate, setLastUpdate] = useState("-");
   const [watchStatus, setWatchStatus] = useState("idle");
@@ -720,7 +735,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       setGeneratedTemplateMap(null);
       setTemplateMapError("");
       setTextureTargets([]);
-      setTextureTarget("all");
+      setTextureTarget(textureModeRef.current === "vehicle" ? PAINT_TARGET : "all");
       setLiveryTarget("");
       setLiveryLabel("");
       // A new model starts from the Settings default; restore applies a saved pick after this.
@@ -803,7 +818,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         windowTexturePath: windowTexturePath || "",
         windowTextureTarget,
         windowTemplateEnabled,
-        liveryWindowOverride,
         bodyColor,
         vehiclePaint,
         backgroundColor,
@@ -831,12 +845,15 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         lineup: multi.lineup,
         multiGizmoVisible: multi.gizmoVisible,
         multiShowroom: multi.showroom,
-        // Mod kit parts chosen in All or Sirens: { path, kitName, mods } or null.
+        // Mod kit parts chosen in Vehicle or Sirens: { path, kitName, mods } or null.
         vehicleMods: modkits.savedSelection,
         extras: modelPath ? { path: modelPath, ...normalizeExtrasState(extrasState) } : null,
         licensePlate: plateOverride,
         savedVehicle,
         gameLivery: gameLivery != null ? { path: modelPath, number: gameLivery } : null,
+        liverySet: liverySet && (liverySet.items.length || liverySet.pattern)
+          ? { path: modelPath, pattern: liverySet.pattern, items: liverySet.items.map(({ id, path, number }) => ({ id, path, number })) }
+          : null,
         // Front wheel angle, for the model it was set on.
         steering: modelPath && steering.path === modelPath ? { path: modelPath, angle: steering.angle } : null,
         // Lights panel choices; the siren setting itself is reread from the model's files.
@@ -878,11 +895,11 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [
     isBooting, restoreSettled, textureMode,
     modelPath, modelSourcePath, modelRotation, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
-    liveryWindowOverride, bodyColor, vehiclePaint, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, showCageWireframe, showSolidWireframe,
+    bodyColor, vehiclePaint, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, showCageWireframe, showSolidWireframe,
     lightIntensity, lightAzimuth, lightElevation, glossiness, liveryExteriorOnly, nativeMaterialsEnabled,
     stage, stageSpot, stageReflect, stageBeam, stageLight, stageFloor, turntable, turntableSpeed,
     multi.lineup, multi.gizmoVisible, multi.showroom, multi.slots,
-    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, steering,
+    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, liverySet, steering,
     lightPreview.switches, lightPreview.muted, lightPreview.speed, lightPreview.spill, lightPreview.spillStrength, lightPreview.glow, lightPreview.haze, lightPreview.lens,
     materialType, matLightIntensity, matGlossiness, matRoughness, matClearcoat, materialTextures,
     shellTab,
@@ -919,7 +936,6 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       textureTarget,
       windowTextureTarget,
       windowTemplateEnabled,
-      liveryWindowOverride,
     });
     if (!entry) return { ok: false, error: "Saving needs a name and a loaded .yft, .clmesh or .dff model." };
     const result = upsertSavedVehicle(loadSavedVehicles(), entry);
@@ -932,7 +948,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setSavedVehicleEntry({ id: result.entry.id, name: result.entry.name, path: modelPath });
     showToast(`Saved ${result.entry.name}. Open it from Home.`);
     return { ok: true, entry: result.entry };
-  }, [savedVehicle, textureMode, modelPath, vehiclePaint, bodyColor, modkits.savedSelection, gameLivery, extrasState, licensePlate, texturePath, windowTexturePath, textureTarget, windowTextureTarget, windowTemplateEnabled, liveryWindowOverride, showToast]);
+  }, [savedVehicle, textureMode, modelPath, vehiclePaint, bodyColor, modkits.savedSelection, gameLivery, extrasState, licensePlate, texturePath, windowTexturePath, textureTarget, windowTextureTarget, windowTemplateEnabled, showToast]);
 
   // The vehicle renamer moved the loaded model's files: reopen it at the new
   // path and carry what is keyed by path (mods, livery, extras, the saved-vehicle link),
@@ -992,14 +1008,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     setLiveryLabel(info?.liveryLabel || "");
     setWindowLiveryTarget(info?.windowTarget || "");
     setWindowLiveryLabel(info?.windowLabel || "");
-    setLiveryWindowOverride((prev) => {
-      if (!prev) return prev;
-      return targets.some((target) => target.value === prev) ? prev : "";
-    });
     setTextureTarget((prev) => {
-      if (prev === "all") return prev;
-      return targets.some((target) => target.value === prev) ? prev : "all";
-
+      if (prev === "all" || prev === PAINT_TARGET) return prev;
+      if (targets.some((target) => target.value === prev)) return prev;
+      return textureModeRef.current === "vehicle" ? PAINT_TARGET : "all";
     });
     setWindowTextureTarget((prev) => {
       if (prev === "all" || prev === "none" || prev === "auto") return prev;
@@ -1212,11 +1224,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       if (openFileLower.endsWith(".ydd")) {
         resolvedTextureMode = "eup";
       } else if (openFileLower.endsWith(".yft")) {
-        resolvedTextureMode = "livery";
+        resolvedTextureMode = "vehicle";
       }
     }
-    if (resolvedTextureMode) setTextureMode(resolvedTextureMode);
-    if (typeof state.liveryWindowOverride === "string") setLiveryWindowOverride(state.liveryWindowOverride);
+    if (resolvedTextureMode) {
+      setTextureMode(resolvedTextureMode);
+      // loadModel below runs before the next render and reads the mode from the ref.
+      textureModeRef.current = resolvedTextureMode;
+    }
     if (typeof state.windowTemplateEnabled === "boolean") setWindowTemplateEnabled(state.windowTemplateEnabled);
     if (state.bodyColor) setBodyColor(state.bodyColor);
     // Tabs saved before paint followed the game palette stored `vehicleSlotColors`.
@@ -1275,8 +1290,10 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       setModelRotation(normalizeModelRotation(state.modelRotation));
       // loadModel resets the mesh targets for a new model; the saved ones are
       // the user's picks and win. handleModelInfo drops any the model lacks.
-      if (typeof state.textureTarget === "string" && state.textureTarget) setTextureTarget(state.textureTarget);
-      if (typeof state.windowTextureTarget === "string" && state.windowTextureTarget) setWindowTextureTarget(state.windowTextureTarget);
+      // A Livery or All tab saved before Vehicle mode keeps the targets it meant.
+      const savedTargets = savedVehicleTargets(state);
+      if (savedTargets.textureTarget) setTextureTarget(savedTargets.textureTarget);
+      if (savedTargets.windowTextureTarget) setWindowTextureTarget(savedTargets.windowTextureTarget);
       const savedSteering = normalizeSavedSteering(state.steering, initialModelPath);
       if (savedSteering) setSteering(savedSteering);
       // Saved for this model only; the parts load once the resource is scanned.
@@ -1288,6 +1305,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       if (Number.isInteger(state.gameLivery?.number) && state.gameLivery.path === initialModelPath) {
         setGameLiveryEntry({ path: initialModelPath, number: state.gameLivery.number });
       }
+      const restoredLiveries = state.liverySet?.path === initialModelPath ? normalizeLiverySet(state.liverySet) : null;
+      if (restoredLiveries) setLiverySetEntry({ path: initialModelPath, ...restoredLiveries });
       if (state.savedVehicle?.id && state.savedVehicle.path === initialModelPath) {
         setSavedVehicleEntry({ id: state.savedVehicle.id, name: String(state.savedVehicle.name || ""), path: initialModelPath });
       }
@@ -1783,7 +1802,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, [isTauriRuntime, persistPreviewFolder, promptForPreviewFolder, showToast]);
 
   const kitShoot = useKitShoot({
-    enabled: isTauriRuntime && textureMode === "everything",
+    enabled: isTauriRuntime && textureMode === "vehicle",
     modkits,
     viewerApiRef,
     modelPath,
@@ -2185,15 +2204,12 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
   }, []);
 
   const resolvedTextureTarget =
-    textureMode === "livery" ? liveryTarget || "all" : textureTarget;
+    textureTarget === PAINT_TARGET ? liveryTarget || "all" : textureTarget;
   const resolvedWindowBaseTarget =
     windowTextureTarget === "auto"
       ? windowLiveryTarget || "none"
       : windowTextureTarget || "none";
-  const resolvedWindowTextureTarget =
-    textureMode === "livery"
-      ? liveryWindowOverride || resolvedWindowBaseTarget
-      : resolvedWindowBaseTarget;
+  const resolvedWindowTextureTarget = resolvedWindowBaseTarget;
   const activeMaterialTexturePath = materialTextures.length
     ? materialTextures[materialTextures.length - 1]?.path || ""
     : "";
@@ -2222,34 +2238,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       ? ""
       : " is-fallback";
   const windowStatusLabel = windowLiveryLabel || "No window material found";
-  const usingWindowOverride = textureMode === "livery" && liveryWindowOverride;
-  const windowHint = !hasModel
-    ? "Load a model to detect window materials."
-    : usingWindowOverride
-      ? "Using manually selected material."
-      : windowLiveryTarget
-        ? "Auto-detecting glass/window materials. Use dropdown to override."
-        : "No window material auto-detected. Select a material below.";
   const modelLabel = getFileLabel(modelSourcePath || modelPath, "No model selected");
-  const primaryTemplateLabel =
-    textureMode === "livery"
-      ? getFileLabel(texturePath, "No livery template")
-      : textureMode === "everything"
-        ? getFileLabel(texturePath, "No texture template")
-        : getFileLabel(texturePath, "No uniform texture");
   const overlayLabel = windowTemplateEnabled
     ? getFileLabel(windowTexturePath, "No overlay selected")
     : "Off";
-  const manualTargetLabel =
-    textureTarget === "all"
-      ? "All meshes"
-      : textureTargets.find((target) => target.value === textureTarget)?.label || "Custom target";
-  const targetingLabel = textureMode === "livery" ? (liveryTarget ? "Auto" : "No target") : manualTargetLabel;
   const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
-  const showVehicleSlotColorCards = textureMode === "livery" || textureMode === "everything" || textureMode === "sirens";
+  const showVehicleSlotColorCards = textureMode === "vehicle" || textureMode === "sirens";
   const nativeMaterialsAvailable = Boolean(nativeMaterialsStatus.available);
-  // Sirens loads the model the way All does.
-  const nativeMaterialsActive = Boolean(nativeMaterialsEnabled && (textureMode === "everything" || textureMode === "sirens"));
+  const nativeMaterialsActive = Boolean(nativeMaterialsEnabled && (textureMode === "vehicle" || textureMode === "sirens"));
   const nativeMaterialsCompleteCount =
     (nativeMaterialsStatus.loadedTextureCount || 0) +
     (nativeMaterialsStatus.failedTextureCount || 0);
@@ -2293,8 +2289,14 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     }
   })();
 
-  const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi", sirens: "Sirens" };
+  const modeLabels = { vehicle: "Vehicle", eup: "EUP", multi: "Multi", sirens: "Sirens" };
   const currentModeLabel = modeLabels[textureMode] || "Preview";
+  // The viewer still renders by the two old behaviours: on the detected paint
+  // the livery is clamped to its sheet on the livery UV channel ("livery");
+  // any other target treats it as a texture on those meshes ("everything").
+  const viewerTextureMode = textureMode === "vehicle"
+    ? (textureTarget === PAINT_TARGET ? "livery" : "everything")
+    : textureMode;
 
   const singleViewer = (
   <Viewer
@@ -2313,13 +2315,13 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     modelReloadToken={modelReloadToken}
     textureTarget={resolvedTextureTarget}
     windowTextureTarget={resolvedWindowTextureTarget}
-    textureMode={textureMode}
+    textureMode={viewerTextureMode}
     showWireframe={showWireframe}
     showCageWireframe={showCageWireframe}
     showSolidWireframe={showSolidWireframe}
     onMeshStats={setMeshStats}
     wasdEnabled={true}
-    liveryExteriorOnly={(textureMode === "livery" || textureMode === "everything") && liveryExteriorOnly}
+    liveryExteriorOnly={textureMode === "vehicle" && liveryExteriorOnly}
     lightIntensity={lightIntensity}
     lightAzimuth={lightAzimuth}
     lightElevation={lightElevation}
@@ -2355,8 +2357,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     onFormatWarning={handleFormatWarning}
     onAssetError={setDialogError}
     onNativeMaterialsStatus={handleNativeMaterialsStatus}
-    vehicleMods={textureMode === "everything" || textureMode === "sirens" ? modkits.vehicleMods : null}
-    gameLivery={textureMode === "everything" || textureMode === "sirens" ? gameLivery : null}
+    vehicleMods={textureMode === "vehicle" || textureMode === "sirens" ? modkits.vehicleMods : null}
+    gameLivery={textureMode === "vehicle" || textureMode === "sirens" ? gameLivery : null}
     onGameLiveryStatus={setGameLiveries}
     steeringAngle={steeringAngle}
     roofClip={activeRoofClip}
@@ -2457,7 +2459,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       stageSpot={stageSpot}
       stageReflect={stageReflect}
       stageBeam={stageBeam}
-      stageLight={stageLight}
+        stageLight={stageLight}
       stageFloor={multi.showroom.floor}
       stageBays={multi.showroom.lights === "each"}
       turntable={turntable}
@@ -2562,7 +2564,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       },
       texturePath, setTexturePath, selectTexture, liveryTargetLabel,
       windowTemplateEnabled, setWindowTemplateEnabled, windowTexturePath, setWindowTexturePath,
-      selectWindowTexture, liveryWindowOverride, setLiveryWindowOverride,
+      selectWindowTexture,
       windowLiveryTarget, windowStatusLabel, textureTargets,
       liveryExteriorOnly, setLiveryExteriorOnly,
       watchStatus, lastUpdate,
@@ -2591,7 +2593,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       handleLightAzimuthChange, handleLightElevationChange, handleLightIntensityChange, resetLighting,
       metaModelInfo,
       onApplyMetaLivery: (path) => {
-        if (liveryTarget) setTextureTarget(liveryTarget);
+        if (textureMode === "vehicle") setTextureTarget(PAINT_TARGET);
+        else if (liveryTarget) setTextureTarget(liveryTarget);
         setTexturePath(path);
       },
       onApplyMetaColors: (preset) => {
@@ -2612,8 +2615,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       // Reopens a model by path, e.g. after the vehicle renamer moves its file.
       loadModel, reloadMovedModel, reloadModel,
       licensePlate, updateLicensePlate, licensePlateStatus,
-      // Kit Shoot is an All tool; Sirens only picks parts.
-      modkits, vehicleModsStatus, gameLivery, setGameLivery, gameLiveries, kitShoot: textureMode === "everything" ? kitShoot : null,
+      // Kit Shoot is a Vehicle tool; Sirens only picks parts.
+      modkits, vehicleModsStatus, gameLivery, setGameLivery, gameLiveries, kitShoot: textureMode === "vehicle" ? kitShoot : null,
+      liverySet, setLiverySet,
       savedVehicle, saveVehicle: textureMode === "eup" ? null : saveVehicle,
       generatingPreview, previewProgress, previewComplete, setPreviewComplete,
       previewOutputPath, previewFolderOpening, previewFolderOpenError, handleOpenPreviewFolder,

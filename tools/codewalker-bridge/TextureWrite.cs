@@ -4,12 +4,17 @@ using CodeWalker.Utils;
 
 namespace CodeWalkerBridge;
 
-// Writes textures into a copy of a texture dictionary for the lens colour
-// write. The input is only read: the rebuilt dictionary goes to `output`, and
-// the app replaces the user's file (after a backup) once every dictionary in
-// the write has been built and read back. An added texture is a recoloured copy
-// of one in `source`, a dictionary of the vehicle's own resource (the app
-// checks where it is); it must hold a texture of that name.
+// Writes textures into a copy of a texture dictionary, for the lens colour
+// write and the livery write. The input is only read: the rebuilt dictionary
+// goes to `output`, and the app replaces the user's file (after a backup) once
+// every dictionary in the write has been built and read back.
+//   replace: a texture the dictionary holds, keeping its name and use.
+//   add:     a recoloured lens copy of one in `source`, a dictionary of the
+//            vehicle's own resource (the app checks where it is); it must hold
+//            a texture of that name.
+//   insert:  a new texture made from the user's own image, such as another
+//            livery; `like` names a texture already in the dictionary whose
+//            use it takes, so a new livery is used as the others are.
 public static partial class Program
 {
     private const uint ResourceMagic = 0x37435352; // "RSC7"
@@ -71,7 +76,7 @@ public static partial class Program
             {
                 case "replace":
                 {
-                    if (index < 0) throw new BridgeException($"{fileName} no longer holds {name}. Check the lenses again.");
+                    if (index < 0) throw new BridgeException($"{fileName} no longer holds {name}, so it cannot be replaced.");
                     // As CodeWalker's Replace does: the game finds it by the same name and use.
                     var existing = textures[index];
                     texture.Name = existing.Name;
@@ -84,7 +89,7 @@ public static partial class Program
                 }
                 case "add":
                 {
-                    if (index >= 0) throw new BridgeException($"{fileName} already holds {name}. Check the lenses again.");
+                    if (index >= 0) throw new BridgeException($"{fileName} already holds {name}, so it cannot be added again.");
                     var source = item.TryGetProperty("source", out var sourceValue) && sourceValue.ValueKind == JsonValueKind.String
                         ? sourceValue.GetString()
                         : null;
@@ -92,6 +97,26 @@ public static partial class Program
                     if (!TextureNamesOf(source, sourceNames).Contains(name))
                     {
                         throw new BridgeException($"{Path.GetFileName(source)} does not hold {name}, so it cannot be copied. Check the lenses again.");
+                    }
+                    texture.Name = name;
+                    texture.NameHash = JenkHash.GenHash(name.ToLowerInvariant());
+                    JenkIndex.Ensure(name.ToLowerInvariant());
+                    textures.Add(texture);
+                    break;
+                }
+                case "insert":
+                {
+                    if (index >= 0) throw new BridgeException($"{fileName} already holds {name}, so it cannot be added again.");
+                    var like = item.TryGetProperty("like", out var likeValue) && likeValue.ValueKind == JsonValueKind.String
+                        ? likeValue.GetString()
+                        : null;
+                    if (!string.IsNullOrWhiteSpace(like))
+                    {
+                        var model = textures.Find(existing => string.Equals(GetTextureName(existing), like, StringComparison.OrdinalIgnoreCase))
+                            ?? throw new BridgeException($"{fileName} no longer holds {like}, the texture {name} is modelled on.");
+                        texture.Usage = model.Usage;
+                        texture.UsageFlags = model.UsageFlags;
+                        texture.Unknown_32h = model.Unknown_32h;
                     }
                     texture.Name = name;
                     texture.NameHash = JenkHash.GenHash(name.ToLowerInvariant());

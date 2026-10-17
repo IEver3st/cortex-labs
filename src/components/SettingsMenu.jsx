@@ -903,12 +903,12 @@ export default function SettingsMenu({
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="settings-row-title">Start in Exterior Only</div>
-                                      <div className="settings-row-desc">New Livery and All Textures workspaces open with interior, glass and wheels hidden. The camera deck toggles it per workspace.</div>
+                                      <div className="settings-row-desc">New Vehicle workspaces open with interior, glass and wheels hidden. The camera deck toggles it per workspace.</div>
                                     </div>
                                     <Toggle
                                       checked={draft.liveryExteriorOnly === true}
                                       onChange={(v) => setDraft((p) => ({ ...p, liveryExteriorOnly: v }))}
-                                      ariaLabel="Start new Livery and All Textures workspaces in Exterior Only"
+                                      ariaLabel="Start new Vehicle workspaces in Exterior Only"
                                     />
                                   </div>
                                   <div className="settings-row">
@@ -960,7 +960,7 @@ export default function SettingsMenu({
                                 <section className="settings-panel">
                                   <div className="settings-panel-title">Render Effects</div>
                                   <p className="settings-panel-description">
-                                    Livery, All Textures, EUP, Multi and Sirens tabs share these, and their camera deck buttons change them too. EUP Studio, Prop Studio and Photo Mode keep their own with each workspace.
+                                    Vehicle, EUP, Multi and Sirens tabs share these, and their camera deck buttons change them too. EUP Studio, Prop Studio and Photo Mode keep their own with each workspace.
                                   </p>
                                   <div className="settings-row">
                                     <div className="settings-row-label">

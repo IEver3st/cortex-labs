@@ -201,7 +201,7 @@ export default function useKitShoot({
     for (const waiter of [...waitersRef.current]) waiter(status);
   }, []);
 
-  // A different model, leaving All mode, or closing the workspace ends the run.
+  // A different model, leaving Vehicle mode, or closing the workspace ends the run.
   useEffect(() => () => controllerRef.current?.abort(), [modelPath]);
   useEffect(() => {
     if (!enabled) controllerRef.current?.abort();

@@ -1,0 +1,358 @@
+/* ── Liveries inspector and its write dialog ── */
+
+.lv-liveries {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 100%;
+}
+
+.lv-liv-count {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
+.lv-liv-names {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.lv-liv-names-label {
+  font-size: 12.5px;
+  color: var(--mg-muted);
+}
+
+.lv-liv-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: 12.5px;
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.lv-liv-input:focus {
+  outline: none;
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.lv-liv-input.is-invalid {
+  border-color: var(--mg-destructive);
+}
+
+.lv-liv-rows {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lv-liv-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 8px;
+  transition: background-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.lv-liv-row:hover {
+  background: var(--cx-wash);
+}
+
+.lv-liv-row.is-selected,
+.lv-liv-row.is-selected:hover {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+/* The livery an image dropped here would replace. */
+.lv-liv-row.is-drop {
+  background: color-mix(in srgb, var(--mg-primary) 10%, transparent);
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.lv-liv-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 4px 6px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lv-liv-main:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
+.lv-liv-number {
+  flex-shrink: 0;
+  width: 22px;
+  font-size: 20px;
+  text-align: center;
+}
+
+.lv-liv-thumb {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 5px;
+  background:
+    repeating-conic-gradient(color-mix(in srgb, var(--mg-fg) 9%, transparent) 0 25%, transparent 0 50%) 0 0 / 10px 10px,
+    var(--mg-input-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 14%, transparent);
+  object-fit: contain;
+}
+
+.lv-liv-thumb.is-loading {
+  background: var(--mg-input-bg);
+}
+
+.lv-liv-thumb.is-empty {
+  display: grid;
+  place-items: center;
+  color: var(--mg-muted);
+}
+
+.lv-liv-thumb.is-empty svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lv-liv-row.is-selected .lv-liv-thumb {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cx-invert-fg) 30%, transparent);
+}
+
+.lv-liv-text {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lv-liv-name,
+.lv-liv-sub-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "new" or "replaces" outlasts a long file name. */
+.lv-liv-sub-line {
+  display: flex;
+  min-width: 0;
+}
+
+.lv-liv-sub-status {
+  flex-shrink: 0;
+  white-space: pre;
+}
+
+.lv-liv-name {
+  font-family: var(--font-hud);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.lv-liv-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.lv-liv-sub.is-warn .lv-dot { background: var(--cx-caution); }
+.lv-liv-sub.is-error { color: var(--mg-destructive); }
+.lv-liv-sub.is-error .lv-dot { background: var(--mg-destructive); }
+
+.lv-liv-row.is-selected .lv-liv-sub,
+.lv-liv-row.is-selected .lv-liv-sub.is-error {
+  color: var(--cx-invert-muted);
+}
+
+/* Hover-revealed, and always there for keyboard focus and the selected row. */
+.lv-liv-remove {
+  flex-shrink: 0;
+  margin-right: 4px;
+  color: inherit;
+  opacity: 0;
+  transition: opacity 140ms var(--cx-ease);
+}
+
+.lv-liv-row:hover .lv-liv-remove,
+.lv-liv-row:focus-within .lv-liv-remove,
+.lv-liv-row.is-selected .lv-liv-remove {
+  opacity: 0.75;
+}
+
+.lv-liv-row.is-selected .lv-liv-remove:hover {
+  background: color-mix(in srgb, var(--cx-invert-fg) 10%, transparent);
+}
+
+/* Dropping below the rows adds; the add target shows it. */
+.lv-liveries.is-drop-end .lv-drop {
+  border-color: var(--mg-primary);
+  background: color-mix(in srgb, var(--mg-primary) 10%, transparent);
+}
+
+.lv-liv-add-loaded {
+  justify-self: start;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.lv-liv-note-icon {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  transform: translateY(2px);
+}
+
+/* The write action stays at the bottom of the inspector while the list scrolls. */
+.lv-liv-foot {
+  position: sticky;
+  bottom: -30px;
+  display: grid;
+  gap: 8px;
+  margin: auto -16px -30px;
+  padding: 14px 16px 16px;
+  border-top: 1px solid var(--mg-border);
+  background: color-mix(in srgb, var(--mg-bg) 30%, var(--cx-frame));
+}
+
+.lv-liv-write {
+  width: 100%;
+}
+
+.lv-liv-foot-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lv-liv-foot-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.lv-liv-foot > .lv-liv-foot-note {
+  text-align: center;
+}
+
+/* ── Write dialog ── */
+
+.lv-liv-plan {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.lv-liv-plan th {
+  padding: 0 12px 7px 0;
+  border-bottom: 1px solid var(--cx-rule);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-align: left;
+  text-transform: uppercase;
+  color: var(--mg-muted);
+}
+
+.lv-liv-plan td {
+  padding: 9px 12px 9px 0;
+  border-bottom: 1px solid var(--cx-rule);
+  white-space: nowrap;
+}
+
+.lv-liv-plan-file,
+.lv-liv-plan-size {
+  font-family: var(--font-hud);
+  font-size: 12px;
+}
+
+.lv-liv-plan-file {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-liv-checks {
+  display: grid;
+  gap: 8px;
+}
+
+.lv-liv-checks h3 {
+  margin: 4px 0 0;
+}
+
+.lv-liv-checks ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lv-liv-checks li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.lv-liv-checks li .lv-dot { background: color-mix(in srgb, var(--mg-muted) 60%, transparent); }
+.lv-liv-checks li.is-confirm .lv-dot { background: var(--cx-confirm); }
+.lv-liv-checks li.is-caution .lv-dot { background: var(--cx-caution); }
+.lv-liv-checks li.is-destructive { color: var(--mg-destructive); }
+.lv-liv-checks li.is-destructive .lv-dot { background: var(--mg-destructive); }
+
+.lv-liv-backup {
+  margin: 0;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+}
+
+.lv-liv-progress {
+  display: grid;
+  gap: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-liv-row,
+  .lv-liv-remove,
+  .lv-liv-input {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .lv-liv-row.is-selected,
+  .lv-liv-row.is-drop {
+    outline: 2px solid Highlight;
+  }
+}

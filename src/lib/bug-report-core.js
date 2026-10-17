@@ -11,8 +11,7 @@ const REPORT_TYPE_VALUES = new Set(["bug", "feature"]);
 // Optional triage context. Values are stable identifiers; labels are what the
 // issue body shows. Unknown values are dropped rather than forwarded.
 export const BUG_REPORT_AREAS = Object.freeze([
-  { value: "livery", label: "Livery" },
-  { value: "all-textures", label: "All Textures" },
+  { value: "livery", label: "Vehicle" },
   { value: "eup", label: "EUP" },
   { value: "eup-studio", label: "EUP Studio" },
   { value: "prop-studio", label: "Prop Studio" },
@@ -34,6 +33,8 @@ const AREA_LABELS = new Map(BUG_REPORT_AREAS.map((entry) => [entry.value, entry.
 const FREQUENCY_LABELS = new Map(BUG_REPORT_FREQUENCIES.map((entry) => [entry.value, entry.label]));
 
 export function normalizeBugReportArea(value) {
+  // All Textures was merged into Vehicle, which kept Livery's "livery" id.
+  if (value === "all-textures") return "livery";
   return typeof value === "string" && AREA_LABELS.has(value) ? value : "";
 }
 
