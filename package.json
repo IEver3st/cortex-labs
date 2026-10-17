@@ -2,7 +2,7 @@
   "name": "cortex-studio",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
-  "version": "5.2.0",
+  "version": "5.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,7 +23,7 @@
     "test:feedback": "node --test src/lib/bug-report.test.mjs",
     "test:changelog": "node --test src/lib/changelog.test.mjs",
     "test:watermark": "node --test src/lib/watermark.test.mjs",
-    "test:workspace": "node --test src/lib/workspace.test.mjs src/lib/saved-vehicles.test.mjs src/lib/workspace-state.test.mjs src/lib/unsaved-changes.test.mjs",
+    "test:workspace": "node --test src/lib/workspace.test.mjs src/lib/saved-vehicles.test.mjs src/lib/workspace-state.test.mjs src/lib/unsaved-changes.test.mjs src/lib/vehicle-folder.test.mjs src/lib/vehicle-snapshots.test.mjs",
     "test:camera": "node --test src/lib/camera-framing.test.mjs src/lib/camera-flight.test.mjs",
     "test:render-effects": "node --test src/lib/viewer-render-effects.test.mjs src/lib/part-swap-animation.test.mjs src/lib/mesh-stats.test.mjs",
     "test:clmesh": "node --test src/lib/clmesh.test.mjs",

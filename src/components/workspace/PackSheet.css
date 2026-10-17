@@ -1,0 +1,615 @@
+/* The Pack view (PackSheet.jsx) over the viewer workspace, the pack bar atop
+   the dock in the Vehicle view, and the Pack / Vehicle switch in the frame. */
+
+/* The workspace stays laid out under the sheet, so the viewer keeps its size
+   for snapshots, but nothing in it shows, takes focus or answers a click. */
+.lv-root.is-pack > :not(.lv-pack) {
+  visibility: hidden;
+}
+
+.lv-pack {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  visibility: visible;
+}
+
+/* ── Head ── */
+.lv-pack-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 20px 28px 16px;
+  border-bottom: 1px solid var(--mg-border);
+}
+
+.lv-pack-id {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.lv-pack-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: clamp(30px, 3vw, 40px);
+  line-height: 0.95;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-pack-where {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin-top: 6px;
+}
+
+/* The end of the path names the folder; the start gives way first. */
+.lv-pack-path {
+  min-width: 0;
+  margin-right: 8px;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.lv-pack-where .cx-icon-btn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+}
+
+.lv-pack-where .cx-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.lv-pack-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 16px;
+  min-width: 0;
+}
+
+.lv-pack-stats {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+}
+
+.lv-pack-stats > span {
+  padding: 0 12px;
+  border-left: 1px solid var(--mg-border);
+}
+
+.lv-pack-stats > span:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.lv-pack-stats b {
+  font-weight: 400;
+  color: var(--mg-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-pack-stats .is-caution b {
+  color: var(--cx-caution);
+}
+
+.lv-pack-run {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lv-pack-run:empty {
+  display: none;
+}
+
+.lv-pack-run-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.lv-pack-run-text svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.lv-pack-run-text.is-done svg {
+  color: var(--cx-confirm);
+}
+
+.lv-pack-run-text.is-warn svg {
+  color: var(--cx-caution);
+}
+
+.lv-pack-figure {
+  font-family: var(--font-hud);
+  font-size: 12px;
+  color: var(--mg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-pack-btn {
+  height: 30px;
+  gap: 7px;
+}
+
+.lv-pack-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lv-pack-search {
+  display: flex;
+  align-items: center;
+  width: 240px;
+  height: 30px;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
+}
+
+.lv-pack-search:focus-within {
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+.lv-pack-search-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--mg-muted);
+}
+
+.lv-pack-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.lv-pack-search-input::placeholder {
+  color: var(--mg-muted);
+}
+
+.lv-pack-search-clear {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-muted);
+  cursor: pointer;
+}
+
+.lv-pack-search-clear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.lv-pack-search-clear:hover {
+  background: var(--cx-wash-strong);
+  color: var(--mg-fg);
+}
+
+.lv-pack-search-clear:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* ── Sheet ── */
+.lv-pack-scroll {
+  min-height: 0;
+  padding: 20px 28px 32px;
+  overflow-y: auto;
+}
+
+.lv-pack-group + .lv-pack-group {
+  margin-top: 28px;
+}
+
+.lv-pack-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.lv-pack-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-pack-group-count {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-pack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 20px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lv-pack-tile {
+  min-width: 0;
+}
+
+.lv-pack-tile-btn {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lv-pack-tile-btn:focus-visible {
+  outline: none;
+}
+
+.lv-pack-tile-btn:focus-visible .lv-pack-shot {
+  box-shadow: var(--cx-focus);
+}
+
+.lv-pack-shot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--mg-border);
+  border-radius: 7px;
+  background: var(--mg-input-bg);
+  transition: border-color 140ms var(--cx-ease);
+}
+
+.lv-pack-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lv-pack-tile-btn:hover .lv-pack-shot {
+  border-color: color-mix(in srgb, var(--mg-fg) 32%, var(--mg-border));
+}
+
+.lv-pack-plate {
+  max-width: 100%;
+  padding: 0 12px;
+  overflow: hidden;
+  font-size: 22px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--mg-muted) 60%, transparent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-pack-busy {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--lv-slip);
+  color: var(--mg-primary);
+  animation: lv-spin 900ms linear infinite;
+}
+
+.lv-pack-cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 6px;
+  padding: 4px 6px;
+  border-radius: 5px;
+}
+
+.lv-pack-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-pack-warn {
+  display: inline-grid;
+  flex-shrink: 0;
+  color: var(--cx-caution);
+}
+
+.lv-pack-warn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lv-pack-staged {
+  flex-shrink: 0;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--cx-caution);
+  white-space: nowrap;
+}
+
+.lv-pack-sub {
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The open vehicle: opposite ink on its caption, an ink edge on its picture. */
+.lv-pack-tile.is-open .lv-pack-shot {
+  border-color: var(--cx-invert-bg);
+  box-shadow: inset 0 0 0 1px var(--cx-invert-bg);
+}
+
+.lv-pack-tile.is-open .lv-pack-cap {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.lv-pack-tile.is-open .lv-pack-staged,
+.lv-pack-tile.is-open .lv-pack-warn {
+  color: var(--cx-invert-fg);
+}
+
+.lv-pack-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--mg-muted);
+}
+
+.lv-pack-spin {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--mg-primary);
+  animation: lv-spin 900ms linear infinite;
+}
+
+.lv-pack-empty {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  max-width: 420px;
+}
+
+.lv-pack-empty-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.lv-pack-empty-title.is-error {
+  color: var(--mg-destructive);
+}
+
+.lv-pack-empty-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mg-muted);
+}
+
+.lv-pack-notes {
+  max-width: 360px;
+  margin-top: 28px;
+}
+
+/* ── Pack bar (Vehicle view, atop the dock) ── */
+.lv-packbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 6px 8px 6px 8px;
+  border-bottom: 1px solid var(--mg-border);
+}
+
+.lv-packbar-pack {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease);
+}
+
+.lv-packbar-pack:hover {
+  background: var(--cx-wash);
+}
+
+.lv-packbar-pack:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.lv-packbar-figure {
+  flex-shrink: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.lv-packbar-total {
+  color: var(--mg-muted);
+}
+
+.lv-packbar-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-packbar .cx-icon-btn {
+  flex-shrink: 0;
+}
+
+.lv-packbar .cx-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Pack / Vehicle switch (frame context slot) ── */
+.lv-ctx-seg {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: 6px;
+  padding: 2px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+}
+
+.lv-ctx-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.lv-ctx-seg-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lv-ctx-seg-btn:hover {
+  background: var(--cx-wash-strong);
+  color: var(--mg-fg);
+}
+
+.lv-ctx-seg-btn.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.lv-ctx-seg-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+/* The Model step's way in, under its card or drop target. */
+.lv-folder-link {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+}
+
+.lv-folder-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-pack-shot,
+  .lv-pack-search,
+  .lv-packbar-pack,
+  .lv-ctx-seg-btn {
+    transition: none;
+  }
+
+  .lv-pack-busy,
+  .lv-pack-spin {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .lv-pack-tile.is-open .lv-pack-shot,
+  .lv-ctx-seg-btn.is-on {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .lv-pack-tile.is-open .lv-pack-cap {
+    outline: 2px solid Highlight;
+  }
+}

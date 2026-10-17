@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { AlertTriangle, Aperture, Camera, Car, Check, ChevronUp, FolderOpen, Box, Boxes, RefreshCw } from "lucide-react";
+import { AlertTriangle, Aperture, Camera, Car, Check, ChevronUp, FolderOpen, FolderTree, Box, Boxes, LayoutGrid, RefreshCw } from "lucide-react";
 import { Toggle } from "../ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
@@ -7,6 +7,7 @@ import VehicleMetaPanel from "../VehicleMetaPanel";
 import ModkitPanel, { GameLiverySwitcher } from "./ModkitPanel";
 import LiveriesPanel from "./LiveriesPanel";
 import SaveVehicle from "./SaveVehicle";
+import PackSheet, { PackBar } from "./PackSheet";
 import KitShootReview from "./KitShootReview";
 import PaintSlots from "./PaintSlots";
 import {
@@ -427,6 +428,24 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
   const panes = usePaneWidths(`cortex.${isEup ? "eup-textures" : "livery"}.panes`);
   const hasModel = Boolean(s.modelPath);
   const hk = s.hotkeys || {};
+  // A folder of vehicles is a desktop read, so the Pack view is Vehicle mode in the app only.
+  const canOpenFolder = isVehicle && Boolean(s.isTauriRuntime);
+  const hasFolder = canOpenFolder && Boolean(s.vehicleFolder);
+  const packShown = hasFolder && s.folderView === "pack";
+  const viewSwitch = hasFolder ? (
+    <div className="lv-ctx-seg" role="group" aria-label="Folder view">
+      <button type="button" className={`lv-ctx-seg-btn ${packShown ? "is-on" : ""}`} aria-pressed={packShown}
+        onClick={() => s.setFolderView("pack")} title="Every vehicle in the folder">
+        <LayoutGrid aria-hidden="true" />
+        Pack
+      </button>
+      <button type="button" className={`lv-ctx-seg-btn ${packShown ? "" : "is-on"}`} aria-pressed={!packShown}
+        onClick={() => s.setFolderView("vehicle")} title="The open vehicle">
+        <Car aria-hidden="true" />
+        Vehicle
+      </button>
+    </div>
+  ) : null;
 
   const alerts = useMemo(() => {
     const list = [];
@@ -457,9 +476,13 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
   ));
 
   return (
-    <WorkspaceFrame s={s} inspectorOpen={inspectorOpen} setInspectorOpen={setInspectorOpen} style={panes.style}>
+    <WorkspaceFrame s={s} inspectorOpen={inspectorOpen} setInspectorOpen={setInspectorOpen} style={panes.style}
+      className={packShown ? "is-pack" : ""} viewSwitch={viewSwitch} panelControls={!packShown}>
+      {packShown ? <PackSheet s={s} /> : null}
+
       {/* ──── Asset pipeline ──── */}
       <aside className="lv-dock" aria-label={copy.asideLabel} inert={s.panelCollapsed}>
+        {hasFolder ? <PackBar s={s} /> : null}
         <div className="lv-dock-scroll custom-scrollbar">
           <AssetSlot
             id="panel-model"
@@ -480,6 +503,12 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             ) : null}
           >
             {s.modelLoading ? <p className="lv-slot-note is-busy">Loading model…</p> : null}
+            {canOpenFolder && !hasFolder ? (
+              <button type="button" className="lv-link lv-folder-link" onClick={s.openVehicleFolder} title="See a pack's vehicles side by side and go through them one at a time">
+                <FolderTree aria-hidden="true" />
+                Open a folder of vehicles
+              </button>
+            ) : null}
           </AssetSlot>
 
           <AssetSlot

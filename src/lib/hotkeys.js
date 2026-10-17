@@ -22,6 +22,8 @@ export const HOTKEY_ACTIONS = {
   SELECT_MODEL: "selectModel",
   SELECT_LIVERY: "selectLivery",
   SELECT_GLASS: "selectGlass",
+  PREVIOUS_VEHICLE: "previousVehicle",
+  NEXT_VEHICLE: "nextVehicle",
   TOGGLE_DUAL_GIZMO: "toggleDualGizmo",
   SWAP_DUAL_SLOT: "swapDualSlot",
 };
@@ -49,6 +51,8 @@ export const HOTKEY_LABELS = {
   [HOTKEY_ACTIONS.SELECT_MODEL]: "Select Model",
   [HOTKEY_ACTIONS.SELECT_LIVERY]: "Select Livery/Texture",
   [HOTKEY_ACTIONS.SELECT_GLASS]: "Select Glass/Window",
+  [HOTKEY_ACTIONS.PREVIOUS_VEHICLE]: "Previous Vehicle in Folder",
+  [HOTKEY_ACTIONS.NEXT_VEHICLE]: "Next Vehicle in Folder",
   [HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO]: "Toggle Multi Gizmo",
   [HOTKEY_ACTIONS.SWAP_DUAL_SLOT]: "Next Vehicle in Multi",
 };
@@ -101,6 +105,8 @@ export const HOTKEY_CATEGORIES = {
       HOTKEY_ACTIONS.SELECT_MODEL,
       HOTKEY_ACTIONS.SELECT_LIVERY,
       HOTKEY_ACTIONS.SELECT_GLASS,
+      HOTKEY_ACTIONS.PREVIOUS_VEHICLE,
+      HOTKEY_ACTIONS.NEXT_VEHICLE,
     ],
   },
 };
@@ -128,6 +134,8 @@ export const DEFAULT_HOTKEYS = {
   [HOTKEY_ACTIONS.SELECT_MODEL]: { key: "O", ctrl: true, alt: false, shift: false },
   [HOTKEY_ACTIONS.SELECT_LIVERY]: { key: "L", ctrl: true, alt: false, shift: false },
   [HOTKEY_ACTIONS.SELECT_GLASS]: { key: "G", ctrl: true, alt: false, shift: false },
+  [HOTKEY_ACTIONS.PREVIOUS_VEHICLE]: { key: "PageUp", ctrl: false, alt: true, shift: false },
+  [HOTKEY_ACTIONS.NEXT_VEHICLE]: { key: "PageDown", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO]: { key: "G", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.SWAP_DUAL_SLOT]: { key: "X", ctrl: false, alt: true, shift: false },
 };

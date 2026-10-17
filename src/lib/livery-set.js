@@ -81,16 +81,18 @@ export function defaultLiveryPattern({ signPrefix = "", dictionaries = [], model
 }
 
 /**
- * The liveries the vehicle has after a write, by number: each slot's
- * `existing` copies (`{ dictionary, texture }`, one per dictionary holding
- * it) and the staged `item` that replaces or adds it.
+ * The vehicle's liveries and what a write does to them, by number: each
+ * slot's `existing` copies (`{ dictionary, texture }`, one per dictionary
+ * holding it), the staged `item` that replaces or adds it, and `removed` when
+ * the write deletes it. `removed` lists livery numbers to delete; a number
+ * with a staged image is replaced instead, and one the vehicle lacks is ignored.
  */
-export function liverySlots({ dictionaries = [], pattern, items = [] }) {
+export function liverySlots({ dictionaries = [], pattern, items = [], removed = [] }) {
   const parsed = typeof pattern === "string" ? parseLiveryPattern(pattern) : pattern;
   if (!parsed || parsed.error) return [];
   const slots = new Map();
   const slot = (number) => {
-    if (!slots.has(number)) slots.set(number, { number, name: parsed.nameFor(number), existing: [], item: null });
+    if (!slots.has(number)) slots.set(number, { number, name: parsed.nameFor(number), existing: [], item: null, removed: false });
     return slots.get(number);
   };
   for (const dictionary of dictionaries) {
@@ -100,6 +102,10 @@ export function liverySlots({ dictionaries = [], pattern, items = [] }) {
     }
   }
   for (const item of items) slot(item.number).item = item;
+  for (const number of removed) {
+    const target = slots.get(number);
+    if (target?.existing.length && !target.item) target.removed = true;
+  }
   return [...slots.values()].sort((a, b) => a.number - b.number);
 }
 
@@ -176,7 +182,8 @@ function joinList(items) {
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
-function numberRuns(numbers) {
+/** Livery numbers as people read them: "1 to 4, 7 and 9". */
+export function numberRuns(numbers) {
   const sorted = [...new Set(numbers)].sort((a, b) => a - b);
   const parts = [];
   for (let i = 0; i < sorted.length;) {
@@ -189,6 +196,14 @@ function numberRuns(numbers) {
   return joinList(parts);
 }
 
+const liveryWord = (count) => `${count} ${count === 1 ? "livery" : "liveries"}`;
+
+/** The write action's label: "Write 3 liveries", "Write 3, remove 1" or "Remove 1 livery". */
+export function liveryWriteLabel(count, removals) {
+  if (count && removals) return `Write ${count}, remove ${removals}`;
+  return removals ? `Remove ${liveryWord(removals)}` : `Write ${liveryWord(count)}`;
+}
+
 // The dictionaries a write goes into: every one that holds a livery of this
 // name already, else the model's base dictionary (`x.ytd`, not `x+hi.ytd`).
 function targetDictionaries(dictionaries, parsed) {
@@ -199,21 +214,26 @@ function targetDictionaries(dictionaries, parsed) {
 }
 
 /**
- * What writing the staged liveries does. `sources` maps an item id to its
- * decoded image `{ width, height }`, `{ error }`, or nothing while it is read.
- * Returns `{ blocked, pending, files, checks }`: `files[]` is
+ * What writing the staged liveries and removing the `removed` ones does.
+ * `sources` maps an item id to its decoded image `{ width, height }`,
+ * `{ error }`, or nothing while it is read. Returns
+ * `{ blocked, pending, files, removals, checks }`: `files[]` is
  * `{ path, name, textures: [{ itemId, number, name, mode, like, width, height, levels }] }`
- * with `added`, `replaced` and `bytes`; `checks[]` is `{ tone, text }` with
- * tone confirm, caution or destructive.
+ * with `added`, `replaced`, `removed` and `bytes`, where a removed texture has
+ * mode `delete`, no item and no size; `removals` lists the livery numbers
+ * removed; `checks[]` is `{ tone, text }` with tone confirm, caution or
+ * destructive.
  */
-export function planLiveryWrite({ modelPath = "", dictionaries = [], pattern, items = [], sources = {}, signPrefix = null }) {
-  const plan = { blocked: null, pending: false, files: [], checks: [] };
+export function planLiveryWrite({ modelPath = "", dictionaries = [], pattern, items = [], removed = [], sources = {}, signPrefix = null }) {
+  const plan = { blocked: null, pending: false, files: [], removals: [], checks: [] };
   const parsed = parseLiveryPattern(pattern);
   if (parsed.error) {
     plan.blocked = parsed.error;
     return plan;
   }
-  if (!items.length) {
+  const slots = liverySlots({ dictionaries, pattern: parsed, items, removed });
+  plan.removals = slots.filter((slot) => slot.removed).map((slot) => slot.number);
+  if (!items.length && !plan.removals.length) {
     plan.blocked = "Add liveries to write.";
     return plan;
   }
@@ -241,13 +261,16 @@ export function planLiveryWrite({ modelPath = "", dictionaries = [], pattern, it
 
   const upscaled = new Map();
   const stretched = new Map();
+  const removing = new Set(plan.removals);
   for (const dictionary of targets) {
     const liveries = (dictionary.textures || [])
       .map((texture) => ({ texture, number: parsed.numberOf(texture?.name) }))
       .filter((entry) => entry.number != null)
       .sort((a, b) => a.number - b.number);
-    const model = liveries.find((entry) => entry.texture.width && entry.texture.height)?.texture || null;
-    const file = { path: dictionary.path, name: dictionary.name || fileNameOf(dictionary.path), textures: [], added: 0, replaced: 0, bytes: 0 };
+    // New liveries take the use of one that stays, when one does.
+    const sized = (entry) => entry.texture.width && entry.texture.height;
+    const model = (liveries.find((entry) => sized(entry) && !removing.has(entry.number)) || liveries.find(sized))?.texture || null;
+    const file = { path: dictionary.path, name: dictionary.name || fileNameOf(dictionary.path), textures: [], added: 0, replaced: 0, removed: 0, bytes: 0 };
     for (const item of items) {
       const holder = liveries.find((entry) => entry.number === item.number)?.texture || null;
       const shape = holder?.width && holder?.height ? holder : model;
@@ -281,6 +304,16 @@ export function planLiveryWrite({ modelPath = "", dictionaries = [], pattern, it
         if (Math.abs(aspect - target) / target > 0.02 && !stretched.has(label)) stretched.set(label, { source, size });
       }
     }
+    // Removals go last, so an insert modelled on a removed livery still finds it.
+    for (const entry of liveries) {
+      if (!removing.has(entry.number)) continue;
+      file.textures.push({ itemId: null, number: entry.number, name: entry.texture.name, mode: "delete", like: null, width: 0, height: 0, levels: 0 });
+      file.removed += 1;
+    }
+    if (!file.textures.length) continue;
+    if ((dictionary.textures || []).length + file.added - file.removed <= 0) {
+      plan.blocked = plan.blocked || `Removing these leaves ${file.name} with no textures, which the game cannot load. Keep at least one livery.`;
+    }
     plan.files.push(file);
   }
 
@@ -300,17 +333,22 @@ export function planLiveryWrite({ modelPath = "", dictionaries = [], pattern, it
     plan.checks.push({ tone: "caution", text: `${label} is ${source.width} × ${source.height}, so it is stretched to the ${size.width} × ${size.height} livery shape.` });
   }
 
-  const numbers = liverySlots({ dictionaries, pattern: parsed, items }).map((slot) => slot.number);
+  const numbers = slots.filter((slot) => !slot.removed).map((slot) => slot.number);
   const highest = Math.max(0, ...numbers);
   const missing = [];
   for (let number = 1; number <= highest; number += 1) {
     if (!numbers.includes(number)) missing.push(number);
   }
-  const added = items.map((item) => item.number);
-  if (missing.length) {
+  const changes = [
+    items.length ? `writes ${numberRuns(items.map((item) => item.number))}` : "",
+    plan.removals.length ? `removes ${numberRuns(plan.removals)}` : "",
+  ].filter(Boolean).join(" and ");
+  if (!highest) {
+    plan.checks.push({ tone: "caution", text: "This removes every livery, so the vehicle has none in game." });
+  } else if (missing.length) {
     plan.checks.push({ tone: "caution", text: `Livery ${numberRuns(missing)} ${missing.length === 1 ? "is" : "are"} missing. The game counts liveries 1, 2, 3… in order, so keep the numbers without gaps.` });
   } else {
-    plan.checks.push({ tone: "confirm", text: `Liveries run 1 to ${highest} with no gaps; this writes ${numberRuns(added)}.` });
+    plan.checks.push({ tone: "confirm", text: `Liveries run 1 to ${highest} with no gaps; this ${changes}.` });
   }
 
   const expected = signPrefix ? `${signPrefix}_sign_1` : "";
@@ -322,9 +360,12 @@ export function planLiveryWrite({ modelPath = "", dictionaries = [], pattern, it
   return plan;
 }
 
+const isLiveryNumber = (number) => Number.isInteger(number) && number >= 1 && number <= MAX_LIVERY_NUMBER;
+
 /**
- * A staged set from saved session data, `{ pattern, items }`, keeping only
- * items with a path and a distinct number from 1 to 99. Null when unusable.
+ * A staged set from saved session data, `{ pattern, items, removed }`,
+ * keeping only items with a path and a distinct number from 1 to 99, and
+ * removals of other numbers in that range. Null when unusable.
  */
 export function normalizeLiverySet(value) {
   if (!value || typeof value !== "object") return null;
@@ -334,16 +375,20 @@ export function normalizeLiverySet(value) {
   const items = [];
   for (const item of Array.isArray(value.items) ? value.items : []) {
     const number = Number(item?.number);
-    if (typeof item?.path !== "string" || !item.path || !Number.isInteger(number) || number < 1 || number > MAX_LIVERY_NUMBER || numbers.has(number)) continue;
+    if (typeof item?.path !== "string" || !item.path || !isLiveryNumber(number) || numbers.has(number)) continue;
     const id = typeof item.id === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(item.id) && !ids.has(item.id) ? item.id : `r${number}`;
     numbers.add(number);
     ids.add(id);
     items.push({ id, path: item.path, number });
   }
-  return { pattern, items: items.sort((a, b) => a.number - b.number) };
+  const removed = [...new Set((Array.isArray(value.removed) ? value.removed : []).map(Number))]
+    .filter((number) => isLiveryNumber(number) && !numbers.has(number))
+    .sort((a, b) => a - b);
+  return { pattern, items: items.sort((a, b) => a.number - b.number), removed };
 }
 
 /** True when a plan can be written now. */
 export function canWriteLiveries(plan) {
-  return Boolean(plan && !plan.blocked && !plan.pending && plan.files.length && plan.files.every((file) => file.textures.every((texture) => texture.width && texture.height)));
+  return Boolean(plan && !plan.blocked && !plan.pending && plan.files.length
+    && plan.files.every((file) => file.textures.every((texture) => texture.mode === "delete" || (texture.width && texture.height))));
 }

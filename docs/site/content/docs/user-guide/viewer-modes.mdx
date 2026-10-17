@@ -19,6 +19,33 @@ Everything for a vehicle in one place: liveries, paint, mod kits and texture che
 - **Turntable** (Scene tab) spins the vehicle in place under the lights at a speed you set, in Vehicle, Sirens and Multi. Turned off, the vehicle settles back facing forward. Captures from a named shot (Front, Side, 3/4 and so on) always show the vehicle at rest.
 - **Capture** (also in EUP) sits folded to one line at the bottom of the dock; click it to open. It saves one PNG per chosen angle, named `<model>_<angle>.png`, into a `<model>` folder inside your preview export folder. A preview folder outside your user folders (another drive, for example) takes the shots directly, and the result says so. Cortex asks before replacing shots that already exist, and the result counts only the files it wrote, naming any angle that couldn't be captured and the error that stopped a run. **Save this view** saves the viewfinder as framed; in the browser it downloads the PNG, and capturing angles needs the desktop app.
 
+### A folder of vehicles
+
+**Open a folder of vehicles**, under the model on the Model step (desktop app), shows every vehicle in a folder on one screen, so you can go through a pack one car at a time instead of opening each model.
+
+- Pick one resource or a folder of resources, such as a `[cars]` category. With more than one resource, the vehicles are grouped under each resource's name. Picking a folder inside a resource, such as its `stream` folder, lists the vehicles that resource's `vehicles.meta` names in that folder.
+- In a resource with a `vehicles.meta`, the models it names are the vehicles, so mod kit parts kept in the same folder as the car stay out of the list. Without one, or when it names no vehicles, every `.yft` is listed except the parts its `carcols.meta` kits use. A vehicle opens its `_hi` model when it has one.
+
+#### Pack and Vehicle
+
+With a folder open, **Pack** and **Vehicle** in the title bar switch between the whole folder and the vehicle you're working on.
+
+- **Pack** names the pack and shows each vehicle as a snapshot, with its model name and display name or file. The open vehicle is shown in opposite ink. A vehicle with liveries staged on the **Liveries** tab and not yet written says how many, and a warning sign marks a vehicle whose meta has errors the **Meta** tab explains, such as a livery list without `FLAG_HAS_LIVERY`. Click a vehicle to open it in **Vehicle**.
+- **Vehicle** is the usual workspace with the folder at the top of the dock: the open vehicle's place in it (`08 / 18`), and arrows that open the previous or next vehicle. **Alt + PageUp** and **Alt + PageDown** do the same from either view. Clicking the pack's name goes back to **Pack**.
+- **Filter vehicles** narrows the pack by model name, display name or resource, and the arrows and shortcuts step through what it leaves. **Esc** in the filter clears it.
+- **Missing models** lists `vehicles.meta` entries the folder holds no model for, and **Couldn't read** lists folders or meta files that were skipped. A very large folder is listed only in part, and the pack says so. A folder inside a resource doesn't report the vehicles it leaves out as missing.
+- The buttons beside the folder's path list it again, such as after you add or remove vehicles, open another folder, or close the folder.
+- Liveries you add on the **Liveries** tab but haven't written stay with their vehicle while you move through the folder.
+
+#### Snapshots
+
+A snapshot is taken from the same 3/4 camera shot for every vehicle, the first time each session the vehicle is open with its textures loaded. Snapshots are kept in Cortex's cache, not beside your files, so the pack shows them again next time without loading any vehicle. Until a vehicle has one, its tile shows its name, less any prefix every vehicle in the pack shares.
+
+**Take snapshots** opens each vehicle that has none in turn, behind the pack, and takes one, then reopens the vehicle you had open. It counts its way through them; **Stop** ends it early, and so does opening a vehicle yourself. A vehicle that doesn't load, or hasn't loaded after two minutes, is skipped and counted at the end. Once every vehicle has one, the button reads **Retake snapshots** and takes them all again, such as after you write liveries or turn the model's own textures on or off; a snapshot shows the vehicle the way the viewer showed it. Because each vehicle opens as if you had clicked it, a vehicle's first load converts its model, so a large pack takes a while the first time.
+
+- The folder and the view you were on are saved with the workspace. Cortex can read a folder you open until the app closes; after a restart, a folder outside your user folder lists again only when it is the open vehicle's own resource. Otherwise the pack says it couldn't read the folder, and **Open folder…** asks for it again.
+- Focus mode hides the folder bar with the dock.
+
 ### Liveries
 
 The **Liveries** tab (desktop app) switches between the liveries the vehicle has in game and writes a whole set of your images into the vehicle at once.
@@ -32,9 +59,10 @@ The list under **In game** shows the vehicle's texture liveries as the game numb
 - **Names** is the texture name, with `#` where the livery number goes. It starts as the `<name>_sign_#` the paint uses (for example `fpiu_sign_#`), else the one the vehicle's texture dictionaries hold, else one made from the model name.
 - Each row is one livery: its number, a thumbnail and its texture name. Liveries already in the vehicle say **In the vehicle** with their largest size. Click a row to preview it on the Livery step.
 - **Add liveries** picks PNG, JPG, WebP, BMP, TIFF, PSD, PDN or DDS images, or drop them on the tab. New images follow the vehicle's liveries in file-name order (`livery2` before `livery10`), up to livery 99. Dropping images on a row replaces that livery with the first of them; the rest take the next free numbers. The **X** on a row takes an image back out, and **Clear** takes them all. The images you add are kept with the workspace until you write them.
+- The bin on a livery already in the vehicle marks it for removal, for when you have fewer liveries than the vehicle came with: its name is struck through and it says **Removed on write**, and the undo arrow keeps it after all. Nothing is removed until you write, and editing **Names** clears the marks. An image dropped on a marked livery replaces it instead, and new images follow the liveries that stay, so marking the last livery and adding an image replaces it. Removing one from the middle leaves a gap, which **Checks** points out. A dictionary can't be left without any textures.
 - When the Livery step shows an image that isn't one of these liveries, **Add `<file>` as livery N** adds it.
-- **Write N liveries…** shows what changes before anything is written: each texture dictionary it writes to, how many textures it adds or replaces there, and at what size. Your images go into every dictionary beside the model that already holds the liveries (`<vehicle>+hi.ytd` and `<vehicle>.ytd` often both do), scaled to the size and mip count that dictionary's liveries use. A vehicle without liveries gets them in its `<vehicle>.ytd`, at the image's size rounded to a power of two between 64 and 4096. Images are stored as DXT5; a DDS already at the right size goes in unchanged. **Checks** point out images that are scaled up or stretched, gaps in the numbers (the game counts liveries 1, 2, 3… in order), and names the paint doesn't use.
-- Each `.ytd` is first copied to a `.bak` named with the date and time, and the write is all or nothing: **Stop**, or any failure, leaves every file as it was. Afterwards the model reloads with the new liveries; restart the resource in game to load them.
+- **Write N liveries…** (or **Write N, remove N…**, or **Remove N liveries…**) shows what changes before anything is written: each texture dictionary it writes to, how many textures it adds, replaces or removes there, and at what size. A removed livery leaves every dictionary that holds it. Your images go into every dictionary beside the model that already holds the liveries (`<vehicle>+hi.ytd` and `<vehicle>.ytd` often both do), scaled to the size and mip count that dictionary's liveries use. A vehicle without liveries gets them in its `<vehicle>.ytd`, at the image's size rounded to a power of two between 64 and 4096. Images are stored as DXT5; a DDS already at the right size goes in unchanged. **Checks** point out images that are scaled up or stretched, gaps in the numbers (the game counts liveries 1, 2, 3… in order), and names the paint doesn't use.
+- Each `.ytd` is first copied to a `.bak` named with the date and time, and the write is all or nothing: **Stop**, or any failure, leaves every file as it was. Afterwards the model reloads with the changed liveries; restart the resource in game to load them.
 - Only the vehicle's own texture dictionaries change, and only with your images. Editing a vehicle you bought or downloaded follows its licence, the same as editing its files by hand; escrow-encrypted dictionaries can't be read, so they can't be written. Only legacy GTA V dictionaries can be written, and a vehicle needs a `.ytd` of its own beside the model.
 
 ### Mod kits

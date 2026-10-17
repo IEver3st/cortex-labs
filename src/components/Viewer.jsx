@@ -1647,6 +1647,19 @@ function ViewerComponent({
         if (presetKey) restoreLiveFrame();
         return pending;
       },
+      /**
+       * The model on screen: the path it was loaded from, an id that changes
+       * with every load, and whether its own textures have settled.
+       */
+      getShownModel: () => {
+        const object = modelRef.current;
+        if (!object) return null;
+        return {
+          path: shownModelPathRef.current || "",
+          id: object.uuid,
+          settled: object.userData?.nativeMaterialsSettled === true,
+        };
+      },
       /** The live camera, so a Kit Shoot run keeps shooting from where it started. */
       getCameraSnapshot: () => ({
         position: camera.position.toArray(),
@@ -1685,9 +1698,10 @@ function ViewerComponent({
       /**
        * Renders the scene at exactly width x height into new 2D canvases, one
        * per `{ pose, crop }`. A pose is `{ type: "view", camera }` with a
-       * getCameraSnapshot result (cropped to the output like EUP shots), or
+       * getCameraSnapshot result (cropped to the output like EUP shots),
        * `{ type: "focus", box, direction, fov?, minDistance?, maxDistance? }`
-       * to frame a box from a direction. `crop` (`{ x, y, width, height }` as
+       * to frame a box from a direction, or `{ type: "preset", presetKey,
+       * zoomFactor? }` for a named camera shot of the model. `crop` (`{ x, y, width, height }` as
        * fractions of the frame, same aspect) renders that part of the frame at
        * full resolution. The drawing buffer is resized once for the batch and
        * restored before the browser paints, so the live view never shows it.
@@ -1719,6 +1733,20 @@ function ViewerComponent({
             shot.position.copy(framing.target).addScaledVector(direction, distance);
             shot.up.copy(framing.up);
             shot.near = Math.min(framing.near, Math.max(0.01, distance * 0.05));
+            shot.far = framing.far;
+            shot.lookAt(framing.target);
+          } else if (pose?.type === "preset") {
+            const framing = buildCameraFraming({
+              bounds: fitRef.current.bounds,
+              aspect: outAspect,
+              fov: camera.fov,
+              presetKey: pose.presetKey,
+              zoomFactor: pose.zoomFactor,
+            });
+            shot.fov = camera.fov;
+            shot.position.copy(framing.position);
+            shot.up.copy(framing.up);
+            shot.near = framing.near;
             shot.far = framing.far;
             shot.lookAt(framing.target);
           } else {
@@ -2755,6 +2783,9 @@ function ViewerComponent({
     object.userData = object.userData || {};
     object.userData.nativeMaterialsEnabled = enabled;
     object.userData.nativeMaterialsReady = false;
+    // True once the model's own textures have loaded, failed or been turned
+    // off, so a snapshot of the vehicle shows it as it will look.
+    object.userData.nativeMaterialsSettled = false;
 
     const reapplyMaterials = () => {
       const state = materialStateRef.current;
@@ -2775,6 +2806,7 @@ function ViewerComponent({
 
     const nativeMeshes = getMeshList(object).filter((mesh) => mesh.userData?.nativeMaterial && !isVehicleModMesh(mesh));
     if (!enabled) {
+      object.userData.nativeMaterialsSettled = true;
       onNativeMaterialsStatusRef.current?.({
         state: "disabled",
         available: nativeMeshes.length > 0,
@@ -2785,6 +2817,7 @@ function ViewerComponent({
     }
 
     if (object.userData?.sourceFormat !== "yft" || nativeMeshes.length === 0) {
+      object.userData.nativeMaterialsSettled = true;
       onNativeMaterialsStatusRef.current?.({
         state: "unavailable",
         available: false,
@@ -2829,6 +2862,7 @@ function ViewerComponent({
         }
 
         object.userData.nativeMaterialsReady = true;
+        object.userData.nativeMaterialsSettled = true;
         setNativeReadyVersion((version) => version + 1);
         const status = resources.summary;
         onNativeMaterialsStatusRef.current?.({
@@ -2845,6 +2879,7 @@ function ViewerComponent({
       } catch (error) {
         if (cancelled || error?.name === "AbortError") return;
         object.userData.nativeMaterialsReady = false;
+        object.userData.nativeMaterialsSettled = true;
         onNativeMaterialsStatusRef.current?.({
           state: "error",
           available: true,
