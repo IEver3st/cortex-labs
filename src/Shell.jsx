@@ -3,7 +3,7 @@ import { AnimatePresence, MotionConfig, motion, useMotionValue, useTransform, us
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Layers, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Sparkles, MessageSquarePlus, Flashlight, CopyX, Siren, Aperture } from "lucide-react";
+import { Minus, Square, X, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Sparkles, MessageSquarePlus, Flashlight, CopyX, Siren, Aperture } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import UpdateToolbarControl from "./components/UpdateToolbarControl";
@@ -26,6 +26,7 @@ import {
   saveOpenTabs,
 } from "./lib/workspace";
 import { applySavedVehicleToState, findSavedVehicleWorkspace, savedVehicleWorkspaceState } from "./lib/saved-vehicles";
+import { normalizeTextureMode } from "./lib/workspace-state";
 import { subscribeUnsavedChanges, unsavedChangeKeys } from "./lib/unsaved-changes";
 import { clearSession } from "./lib/prefs";
 import UnsavedChangesDialog from "./components/UnsavedChangesDialog";
@@ -90,8 +91,7 @@ function restoreOpenTabs() {
 
 // Same glyphs as the New tab menu, so a tab names its workspace kind.
 const VIEWER_MODE_ICONS = {
-  livery: Car,
-  everything: Layers,
+  vehicle: Car,
   eup: Shirt,
   multi: Link2,
   sirens: Siren,
@@ -107,7 +107,7 @@ const TAB_ICONS = {
 
 function tabIconFor(tab) {
   if (tab.type === "viewer") {
-    const mode = tab.initialState?.textureMode || tab.defaultMode || "livery";
+    const mode = normalizeTextureMode(tab.initialState?.textureMode || tab.defaultMode) || "vehicle";
     return VIEWER_MODE_ICONS[mode] || Car;
   }
   return TAB_ICONS[tab.type] || Car;
@@ -119,14 +119,15 @@ const MAX_UI_SCALE = 1.4;
 const WINDOW_DRAG_THRESHOLD_PX = 4;
 
 // Feedback "Area" defaults to the workflow the report was opened from.
-const FEEDBACK_AREA_BY_MODE = { livery: "livery", everything: "all-textures", eup: "eup", multi: "multi", sirens: "sirens" };
+// Vehicle reports keep Livery's stable "livery" id.
+const FEEDBACK_AREA_BY_MODE = { vehicle: "livery", eup: "eup", multi: "multi", sirens: "sirens" };
 function feedbackAreaForTab(tab, settingsOpen) {
   if (settingsOpen || !tab || tab.type === "home") return "home-settings";
   if (tab.type === "eupstudio") return "eup-studio";
   if (tab.type === "propstudio") return "prop-studio";
   if (tab.type === "variants") return "variant-builder";
   if (tab.type === "templategen") return "template-generator";
-  const mode = loadWorkspaces()[tab.workspaceId]?.state?.textureMode || tab.defaultMode;
+  const mode = normalizeTextureMode(loadWorkspaces()[tab.workspaceId]?.state?.textureMode || tab.defaultMode);
   return FEEDBACK_AREA_BY_MODE[mode] || "other";
 }
 
@@ -297,10 +298,10 @@ export default function Shell() {
         return [...prev];
       }
 
-      const modeLabels = { livery: "Livery", everything: "All", eup: "EUP", multi: "Multi", sirens: "Sirens" };
+      const modeLabels = { vehicle: "Vehicle", eup: "EUP", multi: "Multi", sirens: "Sirens" };
       const fallbackLabel =
         type === "viewer"
-          ? modeLabels[defaultMode] || "Preview"
+          ? modeLabels[normalizeTextureMode(defaultMode)] || "Preview"
           : type === "eupstudio"
             ? "EUP Studio"
           : type === "propstudio"
@@ -363,7 +364,7 @@ export default function Shell() {
       openTab("propstudio", fileName, propWsId, propState);
       return;
     }
-    const mode = lower.endsWith(".ydd") ? "eup" : "livery";
+    const mode = lower.endsWith(".ydd") ? "eup" : "vehicle";
     const initialState = { textureMode: mode, modelPath: filePath, openFile: filePath };
     const wsId = createWorkspace(fileName, "viewer", initialState);
     openTab("viewer", fileName, wsId, initialState, mode);
@@ -588,7 +589,7 @@ export default function Shell() {
     setSettingsOpen(false);
     const fallbackLabel = workspaceLabel(type, defaultMode);
     if (!workspaceId) {
-      const initial = type === "viewer" ? { textureMode: defaultMode || "livery" } : {};
+      const initial = type === "viewer" ? { textureMode: defaultMode || "vehicle" } : {};
       workspaceId = createWorkspace(fallbackLabel, type, initial);
     }
     const ws = loadWorkspaces()[workspaceId];
@@ -599,7 +600,7 @@ export default function Shell() {
   }, [openTab]);
 
   const launchWorkspaceMode = useCallback((modeId) => {
-    const route = workspaceModeRoute(modeId) || workspaceModeRoute("livery");
+    const route = workspaceModeRoute(modeId) || workspaceModeRoute("vehicle");
     handleNavigate(route.page, null, route.textureMode);
   }, [handleNavigate]);
 
@@ -608,7 +609,7 @@ export default function Shell() {
     if (!ws?.id) return;
     setSettingsOpen(false);
     const latestWs = loadWorkspaces()[ws.id] || ws;
-    const defaultMode = latestWs?.state?.textureMode || "livery";
+    const defaultMode = normalizeTextureMode(latestWs?.state?.textureMode) || "vehicle";
     const page =
       latestWs.page === "eupstudio"
         ? "eupstudio"
@@ -1357,7 +1358,7 @@ export default function Shell() {
                     <App
                       shellTab={tab}
                       isActive={isActive}
-                      defaultTextureMode={tab.defaultMode || "livery"}
+                      defaultTextureMode={tab.defaultMode || "vehicle"}
                       initialState={tab.initialState || null}
                       onRenameTab={(label) => renameTab(tab.id, label)}
                       settingsVersion={settingsVersion}

@@ -34,7 +34,7 @@ import { backupPathFor } from "../../lib/siren-install.js";
 // they came in, so a backup is an exact copy and untouched text keeps its
 // bytes. The open file is watched, so a change made elsewhere reaches the
 // lights. Sirens edits the VCF and switches between carcols sirens and ELS;
-// Livery and All switch it from their Lights panel. Nothing here reads files
+// Vehicle switches it from its Lights panel. Nothing here reads files
 // outside those workspaces.
 
 const HISTORY_LIMIT = 200;

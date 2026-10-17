@@ -131,10 +131,14 @@ test("every new-tab action opens one workspace with its canonical name", () => {
     assert.equal(workspaceLabel(route.page, route.textureMode), mode.label);
     assert.equal(HOTKEY_LABELS[action], `New ${mode.label} Tab`, "the hotkey label uses the workspace name");
   }
-  assert.deepEqual(workspaceModeRoute("everything"), { page: "viewer", textureMode: "everything" });
+  assert.deepEqual(workspaceModeRoute("vehicle"), { page: "viewer", textureMode: "vehicle" });
+  // Livery and All were merged into Vehicle; their old ids still open it.
+  assert.deepEqual(workspaceModeRoute("everything"), { page: "viewer", textureMode: "vehicle" });
+  assert.deepEqual(workspaceModeRoute("livery"), { page: "viewer", textureMode: "vehicle" });
   assert.deepEqual(workspaceModeRoute("templategen"), { page: "templategen", textureMode: null });
   assert.equal(workspaceModeRoute("nope"), null);
-  assert.equal(workspaceLabel("viewer"), "Livery");
+  assert.equal(workspaceLabel("viewer"), "Vehicle");
+  assert.equal(workspaceLabel("viewer", "everything"), "Vehicle");
   assert.equal(workspaceLabel("variants"), "Variant Builder");
 });
 

@@ -17,7 +17,7 @@ import {
 } from "../lib/studio-defaults.js";
 
 const SUBJECTS = [
-  { value: "vehicle", label: "Vehicles", desc: "Livery, All Textures and Multi." },
+  { value: "vehicle", label: "Vehicles", desc: "Vehicle and Multi." },
   { value: "ped", label: "EUP", desc: "EUP Studio and EUP." },
   { value: "prop", label: "Props", desc: "Prop Studio." },
 ];

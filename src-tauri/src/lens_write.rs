@@ -57,7 +57,7 @@ struct HeaderTexture {
 }
 
 /// A texture name as dictionaries store it: what the game looks up by hash.
-fn valid_texture_name(name: &str) -> bool {
+pub(crate) fn valid_texture_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
         && name
@@ -66,7 +66,7 @@ fn valid_texture_name(name: &str) -> bool {
 }
 
 /// `yyyymmdd-hhmmss`, as the vcf.lua backups use.
-fn valid_stamp(stamp: &str) -> bool {
+pub(crate) fn valid_stamp(stamp: &str) -> bool {
     let digits = |part: &str, count: usize| {
         part.len() == count && part.bytes().all(|byte| byte.is_ascii_digit())
     };

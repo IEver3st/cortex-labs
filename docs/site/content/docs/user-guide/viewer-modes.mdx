@@ -5,42 +5,45 @@ description: Choose the right preview mode for your asset type and workflow.
 
 Cortex Studio’s viewer supports multiple modes, optimized for different workflows.
 
-## Livery mode (Alt + 1)
+## Vehicle mode (Alt + 1)
 
-Best for **vehicle liveries**.
+Everything for a vehicle in one place: liveries, paint, mod kits and texture checks. Projects, recent tabs and saved vehicles from the earlier Livery and All modes open here.
 
-- Attempts to auto-target common “livery / carpaint / decal” materials.
-- Designed so your texture applies where you expect without manually picking a mesh.
+- **Livery** (step 2) goes on the paint material Cortex detects, shown under **Apply to** as **Detected:** and the material's name, so your texture lands where the game puts a livery without picking a mesh. There it is clamped to the livery sheet and uses the model's livery UV set. If no paint material is found, it covers every mesh. **Apply to** can also put it on **All meshes**, which is the way to check a blank template's UV layout and spot unexpected UV islands, or on one material or mesh.
+- **Glass** (step 3) adds window decals or tint on the glass Cortex detects. **Apply to** points it at **All meshes**, one material or mesh, or **None** instead.
+- **Model's own textures** (under step 2, desktop app) loads the vehicle's GTA textures, so the rest of the vehicle looks as it does in game around your livery. It is a best-effort preview, not GTA shader parity. Turn it off for plain paint.
 - Optional **Exterior Only** behavior to avoid pushing livery textures onto interior/glass candidates.
+- The inspector has five tabs: **Paint**, **Liveries**, **Mods**, **Scene** and **Meta**.
 - The **Paint** tab holds the vehicle's six game colours, as carcols sets them: **Primary**, **Secondary**, **Pearlescent**, **Wheels**, **Interior trim** and **Dashboard**. Each mesh takes the colour its shader's paint layer names (`matDiffuseColor` `2, layer, 0`), so lights, glass, tires and unpainted parts keep their own look. Pick a colour from the game palette, grouped by finish (Metallic, Matte, Util, Worn and Metals), or type any hex for a custom colour. Primary and Secondary also take a finish; a palette colour brings its own, and changing it makes a custom colour. Pearlescent shows as a sheen on glossy primary paint. Slots the loaded model never uses say **Not on this model**. The Meta tab's colour presets fill all six slots.
-- The **Showroom** stage (Scene tab) parks the vehicle in a dark studio under an aimable spotlight, on a floor you choose: **Concrete**, **Polished**, **Tiles**, **Marble**, **Checker**, **Epoxy**, **Asphalt**, **Wood** or **Tread plate**. All and Sirens share the same floor picker.
-- **Turntable** (Scene tab) spins the vehicle in place under the lights at a speed you set, in Livery, All, Sirens and Multi. Turned off, the vehicle settles back facing forward. Captures from a named shot (Front, Side, 3/4 and so on) always show the vehicle at rest.
-- **Capture** (also in All and EUP) sits folded to one line at the bottom of the dock; click it to open. It saves one PNG per chosen angle, named `<model>_<angle>.png`, into a `<model>` folder inside your preview export folder. A preview folder outside your user folders (another drive, for example) takes the shots directly, and the result says so. Cortex asks before replacing shots that already exist, and the result counts only the files it wrote, naming any angle that couldn't be captured and the error that stopped a run. **Save this view** saves the viewfinder as framed; in the browser it downloads the PNG, and capturing angles needs the desktop app.
+- The **Showroom** stage (Scene tab) parks the vehicle in a dark studio under an aimable spotlight, on a floor you choose: **Concrete**, **Polished**, **Tiles**, **Marble**, **Checker**, **Epoxy**, **Asphalt**, **Wood** or **Tread plate**. Sirens shares the same floor picker.
+- **Turntable** (Scene tab) spins the vehicle in place under the lights at a speed you set, in Vehicle, Sirens and Multi. Turned off, the vehicle settles back facing forward. Captures from a named shot (Front, Side, 3/4 and so on) always show the vehicle at rest.
+- **Capture** (also in EUP) sits folded to one line at the bottom of the dock; click it to open. It saves one PNG per chosen angle, named `<model>_<angle>.png`, into a `<model>` folder inside your preview export folder. A preview folder outside your user folders (another drive, for example) takes the shots directly, and the result says so. Cortex asks before replacing shots that already exist, and the result counts only the files it wrote, naming any angle that couldn't be captured and the error that stopped a run. **Save this view** saves the viewfinder as framed; in the browser it downloads the PNG, and capturing angles needs the desktop app.
 
-Use this mode when:
+### Liveries
 
-- Your `.yft` has typical GTA material naming conventions.
-- You want a quick “does it look right in-game?” preview.
+The **Liveries** tab (desktop app) switches between the liveries the vehicle has in game and writes a whole set of your images into the vehicle at once.
 
-## All mode (Alt + 2)
+- **Livery**, at the top of the tab, switches between the liveries the vehicle has in game. It lists the texture liveries in the vehicle's texture dictionary chain (`<name>_sign_1`, `_sign_2` and so on, what `SetVehicleLivery` picks between) and the mod kit's livery mods (`VMT_LIVERY_MOD`). The arrows beside it step to the previous or next livery. Texture liveries use the kit's `<liveryNames>` text when the resource registers it, otherwise they show as Livery 1, Livery 2 and so on. **As modelled** shows the textures the model binds. A livery mod's model is only a placeholder, so its livery texture is shown on the paint instead; it covers a texture livery in game, so picking one clears the other. Liveries need **Model's own textures**, and texture liveries show even when the resource has no mod kit. A texture you loaded in step 2 stays on the meshes it's applied to, so a game livery only shows on the rest (with **All meshes**, nowhere until you unload it); the Livery section says so while one is loaded.
 
-Best for **templates** and broad inspection.
+#### Writing liveries
 
-- Applies the loaded texture to *every* mesh/material.
-- Useful for checking UV alignment and spotting unexpected UV islands.
+The list under **In game** shows the vehicle's texture liveries as the game numbers them.
 
-Use this mode when:
-
-- You’re validating a blank template.
-- You don’t want auto-targeting logic to hide issues.
+- **Names** is the texture name, with `#` where the livery number goes. It starts as the `<name>_sign_#` the paint uses (for example `fpiu_sign_#`), else the one the vehicle's texture dictionaries hold, else one made from the model name.
+- Each row is one livery: its number, a thumbnail and its texture name. Liveries already in the vehicle say **In the vehicle** with their largest size. Click a row to preview it on the Livery step.
+- **Add liveries** picks PNG, JPG, WebP, BMP, TIFF, PSD, PDN or DDS images, or drop them on the tab. New images follow the vehicle's liveries in file-name order (`livery2` before `livery10`), up to livery 99. Dropping images on a row replaces that livery with the first of them; the rest take the next free numbers. The **X** on a row takes an image back out, and **Clear** takes them all. The images you add are kept with the workspace until you write them.
+- When the Livery step shows an image that isn't one of these liveries, **Add `<file>` as livery N** adds it.
+- **Write N liveries…** shows what changes before anything is written: each texture dictionary it writes to, how many textures it adds or replaces there, and at what size. Your images go into every dictionary beside the model that already holds the liveries (`<vehicle>+hi.ytd` and `<vehicle>.ytd` often both do), scaled to the size and mip count that dictionary's liveries use. A vehicle without liveries gets them in its `<vehicle>.ytd`, at the image's size rounded to a power of two between 64 and 4096. Images are stored as DXT5; a DDS already at the right size goes in unchanged. **Checks** point out images that are scaled up or stretched, gaps in the numbers (the game counts liveries 1, 2, 3… in order), and names the paint doesn't use.
+- Each `.ytd` is first copied to a `.bak` named with the date and time, and the write is all or nothing: **Stop**, or any failure, leaves every file as it was. Afterwards the model reloads with the new liveries; restart the resource in game to load them.
+- Only the vehicle's own texture dictionaries change, and only with your images. Editing a vehicle you bought or downloaded follows its licence, the same as editing its files by hand; escrow-encrypted dictionaries can't be read, so they can't be written. Only legacy GTA V dictionaries can be written, and a vehicle needs a `.ytd` of its own beside the model.
 
 ### Mod kits
 
 The **Mods** inspector tab previews a vehicle's mod kit parts on the loaded `.yft` (desktop app only).
 
 - Cortex reads the resource's `carcols.meta` and `carvariations.meta` and lists the kit linked to the model under `<kits>`. A kit that only names the model, or the only kit in a single-vehicle resource, is shown with a warning, because the game will not offer it until carvariations links it.
-- **Livery**, at the top of the tab, switches between the liveries the vehicle has in game. It lists the texture liveries in the vehicle's texture dictionary chain (`<name>_sign_1`, `_sign_2` and so on, what `SetVehicleLivery` picks between) and the kit's livery mods (`VMT_LIVERY_MOD`). The arrows beside it step to the previous or next livery. Texture liveries use the kit's `<liveryNames>` text when the resource registers it, otherwise they show as Livery 1, Livery 2 and so on. **As modelled** shows the textures the model binds. A livery mod's model is only a placeholder, so its livery texture is shown on the paint instead; it covers a texture livery in game, so picking one clears the other. Liveries need **Model's own textures**, and texture liveries show even when the resource has no mod kit. A texture you loaded in step 2 stays on the meshes it's applied to, so a game livery only shows on the rest (with **All meshes**, nowhere until you unload it); the Livery section says so while one is loaded.
-- Each other slot (spoiler, front bumper and so on) lists its visible mods in carcols order. Pick one per slot, or **Stock**. Linked models load with their mod.
+- The game livery, including the kit's livery mods, is picked in the **Liveries** tab (see [Liveries](#liveries)).
+- Each slot (spoiler, front bumper and so on) lists its visible mods in carcols order. Pick one per slot, or **Stock**. Linked models load with their mod.
 - Switching a part animates on the model: the old part drops away and the new one lands from above. Extras switched in the Meta tab or in Sirens do the same. Parts the model loads with, Kit Shoot captures, and **Reduce motion** (in Settings or Windows) switch at once.
 - Slots use the kit's carcols `<slotNames>` when it names them. Parts use the text the resource registers for their `modShopLabel` with `AddTextEntry` or `AddTextEntryByHash` in its Lua or JavaScript files; without one, the label itself is shown. Escrow-encrypted scripts can't be read, so their names don't appear.
 - Mod `.yft` files are found anywhere in the resource, including `stream/` subfolders. A `_hi` version is used when present.
@@ -48,7 +51,7 @@ The **Mods** inspector tab previews a vehicle's mod kit parts on the loaded `.yf
 - Stock meshes bound to a bone in the selected mod's `turnOffBones` are hidden. Meshes that span several bones stay visible.
 - A part follows the bone its carcols entry names in `<bone>` (a linked model uses its `<linkMods>` entry when the kit has one). Door badges on `door_dside_f` open with the driver door, and parts on `boot` lift with the boot, as in game. Parts on `chassis` stay put even when they sit on a door or the boot, because the game doesn't move them either. Clicking a part on a door opens that door.
 - The parts and livery you pick are saved with the workspace and load again when you reopen it from Home or restart the app. To keep a setup you can reopen later in a new tab, use **Save** on the **Saved vehicle** row under the model (see [Saved vehicles](/docs/user-guide/workspaces#saved-vehicles)).
-- Sirens has the same **Mods** tab, without Kit shoot.
+- Sirens has the same **Mods** tab, with the **Livery** switcher at its top and without Kit shoot.
 
 #### Builds
 
@@ -104,7 +107,7 @@ Use this mode when:
 Best for **comparing vehicles**.
 
 - Lines up to six vehicles (`.yft`, `.clmesh` or `.dff`) in one scene. Each has its own model, livery, window design and paint (the same six game colours as Livery).
-- In the desktop app a `.yft` loads through the CodeWalker bridge, as in All: wheels and the vehicle's own game textures, tinted by its paint. A livery replaces the textures on the meshes it covers. Vehicles load one at a time in lineup order; the ones still waiting say so in their Model step. If the bridge can't read a model, the vehicle shows its shape only and the Model step says why.
+- In the desktop app a `.yft` loads through the CodeWalker bridge, as in Vehicle: wheels and the vehicle's own game textures, tinted by its paint. A livery replaces the textures on the meshes it covers. Vehicles load one at a time in lineup order; the ones still waiting say so in their Model step. If the bridge can't read a model, the vehicle shows its shape only and the Model step says why.
 - **Add** creates an empty slot, the duplicate button copies the selected vehicle (same model, paint and liveries) so you can try another livery on it, and the arrows reorder the lineup. The eye button hides a vehicle without unloading it.
 - **Use on all** puts the selected livery on every vehicle; **Use this paint on every vehicle** does the same for paint.
 - Click a vehicle in the viewfinder to select it; the gizmo follows the selection. **Move** on the deck (Alt + G) drags the vehicle across the floor, and **Rotate** swaps it for a ring that turns the vehicle in place. Click the lit button again to hide the gizmo. These buttons stay on the deck even when camera controls are in the panel. **Line up** on the deck parks every visible vehicle side by side in lineup order and keeps each vehicle's facing.

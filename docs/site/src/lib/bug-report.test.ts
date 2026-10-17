@@ -99,7 +99,7 @@ test("keeps allowlisted area and frequency and drops unknown values", () => {
   const body = formatBugReportIssueBody(payload);
   assert.match(
     body,
-    /## Area\nLivery\n\n## Frequency\nSometimes\n\n## Priority/,
+    /## Area\nVehicle\n\n## Frequency\nSometimes\n\n## Priority/,
   );
 
   const unknown = validateBugReportPayload({

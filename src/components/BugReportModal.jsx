@@ -66,7 +66,7 @@ const TYPES = {
         key: "reproSteps",
         label: "Steps to reproduce",
         rows: 4,
-        placeholder: "1. Open a Livery tab and load a .yft\n2. Pick a PSD texture\n3. Edit the PSD and save",
+        placeholder: "1. Open a Vehicle tab and load a .yft\n2. Pick a PSD texture\n3. Edit the PSD and save",
       },
       {
         key: "expectedBehavior",

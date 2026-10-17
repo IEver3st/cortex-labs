@@ -18,6 +18,7 @@ mod child_job;
 mod els_scope;
 mod fivem_kvs;
 mod lens_write;
+mod livery_write;
 mod model_resource_scope;
 mod pdn;
 mod photo_assets;
@@ -2060,19 +2061,23 @@ async fn write_lens_textures(
         .map_err(|error| format!("The lens write stopped: {error}. Check the texture dictionaries and their backups."))?
 }
 
+/// True when the user opened `model` in Cortex (the picker or file association
+/// put it in the filesystem scope), so a write to its files follows their choice.
+fn model_opened(app: &tauri::AppHandle, model: &Path) -> bool {
+    use tauri_plugin_fs::FsExt;
+    let scope = app.fs_scope();
+    scope.is_allowed(model)
+        || model
+            .canonicalize()
+            .is_ok_and(|path| scope.is_allowed(path))
+}
+
 fn write_lens_textures_blocking(
     app: &tauri::AppHandle,
     body: &[u8],
 ) -> Result<serde_json::Value, String> {
-    use tauri_plugin_fs::FsExt;
     let mut request = lens_write::parse_request(body)?;
-    let scope = app.fs_scope();
-    if !scope.is_allowed(&request.model)
-        && !request
-            .model
-            .canonicalize()
-            .is_ok_and(|path| scope.is_allowed(path))
-    {
+    if !model_opened(app, &request.model) {
         return Err("Open the model in Cortex before writing its lens textures.".into());
     }
     for (index, dictionary) in request.dictionaries.iter().enumerate() {
@@ -2151,6 +2156,185 @@ fn write_lens_textures_blocking(
     })();
     let _ = std::fs::remove_dir_all(&staging);
     result
+}
+
+/// The model's own texture dictionaries with each texture's size, mip count and
+/// format, for planning a livery write. `legacy` is false for a dictionary the
+/// bridge cannot rebuild.
+#[tauri::command]
+async fn livery_dictionaries(
+    model_path: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let model = PathBuf::from(model_path.trim());
+        if !has_extension(&model_path, "yft") || !model.is_file() {
+            return Err(format!("Model not found: {}", model.display()));
+        }
+        let mut dictionaries = Vec::new();
+        for path in model_resource_scope::model_sibling_ytds(&model) {
+            let display = path.to_string_lossy().to_string();
+            let listing = export_ytd_listing(&app, &display)?;
+            let textures = listing
+                .get("textures")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|texture| {
+                    let name = texture.get("name")?.as_str()?;
+                    let file = texture.get("path")?.as_str()?;
+                    let info = livery_write::read_dds_info(Path::new(file));
+                    Some(serde_json::json!({
+                        "name": name,
+                        "path": file,
+                        "width": info.as_ref().map(|info| info.width),
+                        "height": info.as_ref().map(|info| info.height),
+                        "levels": info.as_ref().map(|info| info.levels),
+                        "format": info.as_ref().map(|info| info.format.clone()),
+                    }))
+                })
+                .collect::<Vec<_>>();
+            dictionaries.push(serde_json::json!({
+                "path": display,
+                "name": path.file_name().map(|name| name.to_string_lossy().to_string()),
+                "legacy": livery_write::is_legacy_ytd(&path),
+                "textures": textures,
+            }));
+        }
+        Ok(serde_json::json!({ "dictionaries": dictionaries }))
+    })
+    .await
+    .map_err(|error| format!("Reading the livery dictionaries stopped: {error}"))?
+}
+
+/// Starts a livery write for a model the user opened. Returns `{ token }`.
+#[tauri::command]
+async fn livery_write_begin(
+    model_path: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let model = PathBuf::from(model_path.trim());
+    if !has_extension(&model_path, "yft") || !model.is_file() {
+        return Err(format!("Model not found: {}", model.display()));
+    }
+    if !model_opened(&app, &model) {
+        return Err("Open the model in Cortex before writing its liveries.".into());
+    }
+    let root = app_cache_root(&app, "livery-write")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = app
+            .state::<livery_write::LiveryWriteState>()
+            .begin(&root, model)?;
+        Ok(serde_json::json!({ "token": token }))
+    })
+    .await
+    .map_err(|error| format!("Starting the livery write stopped: {error}"))?
+}
+
+/// Stages one livery DDS (raw body, see livery_write::parse_stage).
+#[tauri::command]
+async fn livery_write_stage(
+    request: tauri::ipc::Request<'_>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err("A livery texture must be sent as raw bytes.".into());
+    };
+    let body = body.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (token, id, dds) = livery_write::parse_stage(&body)?;
+        app.state::<livery_write::LiveryWriteState>()
+            .stage(&token, &id, dds)
+    })
+    .await
+    .map_err(|error| format!("Staging a livery texture stopped: {error}"))?
+}
+
+/// Writes the staged liveries: every dictionary is rebuilt first, then the
+/// user's files are replaced, each after a stamped backup beside it. Resolves
+/// `{ files: [{ path, backup, textures }] }`; rejects with a message that says
+/// whether anything changed.
+#[tauri::command]
+async fn livery_write_commit(
+    request: livery_write::CommitRequest,
+    app: tauri::AppHandle,
+    state: State<'_, livery_write::LiveryWriteState>,
+) -> Result<serde_json::Value, String> {
+    let staged = state.take(&request.token)?;
+    tauri::async_runtime::spawn_blocking(move || commit_livery_write(&app, &request, &staged))
+        .await
+        .map_err(|error| {
+            format!("The livery write stopped: {error}. Check the texture dictionaries and their backups.")
+        })?
+}
+
+fn commit_livery_write(
+    app: &tauri::AppHandle,
+    request: &livery_write::CommitRequest,
+    staged: &livery_write::Staged,
+) -> Result<serde_json::Value, String> {
+    livery_write::check_commit(request, &staged.files)?;
+    if !model_opened(app, &staged.model) {
+        return Err("Open the model in Cortex before writing its liveries.".into());
+    }
+    for (index, ytd) in request.ytds.iter().enumerate() {
+        model_resource_scope::validate_sibling_ytd(&staged.model, &ytd.path)?;
+        let same = |other: &livery_write::CommitYtd| {
+            other.path.canonicalize().ok() == ytd.path.canonicalize().ok()
+        };
+        if request.ytds[..index].iter().any(same) {
+            return Err(format!("{} is listed twice.", ytd.path.display()));
+        }
+    }
+    // Every dictionary is rebuilt before any user file is touched.
+    let mut built = Vec::new();
+    let mut written = Vec::new();
+    for (index, ytd) in request.ytds.iter().enumerate() {
+        let textures = ytd
+            .textures
+            .iter()
+            .map(|texture| {
+                serde_json::json!({
+                    "name": texture.name,
+                    "path": staged.files[&texture.id],
+                    "mode": texture.mode,
+                    "like": texture.like,
+                })
+            })
+            .collect::<Vec<_>>();
+        let output = staged.dir.join(format!("{index}.ytd"));
+        let rebuilt = bridge_request(
+            app,
+            "writeYtdTextures",
+            serde_json::json!({
+                "input": ytd.path,
+                "output": output,
+                "textures": textures,
+            }),
+            BRIDGE_REQUEST_TIMEOUT,
+        )
+        .map_err(|error| format!("{error} Nothing was changed."))?;
+        built.push((ytd.path.clone(), output));
+        written.push(rebuilt);
+    }
+    let replaced = lens_write::replace_with_backups(&built, &request.stamp)?;
+    Ok(serde_json::json!({
+        "files": replaced
+            .into_iter()
+            .zip(written)
+            .map(|(file, rebuilt)| serde_json::json!({
+                "path": file.path,
+                "backup": file.backup,
+                "textures": rebuilt.get("textures").cloned().unwrap_or_default(),
+            }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+/// Drops a livery write and what it staged.
+#[tauri::command]
+fn livery_write_cancel(token: String, state: State<'_, livery_write::LiveryWriteState>) {
+    state.cancel(&token);
 }
 
 fn validate_ped_name(ped: &str) -> Result<String, String> {
@@ -2866,55 +3050,59 @@ fn read_texture_listing(dir: &Path) -> Option<serde_json::Value> {
 
 #[tauri::command]
 async fn export_ytd(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let trimmed = path.trim().to_string();
-        if !has_extension(&trimmed, "ytd") {
-            return Err("Only .ytd files are supported by export_ytd".to_string());
+    tauri::async_runtime::spawn_blocking(move || export_ytd_listing(&app, &path))
+        .await
+        .map_err(|e| format!("Failed to join ytd export task: {e}"))?
+}
+
+/// A dictionary's textures as DDS files in the ytd cache, reused while the
+/// `.ytd` is unchanged: `{ dir, textures: [{ name, path }], warnings }`.
+fn export_ytd_listing(app: &tauri::AppHandle, path: &str) -> Result<serde_json::Value, String> {
+    let trimmed = path.trim().to_string();
+    if !has_extension(&trimmed, "ytd") {
+        return Err("Only .ytd files are supported by export_ytd".to_string());
+    }
+    if !Path::new(&trimmed).is_file() {
+        return Err(format!("Texture dictionary not found: {trimmed}"));
+    }
+
+    let cache_root = app_cache_root(app, "ytd-cache")?;
+    std::fs::create_dir_all(&cache_root)
+        .map_err(|e| format!("Failed to create ytd cache dir: {e}"))?;
+
+    let (mtime, size) = file_identity(&trimmed)?;
+    let key = cache_key(b"export_ytd_v1", &trimmed, mtime, size);
+    let out_dir = cache_root.join(&key);
+
+    {
+        let _guard = CACHE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(listing) = read_texture_listing(&out_dir) {
+            touch_cache_entry(&out_dir);
+            return Ok(listing);
         }
-        if !Path::new(&trimmed).is_file() {
-            return Err(format!("Texture dictionary not found: {trimmed}"));
+    }
+
+    let listing = bridge_request(
+        app,
+        "exportYtd",
+        serde_json::json!({
+            "path": trimmed,
+            "outputDir": out_dir.to_string_lossy().to_string(),
+        }),
+        BRIDGE_REQUEST_TIMEOUT,
+    )
+    .inspect_err(|_| {
+        // Partial DDS files without a listing are never reused; drop them.
+        let _guard = lock_ignoring_poison(&CACHE_LOCK);
+        if out_dir.exists() && read_texture_listing(&out_dir).is_none() {
+            remove_cache_entry(&out_dir);
         }
-
-        let cache_root = app_cache_root(&app, "ytd-cache")?;
-        std::fs::create_dir_all(&cache_root)
-            .map_err(|e| format!("Failed to create ytd cache dir: {e}"))?;
-
-        let (mtime, size) = file_identity(&trimmed)?;
-        let key = cache_key(b"export_ytd_v1", &trimmed, mtime, size);
-        let out_dir = cache_root.join(&key);
-
-        {
-            let _guard = CACHE_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(listing) = read_texture_listing(&out_dir) {
-                touch_cache_entry(&out_dir);
-                return Ok(listing);
-            }
-        }
-
-        let listing = bridge_request(
-            &app,
-            "exportYtd",
-            serde_json::json!({
-                "path": trimmed,
-                "outputDir": out_dir.to_string_lossy().to_string(),
-            }),
-            BRIDGE_REQUEST_TIMEOUT,
-        )
-        .inspect_err(|_| {
-            // Partial DDS files without a listing are never reused; drop them.
-            let _guard = lock_ignoring_poison(&CACHE_LOCK);
-            if out_dir.exists() && read_texture_listing(&out_dir).is_none() {
-                remove_cache_entry(&out_dir);
-            }
-        })?;
-        touch_cache_entry(&out_dir);
-        run_cache_maintenance(&app);
-        Ok(listing)
-    })
-    .await
-    .map_err(|e| format!("Failed to join ytd export task: {e}"))?
+    })?;
+    touch_cache_entry(&out_dir);
+    run_cache_maintenance(app);
+    Ok(listing)
 }
 
 /// Game license plate textures and carcols plate definitions, exported once from
@@ -3354,6 +3542,7 @@ pub fn run() {
         .manage(EupWatchState::default())
         .manage(PendingOpenFileState::default())
         .manage(BridgeState::default())
+        .manage(livery_write::LiveryWriteState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(file_path) = extract_open_file_arg(&args) {
                 queue_open_file(app, file_path);
@@ -3387,6 +3576,11 @@ pub fn run() {
             open_model_meta_file,
             rename_model_stream_files,
             write_lens_textures,
+            livery_dictionaries,
+            livery_write_begin,
+            livery_write_stage,
+            livery_write_commit,
+            livery_write_cancel,
             list_ped_assets,
             export_ped_asset,
             search_peds,

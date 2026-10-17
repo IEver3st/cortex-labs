@@ -317,7 +317,7 @@ export function MetaPanel({
               {sim.modkitLiveries.kits.map((kit) => (
                 <p key={kit.kitName} className="mp-muted">
                   {kit.liveryMods.length} mod kit {kit.liveryMods.length === 1 ? "livery" : "liveries"} in{" "}
-                  <span className="mp-mono" title={kit.kitName}>{kit.kitName}</span>. Preview them from the Mods tab in All.
+                  <span className="mp-mono" title={kit.kitName}>{kit.kitName}</span>. Preview them from the Liveries tab in Vehicle.
                 </p>
               ))}
             </Section>

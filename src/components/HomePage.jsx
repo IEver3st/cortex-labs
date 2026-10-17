@@ -2,7 +2,6 @@ import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Car,
-  Layers,
   Shirt,
   Link2,
   Trash2,
@@ -36,6 +35,7 @@ import {
 } from "../lib/workspace";
 import { loadPrefs } from "../lib/prefs";
 import { WORKSPACE_MODES, WORKSPACE_MODE_GROUPS, workspaceModeRoute } from "../lib/workspace-modes";
+import { normalizeTextureMode } from "../lib/workspace-state";
 import { DEFAULT_HOTKEYS, HOTKEY_ACTIONS, mergeHotkeys } from "../lib/hotkeys";
 import appMeta from "../../package.json";
 import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
@@ -49,7 +49,7 @@ const MODE_GROUPS = WORKSPACE_MODE_GROUPS;
 
 const FILTER_TABS = [
   { id: "all", label: "All" },
-  { id: "livery", label: "Livery" },
+  { id: "vehicle", label: "Vehicle" },
   { id: "eup", label: "EUP" },
   { id: "multi", label: "Multi" },
   { id: "sirens", label: "Sirens" },
@@ -94,18 +94,15 @@ function getModeTag(entry, ws) {
   if (entry.page === "eupstudio") return "EUP Studio";
   if (entry.page === "propstudio") return "Prop Studio";
   if (entry.page === "photo") return "Photo Mode";
-  const mode = ws?.state?.textureMode || "livery";
-  if (mode === "livery") return "Livery";
-  if (mode === "everything") return "All";
+  const mode = normalizeTextureMode(ws?.state?.textureMode) || "vehicle";
   if (mode === "eup") return "EUP";
   if (mode === "multi") return "Multi";
   if (mode === "sirens") return "Sirens";
-  return "Livery";
+  return "Vehicle";
 }
 
 const TAG_CATEGORY = {
-  Livery: "livery",
-  All: "all",
+  Vehicle: "livery",
   EUP: "eup",
   "EUP Studio": "eup",
   "Prop Studio": "prop",
@@ -124,7 +121,7 @@ function matchesFilter(filterId, entry, ws) {
   if (entry.page === "variants" || entry.page === "templategen" || entry.page === "eupstudio" || entry.page === "propstudio" || entry.page === "photo") {
     return false;
   }
-  return (ws?.state?.textureMode || "livery") === filterId;
+  return (normalizeTextureMode(ws?.state?.textureMode) || "vehicle") === filterId;
 }
 
 function getModelPath(ws) {
@@ -160,7 +157,7 @@ const MAX_LINEUP_STEPS = 3;
 function projectPipeline(entry, ws) {
   if (entry.page !== "viewer") return null;
   const state = ws?.state || {};
-  const mode = state.textureMode || "livery";
+  const mode = normalizeTextureMode(state.textureMode) || "vehicle";
   if (mode === "multi") {
     const vehicles = (Array.isArray(state.lineup?.slots) ? state.lineup.slots : [])
       .map((slot) => splitPath(slot?.modelPath))
@@ -175,7 +172,7 @@ function projectPipeline(entry, ws) {
   }
   const steps = [
     { label: "Model", file: splitPath(state.modelSourcePath || state.modelPath || state.openFile) },
-    { label: mode === "livery" ? "Livery" : "Texture", file: splitPath(state.texturePath) },
+    { label: mode === "vehicle" ? "Livery" : "Texture", file: splitPath(state.texturePath) },
   ];
   if (state.windowTexturePath || state.windowTemplateEnabled) {
     steps.push({ label: "Windows", file: splitPath(state.windowTexturePath) });
@@ -236,13 +233,12 @@ function shouldConfirmDelete() {
 }
 
 function modeIconFor(entry, ws) {
-  const mode = ws?.state?.textureMode || "livery";
+  const mode = normalizeTextureMode(ws?.state?.textureMode) || "vehicle";
   if (entry.page === "variants") return Palette;
   if (entry.page === "templategen") return Zap;
   if (entry.page === "eupstudio") return Shirt;
   if (entry.page === "propstudio") return Flashlight;
   if (entry.page === "photo") return Aperture;
-  if (mode === "everything") return Layers;
   if (mode === "eup") return Shirt;
   if (mode === "multi") return Link2;
   if (mode === "sirens") return Siren;
@@ -270,7 +266,7 @@ export default function HomePage({
   const [hotkeys, setHotkeys] = useState(() => loadHotkeys());
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
-  const [selectedMode, setSelectedMode] = useState("livery");
+  const [selectedMode, setSelectedMode] = useState("vehicle");
   const [activeSection, setActiveSection] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState(() => loadDefaultSort());
@@ -749,7 +745,7 @@ export default function HomePage({
             <button
               type="button"
               className="cx-btn is-primary"
-              onClick={() => handleLaunch("livery")}
+              onClick={() => handleLaunch("vehicle")}
             >
               <Car aria-hidden="true" />
               Open a vehicle model

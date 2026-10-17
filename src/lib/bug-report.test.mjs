@@ -169,9 +169,12 @@ function payloadFor(draft) {
 test("area and frequency are allowlisted and dropped when unknown", () => {
   assert.deepEqual(
     BUG_REPORT_AREAS.map((entry) => entry.value),
-    ["livery", "all-textures", "eup", "eup-studio", "prop-studio", "multi", "sirens", "variant-builder", "template-generator", "home-settings", "other"],
+    ["livery", "eup", "eup-studio", "prop-studio", "multi", "sirens", "variant-builder", "template-generator", "home-settings", "other"],
   );
   assert.deepEqual(BUG_REPORT_FREQUENCIES.map((entry) => entry.value), ["always", "sometimes", "once"]);
+
+  // A draft saved from All Textures, before Vehicle mode, keeps its area.
+  assert.equal(sanitizeBugReportDraft({ ...BUG_DRAFT, area: "all-textures" }).sanitizedDraft.area, "livery");
 
   const known = sanitizeBugReportDraft({ ...BUG_DRAFT, area: "eup-studio", frequency: "sometimes" });
   assert.equal(known.sanitizedDraft.area, "eup-studio");
@@ -236,7 +239,8 @@ test("sanitizing user fields does not depend on submission readiness", () => {
 
   const markdown = formatBugReportMarkdown(payloadFor({ ...BUG_DRAFT, area: "livery" }));
   assert.match(markdown, /^# \[Bug\] Viewer freezes after texture reload\n\n## Summary\n/);
-  assert.match(markdown, /## Area\nLivery\n/);
+  // Vehicle reports keep Livery's "livery" id.
+  assert.match(markdown, /## Area\nVehicle\n/);
 });
 
 test("draft store keeps allowlisted fields per type and never the honeypot", () => {

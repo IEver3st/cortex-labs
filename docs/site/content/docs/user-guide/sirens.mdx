@@ -5,7 +5,7 @@ description: A workspace for a vehicle's emergency lights. Edit its carcols.meta
 
 Sirens is its own workspace (**Alt + 9**, or **Sirens** on Home). Open a `.yft` vehicle and the workspace reads the carcols siren setting that carvariations `sirenSettings` links to it, starts the pattern, and opens the setting for editing. Every edit shows on the model as you make it. Nothing is written to disk until you save. Vehicles that use ELS switch to their VCF instead; see [ELS](#els).
 
-The vehicle loads the way it does in All: the whole model, with its own GTA textures (turn **Model's own textures** off under the vehicle for plain paint). Exterior only does not apply here. The **Workbench** and **Showroom** stages both work, and Night darkens either one.
+The vehicle loads the way it does in Vehicle: the whole model, with its own GTA textures (turn **Model's own textures** off under the vehicle for plain paint). Exterior only does not apply here. The **Workbench** and **Showroom** stages both work, and Night darkens either one.
 
 ## Layout
 
@@ -159,7 +159,7 @@ The bar runs the lights the way the script switches them in game, and a strip sh
 - **ELS V8:** **Stage** Off, 1, 2 or 3. Stage 1 runs the secondary lights. Stage 2 adds the primary extras named by **Stage 2 extras**. Stage 3 runs every primary extra and the warning lights; secondary lights stop at stage 3 when their **Off at stage 3** is on. With all three groups on the CHP format, each stage instead plays one CHP pattern across extras 1 to 10 (the warning pattern at stage 1, secondary at 2, primary at 3), as ELS-FiveM does. The vehicle's carcols siren lights run from the stage set under **Misc**. **Cruise**, **Takedowns** and **Scene** switch those lights.
 - **MISS-ELS:** **Primary**, **Secondary** and **Rear reds** play the file's patterns.
 
-The same switches are in the **Lights** tab here and in the Meta tab of Livery and All, where **Lighting** turns ELS on or off for the vehicle. An ELS vehicle's lights run there too, with the edits in this tab.
+The same switches are in the **Lights** tab here and in the Meta tab of Vehicle, where **Lighting** turns ELS on or off for the vehicle. An ELS vehicle's lights run there too, with the edits in this tab.
 
 Under the bar:
 

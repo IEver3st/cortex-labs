@@ -9,7 +9,7 @@ import { createSirenSetting, nextFreeSirenId } from "../../lib/siren-settings.js
 // The Sirens workspace's view of the model's resource: the carcols siren
 // setting carvariations links to the model, the ULC config, and what the editor
 // needs to check and save a setting. It hands the setting and ULC config to the
-// light preview the same way the Meta tab does in Livery and All.
+// light preview the same way the Meta tab does in Vehicle.
 
 const EMPTY_SCAN = Object.freeze({ path: "", status: "idle", root: "", meta: createEmptyResourceMeta(), ulcFiles: [] });
 

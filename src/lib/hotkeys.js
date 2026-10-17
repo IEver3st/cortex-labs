@@ -1,8 +1,8 @@
 export const HOTKEY_ACTIONS = {
   TOGGLE_EXTERIOR_ONLY: "toggleExteriorOnly",
   TOGGLE_SHADOWS: "toggleShadows",
+  // Opens Vehicle mode; the id predates it, so saved bindings carry over.
   NEW_TAB_LIVERY: "newTabLivery",
-  NEW_TAB_ALL: "newTabAll",
   NEW_TAB_EUP: "newTabEup",
   NEW_TAB_MULTI: "newTabMulti",
   NEW_TAB_VARIANTS: "newTabVariants",
@@ -29,8 +29,7 @@ export const HOTKEY_ACTIONS = {
 export const HOTKEY_LABELS = {
   [HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY]: "Toggle Exterior Only",
   [HOTKEY_ACTIONS.TOGGLE_SHADOWS]: "Toggle Ground Shadows",
-  [HOTKEY_ACTIONS.NEW_TAB_LIVERY]: "New Livery Tab",
-  [HOTKEY_ACTIONS.NEW_TAB_ALL]: "New All Tab",
+  [HOTKEY_ACTIONS.NEW_TAB_LIVERY]: "New Vehicle Tab",
   [HOTKEY_ACTIONS.NEW_TAB_EUP]: "New EUP Tab",
   [HOTKEY_ACTIONS.NEW_TAB_MULTI]: "New Multi Tab",
   [HOTKEY_ACTIONS.NEW_TAB_VARIANTS]: "New Variant Builder Tab",
@@ -59,7 +58,6 @@ export const HOTKEY_CATEGORIES = {
     label: "New Tabs",
     actions: [
       HOTKEY_ACTIONS.NEW_TAB_LIVERY,
-      HOTKEY_ACTIONS.NEW_TAB_ALL,
       HOTKEY_ACTIONS.NEW_TAB_EUP,
       HOTKEY_ACTIONS.NEW_TAB_MULTI,
       HOTKEY_ACTIONS.NEW_TAB_VARIANTS,
@@ -111,7 +109,6 @@ export const DEFAULT_HOTKEYS = {
   [HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY]: { key: "E", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.TOGGLE_SHADOWS]: { key: "S", ctrl: false, alt: true, shift: true },
   [HOTKEY_ACTIONS.NEW_TAB_LIVERY]: { key: "1", ctrl: false, alt: true, shift: false },
-  [HOTKEY_ACTIONS.NEW_TAB_ALL]: { key: "2", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.NEW_TAB_EUP]: { key: "3", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.NEW_TAB_MULTI]: { key: "4", ctrl: false, alt: true, shift: false },
   [HOTKEY_ACTIONS.NEW_TAB_VARIANTS]: { key: "5", ctrl: false, alt: true, shift: false },

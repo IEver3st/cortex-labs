@@ -6,7 +6,21 @@ All notable changes to Cortex Studio are documented here.
 
 ## Unreleased
 
+---
+
+## [5.2.0] - 2026-10-16
+
+Vehicle mode brings Livery and All together, and its new Liveries tab writes a whole set of liveries into a vehicle at once.
+
+### Added
+
+- **Write liveries in bulk** - The new **Liveries** tab in Vehicle mode lists the vehicle's liveries as the game numbers them (`<name>_sign_1`, `_sign_2` and so on) and writes a whole set of your images into the vehicle at once. Click a livery to preview it. Add images with the picker or drop them on the tab: they are numbered after the vehicle's liveries in file-name order, up to livery 99, and an image dropped on a livery replaces it. **Write N liveries…** shows every texture dictionary it changes and at what size, and checks for scaled-up or stretched images and gaps in the numbers. Images are fitted to the size each dictionary's liveries already use and stored as DXT5; a DDS already at the right size goes in unchanged. Every `.ytd` is backed up first, **Stop** changes nothing, and if a write fails the files already written are put back. Restart the resource in game to load the new liveries. PNG, JPG, WebP, BMP, TIFF, PSD, PDN and DDS images are read. Only the legacy GTA V texture dictionaries beside the model can be written; escrow-encrypted ones can't be read. Desktop app only.
+
 ### Changed
+
+- **Vehicle mode replaces Livery and All** - One **Vehicle** workspace (Alt + 1) now holds everything for a vehicle: the inspector's **Paint**, **Liveries**, **Mods**, **Scene** and **Meta** tabs, Kit shoot, saved builds and the model's own textures. The livery goes on the detected paint as before, and **Apply to** can switch it to all meshes or one material or mesh, so template checks no longer need a separate mode. The glass step gets the same choices, plus **None**. The in-game livery switcher moved from **Mods** to the top of **Liveries**. Livery and All projects, recent tabs and saved vehicles open in Vehicle with the targets they used. Alt + 2 is free: a custom shortcut for the old New Livery Tab now opens Vehicle, and one for New All Tab is dropped. In the bug report form, the Livery and All Textures areas are now one **Vehicle** area.
+
+- **Clearer texture write errors** - When a texture dictionary changed after Cortex read it, **Write to textures…** now says the texture can no longer be replaced or added, instead of asking you to check the lenses again.
 
 - **Source code is public** - Cortex Studio's source is published in the public repository under the Cortex Studio Source-Available License 1.0. You can use the app for anything, including commercial work, and build or modify it for your own use. Redistributing, reselling, or rebranding it is not allowed. See `LICENSE` and `SECURITY.md`.
 

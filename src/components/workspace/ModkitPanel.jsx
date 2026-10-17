@@ -4,10 +4,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { SelectField } from "./parts";
 import { BuildsSection, KitShootSection } from "./KitShootPanel";
 
-/* Mods inspector for All and Sirens: pick the vehicle's game livery and
-   carcols mod kit parts per slot, and preview them on the loaded vehicle. Kit
-   Shoot only shows in All. State lives in useVehicleModkits; the viewer
-   reports per-part load and texture status back through `status`. */
+/* Mods inspector for Vehicle and Sirens: pick the vehicle's game livery and
+   carcols mod kit parts per slot, and preview them on the loaded vehicle.
+   Vehicle shows the livery switcher in its Liveries tab instead, and adds Kit
+   Shoot. State lives in useVehicleModkits; the viewer reports per-part load
+   and texture status back through `status`. */
 
 const STOCK = "stock";
 const LIVERY_SLOT = "VMT_LIVERY_MOD";
@@ -182,7 +183,22 @@ function LiverySection({ s, kit, parts, missing, status, locked }) {
   );
 }
 
-export default function ModkitPanel({ s }) {
+/** The game livery switcher on its own, for Vehicle's Liveries tab. Livery
+    mods come from the kit once it is read; texture liveries show before that. */
+export function GameLiverySwitcher({ s }) {
+  const modkits = s.modkits;
+  const { request } = modkits;
+  useEffect(() => { request(); }, [request]);
+
+  if (!s.isTauriRuntime || !s.modelPath) return null;
+  const read = modkits.eligible && !["idle", "scanning", "error"].includes(modkits.status);
+  const kit = read ? modkits.activeKit : null;
+  const { parts, missing } = kit ? modkits.resolution : { parts: [], missing: [] };
+  const locked = Boolean(kit && (modkits.shooting || s.kitShoot?.running));
+  return <LiverySection s={s} kit={kit} parts={parts} missing={missing} status={s.vehicleModsStatus} locked={locked} />;
+}
+
+export default function ModkitPanel({ s, livery = true }) {
   const modkits = s.modkits;
   const status = s.vehicleModsStatus;
   const { request } = modkits;
@@ -191,7 +207,7 @@ export default function ModkitPanel({ s }) {
   if (!s.isTauriRuntime) return <p className="lv-slot-note">Mod kits need the desktop app.</p>;
   if (!s.modelPath) return <p className="lv-slot-note">Load a vehicle to preview its mod kit.</p>;
   // Texture liveries don't need the kit, so they show while it is unavailable.
-  const textureLiveries = <LiverySection s={s} kit={null} parts={[]} missing={[]} status={status} locked={false} />;
+  const textureLiveries = livery ? <LiverySection s={s} kit={null} parts={[]} missing={[]} status={status} locked={false} /> : null;
   if (!modkits.eligible) {
     return (
       <>
@@ -253,7 +269,7 @@ export default function ModkitPanel({ s }) {
   const locked = modkits.shooting || Boolean(s.kitShoot?.running);
   return (
     <>
-      <LiverySection s={s} kit={kit} parts={parts} missing={missing} status={status} locked={locked} />
+      {livery ? <LiverySection s={s} kit={kit} parts={parts} missing={missing} status={status} locked={locked} /> : null}
       <section className="lv-group" id="panel-modkit">
         <div className="lv-group-head">
           <h3 className="lv-group-title">Mod kit</h3>

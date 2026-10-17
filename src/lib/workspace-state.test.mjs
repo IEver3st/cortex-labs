@@ -7,13 +7,32 @@ import {
   normalizeSavedSteering,
   normalizeTextureMode,
   normalizeVariantList,
+  PAINT_TARGET,
+  savedVehicleTargets,
 } from "./workspace-state.js";
 
 const MODEL = "D:\\cars\\police4_hi.yft";
 
-test("only known viewer modes restore", () => {
-  for (const mode of ["livery", "everything", "eup", "multi", "sirens"]) assert.equal(normalizeTextureMode(mode), mode);
-  for (const bad of ["Livery", "all", "", null, undefined, 3, {}]) assert.equal(normalizeTextureMode(bad), "");
+test("only known viewer modes restore, and Livery and All restore as Vehicle", () => {
+  for (const mode of ["vehicle", "eup", "multi", "sirens"]) assert.equal(normalizeTextureMode(mode), mode);
+  assert.equal(normalizeTextureMode("livery"), "vehicle");
+  assert.equal(normalizeTextureMode("everything"), "vehicle");
+  for (const bad of ["Livery", "Vehicle", "all", "", null, undefined, 3, {}]) assert.equal(normalizeTextureMode(bad), "");
+});
+
+test("targets saved by Livery and All keep what they meant in Vehicle mode", () => {
+  // Livery painted the detected paint whatever textureTarget held, and kept its glass pick apart.
+  assert.deepEqual(
+    savedVehicleTargets({ textureMode: "livery", textureTarget: "all", windowTextureTarget: "auto", liveryWindowOverride: "material:glass_tint" }),
+    { textureTarget: PAINT_TARGET, windowTextureTarget: "material:glass_tint" },
+  );
+  assert.deepEqual(savedVehicleTargets({ mode: "livery", windowTextureTarget: "auto" }), { textureTarget: PAINT_TARGET, windowTextureTarget: "auto" });
+  // All defaulted to every mesh.
+  assert.deepEqual(savedVehicleTargets({ textureMode: "everything", textureTarget: "mesh:door_l" }), { textureTarget: "mesh:door_l", windowTextureTarget: "" });
+  assert.deepEqual(savedVehicleTargets({ mode: "everything" }), { textureTarget: "all", windowTextureTarget: "" });
+  assert.deepEqual(savedVehicleTargets({ textureMode: "vehicle", textureTarget: PAINT_TARGET, windowTextureTarget: "none" }), { textureTarget: PAINT_TARGET, windowTextureTarget: "none" });
+  assert.deepEqual(savedVehicleTargets({ textureMode: "vehicle", textureTarget: 4 }), { textureTarget: "", windowTextureTarget: "" });
+  assert.deepEqual(savedVehicleTargets(null), { textureTarget: "", windowTextureTarget: "" });
 });
 
 test("the wheel angle restores only for the model it was set on", () => {

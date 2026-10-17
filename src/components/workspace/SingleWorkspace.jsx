@@ -4,7 +4,8 @@ import { Toggle } from "../ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import VehicleMetaPanel from "../VehicleMetaPanel";
-import ModkitPanel from "./ModkitPanel";
+import ModkitPanel, { GameLiverySwitcher } from "./ModkitPanel";
+import LiveriesPanel from "./LiveriesPanel";
 import SaveVehicle from "./SaveVehicle";
 import KitShootReview from "./KitShootReview";
 import PaintSlots from "./PaintSlots";
@@ -32,46 +33,30 @@ import { PaneResizer, usePaneWidths } from "./PaneResizer";
 import ReplacePrompt from "./ReplacePrompt";
 import { Fact, FactDisclosure, FactList, Facts } from "./DockFacts";
 import { describePreviewRun } from "../../lib/capture-output";
+import { PAINT_TARGET } from "../../lib/workspace-state";
 
-/* Livery, All and EUP share one workspace. Livery targets the paint material
-   automatically and treats the second texture as glass; All lets the user
-   pick targets for both textures and adds experimental native materials; EUP
-   previews one uniform texture on a clothing drawable over a body colour. */
+/* Vehicle and EUP share one workspace. Vehicle puts the livery on the
+   detected paint material by default and the second texture on the detected
+   glass, and either can be pointed at every mesh or one material or mesh;
+   EUP previews one uniform texture on a clothing drawable over a body colour. */
 
 const COPY = {
-  livery: {
-    asideLabel: "Livery assets",
+  vehicle: {
+    asideLabel: "Vehicle assets",
     modelEmpty: "Open a vehicle model",
     modelHint: ".yft, .dff or .clmesh. You can also drop it on the viewfinder.",
     textureTitle: "Livery",
     textureEmpty: "Choose a livery",
-    textureHint: "PSD, PDN, PNG, DDS and more. Saved changes reload live.",
+    textureHint: "PSD, PDN, PNG, DDS and more, on the paint or the meshes you pick. Saved changes reload live.",
     textureError: "Livery didn't load",
     overlayTitle: "Glass",
     overlayEmpty: "Choose a glass texture",
-    overlayHint: "Window decals and tint, applied to glass materials.",
-    overlayOff: "Turn on to add window decals or tint on top of the livery.",
+    overlayHint: "Window decals and tint on the glass, or a second texture on the meshes you pick.",
+    overlayOff: "Turn on to add window decals, tint or a second texture on top of the livery.",
     overlayToggle: "Use a glass texture",
     overlayError: "Glass texture didn't load",
     dropHint: "models, or a livery image",
     captureEmpty: "Load a model to export preview shots of your livery.",
-  },
-  everything: {
-    asideLabel: "Model and textures",
-    modelEmpty: "Open a vehicle model",
-    modelHint: ".yft, .dff or .clmesh. You can also drop it on the viewfinder.",
-    textureTitle: "Texture",
-    textureEmpty: "Choose a texture",
-    textureHint: "Any supported image, applied to the meshes you pick. Saved changes reload live.",
-    textureError: "Texture didn't load",
-    overlayTitle: "Overlay",
-    overlayEmpty: "Choose an overlay texture",
-    overlayHint: "A second texture stacked on top, for decals or detail.",
-    overlayOff: "Turn on to stack a second texture on top.",
-    overlayToggle: "Use an overlay texture",
-    overlayError: "Overlay didn't load",
-    dropHint: "models, or a texture image",
-    captureEmpty: "Load a model to export preview shots.",
   },
   eup: {
     asideLabel: "Uniform assets",
@@ -87,8 +72,13 @@ const COPY = {
 };
 
 const INSPECTOR_TABS = {
-  livery: [{ id: "paint", label: "Paint" }, { id: "scene", label: "Scene" }, { id: "meta", label: "Meta" }],
-  everything: [{ id: "paint", label: "Paint" }, { id: "scene", label: "Scene" }, { id: "mods", label: "Mods" }, { id: "meta", label: "Meta" }],
+  vehicle: [
+    { id: "paint", label: "Paint" },
+    { id: "liveries", label: "Liveries" },
+    { id: "mods", label: "Mods" },
+    { id: "scene", label: "Scene" },
+    { id: "meta", label: "Meta" },
+  ],
   eup: [{ id: "paint", label: "Material" }, { id: "scene", label: "Scene" }],
 };
 
@@ -427,10 +417,14 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
   const [inspectorTab, setInspectorTab] = useState("paint");
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const isEup = s.mode === "eup";
-  const isLivery = s.mode === "livery";
-  const copy = COPY[isEup ? "eup" : isLivery ? "livery" : "everything"];
-  // Each mode keeps its own dock and inspector widths.
-  const panes = usePaneWidths(`cortex.${isEup ? "eup-textures" : isLivery ? "livery" : "all"}.panes`);
+  const isVehicle = !isEup;
+  const copy = COPY[isEup ? "eup" : "vehicle"];
+  const tabs = INSPECTOR_TABS[isEup ? "eup" : "vehicle"];
+  // A tab another mode has (Mods, Liveries) falls back to Paint here.
+  const activeTab = tabs.some((tab) => tab.id === inspectorTab) ? inspectorTab : "paint";
+  // Each mode keeps its own dock and inspector widths; Vehicle keeps the ones
+  // Livery mode saved.
+  const panes = usePaneWidths(`cortex.${isEup ? "eup-textures" : "livery"}.panes`);
   const hasModel = Boolean(s.modelPath);
   const hk = s.hotkeys || {};
 
@@ -443,12 +437,13 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
     return list;
   }, [s, copy, isEup]);
 
-  const liveryTone = !hasModel ? "idle" : s.liveryTargetLabel ? "ok" : "warn";
-  const liveryMessage = !hasModel
-    ? "Load a model and the livery is placed on its paint material automatically."
-    : s.liveryTargetLabel
-      ? `Painting ${s.liveryTargetLabel}`
-      : "No paint material found, so the livery covers every mesh.";
+  const onPaint = isVehicle && s.textureTarget === PAINT_TARGET;
+  const paintOption = !hasModel ? "Detected paint" : s.liveryTargetLabel ? `Detected: ${s.liveryTargetLabel}` : "Detected: none found";
+  // The select names the paint it found; the note covers what it can't say.
+  const paintNote = !onPaint ? null : !hasModel
+    ? { tone: "idle", text: "Load a model and the livery is placed on its paint material automatically." }
+    : s.liveryTargetLabel ? null : { tone: "warn", text: "No paint material found, so the livery covers every mesh." };
+  const glassOption = !hasModel ? "Detected glass" : s.windowLiveryTarget ? `Detected: ${s.windowStatusLabel}` : "Detected: none found";
   const watchTone = s.watchStatus === "watching" ? "live" : s.watchStatus === "error" ? "error" : "idle";
   const watchLabel = s.watchStatus === "watching" ? "Live reload on" : s.watchStatus === "error" ? "Live reload failed" : "Live reload idle";
 
@@ -499,19 +494,19 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             onPick={s.selectTexture}
             onUnload={() => s.setTexturePath("")}
           >
-            {isLivery ? (
-              <p className={`lv-slot-note is-${liveryTone}`}>
+            <SelectField label="Apply to">
+              <TargetSelect value={s.textureTarget} onChange={s.setTextureTarget} placeholder="Meshes">
+                {isVehicle ? <SelectItem value={PAINT_TARGET}>{paintOption}</SelectItem> : null}
+                <SelectItem value="all">All meshes</SelectItem>
+                {targetItems}
+              </TargetSelect>
+            </SelectField>
+            {paintNote ? (
+              <p className={`lv-slot-note is-${paintNote.tone}`}>
                 <span className="lv-dot" aria-hidden="true" />
-                {liveryMessage}
+                {paintNote.text}
               </p>
-            ) : (
-              <SelectField label="Apply to">
-                <TargetSelect value={s.textureTarget} onChange={s.setTextureTarget} placeholder="Meshes">
-                  <SelectItem value="all">All meshes</SelectItem>
-                  {targetItems}
-                </TargetSelect>
-              </SelectField>
-            )}
+            ) : null}
             {s.texturePath ? (
               <p className={`lv-slot-note is-${watchTone}`}>
                 <span className="lv-dot" aria-hidden="true" />
@@ -519,7 +514,7 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
                 {s.lastUpdate ? <span className="lv-slot-time">{s.lastUpdate}</span> : null}
               </p>
             ) : null}
-            {s.mode === "everything" ? <Facts label="The model's own textures"><GameTextures s={s} /></Facts> : null}
+            {isVehicle ? <Facts label="The model's own textures"><GameTextures s={s} /></Facts> : null}
           </AssetSlot>
 
           {isEup ? null : (
@@ -539,25 +534,12 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             trailing={<Toggle checked={s.windowTemplateEnabled} onChange={s.setWindowTemplateEnabled} ariaLabel={copy.overlayToggle} />}
           >
             <SelectField label="Apply to">
-              {isLivery ? (
-                <TargetSelect
-                  value={s.liveryWindowOverride || "auto"}
-                  onChange={(value) => s.setLiveryWindowOverride(value === "auto" ? "" : value)}
-                  placeholder="Glass material"
-                >
-                  <SelectItem value="auto">
-                    {s.windowLiveryTarget ? `Detected: ${s.windowStatusLabel}` : "Detected: none found"}
-                  </SelectItem>
-                  {targetItems}
-                </TargetSelect>
-              ) : (
-                <TargetSelect value={s.windowTextureTarget} onChange={s.setWindowTextureTarget} placeholder="Meshes">
-                  <SelectItem value="auto">Window materials (detected)</SelectItem>
-                  <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="all">All meshes</SelectItem>
-                  {targetItems}
-                </TargetSelect>
-              )}
+              <TargetSelect value={s.windowTextureTarget} onChange={s.setWindowTextureTarget} placeholder="Meshes">
+                <SelectItem value="auto">{glassOption}</SelectItem>
+                <SelectItem value="none">None</SelectItem>
+                <SelectItem value="all">All meshes</SelectItem>
+                {targetItems}
+              </TargetSelect>
             </SelectField>
           </AssetSlot>
           )}
@@ -602,12 +584,12 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
       <aside className="lv-inspector" aria-label="Inspector" inert={s.panelCollapsed || !inspectorOpen}>
         <PaneResizer side="insp" label="Resize the inspector" setWidth={panes.setWidth} />
         <InspectorTabs
-          tabs={INSPECTOR_TABS[isEup ? "eup" : isLivery ? "livery" : "everything"]}
-          active={inspectorTab}
+          tabs={tabs}
+          active={activeTab}
           onChange={setInspectorTab}
         />
         <div className="lv-inspector-scroll custom-scrollbar">
-          {inspectorTab === "paint" && isEup ? (
+          {activeTab === "paint" && isEup ? (
             <>
               <ColorSlots
                 id="panel-colors"
@@ -625,7 +607,7 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             </>
           ) : null}
 
-          {inspectorTab === "paint" && !isEup ? (
+          {activeTab === "paint" && !isEup ? (
             <>
               <PaintSlots
                 paint={s.vehiclePaint}
@@ -636,7 +618,7 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             </>
           ) : null}
 
-          {inspectorTab === "scene" ? (
+          {activeTab === "scene" ? (
             <>
               <StageSection
                 s={s}
@@ -651,9 +633,12 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             </>
           ) : null}
 
-          {inspectorTab === "mods" && !isEup && !isLivery ? <ModkitPanel s={s} /> : null}
+          {/* The in-game livery switcher sits with the liveries it switches between. */}
+          {activeTab === "mods" && isVehicle ? <ModkitPanel s={s} livery={false} /> : null}
 
-          {inspectorTab === "meta" && !isEup ? (
+          {activeTab === "liveries" && isVehicle ? <LiveriesPanel s={s} head={<GameLiverySwitcher s={s} />} /> : null}
+
+          {activeTab === "meta" && !isEup ? (
             <div className="lv-meta">
               <VehicleMetaPanel
                 modelPath={s.modelPath}
