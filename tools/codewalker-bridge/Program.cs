@@ -136,6 +136,10 @@ public static partial class Program
                 return ExportYtd(RequireString(request, "path"), RequireString(request, "outputDir"));
             case "writeYtdTextures":
                 return WriteYtdTextures(request);
+            case "readPedVariation":
+                return ReadPedVariation(RequireString(request, "path"));
+            case "writePedVariation":
+                return WritePedVariation(request);
             case "exportPlateTextures":
                 return ExportPlateTextures(RequireString(request, "outputDir"));
             case "listPedClips":

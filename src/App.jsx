@@ -34,6 +34,7 @@ import { TURNTABLE_DEFAULT_SPEED, normalizeTurntableSpeed } from "./lib/turntabl
 import { DEFAULT_HAZE, DEFAULT_LIGHT_SWITCHES } from "./lib/emergency-lights";
 import { DEFAULT_EXTRAS_STATE, normalizeExtrasState, planExtras } from "./lib/vehicle-extras";
 import { normalizeLiverySet } from "./lib/livery-set";
+import { normalizeClothingSet } from "./lib/clothing-pack";
 import { captureSavedVehicle, generateSavedVehicleId, loadSavedVehicles, MAX_SAVED_VEHICLES, moveSavedVehicleModel, upsertSavedVehicle, writeSavedVehicles } from "./lib/saved-vehicles";
 import { normalizeSavedLightPreview, normalizeSavedMaterials, normalizeSavedSteering, normalizeTextureMode, PAINT_TARGET, savedVehicleTargets } from "./lib/workspace-state";
 import { setUnsavedChanges } from "./lib/unsaved-changes";
@@ -531,6 +532,21 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       return next ? { ...rest, [modelPath]: { pattern: next.pattern || "", items: next.items || [], removed: next.removed || [], path: modelPath } } : rest;
     });
   }, [modelPath]);
+  // Images staged in EUP mode's Textures tab as the open clothing item's
+  // textures: { path, items: [{ id, path, letter }] }, per drawable, like the
+  // liveries above.
+  const [clothingSetEntries, setClothingSetEntries] = useState({});
+  const clothingSet = (modelPath && clothingSetEntries[modelPath]) || null;
+  const setClothingSet = useCallback((update) => {
+    if (!modelPath) return;
+    setClothingSetEntries((entries) => {
+      const base = entries[modelPath] || { path: modelPath, items: [] };
+      const next = typeof update === "function" ? update(base) : update;
+      const rest = { ...entries };
+      delete rest[modelPath];
+      return next?.items?.length ? { ...rest, [modelPath]: { items: next.items, path: modelPath } } : rest;
+    });
+  }, [modelPath]);
   // Reported by the viewer for the model it shows, which lags modelPath while
   // the next model loads.
   const [gameLiveriesReport, setGameLiveries] = useState(null);
@@ -884,6 +900,9 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
         liverySet: liverySet && (liverySet.items.length || liverySet.removed?.length || liverySet.pattern)
           ? { path: modelPath, pattern: liverySet.pattern, items: liverySet.items.map(({ id, path, number }) => ({ id, path, number })), removed: liverySet.removed || [] }
           : null,
+        clothingSet: clothingSet?.items.length
+          ? { path: modelPath, items: clothingSet.items.map(({ id, path, letter }) => ({ id, path, letter })) }
+          : null,
         // Front wheel angle, for the model it was set on.
         steering: modelPath && steering.path === modelPath ? { path: modelPath, angle: steering.angle } : null,
         vehicleFolder: textureMode === "vehicle" && vehicleFolder ? vehicleFolder : null,
@@ -931,7 +950,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
     lightIntensity, lightAzimuth, lightElevation, glossiness, liveryExteriorOnly, nativeMaterialsEnabled,
     stage, stageSpot, stageReflect, stageBeam, stageLight, stageFloor, turntable, turntableSpeed,
     multi.lineup, multi.gizmoVisible, multi.showroom, multi.slots,
-    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, liverySet, steering, vehicleFolder, folderView,
+    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, liverySet, clothingSet, steering, vehicleFolder, folderView,
     lightPreview.switches, lightPreview.muted, lightPreview.speed, lightPreview.spill, lightPreview.spillStrength, lightPreview.glow, lightPreview.haze, lightPreview.lens,
     materialType, matLightIntensity, matGlossiness, matRoughness, matClearcoat, materialTextures,
     shellTab,
@@ -1345,6 +1364,8 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       }
       const restoredLiveries = state.liverySet?.path === initialModelPath ? normalizeLiverySet(state.liverySet) : null;
       if (restoredLiveries) setLiverySetEntries({ [initialModelPath]: { path: initialModelPath, ...restoredLiveries } });
+      const restoredClothing = state.clothingSet?.path === initialModelPath ? normalizeClothingSet(state.clothingSet) : null;
+      if (restoredClothing) setClothingSetEntries({ [initialModelPath]: { path: initialModelPath, ...restoredClothing } });
       if (state.savedVehicle?.id && state.savedVehicle.path === initialModelPath) {
         setSavedVehicleEntry({ id: state.savedVehicle.id, name: String(state.savedVehicle.name || ""), path: initialModelPath });
       }
@@ -2822,7 +2843,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       licensePlate, updateLicensePlate, licensePlateStatus,
       // Kit Shoot is a Vehicle tool; Sirens only picks parts.
       modkits, vehicleModsStatus, gameLivery, setGameLivery, gameLiveries, kitShoot: textureMode === "vehicle" ? kitShoot : null,
-      liverySet, setLiverySet,
+      liverySet, setLiverySet, clothingSet, setClothingSet,
       savedVehicle, saveVehicle: textureMode === "eup" ? null : saveVehicle,
       generatingPreview, previewProgress, previewComplete, setPreviewComplete,
       previewOutputPath, previewFolderOpening, previewFolderOpenError, handleOpenPreviewFolder,

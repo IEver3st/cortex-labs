@@ -1,11 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
-import { AlertTriangle, Aperture, Camera, Car, Check, ChevronUp, FolderOpen, FolderTree, Box, Boxes, LayoutGrid, RefreshCw } from "lucide-react";
+import { AlertTriangle, Aperture, Camera, Car, Check, ChevronUp, FolderOpen, FolderTree, Box, Boxes, LayoutGrid, PackagePlus, RefreshCw } from "lucide-react";
 import { Toggle } from "../ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import VehicleMetaPanel from "../VehicleMetaPanel";
 import ModkitPanel, { GameLiverySwitcher } from "./ModkitPanel";
 import LiveriesPanel from "./LiveriesPanel";
+import ClothingTexturesPanel from "./ClothingTexturesPanel";
+import ClothingPackDialog from "./ClothingPackDialog";
 import SaveVehicle from "./SaveVehicle";
 import PackSheet, { PackBar } from "./PackSheet";
 import KitShootReview from "./KitShootReview";
@@ -80,7 +82,7 @@ const INSPECTOR_TABS = {
     { id: "scene", label: "Scene" },
     { id: "meta", label: "Meta" },
   ],
-  eup: [{ id: "paint", label: "Material" }, { id: "scene", label: "Scene" }],
+  eup: [{ id: "paint", label: "Material" }, { id: "textures", label: "Textures" }, { id: "scene", label: "Scene" }],
 };
 
 function TargetSelect({ value, onChange, children, placeholder }) {
@@ -417,6 +419,7 @@ export function CaptureSection({ s, hasModel, copy }) {
 export default function SingleWorkspace({ s, viewer, overlays }) {
   const [inspectorTab, setInspectorTab] = useState("paint");
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [packDialogOpen, setPackDialogOpen] = useState(false);
   const isEup = s.mode === "eup";
   const isVehicle = !isEup;
   const copy = COPY[isEup ? "eup" : "vehicle"];
@@ -507,6 +510,12 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
               <button type="button" className="lv-link lv-folder-link" onClick={s.openVehicleFolder} title="See a pack's vehicles side by side and go through them one at a time">
                 <FolderTree aria-hidden="true" />
                 Open a folder of vehicles
+              </button>
+            ) : null}
+            {isEup && s.isTauriRuntime ? (
+              <button type="button" className="lv-link lv-folder-link" onClick={() => setPackDialogOpen(true)} title="Merge folders of clothing into one new addon pack resource">
+                <PackagePlus aria-hidden="true" />
+                Build an addon pack
               </button>
             ) : null}
           </AssetSlot>
@@ -667,6 +676,8 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
 
           {activeTab === "liveries" && isVehicle ? <LiveriesPanel s={s} head={<GameLiverySwitcher s={s} />} /> : null}
 
+          {activeTab === "textures" && isEup ? <ClothingTexturesPanel s={s} /> : null}
+
           {activeTab === "meta" && !isEup ? (
             <div className="lv-meta">
               <VehicleMetaPanel
@@ -698,6 +709,7 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
       </aside>
 
       {overlays}
+      {packDialogOpen ? <ClothingPackDialog onClose={() => setPackDialogOpen(false)} /> : null}
       {s.kitShoot?.review ? (
         <KitShootReview
           root={s.kitShoot.review.root}

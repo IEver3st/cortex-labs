@@ -33,7 +33,7 @@ import "./LiveriesPanel.css";
 // panel and the dialog. Keyed by path; `stamp` is the file's mtime and size.
 const imageCache = new Map();
 
-function useLiveryImages(paths) {
+export function useLiveryImages(paths) {
   const [, setVersion] = useState(0);
   const key = paths.join("\n");
   useEffect(() => {
@@ -95,7 +95,7 @@ function samePath(a, b) {
   return Boolean(a) && Boolean(b) && String(a).toLowerCase() === String(b).toLowerCase();
 }
 
-function Thumb({ image, label }) {
+export function Thumb({ image, label }) {
   if (image?.status === "ready" && image.thumb) return <img className="lv-liv-thumb" src={image.thumb} alt="" draggable={false} />;
   if (image?.status === "error") {
     return (
