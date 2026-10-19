@@ -19,7 +19,7 @@ export function encodeStageBody(token, id, bytes) {
   return body;
 }
 
-function stageId(itemId, { width, height, levels }) {
+export function stageId(itemId, { width, height, levels }) {
   // The host takes ids of up to 64 characters; the size suffix must survive.
   return `${String(itemId).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40)}-${width}x${height}-${levels || 0}`;
 }
@@ -67,16 +67,15 @@ function withNothingChanged(error) {
 }
 
 /**
- * Writes a plan. `build(item, targets)` resolves each target's DDS bytes in
- * order; `onProgress({ done, total, item, items, label })` hears each staged
- * texture (`done` of `total`) while the `item`th of `items` images is built;
- * `isCancelled()` stops the write before its commit. Resolves the host's
- * `{ files: [{ path, backup, textures }] }`.
+ * Stages a plan's textures in one host session and commits it. `commands`
+ * names the session's `begin`, `stage`, `commit` and `cancel` commands,
+ * `begin` is called with `beginArgs`, and `commitRequest(token, stamp)` is
+ * the commit's request. See writeLiveries for the rest.
  */
-export async function writeLiveries({ invoke, plan, items, modelPath, build, onProgress = () => {}, isCancelled = () => false, date = new Date() }) {
+export async function writeStagedTextures({ invoke, commands, beginArgs, plan, items, build, commitRequest, onProgress = () => {}, isCancelled = () => false, date = new Date() }) {
   const jobs = liveryBuildJobs(plan, items);
   const total = jobs.reduce((sum, job) => sum + job.targets.length, 0);
-  const { token } = await invoke("livery_write_begin", { modelPath });
+  const { token } = await invoke(commands.begin, beginArgs);
   let done = 0;
   try {
     for (const [index, job] of jobs.entries()) {
@@ -87,18 +86,34 @@ export async function writeLiveries({ invoke, plan, items, modelPath, build, onP
       for (const [index, target] of job.targets.entries()) {
         if (isCancelled()) throw new Error("The write was cancelled.");
         const bytes = outputs[index]?.bytes;
-        if (!bytes?.length) throw new Error(`Livery ${job.item.number} was not built.`);
-        await invoke("livery_write_stage", encodeStageBody(token, target.id, bytes));
+        if (!bytes?.length) throw new Error(`${job.item.number != null ? `Livery ${job.item.number}` : job.item.path || "A texture"} was not built.`);
+        await invoke(commands.stage, encodeStageBody(token, target.id, bytes));
         done += 1;
         onProgress({ done, total, ...at });
       }
     }
     if (isCancelled()) throw new Error("The write was cancelled.");
-    // A write that only removes liveries stages nothing and goes straight to the commit.
+    // A write that only removes textures stages nothing and goes straight to the commit.
     if (!total) onProgress({ done: 0, total: 0, item: 0, items: 0, label: "" });
   } catch (error) {
-    await Promise.resolve(invoke("livery_write_cancel", { token })).catch(() => {});
+    await Promise.resolve(invoke(commands.cancel, { token })).catch(() => {});
     throw withNothingChanged(error);
   }
-  return invoke("livery_write_commit", { request: liveryCommitRequest(plan, token, backupStamp(date)) });
+  return invoke(commands.commit, { request: commitRequest(token, backupStamp(date)) });
+}
+
+const LIVERY_COMMANDS = { begin: "livery_write_begin", stage: "livery_write_stage", commit: "livery_write_commit", cancel: "livery_write_cancel" };
+
+/**
+ * Writes a plan. `build(item, targets)` resolves each target's DDS bytes in
+ * order; `onProgress({ done, total, item, items, label })` hears each staged
+ * texture (`done` of `total`) while the `item`th of `items` images is built;
+ * `isCancelled()` stops the write before its commit. Resolves the host's
+ * `{ files: [{ path, backup, textures }] }`.
+ */
+export function writeLiveries({ invoke, plan, items, modelPath, build, onProgress, isCancelled, date }) {
+  return writeStagedTextures({
+    invoke, commands: LIVERY_COMMANDS, beginArgs: { modelPath }, plan, items, build, onProgress, isCancelled, date,
+    commitRequest: (token, stamp) => liveryCommitRequest(plan, token, stamp),
+  });
 }

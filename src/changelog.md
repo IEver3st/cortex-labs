@@ -1,3 +1,13 @@
+version: 5.3.5
+date: 2026-10-19
+> Write your own textures into EUP clothing, and build addon packs from folders of clothing, merging packs that share a model.
+
+## New
+- Clothing textures | EUP mode's new Textures tab lists a clothing item's textures a to z. Drop images on it to add textures or replace one; the write puts them in the item's .ytd files and counts new ones in its pack's .ymt, after a .bak.
+- Build an addon pack | Build an addon pack on the Model step turns folders of freemode clothing into one new FiveM resource, numbered and ready to ensure. Merge identical models joins packs that recolour the same item. Escrowed resources are never copied.
+
+---
+
 version: 5.3.0
 date: 2026-10-16
 > Open a folder of vehicles to see a whole pack as snapshots and go through it car by car, and remove liveries a vehicle came with.

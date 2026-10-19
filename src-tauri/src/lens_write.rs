@@ -178,7 +178,7 @@ fn sibling_name(target: &Path, stamp: &str, suffix: &str) -> Result<PathBuf, Str
     Ok(target.with_file_name(format!("{name}.{stamp}.{suffix}")))
 }
 
-fn copy_new(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_new(from: &Path, to: &Path) -> std::io::Result<()> {
     // create_new also refuses a (dangling) link at the name.
     let mut target = std::fs::OpenOptions::new()
         .write(true)

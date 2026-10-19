@@ -8,6 +8,18 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [5.3.5] - 2026-10-19
+
+Write your own textures into EUP clothing, and build addon packs from folders of clothing, merging packs that share a model.
+
+### Added
+
+- **Add and replace clothing textures** - EUP mode's new **Textures** tab lists the textures of the clothing item you opened, a to z, and writes your images into it. Drop images on the tab, or pick them with **Add textures**, to add them as the next letters; drop one on a texture to replace it. Adding textures also raises the item's count in the pack's `.ymt`, so that file must be in the same resource. **Write N textures…** shows every file it changes or adds and checks for scaled-up or stretched images. Replaced files and the `.ymt` get a `.bak` first, a failed write puts back what it changed, and a `.ymt` edited outside Cortex since it was read stops the write. Only legacy GTA V texture files can be written. Desktop app only.
+
+- **Build an addon pack** - **Build an addon pack** on EUP mode's Model step makes a new FiveM resource from folders of freemode clothing, such as addon packs or loose files from a clothing tool. Every item is numbered again in the new pack, and `fxmanifest.lua`, the shop metas and the `.ymt` files are written for you; a slot with more than 128 items or 255 textures continues in a second pack in the same resource. **Merge identical models** turns items whose model file is byte for byte the same into one item with all their textures, so several recolour packs for one vest become one vest. Source folders are only read, the new resource never replaces an existing folder, and Cortex does not copy from escrowed resources, encrypted or GTA V Enhanced files, the GTA V install or FiveM's own files. Each pack's licence still applies to its clothing. Creature metadata (how hats sit over hair) is not carried over yet. Desktop app only.
+
+---
+
 ## [5.3.0] - 2026-10-16
 
 Open a folder of vehicles to see a whole pack as snapshots and go through it car by car, and remove liveries a vehicle came with.

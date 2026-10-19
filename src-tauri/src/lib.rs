@@ -15,6 +15,7 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 mod child_job;
+mod clothing_write;
 mod els_scope;
 mod fivem_kvs;
 mod lens_write;
@@ -2340,6 +2341,475 @@ fn livery_write_cancel(token: String, state: State<'_, livery_write::LiveryWrite
     state.cancel(&token);
 }
 
+/// The clothing texture a write replaces in one of an item's texture files:
+/// its diffuse texture (`…_diff_…`), else its first. `file` is its exported
+/// DDS in the texture cache, for the preview.
+fn clothing_texture_of(listing: &serde_json::Value) -> Option<serde_json::Value> {
+    let textures = listing.get("textures")?.as_array()?;
+    let texture = textures
+        .iter()
+        .find(|texture| {
+            texture
+                .get("name")
+                .and_then(|name| name.as_str())
+                .is_some_and(|name| name.to_ascii_lowercase().contains("_diff_"))
+        })
+        .or_else(|| textures.first())?;
+    let name = texture.get("name")?.as_str()?;
+    let file = texture.get("path")?.as_str()?;
+    let info = livery_write::read_dds_info(Path::new(file))?;
+    Some(serde_json::json!({
+        "name": name,
+        "width": info.width,
+        "height": info.height,
+        "levels": info.levels,
+        "format": info.format,
+        "file": file,
+    }))
+}
+
+/// A clothing item the user opened, for planning a clothing write: its
+/// texture files beside it (`texture` is the one a write replaces; `legacy`
+/// false for a file the bridge cannot rebuild) and its pack's ped variation
+/// data, `ymt: { path, xml }` or `{ path?, error }`, null without a pack.
+#[tauri::command]
+async fn clothing_item(
+    drawable_path: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let drawable = PathBuf::from(drawable_path.trim());
+        let item = clothing_write::item_of(&drawable)?;
+        if !model_opened(&app, &drawable) {
+            return Err("Open the clothing item in Cortex before writing its textures.".into());
+        }
+        let mut textures = Vec::new();
+        for path in clothing_write::item_texture_files(&drawable, &item) {
+            let display = path.to_string_lossy().to_string();
+            let legacy = livery_write::is_legacy_ytd(&path);
+            let (texture, error) = if legacy {
+                match export_ytd_listing(&app, &display) {
+                    Ok(listing) => (clothing_texture_of(&listing), None),
+                    Err(error) => (None, Some(error)),
+                }
+            } else {
+                (None, None)
+            };
+            textures.push(serde_json::json!({
+                "path": display,
+                "legacy": legacy,
+                "texture": texture,
+                "error": error,
+            }));
+        }
+        let ymt = match clothing_write::find_pack_ymt(&drawable, &item) {
+            // The search can reach above the folder the item was opened from.
+            Ok(Some(path)) if !model_opened(&app, &path) => serde_json::json!({
+                "path": path,
+                "error": format!("{} is outside the item's resource folder, so Cortex does not change it.", path.display()),
+            }),
+            Ok(Some(path)) => match read_ped_variation(&app, &path) {
+                Ok(xml) => serde_json::json!({ "path": path, "xml": xml }),
+                Err(error) => serde_json::json!({ "path": path, "error": error }),
+            },
+            Ok(None) => serde_json::Value::Null,
+            Err(error) => serde_json::json!({ "error": error }),
+        };
+        Ok(serde_json::json!({ "item": item, "textures": textures, "ymt": ymt }))
+    })
+    .await
+    .map_err(|error| format!("Reading the clothing item stopped: {error}"))?
+}
+
+/// A pack's ped variation file as CodeWalker XML (bridge readPedVariation).
+fn read_ped_variation(app: &tauri::AppHandle, path: &Path) -> Result<String, String> {
+    let read = bridge_request(
+        app,
+        "readPedVariation",
+        serde_json::json!({ "path": path }),
+        BRIDGE_REQUEST_TIMEOUT,
+    )?;
+    read.get("xml")
+        .and_then(|xml| xml.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("{} did not read back as XML.", path.display()))
+}
+
+/// Starts a clothing texture write for an item the user opened. Returns `{ token }`.
+#[tauri::command]
+async fn clothing_write_begin(
+    drawable_path: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let drawable = PathBuf::from(drawable_path.trim());
+    clothing_write::item_of(&drawable)?;
+    if !model_opened(&app, &drawable) {
+        return Err("Open the clothing item in Cortex before writing its textures.".into());
+    }
+    let root = app_cache_root(&app, "clothing-write")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = app
+            .state::<clothing_write::ClothingWriteState>()
+            .0
+            .begin(&root, drawable)?;
+        Ok(serde_json::json!({ "token": token }))
+    })
+    .await
+    .map_err(|error| format!("Starting the clothing write stopped: {error}"))?
+}
+
+/// Stages one clothing texture DDS (raw body, see livery_write::parse_stage).
+#[tauri::command]
+async fn clothing_write_stage(
+    request: tauri::ipc::Request<'_>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err("A clothing texture must be sent as raw bytes.".into());
+    };
+    let body = body.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (token, id, dds) = livery_write::parse_stage(&body)?;
+        app.state::<clothing_write::ClothingWriteState>()
+            .0
+            .stage(&token, &id, dds)
+    })
+    .await
+    .map_err(|error| format!("Staging a clothing texture stopped: {error}"))?
+}
+
+/// Writes the staged textures into the item: every texture file and the
+/// pack's .ymt are built first, then new texture files are added and the
+/// rest replaced, each after a stamped backup beside it. Resolves `{ created,
+/// replaced: [{ path, backup }], files: [{ path, textures }] }`; rejects with
+/// a message that says whether anything changed.
+#[tauri::command]
+async fn clothing_write_commit(
+    request: clothing_write::CommitRequest,
+    app: tauri::AppHandle,
+    state: State<'_, clothing_write::ClothingWriteState>,
+) -> Result<serde_json::Value, String> {
+    let staged = state.0.take(&request.token)?;
+    tauri::async_runtime::spawn_blocking(move || commit_clothing_write(&app, &request, &staged))
+        .await
+        .map_err(|error| {
+            format!(
+                "The clothing write stopped: {error}. Check the texture files and their backups."
+            )
+        })?
+}
+
+fn commit_clothing_write(
+    app: &tauri::AppHandle,
+    request: &clothing_write::CommitRequest,
+    staged: &livery_write::Staged,
+) -> Result<serde_json::Value, String> {
+    clothing_write::check_commit(request, &staged.files)?;
+    let drawable = &staged.model;
+    if !model_opened(app, drawable) {
+        return Err("Open the clothing item in Cortex before writing its textures.".into());
+    }
+    let item = clothing_write::item_of(drawable)?;
+    let mut targets = Vec::with_capacity(request.ytds.len());
+    let mut names = HashSet::new();
+    for ytd in &request.ytds {
+        let creating = ytd.mode == "create";
+        let path = clothing_write::validate_item_texture(drawable, &item, &ytd.path, !creating)?;
+        if !names.insert(path.to_string_lossy().to_ascii_lowercase()) {
+            return Err(format!("{} is listed twice.", ytd.path.display()));
+        }
+        let input = match &ytd.template {
+            Some(template) => {
+                clothing_write::validate_item_texture(drawable, &item, template, true)?
+            }
+            None => path.clone(),
+        };
+        targets.push((ytd, path, input, creating));
+    }
+    let ymt = match &request.ymt {
+        Some(ymt) => {
+            let found = clothing_write::find_pack_ymt(drawable, &item)?
+                .ok_or("The pack's .ymt is no longer in this resource. Nothing was changed.")?;
+            if found.canonicalize().ok() != ymt.path.canonicalize().ok() {
+                return Err(format!(
+                    "{} is not this item's pack file.",
+                    ymt.path.display()
+                ));
+            }
+            if !model_opened(app, &found) {
+                return Err(format!(
+                    "{} is outside the item's resource folder. Nothing was changed.",
+                    found.display()
+                ));
+            }
+            // The new XML was made from the file as it was read; an edit made
+            // since would be lost, so the write stops instead.
+            let current = read_ped_variation(app, &found)
+                .map_err(|error| format!("{error} Nothing was changed."))?;
+            if current != ymt.base {
+                return Err(format!(
+                    "{} changed since Cortex read it, so nothing was changed. Close this to read it again, then write.",
+                    found.display()
+                ));
+            }
+            Some((found, &ymt.xml))
+        }
+        None => None,
+    };
+
+    // Everything is built before any user file is touched.
+    let mut created = Vec::new();
+    let mut replaced = Vec::new();
+    let mut written = Vec::new();
+    for (index, (ytd, path, input, creating)) in targets.iter().enumerate() {
+        let textures = ytd
+            .textures
+            .iter()
+            .map(|texture| {
+                // check_commit made sure every id is staged; a removal has none.
+                serde_json::json!({
+                    "name": texture.name,
+                    "path": texture.id.as_ref().map(|id| &staged.files[id]),
+                    "mode": texture.mode,
+                    "like": texture.like,
+                })
+            })
+            .collect::<Vec<_>>();
+        let output = staged.dir.join(format!("{index}.ytd"));
+        let rebuilt = bridge_request(
+            app,
+            "writeYtdTextures",
+            serde_json::json!({ "input": input, "output": output, "textures": textures }),
+            BRIDGE_REQUEST_TIMEOUT,
+        )
+        .map_err(|error| format!("{error} Nothing was changed."))?;
+        if *creating {
+            created.push((path.clone(), output));
+        } else {
+            replaced.push((path.clone(), output));
+        }
+        written.push(serde_json::json!({
+            "path": path,
+            "textures": rebuilt.get("textures").cloned().unwrap_or_default(),
+        }));
+    }
+    if let Some((path, xml)) = ymt {
+        let output = staged.dir.join("pack.ymt");
+        bridge_request(
+            app,
+            "writePedVariation",
+            serde_json::json!({ "xml": xml, "output": output }),
+            BRIDGE_REQUEST_TIMEOUT,
+        )
+        .map_err(|error| format!("{error} Nothing was changed."))?;
+        // Last, so the game never counts a texture file that is not there.
+        replaced.push((path, output));
+    }
+    let (made, replaced) = clothing_write::apply_write(&created, &replaced, &request.stamp)?;
+    Ok(serde_json::json!({ "created": made, "replaced": replaced, "files": written }))
+}
+
+/// Drops a clothing write and what it staged.
+#[tauri::command]
+fn clothing_write_cancel(token: String, state: State<'_, clothing_write::ClothingWriteState>) {
+    state.0.cancel(&token);
+}
+
+/// The clothing files in a folder the user picked, for building a pack.
+#[tauri::command]
+async fn clothing_folder(
+    folder: String,
+    app: tauri::AppHandle,
+) -> Result<clothing_write::FolderScan, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let picked = PathBuf::from(folder.trim());
+        let resolved = picked
+            .canonicalize()
+            .map_err(|error| format!("Cannot open {}: {error}", picked.display()))?;
+        if !resolved.is_dir() || !model_opened(&app, &resolved) {
+            return Err(format!("Pick {} in Cortex first.", picked.display()));
+        }
+        if let Some(owner) = clothing_write::protected_source(&resolved) {
+            return Err(format!(
+                "{} is part of {owner}; Cortex only builds packs from clothing you have as files.",
+                picked.display()
+            ));
+        }
+        // Listed under the name the user picked, not the resolved form.
+        clothing_write::scan_clothing_folder(&picked)
+    })
+    .await
+    .map_err(|error| format!("Reading the folder stopped: {error}"))?
+}
+
+/// A source pack's ped variation file as CodeWalker XML, from a folder the
+/// user picked. Resolves `{ path, xml }`.
+#[tauri::command]
+async fn read_pack_ymt(path: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = PathBuf::from(path.trim());
+        let resolved = path
+            .canonicalize()
+            .map_err(|error| format!("Cannot open {}: {error}", path.display()))?;
+        if !has_extension(&resolved.to_string_lossy(), "ymt") || !model_opened(&app, &resolved) {
+            return Err(format!(
+                "Pick the folder of {} in Cortex first.",
+                path.display()
+            ));
+        }
+        if clothing_write::protected_source(&resolved).is_some()
+            || clothing_write::escrowed(&resolved)
+        {
+            return Err(format!(
+                "Cortex does not read {} for a pack build.",
+                path.display()
+            ));
+        }
+        let xml = read_ped_variation(&app, &resolved)?;
+        Ok(serde_json::json!({ "path": path, "xml": xml }))
+    })
+    .await
+    .map_err(|error| format!("Reading the pack file stopped: {error}"))?
+}
+
+/// Which of `paths` have the same bytes: the group number of each, null for
+/// a file like no other. Every path must be in a folder the user picked.
+#[tauri::command]
+async fn clothing_identical_files(
+    paths: Vec<String>,
+    app: tauri::AppHandle,
+) -> Result<Vec<Option<usize>>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut resolved = Vec::with_capacity(paths.len());
+        for path in &paths {
+            let file = PathBuf::from(path.trim());
+            let file = file
+                .canonicalize()
+                .map_err(|error| format!("Cannot open {}: {error}", file.display()))?;
+            if !model_opened(&app, &file) || clothing_write::protected_source(&file).is_some() {
+                return Err(format!("Pick the folder of {path} in Cortex first."));
+            }
+            resolved.push(file);
+        }
+        let groups = clothing_write::identical_groups(&resolved)?;
+        Ok((0..resolved.len())
+            .map(|index| groups.get(&index).copied())
+            .collect())
+    })
+    .await
+    .map_err(|error| format!("Comparing the clothing files stopped: {error}"))?
+}
+
+/// Builds a new clothing pack resource (`parent/name`) from files the user
+/// picked: copied and written into a hidden folder beside it, then renamed
+/// into place, so a failed build leaves nothing behind. Emits
+/// `clothing-pack-progress` `{ done, total }`. Resolves `{ path, files }`.
+#[tauri::command]
+async fn clothing_pack_build(
+    request: clothing_write::BuildRequest,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || build_clothing_pack(&app, &request))
+        .await
+        .map_err(|error| format!("The pack build stopped: {error}"))?
+}
+
+fn build_clothing_pack(
+    app: &tauri::AppHandle,
+    request: &clothing_write::BuildRequest,
+) -> Result<serde_json::Value, String> {
+    // Every error says whether anything was left on disk.
+    let ending = |error: String, tail: &str| {
+        let mut text = error.trim_end().to_string();
+        if !text.ends_with('.') {
+            text.push('.');
+        }
+        format!("{text} {tail}")
+    };
+    let build = clothing_write::check_build(request, |path| model_opened(app, path))
+        .map_err(|error| ending(error, "Nothing was written."))?;
+    let nanos = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let staging = build
+        .target
+        .with_file_name(format!(".cortex-build-{}-{nanos}", request.name));
+    std::fs::create_dir(&staging).map_err(|error| {
+        ending(
+            format!("Cannot write in {}: {error}", request.parent.display()),
+            "Nothing was written.",
+        )
+    })?;
+    let total = build.copies.len() + build.ymts.len() + build.texts.len();
+    let progress = |done: usize| {
+        let _ = app.emit(
+            "clothing-pack-progress",
+            serde_json::json!({ "done": done, "total": total }),
+        );
+    };
+    let result = (|| {
+        let mut done = 0usize;
+        for (from, to) in &build.copies {
+            let target = staging.join(to);
+            if let Some(folder) = target.parent() {
+                std::fs::create_dir_all(folder)
+                    .map_err(|error| format!("Cannot write {}: {error}", folder.display()))?;
+            }
+            lens_write::copy_new(from, &target)
+                .map_err(|error| format!("Could not copy {}: {error}", from.display()))?;
+            done += 1;
+            if done.is_multiple_of(25) {
+                progress(done);
+            }
+        }
+        for (to, xml) in &build.ymts {
+            bridge_request(
+                app,
+                "writePedVariation",
+                serde_json::json!({ "xml": xml, "output": staging.join(to) }),
+                BRIDGE_REQUEST_TIMEOUT,
+            )?;
+            done += 1;
+            progress(done);
+        }
+        for (to, text) in &build.texts {
+            let target = staging.join(to);
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+                .and_then(|mut file| file.write_all(text.as_bytes()))
+                .map_err(|error| format!("Could not write {}: {error}", target.display()))?;
+            done += 1;
+        }
+        progress(done);
+        if std::fs::symlink_metadata(&build.target).is_ok() {
+            return Err(format!(
+                "{} appeared while the pack was built, so it is not written over.",
+                build.target.display()
+            ));
+        }
+        std::fs::rename(&staging, &build.target).map_err(|error| {
+            format!(
+                "Could not name the pack {}: {error}",
+                build.target.display()
+            )
+        })?;
+        Ok(serde_json::json!({ "path": build.target, "files": total }))
+    })();
+    result.map_err(|error| match std::fs::remove_dir_all(&staging) {
+        Ok(()) => ending(error, "Nothing was written."),
+        Err(left) => ending(
+            error,
+            &format!(
+                "The unfinished build {} could not be removed ({left}); delete it.",
+                staging.display()
+            ),
+        ),
+    })
+}
+
 fn validate_ped_name(ped: &str) -> Result<String, String> {
     let trimmed = ped.trim();
     if trimmed.is_empty() || trimmed.len() > 64 {
@@ -3546,6 +4016,7 @@ pub fn run() {
         .manage(PendingOpenFileState::default())
         .manage(BridgeState::default())
         .manage(livery_write::LiveryWriteState::default())
+        .manage(clothing_write::ClothingWriteState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(file_path) = extract_open_file_arg(&args) {
                 queue_open_file(app, file_path);
@@ -3584,6 +4055,15 @@ pub fn run() {
             livery_write_stage,
             livery_write_commit,
             livery_write_cancel,
+            clothing_item,
+            clothing_write_begin,
+            clothing_write_stage,
+            clothing_write_commit,
+            clothing_write_cancel,
+            clothing_folder,
+            read_pack_ymt,
+            clothing_identical_files,
+            clothing_pack_build,
             list_ped_assets,
             export_ped_asset,
             search_peds,

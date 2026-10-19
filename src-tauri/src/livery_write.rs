@@ -15,7 +15,6 @@ const MAX_DICTIONARIES: usize = 8;
 const MAX_TEXTURES: usize = 128;
 const MAX_STAGED: usize = 512;
 const MAX_DDS_BYTES: usize = 384 * 1024 * 1024;
-const CANCELLED: &str = "This livery write was cancelled. Nothing was changed.";
 
 struct Session {
     token: String,
@@ -24,9 +23,18 @@ struct Session {
     staged: HashMap<String, PathBuf>,
 }
 
-/// The one livery write in progress, if any.
-#[derive(Default)]
-pub struct LiveryWriteState(Mutex<Option<Session>>);
+/// The one livery write in progress, if any. The clothing texture write
+/// stages through the same session, under its own label (clothing_write.rs).
+pub struct LiveryWriteState {
+    label: &'static str,
+    session: Mutex<Option<Session>>,
+}
+
+impl Default for LiveryWriteState {
+    fn default() -> Self {
+        Self::labelled("livery")
+    }
+}
 
 /// A committed session's staged files. Dropping it removes the session folder.
 pub struct Staged {
@@ -57,11 +65,26 @@ fn valid_id(id: &str) -> bool {
 }
 
 impl LiveryWriteState {
+    /// A session whose messages name the write `label` ("livery", "clothing").
+    pub fn labelled(label: &'static str) -> Self {
+        Self {
+            label,
+            session: Mutex::new(None),
+        }
+    }
+
+    fn cancelled(&self) -> String {
+        format!(
+            "This {} write was cancelled. Nothing was changed.",
+            self.label
+        )
+    }
+
     /// Starts a write for `model`, staging into a new folder under `root`.
     /// One write runs at a time: an earlier session is dropped with its folder,
     /// and so are folders an earlier run of the app left behind.
     pub fn begin(&self, root: &Path, model: PathBuf) -> Result<String, String> {
-        let mut session = lock(&self.0);
+        let mut session = lock(&self.session);
         if let Some(previous) = session.take() {
             let _ = std::fs::remove_dir_all(previous.dir);
         }
@@ -81,7 +104,7 @@ impl LiveryWriteState {
         let token = format!("{own}{nanos}");
         let dir = root.join(&token);
         std::fs::create_dir_all(&dir)
-            .map_err(|error| format!("Cannot prepare the livery write: {error}"))?;
+            .map_err(|error| format!("Cannot prepare the {} write: {error}", self.label))?;
         *session = Some(Session {
             token: token.clone(),
             model,
@@ -97,23 +120,23 @@ impl LiveryWriteState {
             return Err(format!("\"{id}\" is not a staged texture id."));
         }
         let path = {
-            let session = lock(&self.0);
+            let session = lock(&self.session);
             let session = session
                 .as_ref()
                 .filter(|session| session.token == token)
-                .ok_or(CANCELLED)?;
+                .ok_or_else(|| self.cancelled())?;
             if session.staged.contains_key(id) {
                 return Err(format!("{id} is staged twice."));
             }
             if session.staged.len() >= MAX_STAGED {
-                return Err("A livery write holds too many textures.".into());
+                return Err(format!("A {} write holds too many textures.", self.label));
             }
             session.dir.join(format!("{id}.dds"))
         };
         // Written outside the lock: a large DDS takes a moment.
         std::fs::write(&path, dds)
-            .map_err(|error| format!("Cannot prepare livery texture {id}: {error}"))?;
-        let mut session = lock(&self.0);
+            .map_err(|error| format!("Cannot prepare {} texture {id}: {error}", self.label))?;
+        let mut session = lock(&self.session);
         match session.as_mut().filter(|session| session.token == token) {
             Some(session) => {
                 session.staged.insert(id.to_string(), path);
@@ -121,14 +144,14 @@ impl LiveryWriteState {
             }
             None => {
                 let _ = std::fs::remove_file(&path);
-                Err(CANCELLED.into())
+                Err(self.cancelled())
             }
         }
     }
 
     /// Ends the session for its commit. The token cannot be used again.
     pub fn take(&self, token: &str) -> Result<Staged, String> {
-        let mut session = lock(&self.0);
+        let mut session = lock(&self.session);
         match session.take() {
             Some(current) if current.token == token => Ok(Staged {
                 model: current.model,
@@ -137,7 +160,7 @@ impl LiveryWriteState {
             }),
             other => {
                 *session = other;
-                Err(CANCELLED.into())
+                Err(self.cancelled())
             }
         }
     }
@@ -160,19 +183,19 @@ pub fn parse_stage(body: &[u8]) -> Result<(String, String, &[u8]), String> {
     let length = body
         .get(..4)
         .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
-        .ok_or("The livery texture is empty.")?;
+        .ok_or("The staged texture is empty.")?;
     let header_end = 4usize
         .checked_add(length)
         .filter(|end| *end <= body.len())
-        .ok_or("The livery texture header is truncated.")?;
+        .ok_or("The staged texture header is truncated.")?;
     let header: StageHeader = serde_json::from_slice(&body[4..header_end])
-        .map_err(|error| format!("The livery texture header is not valid: {error}"))?;
+        .map_err(|error| format!("The staged texture header is not valid: {error}"))?;
     let dds = &body[header_end..];
     if dds.len() > MAX_DDS_BYTES {
-        return Err(format!("Livery texture {} is too large.", header.id));
+        return Err(format!("Staged texture {} is too large.", header.id));
     }
     if dds.len() < 128 || &dds[..4] != b"DDS " {
-        return Err(format!("Livery texture {} is not a DDS file.", header.id));
+        return Err(format!("Staged texture {} is not a DDS file.", header.id));
     }
     Ok((header.token, header.id, dds))
 }
@@ -218,53 +241,61 @@ pub fn check_commit(
         return Err("A livery write names 1 to 8 texture dictionaries.".into());
     }
     for ytd in &request.ytds {
-        if ytd.textures.is_empty() || ytd.textures.len() > MAX_TEXTURES {
+        check_textures(&ytd.path, &ytd.textures, staged)?;
+    }
+    Ok(())
+}
+
+/// The texture list for one dictionary: valid names, known modes, every new
+/// texture staged, and no name twice. Shared with the clothing write.
+pub fn check_textures(
+    path: &Path,
+    textures: &[CommitTexture],
+    staged: &HashMap<String, PathBuf>,
+) -> Result<(), String> {
+    if textures.is_empty() || textures.len() > MAX_TEXTURES {
+        return Err(format!("{} lists no textures or too many.", path.display()));
+    }
+    let mut names = HashSet::new();
+    for texture in textures {
+        if !valid_texture_name(&texture.name) {
+            return Err(format!("\"{}\" is not a texture name.", texture.name));
+        }
+        if !names.insert(texture.name.to_ascii_lowercase()) {
             return Err(format!(
-                "{} lists no textures or too many.",
-                ytd.path.display()
+                "{} is written twice into {}.",
+                texture.name,
+                path.display()
             ));
         }
-        let mut names = HashSet::new();
-        for texture in &ytd.textures {
-            if !valid_texture_name(&texture.name) {
-                return Err(format!("\"{}\" is not a texture name.", texture.name));
+        match (texture.mode.as_str(), texture.like.as_deref()) {
+            ("replace" | "insert" | "delete", None) => {}
+            ("insert", Some(like)) => {
+                if !valid_texture_name(like) || like.eq_ignore_ascii_case(&texture.name) {
+                    return Err(format!(
+                        "\"{like}\" cannot be the texture {} is modelled on.",
+                        texture.name
+                    ));
+                }
             }
-            if !names.insert(texture.name.to_ascii_lowercase()) {
+            ("replace" | "delete", Some(_)) => {
                 return Err(format!(
-                    "{} is written twice into {}.",
-                    texture.name,
-                    ytd.path.display()
-                ));
+                    "{} is not a new texture, so it is modelled on none.",
+                    texture.name
+                ))
             }
-            match (texture.mode.as_str(), texture.like.as_deref()) {
-                ("replace" | "insert" | "delete", None) => {}
-                ("insert", Some(like)) => {
-                    if !valid_texture_name(like) || like.eq_ignore_ascii_case(&texture.name) {
-                        return Err(format!(
-                            "\"{like}\" cannot be the texture {} is modelled on.",
-                            texture.name
-                        ));
-                    }
-                }
-                ("replace" | "delete", Some(_)) => {
-                    return Err(format!(
-                        "{} is not a new texture, so it is modelled on none.",
-                        texture.name
-                    ))
-                }
-                (other, _) => return Err(format!("Unknown texture write mode \"{other}\".")),
+            (other, _) => return Err(format!("Unknown texture write mode \"{other}\".")),
+        }
+        match (texture.mode.as_str(), texture.id.as_deref()) {
+            ("delete", None) => {}
+            ("delete", Some(_)) => {
+                return Err(format!(
+                    "{} is removed, so nothing is staged for it.",
+                    texture.name
+                ))
             }
-            match (texture.mode.as_str(), texture.id.as_deref()) {
-                ("delete", None) => {}
-                ("delete", Some(_)) => {
-                    return Err(format!(
-                        "{} is removed, so nothing is staged for it.",
-                        texture.name
-                    ))
-                }
-                (_, Some(id)) if staged.contains_key(id) => {}
-                _ => return Err(format!("{} was never staged.", texture.name)),
-            }
+            (_, Some(id)) if staged.contains_key(id) => {}
+            _ => return Err(format!("{} was never staged.", texture.name)),
         }
     }
     Ok(())

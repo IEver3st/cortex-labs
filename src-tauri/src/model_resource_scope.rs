@@ -7,10 +7,12 @@ fn resource_root(model: &Path) -> Result<PathBuf, String> {
         .extension()
         .and_then(|value| value.to_str())
         .is_some_and(|value| {
-            value.eq_ignore_ascii_case("yft") || value.eq_ignore_ascii_case("clmesh")
+            value.eq_ignore_ascii_case("yft")
+                || value.eq_ignore_ascii_case("ydd")
+                || value.eq_ignore_ascii_case("clmesh")
         })
     {
-        return Err("Resource access requires a .yft or .clmesh model.".into());
+        return Err("Resource access requires a .yft, .ydd or .clmesh model.".into());
     }
     let model = model
         .canonicalize()

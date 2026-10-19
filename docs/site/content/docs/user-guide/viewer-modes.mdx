@@ -126,6 +126,23 @@ Best for **clothing models**.
 - The **Workbench / Showroom** switch on the viewfinder works here too. The showroom stands the clothing in a dark studio under one spotlight, with the floor, light direction, spot strength and reflections in the Scene tab, and **Turntable** spins it. New EUP tabs start from the EUP scene in Settings > Studio, the one EUP Studio uses, including its rim light.
 - **Surface** in the Material tab sets how the clothing takes light: the type (Paint, Chrome, Plastic, Metal, Glass), **Light response**, **Gloss**, **Roughness** and **Clearcoat**.
 
+### Clothing textures
+
+- The **Textures** tab lists the textures of the clothing item you opened, a to z, as the game numbers them (`<pack>^task_diff_000_a_uni.ytd`, then `_b_`, `_c_` and so on). Click one to preview it on the item.
+- **Add textures**, or dropping images on the tab, adds them as the item's next letters in file-name order. An image dropped on a texture replaces it. An item holds up to 26 textures, and a pack up to 255 in one slot.
+- **Write N textures…** lists every file it replaces or adds, at what size, and how the pack's count changes, and checks for scaled-up or stretched images. Images are scaled to the size the item's textures already use and written as DXT5; a new texture file starts as a copy of the item's first one. Replaced files and the pack's `.ymt` get a dated `.bak` beside them first, **Stop** changes nothing, and a failed write puts back what it changed. Restart the resource in game to load the textures.
+- Adding textures needs the pack's ped variation file (`<ped>_<pack>.ymt`, such as `mp_m_freemode_01_mp_m_gsdmods_vests.ymt`) in the same resource, because it counts each item's textures. Without one, textures can be replaced but not added.
+- PNG, JPG, WebP, BMP, TIFF, PSD, PDN and DDS images are read. Only legacy GTA V texture files can be written; escrow-encrypted ones can't be read. If you bought or downloaded the clothing, its licence decides whether you may change it. Desktop app only.
+
+### Build an addon pack
+
+- **Build an addon pack** on the Model step makes a new FiveM resource from folders of freemode clothing (`mp_m_freemode_01` and `mp_f_freemode_01`): addon packs you have, or loose files from a clothing tool. Add the source folders, name the pack and pick the folder to build it in.
+- Every item is numbered again in the new pack with its textures, and keeps the settings its pack's `.ymt` gives it. A slot with more than 128 items or 255 textures continues in a second pack, `<name>_02`, in the same resource.
+- **Merge identical models** turns items whose model file is byte for byte the same into one item with the textures of all of them, so three packs that recolour the same vest become one vest with every colour. A texture file that is the same in two packs is kept once.
+- The build writes `fxmanifest.lua`, a shop meta for each ped and the `stream` files into a new folder. It never writes over a folder that exists, the source folders are only read, and a failed build leaves nothing behind. Add `ensure <name>` to your `server.cfg` to stream it.
+- Cortex does not copy from escrowed resources (those with a `.fxap` file), from encrypted or GTA V Enhanced files, or from the GTA V install or FiveM's own files. Only build from clothing you made or may share: each pack's licence still applies to its clothing after a merge, so keep it with the pack.
+- Creature metadata (`mp_creaturemetadata_*.ymt`, which sets how hats sit over hair) is not carried into the new pack yet, so hair may show through those hats in game. The checks say when a source has it. Desktop app only.
+
 Use this mode when:
 
 - You’re previewing Emergency Uniform Pack assets.
