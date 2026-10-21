@@ -136,12 +136,7 @@ Best for **clothing models**.
 
 ### Build an addon pack
 
-- **Build an addon pack** on the Model step makes a new FiveM resource from folders of freemode clothing (`mp_m_freemode_01` and `mp_f_freemode_01`): addon packs you have, or loose files from a clothing tool. Add the source folders, name the pack and pick the folder to build it in.
-- Every item is numbered again in the new pack with its textures, and keeps the settings its pack's `.ymt` gives it. A slot with more than 128 items or 255 textures continues in a second pack, `<name>_02`, in the same resource.
-- **Merge identical models** turns items whose model file is byte for byte the same into one item with the textures of all of them, so three packs that recolour the same vest become one vest with every colour. A texture file that is the same in two packs is kept once.
-- The build writes `fxmanifest.lua`, a shop meta for each ped and the `stream` files into a new folder. It never writes over a folder that exists, the source folders are only read, and a failed build leaves nothing behind. Add `ensure <name>` to your `server.cfg` to stream it.
-- Cortex does not copy from escrowed resources (those with a `.fxap` file), from encrypted or GTA V Enhanced files, or from the GTA V install or FiveM's own files. Only build from clothing you made or may share: each pack's licence still applies to its clothing after a merge, so keep it with the pack.
-- Creature metadata (`mp_creaturemetadata_*.ymt`, which sets how hats sit over hair) is not carried into the new pack yet, so hair may show through those hats in game. The checks say when a source has it. Desktop app only.
+- **Build an addon pack** on the Model step opens EUP Studio on its **Pack** tab, which makes a new FiveM resource from folders of freemode clothing. There you order the items, leave some out, set their sounds, game flags, **Flatten hair** and **Heel height**, and build. See [Build an addon pack](/docs/user-guide/eup-studio#build-an-addon-pack). Desktop app only.
 
 Use this mode when:
 

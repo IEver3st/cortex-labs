@@ -32,6 +32,7 @@ import {
   setGroupPose,
   setGroupSkinTint,
   setHeldPropSpec,
+  setPedHairCrush,
   setPedPose,
   setSlotHidden,
   updatePedPropAttachments,
@@ -184,6 +185,7 @@ export function usePedFigure({
   freezeRef,
   visibility = NO_VISIBILITY,
   clipRevision = 0,
+  hairCrush = null,
   onSettled,
 }) {
   const present = Boolean(member);
@@ -863,6 +865,13 @@ export function usePedFigure({
     for (const group of rootRef.current.children) setGroupHairColor(group, hair);
     viewportRef.current?.requestRender();
   }, [hair, viewportRef]);
+
+  const hairCrushKey = hairCrush ? `${hairCrush.hat}|${hairCrush.hair}` : "";
+  useEffect(() => {
+    setPedHairCrush(rootRef.current, hairCrushKey ? hairCrush : null);
+    viewportRef.current?.requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hairCrushKey, viewportRef]);
 
   useEffect(() => {
     for (const [component, mounted] of runtimeRef.current) {

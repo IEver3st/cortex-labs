@@ -184,7 +184,7 @@ function UnloadButton({ onClick, title, className }) {
   );
 }
 
-function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultTextureMode = "vehicle", initialState = null, contextBarTarget = null }) {
+function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null, settingsVersion, defaultTextureMode = "vehicle", initialState = null, contextBarTarget = null }) {
 
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef({ primary: null, window: null });
@@ -2772,7 +2772,7 @@ function App({ shellTab, isActive = true, onRenameTab, settingsVersion, defaultT
       isActive, isBooting, contextBarTarget, isTauriRuntime, hotkeys,
       panelCollapsed, setPanelCollapsed,
       modelPath, modelSourcePath, modelLoading, viewerReady, modelDropLabel,
-      selectModel,
+      selectModel, openPackBuilder: onOpenPackBuilder,
       vehicleFolder, folderScan, folderVehicles, vehicleFilter, setVehicleFilter, openVehicleFolder, openFolderVehicle, stepFolderVehicle,
       closeVehicleFolder: () => {
         setVehicleFolder("");

@@ -574,14 +574,20 @@ export function applyPropAttachment(group, skeleton, pose = null) {
 // under a hat: MH_Hair_Scale scales by 1 + a; MH_Hair_Crown drops 0.05 * (a + b)
 // along the head's up (local X) axis and narrows across it by 1 + 0.5 * (a + b).
 // `a` is the hairstyle's crush (expressionMods[2], 0.18-0.21 in the game's hair)
-// and `b` the hat's (expressionMods[3], 191 / 255 on base-game hats). Pack
-// metadata isn't read, so every hat uses these values.
+// and `b` the hat's (expressionMods[3], 191 / 255 on base-game hats). A pack
+// hat or hairstyle the page knows the values of sets them in root.userData.hairCrush.
 const HAIR_SCALE_TAG = 0xc664;
 const HAIR_CROWN_TAG = 0x1675;
 const HAT_HAIR_CRUSH = { hair: -0.19, hat: -0.75 };
 
-function applyHatHair(bones) {
-  const { hair, hat } = HAT_HAIR_CRUSH;
+function rootHairCrush(root) {
+  const set = root.userData.hairCrush;
+  const hat = set ? set.hat : HAT_HAIR_CRUSH.hat;
+  if (!hat) return null;
+  return { hat, hair: set?.hair ?? HAT_HAIR_CRUSH.hair };
+}
+
+function applyHatHair(bones, { hair, hat }) {
   for (const bone of bones) {
     if (bone.userData.tag === HAIR_SCALE_TAG) {
       bone.scale.setScalar(1 + hair);
@@ -601,7 +607,7 @@ export function setGroupPose(group, pose) {
     bone.position.copy(translations?.get(index) || bone.userData.bindPosition);
     bone.scale.set(1, 1, 1);
   });
-  if (group.userData.hatHair) applyHatHair(bones);
+  if (group.userData.hatHair) applyHatHair(bones, group.userData.hatHairCrush || HAT_HAIR_CRUSH);
   group.updateMatrixWorld(true);
   // Skinned bounds are computed from the current pose; drop the cached ones.
   group.traverse((child) => {
@@ -658,12 +664,20 @@ export function setSlotHidden(group, hidden) {
 
 /** Crushes the hair while a hat is shown, and restores it when the hat goes. */
 export function updatePedHatHair(root) {
-  const hat = root.children.some((group) => group.name === "p_head" && group.visible);
+  const crush = root.children.some((group) => group.name === "p_head" && group.visible) ? rootHairCrush(root) : null;
+  const key = crush ? `${crush.hair}|${crush.hat}` : "";
   for (const group of root.children) {
-    if (PROP_BONES[group.name] !== undefined || Boolean(group.userData.hatHair) === hat) continue;
-    group.userData.hatHair = hat;
+    if (PROP_BONES[group.name] !== undefined || (group.userData.hatHairKey || "") === key) continue;
+    group.userData.hatHair = Boolean(crush);
+    group.userData.hatHairCrush = crush;
+    group.userData.hatHairKey = key;
     setGroupPose(group, root.userData.pose);
   }
+}
+
+export function setPedHairCrush(root, crush) {
+  root.userData.hairCrush = crush ? { hat: crush.hat, hair: crush.hair } : null;
+  updatePedHatHair(root);
 }
 
 // Props contain bone-local vertices. Reapply attachments when any slot loads,

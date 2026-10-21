@@ -7,7 +7,6 @@ import VehicleMetaPanel from "../VehicleMetaPanel";
 import ModkitPanel, { GameLiverySwitcher } from "./ModkitPanel";
 import LiveriesPanel from "./LiveriesPanel";
 import ClothingTexturesPanel from "./ClothingTexturesPanel";
-import ClothingPackDialog from "./ClothingPackDialog";
 import SaveVehicle from "./SaveVehicle";
 import PackSheet, { PackBar } from "./PackSheet";
 import KitShootReview from "./KitShootReview";
@@ -419,7 +418,6 @@ export function CaptureSection({ s, hasModel, copy }) {
 export default function SingleWorkspace({ s, viewer, overlays }) {
   const [inspectorTab, setInspectorTab] = useState("paint");
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [packDialogOpen, setPackDialogOpen] = useState(false);
   const isEup = s.mode === "eup";
   const isVehicle = !isEup;
   const copy = COPY[isEup ? "eup" : "vehicle"];
@@ -512,8 +510,8 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
                 Open a folder of vehicles
               </button>
             ) : null}
-            {isEup && s.isTauriRuntime ? (
-              <button type="button" className="lv-link lv-folder-link" onClick={() => setPackDialogOpen(true)} title="Merge folders of clothing into one new addon pack resource">
+            {isEup && s.isTauriRuntime && s.openPackBuilder ? (
+              <button type="button" className="lv-link lv-folder-link" onClick={s.openPackBuilder} title="Open EUP Studio's Pack tab to build one addon pack from folders of clothing">
                 <PackagePlus aria-hidden="true" />
                 Build an addon pack
               </button>
@@ -709,7 +707,6 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
       </aside>
 
       {overlays}
-      {packDialogOpen ? <ClothingPackDialog onClose={() => setPackDialogOpen(false)} /> : null}
       {s.kitShoot?.review ? (
         <KitShootReview
           root={s.kitShoot.review.root}

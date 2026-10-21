@@ -10,7 +10,8 @@
 // Pure: the panels supply listings, texture sizes and .ymt XML; the desktop
 // host validates every path and does the writing.
 
-import { COMPONENT_IDS, PED_IDS } from "./eup.js";
+import { COMPONENT_IDS, PED_IDS, pathKey } from "./eup.js";
+import { FEET_SLOT, HAT_ANCHOR, creatureFileName, creatureMetadataXml, editedComponentInfo, editedPropMeta, hatFlatten, heelHeight, normalizeItemEdit } from "./clothing-properties.js";
 import {
   ANCHOR_NAMES,
   buildPedVariation,
@@ -525,6 +526,65 @@ export function normalizeClothingSet(value) {
 
 /* ── Building an addon pack ── */
 
+export const itemKey = (item) => pathKey(item.drawable);
+export const slotOrderKey = ({ ped, isProp, slotId }) => `${ped}|${isProp ? "p" : "c"}|${slotId}`;
+
+export const MAX_PACK_EDITS = 4096;
+const MAX_ORDER_ITEMS = 512;
+const ORDER_KEY = /^mp_[mf]_freemode_01\|[pc]\|\d{1,2}$/;
+
+const validKey = (key) => typeof key === "string" && key.length > 0 && key.length <= 1024;
+
+export function normalizePackProject(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const edits = {};
+  for (const [key, edit] of Object.entries(source.edits && typeof source.edits === "object" ? source.edits : {}).slice(0, MAX_PACK_EDITS)) {
+    const clean = normalizeItemEdit(edit);
+    if (clean && validKey(key)) edits[key] = clean;
+  }
+  const order = {};
+  for (const [key, list] of Object.entries(source.order && typeof source.order === "object" ? source.order : {})) {
+    if (ORDER_KEY.test(key) && Array.isArray(list)) order[key] = [...new Set(list.filter(validKey))].slice(0, MAX_ORDER_ITEMS);
+  }
+  return {
+    name: typeof source.name === "string" ? source.name.trim().slice(0, 32) : "",
+    parent: typeof source.parent === "string" && source.parent.length <= 1024 ? source.parent : "",
+    merge: source.merge !== false,
+    edits,
+    order,
+  };
+}
+
+export function withItemEdits(edits, keys, patch) {
+  const next = { ...edits };
+  for (const key of keys) {
+    const merged = normalizeItemEdit({ ...next[key], ...patch });
+    const cleared = Object.entries(patch).filter(([, value]) => value == null).map(([field]) => field);
+    for (const field of cleared) delete merged?.[field];
+    if (merged && Object.keys(merged).length) next[key] = merged;
+    else delete next[key];
+  }
+  return next;
+}
+
+export function withoutItemProperties(edits, keys) {
+  const next = { ...edits };
+  for (const key of keys) {
+    if (next[key]?.out) next[key] = { out: true };
+    else delete next[key];
+  }
+  return next;
+}
+
+export function movedInOrder(order, slotKey, keys, key, delta) {
+  const at = keys.indexOf(key);
+  const to = at + delta;
+  if (at < 0 || to < 0 || to >= keys.length) return order;
+  const list = keys.slice();
+  [list[at], list[to]] = [list[to], list[at]];
+  return { ...order, [slotKey]: list };
+}
+
 /** A pack name for the files and the .ymt: lowercase letters, digits and _. */
 export function checkPackName(value) {
   const name = String(value || "").trim();
@@ -549,14 +609,23 @@ function sourceData(item, model) {
  * race and id come from its pack's .ymt when that lists the item, else from
  * its file name. Returns `{ items, checks }`.
  */
-function collectItems(sources, models) {
+function collectItems(sources, models, edits) {
   const items = [];
   const checks = [];
+  const left = [];
   for (const source of sources) {
     for (const pack of source.packs) {
       const model = pack.ymtPath ? models[pack.ymtPath] : null;
       for (const item of pack.items) {
         const label = fileNameOf(item.drawable);
+        if (edits[itemKey(item)]?.out) {
+          const data = sourceData(item, model);
+          left.push({
+            key: itemKey(item), label, source: source.label, ped: item.ped, isProp: item.isProp, slot: item.slot, slotId: item.slotId, sourceDrawable: item.drawable,
+            suffix: item.suffix, info: data.info || null, prop: data.prop || null,
+          });
+          continue;
+        }
         const data = sourceData(item, model);
         const listed = item.isProp ? data.prop : data.drawable;
         const files = [...texturesByLetter(item, ymtRaces(item, listed?.textures)).values()].sort((a, b) => a.letter.localeCompare(b.letter));
@@ -606,7 +675,26 @@ function collectItems(sources, models) {
       }
     }
   }
-  return { items, checks };
+  return { items, checks, left };
+}
+
+function inSlotOrder(built, order) {
+  const groups = new Map();
+  for (const entry of built) {
+    const key = slotOrderKey(entry.item);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  const sorted = [];
+  for (const [key, list] of groups) {
+    const wanted = Array.isArray(order[key]) ? order[key] : [];
+    const rank = (entry, position) => {
+      const at = wanted.indexOf(itemKey(entry.item));
+      return at >= 0 ? at : wanted.length + position;
+    };
+    sorted.push(...list.map((entry, position) => ({ entry, rank: rank(entry, position) })).sort((a, b) => a.rank - b.rank).map(({ entry }) => entry));
+  }
+  return sorted;
 }
 
 /**
@@ -624,14 +712,16 @@ function collectItems(sources, models) {
  * `{ to, xml }`, `texts[]` `{ to, text }`; `items` lists each built item with
  * its new name, textures and the sources merged into it.
  */
-export function planClothingPackBuild({ name, sources = [], models = {}, identical = {}, merge = true }) {
-  const plan = { blocked: null, checks: [], items: [], dlcs: [], copies: [], texts: [], ymts: [], summary: { items: 0, textures: 0, merged: 0, packs: 0 } };
+export function planClothingPackBuild({ name, sources = [], models = {}, identical = {}, merge = true, edits = {}, order = {} }) {
+  const plan = { blocked: null, checks: [], items: [], left: [], dlcs: [], copies: [], texts: [], ymts: [], creatures: [], summary: { items: 0, textures: 0, merged: 0, packs: 0, left: 0 } };
   const checked = checkPackName(name);
   if (checked.error) plan.blocked = checked.error;
-  const { items: collected, checks } = collectItems(sources, models);
+  const { items: collected, checks, left } = collectItems(sources, models, edits);
   plan.checks.push(...checks);
+  plan.left = left;
+  plan.summary.left = left.length;
   if (!collected.length) {
-    plan.blocked ||= "Add clothing to build a pack.";
+    plan.blocked ||= left.length ? "Every item is left out. Put one back to build a pack." : "Add clothing to build a pack.";
     return plan;
   }
 
@@ -643,14 +733,18 @@ export function planClothingPackBuild({ name, sources = [], models = {}, identic
     const key = merge && group != null ? `${entry.item.ped}|${entry.item.isProp ? "p" : "c"}|${entry.item.slot}|${entry.item.suffix || ""}|${group}` : null;
     const target = key ? byModel.get(key) : null;
     if (target) {
-      const seen = new Set(target.textures.map((texture) => identical[texture.path] ?? texture.path.toLowerCase()));
-      const fresh = entry.textures.filter((texture) => !seen.has(identical[texture.path] ?? texture.path.toLowerCase()));
+      const textureKey = (texture) => `${texture.texId}|${identical[texture.path] ?? texture.path.toLowerCase()}`;
+      const seen = new Set(target.textures.map(textureKey));
+      const fresh = entry.textures.filter((texture) => !seen.has(textureKey(texture)));
       if (target.textures.length + fresh.length > MAX_ITEM_TEXTURES) {
         plan.checks.push({ tone: "caution", text: `${entry.label} has the same model as ${target.label}, but together they would have ${target.textures.length + fresh.length} textures (an item holds ${MAX_ITEM_TEXTURES}), so they stay apart.` });
       } else {
         // The merged item keeps the first one's first-person and cloth files.
         if (entry.alternates.length > target.alternates.length || (entry.item.cloth && !target.item.cloth)) {
           plan.checks.push({ tone: "caution", text: `${entry.label} has first-person or cloth files that ${target.label} lacks; the merged item uses ${target.label}'s, so they are left out.` });
+        }
+        if (Object.keys(edits[itemKey(entry.item)] || {}).some((field) => field !== "out")) {
+          plan.checks.push({ tone: "caution", text: `${entry.label} merges into ${target.label}, so the settings you gave ${entry.label} are not used.` });
         }
         target.textures.push(...fresh);
         target.merged.push({ label: entry.label, source: entry.source.label, added: fresh.length, duplicates: entry.textures.length - fresh.length });
@@ -663,6 +757,7 @@ export function planClothingPackBuild({ name, sources = [], models = {}, identic
   }
 
   // Number the items per ped and slot; a full slot continues in the next pack.
+  const ordered = inSlotOrder(built, order);
   const packs = new Map();
   const packFor = (ped, part) => {
     const key = `${ped}|${part}`;
@@ -673,7 +768,7 @@ export function planClothingPackBuild({ name, sources = [], models = {}, identic
     }
     return packs.get(key);
   };
-  for (const entry of built) {
+  for (const entry of ordered) {
     const { item } = entry;
     let part = 0;
     for (;;) {
@@ -701,36 +796,44 @@ export function planClothingPackBuild({ name, sources = [], models = {}, identic
   for (const pack of sortedPacks) {
     const components = new Map();
     for (const [slotId, list] of pack.components) {
-      components.set(slotId, list.map((entry) => ({
-        drawable: {
-          propMask: entry.data.drawable?.propMask ?? (entry.item.suffix === "r" ? 17 : 1),
-          // Alternates are the first-person `_1` models: as many as are copied.
-          numAlternatives: entry.alternates.length,
-          textures: entry.textures.map((texture) => ({ texId: texture.texId, distribution: texture.data?.distribution ?? 255 })),
-          ownsCloth: Boolean(entry.item.cloth) && (entry.data.drawable?.ownsCloth ?? true),
-        },
-        info: entry.data.info || null,
-      })));
+      components.set(slotId, list.map((entry) => {
+        const edit = edits[itemKey(entry.item)];
+        const info = entry.data.info || null;
+        return {
+          drawable: {
+            propMask: entry.data.drawable?.propMask ?? (entry.item.suffix === "r" ? 17 : 1),
+            // Alternates are the first-person `_1` models: as many as are copied.
+            numAlternatives: entry.alternates.length,
+            textures: entry.textures.map((texture) => ({ texId: texture.texId, distribution: texture.data?.distribution ?? 255 })),
+            ownsCloth: Boolean(entry.item.cloth) && (entry.data.drawable?.ownsCloth ?? true),
+          },
+          info: edit ? editedComponentInfo(info || defaultComponentInfo(slotId, entry.index), edit) : info,
+        };
+      }));
     }
     const props = new Map();
     for (const [anchorId, list] of pack.props) {
       props.set(anchorId, list.map((entry) => {
         const base = entry.data.prop || defaultPropMeta(anchorId, entry.index, 0);
-        return {
+        return editedPropMeta({
           ...base,
           textures: entry.textures.map((texture, texId) => ({ ...(texture.data || defaultPropMeta(anchorId, entry.index, 1).textures[0]), texId })),
-        };
+        }, edits[itemKey(entry.item)]);
       }));
     }
     const model = buildPedVariation({ name: pack.dlc, dlcName: pack.dlc, components, props });
     const ymt = `stream/${ymtFileName(pack.ped, pack.dlc)}`;
     plan.ymts.push({ to: ymt, xml: pedVariationXml(model) });
+    const hats = (props.get(HAT_ANCHOR) || []).flatMap((prop, index) => (hatFlatten(prop.expressionMods) > 0 ? [index] : []));
+    const heels = (components.get(FEET_SLOT) || []).flatMap(({ info }, index) => (heelHeight(info?.expressionMods) > 0 ? [index] : []));
+    const creature = creatureMetadataXml({ hats, heels });
+    if (creature) plan.creatures.push({ to: `stream/${creatureFileName(pack.dlc)}`, xml: creature, hats: hats.length, heels: heels.length });
     const meta = `${pack.ped}_${pack.dlc}.meta`;
     plan.texts.push({ to: meta, text: shopMetaXml(pack.ped, pack.dlc) });
     plan.dlcs.push({ ped: pack.ped, dlc: pack.dlc, ymt, meta });
   }
 
-  for (const entry of built) {
+  for (const entry of ordered) {
     const { item, pack, index } = entry;
     const at = { ped: item.ped, dlc: pack.dlc, isProp: item.isProp, slot: item.slot, index, suffix: item.suffix };
     const folder = `stream/${streamPrefix(item.ped, pack.dlc, item.isProp)}`;
@@ -743,12 +846,16 @@ export function planClothingPackBuild({ name, sources = [], models = {}, identic
       plan.copies.push({ from: texture.path, to });
       return { from: texture.path, to };
     });
-    plan.items.push({ ped: item.ped, dlc: pack.dlc, isProp: item.isProp, slot: item.slot, index, label: entry.label, source: entry.source.label, drawable, textures, merged: entry.merged });
+    plan.items.push({
+      key: itemKey(item), ped: item.ped, dlc: pack.dlc, isProp: item.isProp, slot: item.slot, slotId: item.slotId, index, label: entry.label, source: entry.source.label,
+      sourceDrawable: item.drawable, drawable, textures, merged: entry.merged, info: entry.data.info || null, prop: entry.data.prop || null,
+      alternates: entry.alternates.length, cloth: Boolean(item.cloth), suffix: item.suffix,
+    });
   }
 
   plan.texts.unshift({ to: "fxmanifest.lua", text: fxManifestLua(plan.dlcs.map((dlc) => dlc.meta)) });
   const merged = built.reduce((sum, entry) => sum + entry.merged.length, 0);
-  plan.summary = { items: built.length, textures: built.reduce((sum, entry) => sum + entry.textures.length, 0), merged, packs: plan.dlcs.length };
+  plan.summary = { items: built.length, textures: built.reduce((sum, entry) => sum + entry.textures.length, 0), merged, packs: plan.dlcs.length, left: left.length };
   if (merged) {
     const duplicates = built.reduce((sum, entry) => sum + entry.merged.reduce((count, part) => count + part.duplicates, 0), 0);
     plan.checks.push({ tone: "confirm", text: `${merged} ${merged === 1 ? "item shares its model" : "items share their model"} with another, so ${merged === 1 ? "its textures join that item" : "their textures join those items"}${duplicates ? `; ${duplicates} identical ${duplicates === 1 ? "texture is" : "textures are"} kept once` : ""}.` });

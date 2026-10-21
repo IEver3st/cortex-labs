@@ -488,6 +488,8 @@ pub struct BuildRequest {
     pub copies: Vec<BuildCopy>,
     pub ymts: Vec<BuildText>,
     pub texts: Vec<BuildText>,
+    #[serde(default)]
+    pub creatures: Vec<BuildText>,
 }
 
 #[derive(serde::Deserialize)]
@@ -586,6 +588,7 @@ pub struct CheckedBuild {
     pub copies: Vec<(PathBuf, PathBuf)>,
     pub ymts: Vec<(PathBuf, String)>,
     pub texts: Vec<(PathBuf, String)>,
+    pub creatures: Vec<(PathBuf, String)>,
 }
 
 pub fn check_build(
@@ -622,7 +625,8 @@ pub fn check_build(
             target.display()
         ));
     }
-    let total = request.copies.len() + request.ymts.len() + request.texts.len();
+    let total =
+        request.copies.len() + request.ymts.len() + request.texts.len() + request.creatures.len();
     if request.copies.is_empty() || total > MAX_BUILD_FILES {
         return Err("A pack build copies 1 to 20000 files.".into());
     }
@@ -680,6 +684,27 @@ pub fn check_build(
         }
         ymts.push((relative, ymt.text.clone()));
     }
+    let mut creatures = Vec::with_capacity(request.creatures.len());
+    for creature in &request.creatures {
+        let relative = claim(&creature.to)?;
+        let file_name = creature.to.strip_prefix("stream/").unwrap_or("");
+        if extension_of(&creature.to) != "ymt"
+            || file_name.contains('/')
+            || !file_name.starts_with("mp_creaturemetadata_")
+        {
+            return Err(format!(
+                "{} is not creature metadata in the stream folder.",
+                creature.to
+            ));
+        }
+        if creature.text.is_empty() || creature.text.len() > MAX_YMT_XML {
+            return Err(format!(
+                "The data for {} is empty or too large.",
+                creature.to
+            ));
+        }
+        creatures.push((relative, creature.text.clone()));
+    }
     let mut texts = Vec::with_capacity(request.texts.len());
     for text in &request.texts {
         let relative = claim(&text.to)?;
@@ -706,6 +731,7 @@ pub fn check_build(
         copies,
         ymts,
         texts,
+        creatures,
     })
 }
 
@@ -1195,6 +1221,7 @@ mod tests {
                     to: to.into(),
                 })
                 .collect(),
+            creatures: vec![],
             ymts: vec![BuildText {
                 to: "stream/mp_m_freemode_01_mp_m_b.ymt".into(),
                 text: "<x/>".into(),

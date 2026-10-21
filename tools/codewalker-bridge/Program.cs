@@ -140,6 +140,8 @@ public static partial class Program
                 return ReadPedVariation(RequireString(request, "path"));
             case "writePedVariation":
                 return WritePedVariation(request);
+            case "writeCreatureMetadata":
+                return WriteCreatureMetadata(request);
             case "exportPlateTextures":
                 return ExportPlateTextures(RequireString(request, "outputDir"));
             case "listPedClips":

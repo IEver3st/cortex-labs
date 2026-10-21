@@ -1,3 +1,14 @@
+version: 5.4.0
+date: 2026-10-21
+> Build addon packs in EUP Studio's new Pack tab, set each item's sounds, game flags, hat hair and heel height, and build the creature metadata the game reads for hats and heels.
+
+## New
+- Pack tab | Building an addon pack now happens in EUP Studio's Pack tab, and Build an addon pack on the Model step opens it. Items are listed by slot with their new numbers: click one to wear it, move it to renumber the slot, or leave it out.
+- Clothing properties | Set an item's sounds, prop transparency, game flags, hat hair flattening, hair squash and heel height, for one item or several at once. The ped shows how far a hat flattens its hair as you drag.
+- Creature metadata | Built packs include creature metadata for hats that flatten hair and shoes with heels, made from the new pack's own items.
+
+---
+
 version: 5.3.5
 date: 2026-10-19
 > Write your own textures into EUP clothing, and build addon packs from folders of clothing, merging packs that share a model.
