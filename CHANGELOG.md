@@ -8,6 +8,24 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [5.4.0] - 2026-10-21
+
+Build addon packs in EUP Studio's new Pack tab, set each item's sounds, game flags, hat hair and heel height, and build the creature metadata the game reads for hats and heels.
+
+### Added
+
+- **Pack tab in EUP Studio** - Building an addon pack moves from a dialog into EUP Studio's new **Pack** tab, and **Build an addon pack** on EUP mode's Model step opens it. The tab lists the items for the ped on screen by slot, with the numbers they get in the new pack. Click an item to wear it; Ctrl-click or Shift-click selects several in one slot. Move items with the row arrows or Alt + Up and Alt + Down to renumber the slot, or turn off **In the pack** to leave one out without deleting anything. The pack's name, folder, order and item settings are saved with the session. Desktop app only.
+
+- **Clothing properties** - Each item starts with the settings its pack's `.ymt` gives it, and you can change them for one item or several: **Sound** and **Footsteps**, prop **Transparency**, **Game flags** (hidden in first person, not in vehicles, armoured, lightly armoured, fire retardant, bulky, and the helmet and physics hat flags on hats), **Flatten hair** on hats, **Squash under hats** on hair and **Heel height** on shoes. The viewer flattens the hair under a pack hat by its **Flatten hair** value as you drag, so a hat at 0% leaves the hair alone. Heel lift is not shown in the viewer.
+
+- **Creature metadata** - When a pack has hats that flatten hair or shoes with a heel height, the build adds `mp_creaturemetadata_mp_m_<name>.ymt` (`mp_f_` for female items), the file the game reads those values from. It is made from the new pack's own items; a source pack's creature metadata is not copied.
+
+### Changed
+
+- **Addon pack checks** - A source pack whose `.ymt` can't be read now stops the build until you fix the file or remove its folder, instead of building its items with default settings. When identical models merge, the merged item keeps the settings of the first of them in folder order, and the checks say when another one's settings go unused.
+
+---
+
 ## [5.3.5] - 2026-10-19
 
 Write your own textures into EUP clothing, and build addon packs from folders of clothing, merging packs that share a model.

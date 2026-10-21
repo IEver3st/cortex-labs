@@ -58,11 +58,17 @@ public static partial class Program
         return new { path, xml };
     }
 
-    private static object WritePedVariation(JsonElement request)
+    private static object WritePedVariation(JsonElement request) =>
+        WriteMetaResource(request, "CPedVariationInfo", "a ped variation file", "The ped variation XML is too large.");
+
+    private static object WriteCreatureMetadata(JsonElement request) =>
+        WriteMetaResource(request, "CCreatureMetaData", "creature metadata", "The creature metadata XML is too large.");
+
+    private static object WriteMetaResource(JsonElement request, string root, string kind, string tooLarge)
     {
         var xml = RequireString(request, "xml");
         var output = RequireString(request, "output");
-        if (xml.Length > MaxPedVariationXmlChars) throw new BridgeException("The ped variation XML is too large.");
+        if (xml.Length > MaxPedVariationXmlChars) throw new BridgeException(tooLarge);
         var fileName = Path.GetFileName(output);
 
         var document = new XmlDocument { XmlResolver = null };
@@ -75,7 +81,7 @@ public static partial class Program
         {
             throw new BridgeException($"The XML for {fileName} is not valid: {ShortReason(ex)}");
         }
-        if (document.DocumentElement?.Name != "CPedVariationInfo") throw new BridgeException($"The XML for {fileName} is not a ped variation file.");
+        if (document.DocumentElement?.Name != root) throw new BridgeException($"The XML for {fileName} is not {kind}.");
 
         byte[] data;
         try

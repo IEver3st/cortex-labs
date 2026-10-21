@@ -52,5 +52,6 @@ export function clothingBuildRequest(plan, parent, folderName) {
     copies: plan.copies.map(({ from, to }) => ({ from, to })),
     ymts: plan.ymts.map(({ to, xml }) => ({ to, text: xml })),
     texts: plan.texts.map(({ to, text }) => ({ to, text })),
+    creatures: (plan.creatures || []).map(({ to, xml }) => ({ to, text: xml })),
   };
 }

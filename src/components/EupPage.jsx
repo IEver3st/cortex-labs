@@ -98,6 +98,10 @@ import EupCharacterImportDialog from "./eup/EupCharacterImportDialog";
 import { headRacesFromListing } from "../lib/character-import";
 import EupThumbnailDialog from "./eup/EupThumbnailDialog";
 import EupExportPanel from "./eup/EupExportPanel";
+import EupPackPanel, { EupPackFooter } from "./eup/EupPackPanel";
+import { usePackProject } from "./eup/usePackProject";
+import { normalizePackProject, slotOrderKey } from "../lib/clothing-pack.js";
+import { hairSquash, hatFlatten, previewHairCrush } from "../lib/clothing-properties.js";
 import {
   exportYtd,
   forgetPedGameFiles,
@@ -385,7 +389,9 @@ export default function EupPage({
   const [assetRevision, setAssetRevision] = useState(0);
   const [pathRevisions, setPathRevisions] = useState({});
   const [watchState, setWatchState] = useState({ status: "off", error: "" });
-  const [inspectorTab, setInspectorTab] = useState("clothing");
+  const [inspectorTab, setInspectorTab] = useState(() => (initial.inspectorTab === "pack" ? "pack" : "clothing"));
+  const [packProject, setPackProject] = useState(() => normalizePackProject(initial.pack));
+  const [packSelection, setPackSelection] = useState([]);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   // Dock and inspector widths the user dragged, kept for every EUP tab.
@@ -511,8 +517,9 @@ export default function EupPage({
     liveReload,
     exportSettings,
     sceneProps,
+    pack: packProject,
     playback: { speed: playback.speed, loop: playback.loop, paused: !playing, time: playing ? 0 : playback.time },
-  }), [cast, scene, cameraPreset, sourceFolders, sourceFiles, liveReload, exportSettings, sceneProps, playback, playing]);
+  }), [cast, scene, cameraPreset, sourceFolders, sourceFiles, liveReload, exportSettings, sceneProps, packProject, playback, playing]);
   // Seed with the restored state so mounting does not emit a no-op persist.
   if (lastPersistedRef.current === null) lastPersistedRef.current = JSON.stringify(snapshot);
   useEffect(() => {
@@ -620,6 +627,45 @@ export default function EupPage({
   }), [groupedByGender]);
   const grouped = groupedByGender[gender];
   const pedAssets = pedAssetsByGender[gender];
+
+  const pack = usePackProject({
+    enabled: isTauriRuntime,
+    compare: inspectorTab === "pack",
+    sourceFolders,
+    sourceFiles,
+    revision: `${assetRevision}|${fileList.length}`,
+    project: packProject,
+  });
+  const packDrawables = useMemo(() => {
+    const map = new Map();
+    for (const [packGender, assets] of Object.entries(pedAssetsByGender)) {
+      for (const bucket of [assets.components, assets.props]) {
+        for (const entry of Object.values(bucket || {})) {
+          for (const drawable of Object.values(entry.drawables)) {
+            if (drawable.drawablePath) map.set(pathKey(drawable.drawablePath), { gender: packGender, component: entry.component, index: drawable.index });
+          }
+        }
+      }
+    }
+    return map;
+  }, [pedAssetsByGender]);
+  const hairCrushFor = (seat) => {
+    if (!seat || (seat.model?.kind && seat.model.kind !== "freemode")) return null;
+    const seatGender = seat.gender === "female" ? "female" : "male";
+    const assets = pedAssetsByGender[seatGender];
+    const worn = (component, bucket) => {
+      const selection = seat.selections?.[seatGender]?.[component];
+      const path = selection ? assets[bucket]?.[component]?.drawables?.[selection.index]?.drawablePath : null;
+      return path ? pack.values.get(pathKey(path)) : null;
+    };
+    const hat = worn("p_head", "props");
+    if (!hat?.item.isProp) return null;
+    const hair = worn("hair", "components");
+    return previewHairCrush({
+      hat: hatFlatten(hat.properties.expressionMods),
+      hair: hair && !hair.item.isProp ? hairSquash(hair.properties.expressionMods) : null,
+    });
+  };
   const otherPedCount = useMemo(
     () => grouped.files.filter((file) => file.ped !== ped).length,
     [grouped, ped],
@@ -673,6 +719,7 @@ export default function EupPage({
   };
   const figureA = usePedFigure({
     ...figureShared,
+    hairCrush: hairCrushFor(cast.a),
     member: cast.a,
     offsetX: offsets.a,
     describeRetry: describeRetry.a,
@@ -680,6 +727,7 @@ export default function EupPage({
   });
   const figureB = usePedFigure({
     ...figureShared,
+    hairCrush: hairCrushFor(cast.b),
     member: cast.b,
     offsetX: offsets.b,
     describeRetry: describeRetry.b,
@@ -1277,6 +1325,35 @@ export default function EupPage({
     },
     [gender],
   );
+
+  useEffect(() => {
+    setPackSelection([]);
+  }, [gender]);
+
+  const handleSelectPackItem = useCallback((item, { toggle = false, range = false } = {}) => {
+    const slotKey = slotOrderKey(item);
+    setPackSelection((prev) => {
+      const anchor = prev.length ? pack.values.get(prev[0])?.item : null;
+      if (!anchor || slotOrderKey(anchor) !== slotKey || (!toggle && !range)) return [item.key];
+      if (toggle) return prev.includes(item.key) ? prev.filter((key) => key !== item.key) : [...prev, item.key];
+      const keys = [...pack.plan.items, ...pack.plan.left].filter((entry) => slotOrderKey(entry) === slotKey).map((entry) => entry.key);
+      const from = keys.indexOf(anchor.key);
+      const to = keys.indexOf(item.key);
+      return from < 0 || to < 0 ? [item.key] : [anchor.key, ...keys.slice(Math.min(from, to), Math.max(from, to) + 1).filter((key) => key !== anchor.key)];
+    });
+    if (toggle || range) return;
+    const target = packDrawables.get(item.key);
+    if (target && target.gender === gender) handleSelectDrawable(target.component, target.index);
+  }, [gender, handleSelectDrawable, pack.plan, pack.values, packDrawables]);
+
+  const handlePickPackParent = useCallback(async () => {
+    try {
+      const picked = await open({ directory: true, title: "Folder to build the new pack in" });
+      if (typeof picked === "string" && picked) setPackProject((current) => ({ ...current, parent: picked }));
+    } catch (error) {
+      raiseAlert("pack-parent", "Couldn't pick the folder", errorMessage(error));
+    }
+  }, [raiseAlert]);
 
   const handleSelectVariant = useCallback(
     (component, variant) => {
@@ -2796,6 +2873,7 @@ export default function EupPage({
         <InspectorTabs
           tabs={[
             { id: "clothing", label: "Clothing" },
+            { id: "pack", label: "Pack" },
             { id: "base", label: "Body" },
             { id: "scene", label: "Scene" },
             { id: "export", label: "Export" },
@@ -2970,7 +3048,26 @@ export default function EupPage({
             />
           ) : null}
           {inspectorTab === "issues" ? <EupIssuesPanel issues={issues} /> : null}
+          {inspectorTab === "pack" ? (
+            <EupPackPanel
+              isTauriRuntime={isTauriRuntime}
+              gender={gender}
+              project={packProject}
+              onProjectChange={setPackProject}
+              pack={pack}
+              selectedKeys={packSelection}
+              onSelectItem={handleSelectPackItem}
+              onShowGender={(target) => characterControls.setModel({ kind: "freemode", gender: target })}
+              onAddFolder={handleOpenFolder}
+              onPickParent={handlePickPackParent}
+              hatWorn={Boolean(genderSelections?.p_head)}
+              note={figure.custom ? `${figure.character?.label || "This character"} isn't a freemode ped, so selecting an item doesn't dress it. The pack still builds.` : ""}
+            />
+          ) : null}
         </div>
+        {inspectorTab === "pack" && isTauriRuntime ? (
+          <EupPackFooter isTauriRuntime={isTauriRuntime} project={packProject} pack={pack} onOpenFolder={openFolderPath} />
+        ) : null}
         {inspectorTab === "clothing" && assetComponents.length > 0 ? (
           <div className="eup-keys" aria-hidden="true">
             <span><kbd className="cx-keycap">←</kbd><kbd className="cx-keycap">→</kbd>Drawable</span>

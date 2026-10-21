@@ -1361,6 +1361,7 @@ export default function Shell() {
                       defaultTextureMode={tab.defaultMode || "vehicle"}
                       initialState={tab.initialState || null}
                       onRenameTab={(label) => renameTab(tab.id, label)}
+                      onOpenPackBuilder={() => openTab("eupstudio", null, null, { inspectorTab: "pack" })}
                       settingsVersion={settingsVersion}
                       contextBarTarget={contextBarRef.current}
                     />

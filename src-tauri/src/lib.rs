@@ -2741,7 +2741,7 @@ fn build_clothing_pack(
             "Nothing was written.",
         )
     })?;
-    let total = build.copies.len() + build.ymts.len() + build.texts.len();
+    let total = build.copies.len() + build.ymts.len() + build.texts.len() + build.creatures.len();
     let progress = |done: usize| {
         let _ = app.emit(
             "clothing-pack-progress",
@@ -2767,6 +2767,16 @@ fn build_clothing_pack(
             bridge_request(
                 app,
                 "writePedVariation",
+                serde_json::json!({ "xml": xml, "output": staging.join(to) }),
+                BRIDGE_REQUEST_TIMEOUT,
+            )?;
+            done += 1;
+            progress(done);
+        }
+        for (to, xml) in &build.creatures {
+            bridge_request(
+                app,
+                "writeCreatureMetadata",
                 serde_json::json!({ "xml": xml, "output": staging.join(to) }),
                 BRIDGE_REQUEST_TIMEOUT,
             )?;

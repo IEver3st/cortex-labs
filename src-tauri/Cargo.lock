@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-studio"
-version = "5.3.5"
+version = "5.4.0"
 dependencies = [
  "flate2",
  "notify",
