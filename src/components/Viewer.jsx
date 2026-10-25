@@ -90,6 +90,7 @@ import { createVehicleRig, normalizeManifestSkeleton } from "../lib/vehicle-rig.
 import { isHiddenByBones } from "../lib/vehicle-modkits.js";
 import { shotFov } from "../lib/eup-export.js";
 import { countDrawnGeometry, summarizeMeshStats } from "../lib/mesh-stats.js";
+import { buildCollisionOverlay, readModelCollisions } from "../lib/collision-overlay.js";
 import {
   FINISHED_PAINT_KEYS,
   VEHICLE_PAINT_KEYS,
@@ -418,6 +419,9 @@ function ViewerComponent({
   // Shaded model with its triangle edges drawn over it; reports onMeshStats.
   showSolidWireframe = false,
   onMeshStats,
+  showCollisions = false,
+  collisionsOnly = false,
+  onCollisions,
   flipTextureY = true,
   wasdEnabled = false,
   showGrid = false,
@@ -591,6 +595,9 @@ function ViewerComponent({
   solidWireRef.current.on = showSolidWireframe;
   const onMeshStatsRef = useRef(onMeshStats);
   onMeshStatsRef.current = onMeshStats;
+  const collisionRef = useRef({ overlay: null, key: "", request: 0, hidden: [] });
+  const onCollisionsRef = useRef(onCollisions);
+  onCollisionsRef.current = onCollisions;
   // null forces the first drawn frame to report.
   const meshStatsKeyRef = useRef(null);
   const solidWirePass = () => {
@@ -1825,6 +1832,11 @@ function ViewerComponent({
       aoRef.current = null;
       solidWireRef.current.material?.dispose();
       solidWireRef.current.material = null;
+      collisionRef.current.overlay?.dispose();
+      collisionRef.current.overlay = null;
+      collisionRef.current.hidden = [];
+      collisionRef.current.key = "";
+      collisionRef.current.request += 1;
       stageRef.current?.dispose();
       stageRef.current = null;
       turntableRef.current = null;
@@ -2638,6 +2650,7 @@ function ViewerComponent({
         }) || object;
         const materialState = materialStateRef.current;
         sceneObject.userData = sceneObject.userData || {};
+        sceneObject.userData.modelSpaceRoot = object;
         sceneObject.userData.materialConfig = materialState.materialConfig || DEFAULT_MATERIAL_CONFIG;
         sceneObject.userData.materialDetailTexture = materialTextureRef.current || null;
         sceneObject.userData.vehiclePaint = materialState.vehiclePaint || normalizeVehiclePaint(null, materialState.bodyColor);
@@ -3339,6 +3352,81 @@ function ViewerComponent({
     meshStatsKeyRef.current = null;
     requestRenderRef.current?.();
   }, [showSolidWireframe, modelVersion, modelRotationKey]);
+
+  useEffect(() => {
+    const state = collisionRef.current;
+    const model = modelRef.current;
+    const path = shownModelPathRef.current;
+    const showModel = () => {
+      for (const object of state.hidden) object.visible = true;
+      state.hidden = [];
+    };
+    const place = () => {
+      const overlay = state.overlay;
+      if (!overlay || !model?.parent) return;
+      const inner = model.userData.modelSpaceRoot || model;
+      model.updateMatrix();
+      overlay.group.matrixAutoUpdate = false;
+      overlay.group.matrix.copy(model.matrix);
+      if (inner !== model) {
+        inner.updateMatrix();
+        overlay.group.matrix.multiply(inner.matrix);
+      }
+      overlay.group.matrixWorldNeedsUpdate = true;
+      if (overlay.group.parent !== model.parent) model.parent.add(overlay.group);
+      overlay.setSolid(collisionsOnly);
+      showModel();
+      if (collisionsOnly) {
+        const cage = sceneRef.current?.getObjectByName("__cageOverlay");
+        state.hidden = [model, cage].filter((object) => object?.visible);
+        for (const object of state.hidden) object.visible = false;
+      }
+      requestRenderRef.current?.();
+    };
+    const clear = () => {
+      showModel();
+      state.overlay?.dispose();
+      state.overlay = null;
+      state.key = "";
+      state.request += 1;
+    };
+
+    if (!showCollisions || !model || !path) {
+      clear();
+      onCollisionsRef.current?.(null);
+      requestRenderRef.current?.();
+      return;
+    }
+    if (!isTauriRuntime || !/\.(yft|ydr|ydd)$/i.test(path)) {
+      clear();
+      onCollisionsRef.current?.({ status: "unavailable" });
+      return;
+    }
+    const key = `${path}|${modelVersion}`;
+    if (state.key === key) {
+      place();
+      return;
+    }
+    clear();
+    state.key = key;
+    const request = state.request;
+    onCollisionsRef.current?.({ status: "loading" });
+    readModelCollisions(invoke, path, String(modelVersion))
+      .then((data) => {
+        if (request !== state.request) return;
+        if (!data.meshes.length && !data.primitives.length) {
+          onCollisionsRef.current?.({ status: "none", data });
+          return;
+        }
+        state.overlay = buildCollisionOverlay(data);
+        place();
+        onCollisionsRef.current?.({ status: "ready", data });
+      })
+      .catch((error) => {
+        if (request !== state.request) return;
+        onCollisionsRef.current?.({ status: "error", error: String(error?.message || error) });
+      });
+  }, [showCollisions, collisionsOnly, modelVersion, modelRotationKey, isTauriRuntime]);
 
   // Cage wireframe overlay — builds/disposes EdgesGeometry + bounding-box cubes
   useEffect(() => {

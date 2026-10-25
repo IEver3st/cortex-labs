@@ -8,6 +8,32 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [5.5.0] - 2026-10-25
+
+Sirens now lays out like Siren Tool, with dual-colour heads and patterns you can build without a vehicle, and a new overlay shows a model's collision bounds.
+
+### Added
+
+- **Sirens grid in columns** - The Sirens sequencer now lays out like Siren Tool. A rail about a fifth of the window wide holds the setting's name and status, BPM and multiplier, a shortcut list and the siren tools, with the six colour tiles, the play tiles, **Install to resource**, **Save to file…**, **Import…**, **Copy XML** and **Revert** pinned at its foot. Beside it is a column per light head, a row per step, and a lamp over each column that lights with the pattern, so the row of lamps reads like the lightbar. Rotation patterns get a narrow column of their own, and the headlight and tail light columns are labelled LH, RH, LT and RT. Empty, numbered columns fill any free space; paint the next one to add a siren in the picked colour. Right-click clears a step, keys 1 to 6 pick the colour and colour the selected sirens, P or Space plays, Left and Right pick a head, Up and Down step, and Alt+Left or Alt+Right moves a head, keeping dual-colour heads together. The mute button shows on hover and on the selected column. The dock and the tabbed inspector are gone: the right column is the preview, the vehicle's file and one panel that follows the selection, with **Setting**, **Vehicle** (the old Lights tab plus the vehicle's textures, warnings, saved vehicle and resource tools), **Mods** and **Scene** a click away. Columns resize with the window so every siren and lamp fits, and the grid only scrolls when even narrow columns can't. The button at the end of the panel's header hides the preview and panel to give the grid the whole width, and the button over the grid brings them back. On shorter windows the rail tightens and the shortcut list folds away.
+
+- **Patterns without a vehicle** - Sirens can build a flash pattern with no vehicle open. **New pattern** starts four red and blue dual-colour heads, the lamps over the grid flash as the pattern plays, and **Save to file…** or **Copy XML** writes it out. **Import from carcols.meta…** also works with no vehicle open. The pattern stays in the tab while you open vehicles, and closing the tab asks first while it has unsaved changes. **Use my pattern** puts it on a vehicle's sirens from siren 1 up: colours, flash patterns, tempo and lamp patterns. The vehicle keeps its id, name, file and each siren's aim, and sirens past the pattern stay as they were.
+
+- **Dual-colour heads** - Two sirens can share one column in the Sirens sequencer, so a head that flashes red and then blue is drawn and edited as one: click a step for the first colour, again for the second, again for off, and a step lit in both colours clears. **Dual colour** adds a head, pairs two selected sirens or splits them. carcols.meta still stores two sirens, so in game the head needs a model with a bone for each colour. The pairing lives only in Cortex: after Revert, Import, reopening the setting or closing the tab, the head shows as two sirens again.
+
+- **Colours take turns** - A new section in the Sirens **Pattern** menu splits the loop between the colours of the selected sirens: every siren of one colour flashes together, then every siren of the next, wherever they sit in the grid. Colours take turns in the order they first appear, from the lowest siren number. Pick steady or a double, triple or quad flash per turn. Light presets in the **Presets** menu now say how many sirens they need when fewer are selected.
+
+- **Collisions** - A hexagon button on the Vehicle and EUP mode decks and in Prop Studio draws the collision bounds stored in the open `.yft`, `.ydr` or `.ydd` over the model: the physics bounds and every drawable bound, as triangles, boxes, spheres, capsules and cylinders, coloured by collision material, so a vehicle's wheel cylinders and glass show in their own colours. A panel counts the triangles and shapes and names up to six materials from the game's materials.dat in your GTA V install, counting the rest. With the model shown, the bounds draw where they are not hidden by the body; turn off **Show the model** to see them through. Very large or damaged bounds are trimmed and the panel says how much was left out. Collisions stay off in Sirens. Vehicle preview captures include what the viewfinder shows; Prop Studio's exported images leave collisions out, as they do its other helpers. It only reads the model; nothing is written. Desktop app only.
+
+- **Mesh stats in Prop Studio and EUP Studio** - The triangle button from Vehicle mode is now on the Prop Studio and EUP Studio decks. It shows triangles, vertices, meshes and size for what is on screen, plus shaders and textures when the model carries GTA shader data, leaving out hidden materials, slots and LODs. In EUP Studio it also draws the solid wireframe over the ped, and with two characters on screen it counts them instead of showing size; Prop Studio keeps its own wireframe on **W**. EUP Studio's panel is in the desktop app only.
+
+### Fixed
+
+- **Saving over another siren setting** - When the carcols.meta you pick for **Save to file…** already holds a setting with the same id, and the setting on screen didn't come from that file, Cortex now asks before replacing it. Saving back to the file a setting came from still replaces it in place.
+
+- **Preview flicker while resizing panels** - Dragging a panel edge in EUP Studio, Prop Studio or Photo Mode no longer blanks the preview for a frame at every step; the resized view is drawn in the same frame.
+
+---
+
 ## [5.4.0] - 2026-10-21
 
 Build addon packs in EUP Studio's new Pack tab, set each item's sounds, game flags, hat hair and heel height, and build the creature metadata the game reads for hats and heels.

@@ -18,6 +18,7 @@ import {
   Eye,
   EyeOff,
   Grid3x3,
+  Hexagon,
   ImageDown,
   LampCeiling,
   Loader2,
@@ -27,6 +28,7 @@ import {
   RotateCcw,
   RotateCw,
   Sun,
+  Triangle,
   X,
 } from "lucide-react";
 import { loadPrefs } from "../lib/prefs";
@@ -37,6 +39,7 @@ import { openFolderPath } from "../lib/open-folder";
 import { applyWatermarkToDataUrl } from "../lib/watermark";
 import { loadNativeMaterialView } from "../lib/native-materials.js";
 import { createPropModel, loadPropAsset } from "../lib/prop-model.js";
+import { buildCollisionOverlay, readModelCollisions } from "../lib/collision-overlay.js";
 import { PROP_LIGHT_LIMIT, createPropLightRig } from "../lib/prop-lights.js";
 import {
   PROP_CAMERA_PRESETS,
@@ -59,7 +62,9 @@ import {
   ColorLine,
   DeckButton,
   FloorField,
+  CollisionSlip,
   InspectorTabs,
+  MeshStatsSlip,
   Slider,
   StageSection,
   WorkspaceFrame,
@@ -199,6 +204,10 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
   const [prop, setProp] = useState(null);
   const [nativeStatus, setNativeStatus] = useState({ state: "off" });
   const [info, setInfo] = useState({ stats: null, dims: null });
+  const [meshStats, setMeshStats] = useState(null);
+  const [collisionInfo, setCollisionInfo] = useState(null);
+  const [collisionsOnly, setCollisionsOnly] = useState(false);
+  const collisionOverlayRef = useRef(null);
   const [glowing, setGlowing] = useState(false);
   const [previewedLights, setPreviewedLights] = useState(() => new Set());
   const [reloadToken, setReloadToken] = useState(0);
@@ -414,6 +423,52 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
     if (boundsHelperRef.current) boundsHelperRef.current.visible = Boolean(view.bounds);
     viewportRef.current?.requestRender();
   }, [prop, view.bounds]);
+
+  useEffect(() => {
+    const path = settings.modelPath;
+    if (!view.collisions || !prop || !path) {
+      setCollisionInfo(null);
+      return undefined;
+    }
+    if (!isTauriRuntime || !/\.(yft|ydr|ydd)$/i.test(path)) {
+      setCollisionInfo({ status: "unavailable" });
+      return undefined;
+    }
+    let overlay = null;
+    let cancelled = false;
+    setCollisionInfo({ status: "loading" });
+    readModelCollisions(invoke, path, prop.root.uuid)
+      .then((data) => {
+        if (cancelled) return;
+        if (!data.meshes.length && !data.primitives.length) {
+          setCollisionInfo({ status: "none" });
+          return;
+        }
+        overlay = buildCollisionOverlay(data);
+        overlay.group.userData.propHelper = true;
+        overlay.setSolid(collisionsOnlyRef.current);
+        prop.gta.add(overlay.group);
+        collisionOverlayRef.current = overlay;
+        setCollisionInfo({ status: "ready", data });
+        viewportRef.current?.requestRender();
+      })
+      .catch((error) => {
+        if (!cancelled) setCollisionInfo({ status: "error", error: errorMessage(error) });
+      });
+    return () => {
+      cancelled = true;
+      if (collisionOverlayRef.current === overlay) collisionOverlayRef.current = null;
+      overlay?.dispose();
+      viewportRef.current?.requestRender();
+    };
+  }, [view.collisions, prop, settings.modelPath, isTauriRuntime]);
+
+  const collisionsOnlyRef = useRef(collisionsOnly);
+  useEffect(() => {
+    collisionsOnlyRef.current = collisionsOnly;
+    collisionOverlayRef.current?.setSolid(collisionsOnly);
+    viewportRef.current?.requestRender();
+  }, [collisionsOnly]);
 
   useEffect(() => {
     refreshLook();
@@ -839,6 +894,9 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
               animating={view.turntable && hasModel}
               onAnimate={handleAnimate}
               onFrame={handleFrame}
+              showMeshStats={view.meshStats && hasModel}
+              onMeshStats={setMeshStats}
+              hideModel={view.collisions && collisionsOnly && collisionInfo?.status === "ready"}
             />
           ) : (
             <div className="ps-stage-empty">
@@ -878,21 +936,31 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
             </div>
           ) : null}
 
-          {loading || (hasModel && view.bounds && dims) ? (
-            <div className="lv-slip ps-status" role="status" aria-live="polite">
-              {loading ? (
-                <span className="ps-status-row">
-                  <Loader2 className="ps-spin" aria-hidden="true" />
-                  <span>{hasModel ? "Reloading…" : "Loading the model…"}</span>
-                </span>
-              ) : null}
-              {hasModel && view.bounds && dims ? (
-                <span className="ps-status-row ps-dims">
-                  <span>{formatLength(dims.x)}</span>×<span>{formatLength(dims.y)}</span>×<span>{formatLength(dims.z)}</span>
-                </span>
-              ) : null}
-            </div>
-          ) : null}
+          <div className="lv-slip-stack">
+            {loading || (hasModel && view.bounds && dims) ? (
+              <div className="lv-slip ps-status" role="status" aria-live="polite">
+                {loading ? (
+                  <span className="ps-status-row">
+                    <Loader2 className="ps-spin" aria-hidden="true" />
+                    <span>{hasModel ? "Reloading…" : "Loading the model…"}</span>
+                  </span>
+                ) : null}
+                {hasModel && view.bounds && dims ? (
+                  <span className="ps-status-row ps-dims">
+                    <span>{formatLength(dims.x)}</span>×<span>{formatLength(dims.y)}</span>×<span>{formatLength(dims.z)}</span>
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {hasModel && view.collisions ? (
+              <CollisionSlip
+                info={collisionInfo || { status: "loading" }}
+                showModel={!collisionsOnly}
+                onShowModelChange={(value) => setCollisionsOnly(!value)}
+              />
+            ) : null}
+            {hasModel && view.meshStats && meshStats ? <MeshStatsSlip stats={{ ...meshStats, size: dims ? { length: Math.max(dims.x, dims.y), width: Math.min(dims.x, dims.y), height: dims.z } : null }} /> : null}
+          </div>
 
           <div className="lv-alerts" role="status" aria-live="polite">
             <AnimatePresence initial={false}>
@@ -975,6 +1043,12 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
               <div className="lv-deck-group" role="group" aria-label="View">
                 <DeckButton active={view.wireframe} onClick={() => updateView({ wireframe: !view.wireframe })} title="Wireframe (W)" className="is-icon">
                   <Box aria-hidden="true" />
+                </DeckButton>
+                <DeckButton active={view.meshStats} onClick={() => updateView({ meshStats: !view.meshStats })} title="Mesh stats" className="is-icon">
+                  <Triangle aria-hidden="true" />
+                </DeckButton>
+                <DeckButton active={view.collisions} onClick={() => updateView({ collisions: !view.collisions })} title="Collisions" className="is-icon">
+                  <Hexagon aria-hidden="true" />
                 </DeckButton>
                 <DeckButton active={view.origin} onClick={() => updateView({ origin: !view.origin })} title="GTA origin and axes" className="is-icon">
                   <Axis3d aria-hidden="true" />

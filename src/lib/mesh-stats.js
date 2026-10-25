@@ -50,6 +50,22 @@ export function countDrawnGeometry(roots) {
   return { meshes, triangles, vertices };
 }
 
+export function createMeshStatsReporter() {
+  let key = null;
+  return {
+    reset() {
+      key = null;
+    },
+    report(roots, onStats) {
+      const counts = roots ? countDrawnGeometry(roots) : null;
+      const next = counts ? `${counts.meshes}:${counts.triangles}:${counts.vertices}` : "";
+      if (next === key) return;
+      key = next;
+      onStats?.(roots ? summarizeMeshStats(roots) : null);
+    },
+  };
+}
+
 const _box = new THREE.Box3();
 
 export function summarizeMeshStats(roots) {

@@ -106,8 +106,8 @@ function PatternField({ label, value, onChange }) {
   const valid = sequencerFromPattern(text) != null;
   return (
     <Field label={label} hint="32 steps, 1 lit and 0 dark, first step first. Saved as the decimal sequencer.">
-      <input className={cx("se-text se-pattern", !valid && "is-invalid")} value={text} maxLength={32} spellCheck={false}
-        aria-label={`${label} steps`} aria-invalid={!valid}
+      <textarea className={cx("se-text se-pattern", !valid && "is-invalid")} value={text} maxLength={32} spellCheck={false}
+        rows={2} aria-label={`${label} steps`} aria-invalid={!valid}
         onChange={(event) => {
           const next = event.target.value.replace(/[^01]/g, "");
           setText(next);
@@ -252,7 +252,7 @@ export function SirenPanel({ s }) {
     <div className="se-panel">
       <SirenFields light={light} multi={editor.selection.length > 1} count={editor.selection.length} index={editor.primary + 1}
         setField={setField} setLightPatch={setLightPatch}
-        lens={<LensFields s={s} light={light} sirens={editor.selection.map((index) => index + 1)} primary={editor.primary + 1} />} />
+        lens={s.modelPath ? <LensFields s={s} light={light} sirens={editor.selection.map((index) => index + 1)} primary={editor.primary + 1} /> : null} />
     </div>
   );
 }
@@ -272,10 +272,11 @@ export function SettingPanel({ s }) {
 function SirenFields({ light, multi, count, index, setField, setLightPatch, lens }) {
   return (
     <>
-      <p className="se-panel-title">
-        <span className="cx-display">{multi ? `${count} sirens` : `Siren ${index}`}</span>
-        {multi ? <span className="se-note">Changes apply to every selected siren. Values shown are siren {index}'s.</span> : null}
-      </p>
+      {multi ? (
+        <p className="se-panel-title">
+          <span className="se-note">Changes apply to every selected siren. Values shown are siren {index}'s.</span>
+        </p>
+      ) : null}
       <Group title="Light">
         <ColorField light={light} onChange={(patch) => setLightPatch(patch, "color")} />
         <RangeField label="Intensity" value={light.intensity ?? 0} min={0} max={10} step={0.05} onChange={(value) => setField("intensity", value)} />

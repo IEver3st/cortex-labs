@@ -133,6 +133,8 @@ export function normalizePropState(value, prefs = {}) {
     view: {
       mode: oneOf(view.mode, PROP_VIEW_MODES, "textured"),
       wireframe: bool(view.wireframe, false),
+      meshStats: bool(view.meshStats, false),
+      collisions: bool(view.collisions, false),
       lod: oneOf(view.lod, PROP_LODS, "high"),
       drawable: Number.isInteger(view.drawable) && view.drawable >= -1 ? view.drawable : -1,
       origin: bool(view.origin, false),

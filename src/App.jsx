@@ -250,6 +250,9 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
   const [showWireframe, setShowWireframe] = useState(false);
   const [showCageWireframe, setShowCageWireframe] = useState(false);
   const [showSolidWireframe, setShowSolidWireframe] = useState(false);
+  const [showCollisions, setShowCollisions] = useState(false);
+  const [collisionsOnly, setCollisionsOnly] = useState(false);
+  const [collisionInfo, setCollisionInfo] = useState(null);
   // What the viewer draws while the solid wireframe is on; null when off.
   const [meshStats, setMeshStats] = useState(null);
   const [lightIntensity, setLightIntensity] = useState(() => normalizeLightDefaults(getInitialDefaults()).intensity);
@@ -872,6 +875,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
         showWireframe,
         showCageWireframe,
         showSolidWireframe,
+        showCollisions,
         lightIntensity,
         lightAzimuth,
         lightElevation,
@@ -946,7 +950,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
   }, [
     isBooting, restoreSettled, textureMode,
     modelPath, modelSourcePath, modelRotation, texturePath, textureTarget, windowTexturePath, windowTextureTarget, windowTemplateEnabled,
-    bodyColor, vehiclePaint, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, showCageWireframe, showSolidWireframe,
+    bodyColor, vehiclePaint, backgroundColor, backgroundImagePath, backgroundImageBlur, showWireframe, showCageWireframe, showSolidWireframe, showCollisions,
     lightIntensity, lightAzimuth, lightElevation, glossiness, liveryExteriorOnly, nativeMaterialsEnabled,
     stage, stageSpot, stageReflect, stageBeam, stageLight, stageFloor, turntable, turntableSpeed,
     multi.lineup, multi.gizmoVisible, multi.showroom, multi.slots,
@@ -961,9 +965,9 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
   const shellTabId = shellTab?.id;
   useEffect(() => {
     if (!shellTabId) return undefined;
-    setUnsavedChanges(shellTabId, sirenEditor.dirty ? "siren" : els.dirty ? "els" : null);
+    setUnsavedChanges(shellTabId, sirenEditor.dirty || sirenEditor.patternDirty ? "siren" : els.dirty ? "els" : null);
     return () => setUnsavedChanges(shellTabId, null);
-  }, [shellTabId, sirenEditor.dirty, els.dirty]);
+  }, [shellTabId, sirenEditor.dirty, sirenEditor.patternDirty, els.dirty]);
 
   // Saves the loaded vehicle's setup to the library Home opens from. Updates
   // the linked entry unless `asNew`; a name already in the library replaces it.
@@ -1297,6 +1301,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
     if (typeof state.showWireframe === "boolean") setShowWireframe(state.showWireframe);
     if (typeof state.showCageWireframe === "boolean") setShowCageWireframe(state.showCageWireframe);
     if (typeof state.showSolidWireframe === "boolean") setShowSolidWireframe(state.showSolidWireframe);
+    if (typeof state.showCollisions === "boolean") setShowCollisions(state.showCollisions);
     if (typeof state.lightIntensity === "number") setLightIntensity(state.lightIntensity);
     if (typeof state.lightAzimuth === "number") setLightAzimuth(state.lightAzimuth);
     if (typeof state.lightElevation === "number") setLightElevation(state.lightElevation);
@@ -2538,6 +2543,9 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
     showCageWireframe={showCageWireframe}
     showSolidWireframe={showSolidWireframe}
     onMeshStats={setMeshStats}
+    showCollisions={showCollisions && textureMode !== "sirens"}
+    collisionsOnly={collisionsOnly}
+    onCollisions={setCollisionInfo}
     wasdEnabled={true}
     liveryExteriorOnly={textureMode === "vehicle" && liveryExteriorOnly}
     lightIntensity={lightIntensity}
@@ -2747,6 +2755,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
       handleSetCameraPreset, handleCenterCamera, handleRotateModel, handleResetRotation, modelRotation,
       showWireframe, setShowWireframe, showCageWireframe, setShowCageWireframe,
       showSolidWireframe, setShowSolidWireframe, meshStats,
+      showCollisions, setShowCollisions, collisionsOnly, setCollisionsOnly, collisionInfo,
       showGrid, showShadows, ambientOcclusion, toggleRenderEffect: toggleGlobalRenderEffect,
       colorSwatches: COLOR_SWATCHES, defaultBody: DEFAULT_BODY, defaultBg: DEFAULT_BG,
       backgroundColor, setBackgroundColor, backgroundImagePath, selectBackgroundImage,
@@ -2800,6 +2809,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
       handleSetCameraPreset, handleCenterCamera, handleRotateModel, handleResetRotation, modelRotation,
       showWireframe, setShowWireframe, showCageWireframe, setShowCageWireframe,
       showSolidWireframe, setShowSolidWireframe, meshStats,
+      showCollisions, setShowCollisions, collisionsOnly, setCollisionsOnly, collisionInfo,
       showGrid, showShadows, ambientOcclusion, toggleRenderEffect: toggleGlobalRenderEffect,
       vehiclePaint, setVehiclePaintSlot, resetVehiclePaintSlot, paintSlotsInUse,
       colorSwatches: COLOR_SWATCHES, defaultBody: DEFAULT_BODY, defaultBg: DEFAULT_BG,

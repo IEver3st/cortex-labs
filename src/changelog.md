@@ -1,3 +1,21 @@
+version: 5.5.0
+date: 2026-10-25
+> Sirens now lays out like Siren Tool, with dual-colour heads and patterns you can build without a vehicle, and a new overlay shows a model's collision bounds.
+
+## New
+- Siren Tool layout | The Sirens sequencer is a column per light head with a lamp over each, beside a rail with the colours, play controls, Install and Save. Columns fit the window, and the preview column closes to give the grid the whole width.
+- Dual-colour heads | Two sirens can share one column, so a head that flashes red and then blue is edited as one. In game the head needs a bone for each colour.
+- Colours take turns | A new Pattern menu section flashes every siren of one colour together, then the next colour, steady or as a double, triple or quad flash.
+- Patterns without a vehicle | New pattern builds a flash pattern with no vehicle open. Save it or copy the XML, and Use my pattern puts it on a vehicle later.
+- Collisions | The hexagon button draws a model's collision bounds coloured by material, with a panel that counts triangles, shapes and materials.
+- Mesh stats in more places | The triangle button shows triangles, vertices, meshes and size in Prop Studio and EUP Studio too.
+
+## Fixed
+- Saving over another setting | Save to file asks before replacing a setting with the same id in a carcols.meta it didn't come from.
+- Resize flicker | Dragging a panel edge in EUP Studio, Prop Studio or Photo Mode no longer blanks the preview.
+
+---
+
 version: 5.4.0
 date: 2026-10-21
 > Build addon packs in EUP Studio's new Pack tab, set each item's sounds, game flags, hat hair and heel height, and build the creature metadata the game reads for hats and heels.

@@ -34,6 +34,10 @@ With **Live reload** on, saving the model, a `.ytd` or a `.ytyp` in its folder r
 
 The **X**, **Y** and **Z** buttons on the deck turn the prop a quarter turn for viewing; the reset button returns it to its authored orientation. Turning never changes the file or the sizes shown.
 
+The triangle button on the deck opens a **Mesh stats** panel in the viewfinder: triangles, vertices, meshes, shaders, textures and size for what is on screen now. Hidden materials, other LODs and other drawables are not counted, so switching LOD or drawable updates the numbers. Use **W** for the wireframe.
+
+The hexagon button draws the prop's collision bounds over it, coloured by collision material, with a **Collisions** panel that counts them and names the materials. Turn off **Show the model** to see the collisions alone. Exported images leave the collisions out; **Save this view** keeps them, as it shows the viewfinder.
+
 ## Light tab
 
 **Emissives** lists every emissive material. Each has a switch and a level, and the group has an overall **Brightness** and **Glow**. With **Use the game's multipliers** on, each material starts from its shader's `emissiveMultiplier`, compressed to between 0.25× and 4× so a strong lamp reads brighter than a dim panel without washing out. Materials on `emissivenight` shaders, which the game lights only at night, have their own switch.

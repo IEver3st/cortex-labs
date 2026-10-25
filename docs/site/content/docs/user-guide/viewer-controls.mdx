@@ -85,6 +85,12 @@ While it is on, a **Mesh stats** panel under the stage switch lists what the vie
 - **Shaders** and **Textures**: distinct GTA shaders and referenced textures, shown for GTA models only
 - **Size**: length × width × height in metres (single models only)
 
-Hidden parts, inactive LODs and lamp glow are not counted, and the numbers update when you toggle exterior-only, extras or mod parts. In Multi the panel totals every visible vehicle. The other Wireframe button still shows the see-through wireframe, and the two can be combined. The solid wireframe is included in preview captures.
+Hidden parts, inactive LODs and lamp glow are not counted, and the numbers update when you toggle exterior-only, extras or mod parts. In Multi the panel totals every visible vehicle. Prop Studio and EUP Studio have the same panel on their decks. The other Wireframe button still shows the see-through wireframe, and the two can be combined. The solid wireframe is included in preview captures.
+
+## Collisions
+
+The hexagon button on the view deck draws the collision bounds stored in the open `.yft`, `.ydr` or `.ydd` over the model: a vehicle's physics hull, wheel cylinders and glass, and any bounds the drawables carry. Each collision material gets its own colour. A **Collisions** panel lists the triangle count, any boxes, spheres, capsules and cylinders, and the materials by name (read from your GTA V install; without one they show as numbers). Turn off **Show the model** to see the collisions alone as solid shapes; the cage wireframe hides with the model.
+
+Collisions are read from the file on demand and need the desktop app. Nothing is written. A model with no bounds says so. Preview captures show what the viewfinder shows, so they include the overlay while it is on, and leave the model out while **Show the model** is off.
 
 Tip: For subtle decals, try a darker background with slightly lower glossiness to see banding and edge artifacts.

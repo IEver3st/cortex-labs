@@ -1921,6 +1921,36 @@ async fn parse_yft(
     .map_err(|e| format!("Failed to join YFT parse task: {e}"))?
 }
 
+/// `read_model_collisions({ path })`: the collision bounds of a model the
+/// viewer shows, in model space. Read on demand, never cached or written.
+#[tauri::command]
+async fn read_model_collisions(
+    path: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_bridge_model(&path) {
+            return Err("Collisions can be read from .yft, .ydr and .ydd models only.".to_string());
+        }
+        if !cfg!(target_os = "windows") {
+            return Err("Reading collisions needs the Windows build.".to_string());
+        }
+        if !Path::new(&path).is_file() {
+            return Err(format!(
+                "{path} is no longer there, so its collisions cannot be read."
+            ));
+        }
+        bridge_request(
+            &app,
+            "readCollisions",
+            serde_json::json!({ "input": path }),
+            BRIDGE_HEAVY_REQUEST_TIMEOUT,
+        )
+    })
+    .await
+    .map_err(|e| format!("Reading collisions stopped: {e}"))?
+}
+
 /// Builds the bridge's shared GTA texture index ahead of the first mod part.
 /// The RPF scan takes seconds, and when the vehicle itself came from the parse
 /// cache it would otherwise land on the first part the user fits. Skipped when
@@ -4052,6 +4082,7 @@ pub fn run() {
             start_eup_watch,
             stop_eup_watch,
             parse_yft,
+            read_model_collisions,
             warm_codewalker_bridge,
             allow_model_resource,
             allow_els_folder,

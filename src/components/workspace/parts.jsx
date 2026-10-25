@@ -12,6 +12,7 @@ import {
   Grid3x3,
   ImagePlus,
   LampCeiling,
+  Loader2,
   PanelLeft,
   PanelRight,
   Plus,
@@ -23,6 +24,7 @@ import {
 import { Toggle } from "../ui/toggle";
 import { Keycaps, hotkeyLabel } from "../ui/keycaps";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
+import { collisionMaterialColor, collisionMaterialLabel } from "../../lib/collision-overlay.js";
 import { SHOWROOM_FLOORS, SHOWROOM_FLOOR_LABELS } from "../../lib/showroom-floors.js";
 import { TURNTABLE_MAX_SPEED, TURNTABLE_MIN_SPEED } from "../../lib/turntable.js";
 import LightDome from "../LightDome";
@@ -435,7 +437,7 @@ function HelpPopover() {
  * workspace's own deck groups (camera, rotate, snap...), `viewButtons` its
  * view toggles; grid, shadow, guides and help are shared.
  */
-export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, viewButtons, progress, stageSwitch = true }) {
+export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, viewButtons, progress, stageSwitch = true, collisions = null }) {
   const [guides, setGuides] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const hk = s.hotkeys || {};
@@ -486,8 +488,11 @@ export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, v
           </div>
         ) : null}
 
-        {hasModel && s.showSolidWireframe && s.meshStats ? (
-          <MeshStatsSlip stats={s.meshStats} belowSwitch={stageSwitch} />
+        {hasModel && ((s.showSolidWireframe && s.meshStats) || collisions) ? (
+          <div className={`lv-slip-stack ${stageSwitch ? "" : "is-top"}`}>
+            {s.showSolidWireframe && s.meshStats ? <MeshStatsSlip stats={s.meshStats} /> : null}
+            {collisions}
+          </div>
         ) : null}
 
         <div className="lv-alerts" role="status" aria-live="polite">
@@ -615,18 +620,22 @@ export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, v
 
 const formatCount = (value) => Number(value || 0).toLocaleString();
 const formatMetres = (value) => value.toFixed(2);
+const formatSize = ({ length, width, height }) =>
+  Math.max(length, width, height) < 1
+    ? `${(length * 100).toFixed(1)} × ${(width * 100).toFixed(1)} × ${(height * 100).toFixed(1)} cm`
+    : `${formatMetres(length)} × ${formatMetres(width)} × ${formatMetres(height)} m`;
 
 // Counts what the viewer draws now, so hidden parts and inactive LODs are out.
-function MeshStatsSlip({ stats, belowSwitch }) {
+export function MeshStatsSlip({ stats, belowSwitch, modelsLabel = "Vehicles" }) {
   const rows = [
-    stats.models > 1 ? ["Vehicles", formatCount(stats.models)] : null,
+    stats.models > 1 ? [modelsLabel, formatCount(stats.models)] : null,
     ["Triangles", formatCount(stats.triangles), "GTA drawables are triangle lists, so this is the polygon count"],
     ["Vertices", formatCount(stats.vertices)],
     ["Meshes", formatCount(stats.meshes), "Drawn geometry pieces; each is at least one draw call"],
     stats.shaders === null ? null : ["Shaders", formatCount(stats.shaders), "Distinct GTA shaders in use"],
     stats.textures === null ? null : ["Textures", formatCount(stats.textures), "Distinct textures the drawn shaders reference"],
     stats.size
-      ? ["Size", `${formatMetres(stats.size.length)} × ${formatMetres(stats.size.width)} × ${formatMetres(stats.size.height)} m`, "Length × width × height"]
+      ? ["Size", formatSize(stats.size), "Length × width × height"]
       : null,
   ].filter(Boolean);
   return (
@@ -640,6 +649,74 @@ function MeshStatsSlip({ stats, belowSwitch }) {
           </div>
         ))}
       </dl>
+    </section>
+  );
+}
+
+const COLLISION_KINDS = [
+  ["box", "Boxes"],
+  ["sphere", "Spheres"],
+  ["capsule", "Capsules"],
+  ["cylinder", "Cylinders"],
+];
+const COLLISION_MATERIAL_ROWS = 6;
+
+const COLLISION_NOTES = {
+  loading: "Reading collisions…",
+  none: "This model has no collision bounds.",
+  unavailable: "Collisions are read from .yft, .ydr and .ydd files in the desktop app.",
+};
+
+export function CollisionSlip({ info, showModel, onShowModelChange }) {
+  const data = info?.status === "ready" ? info.data : null;
+  const materials = data?.materials || [];
+  const shown = materials.slice(0, COLLISION_MATERIAL_ROWS);
+  return (
+    <section className="lv-slip lv-mesh-stats lv-collisions" aria-label="Collisions">
+      <h3 className="cx-label">Collisions</h3>
+      {data ? (
+        <>
+          <dl>
+            <div title="Collision mesh triangles">
+              <dt>Triangles</dt>
+              <dd>{formatCount(data.triangles)}</dd>
+            </div>
+            {COLLISION_KINDS.filter(([kind]) => data.kinds[kind] > 0).map(([kind, label]) => (
+              <div key={kind}>
+                <dt>{label}</dt>
+                <dd>{formatCount(data.kinds[kind])}</dd>
+              </div>
+            ))}
+          </dl>
+          <ul className="lv-collision-materials" aria-label="Collision materials">
+            {shown.map((material) => (
+              <li key={material.index} title={`${collisionMaterialLabel(material)}: ${formatCount(material.triangles)} triangles, ${formatCount(material.shapes)} shapes`}>
+                <span className="lv-collision-chip" style={{ background: `#${collisionMaterialColor(material.slot).getHexString()}` }} aria-hidden="true" />
+                <span className="lv-collision-name">{collisionMaterialLabel(material)}</span>
+                <span className="lv-collision-count">{formatCount(material.triangles + material.shapes)}</span>
+              </li>
+            ))}
+          </ul>
+          {materials.length > shown.length ? (
+            <p className="lv-collision-note">{materials.length - shown.length} more materials</p>
+          ) : null}
+          {data.truncated ? <p className="lv-collision-note">Very large; only part of it is shown.</p> : null}
+          {data.warnings.slice(0, 2).map((warning) => (
+            <p key={warning} className="lv-collision-note">{warning}</p>
+          ))}
+          <label className="lv-collision-toggle">
+            <span>Show the model</span>
+            <Toggle checked={showModel} onChange={onShowModelChange} ariaLabel="Show the model with its collisions" />
+          </label>
+        </>
+      ) : info?.status === "error" ? (
+        <p className="lv-collision-note is-error">{info.error || "The collisions couldn't be read."}</p>
+      ) : (
+        <p className="lv-collision-note">
+          {info?.status === "loading" ? <Loader2 className="lv-collision-spin" aria-hidden="true" /> : null}
+          {COLLISION_NOTES[info?.status] || COLLISION_NOTES.loading}
+        </p>
+      )}
     </section>
   );
 }

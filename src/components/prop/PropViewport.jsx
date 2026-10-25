@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { createViewerStage } from "../../lib/viewer-stage.js";
+import { createMeshStatsReporter } from "../../lib/mesh-stats.js";
 import {
   GLOW_LAYER,
   applyShadowFlags,
@@ -69,6 +70,9 @@ const PropViewport = forwardRef(function PropViewport(
     animating = false,
     onAnimate = null,
     onFrame = null,
+    showMeshStats = false,
+    onMeshStats = null,
+    hideModel = false,
   },
   ref,
 ) {
@@ -84,6 +88,11 @@ const PropViewport = forwardRef(function PropViewport(
   onFrameRef.current = onFrame;
   const propRef = useRef(prop);
   propRef.current = prop;
+  const meshStatsRef = useRef({ on: showMeshStats, onStats: onMeshStats, reporter: createMeshStatsReporter() });
+  meshStatsRef.current.on = showMeshStats;
+  meshStatsRef.current.onStats = onMeshStats;
+  const hideModelRef = useRef(Boolean(hideModel));
+  hideModelRef.current = Boolean(hideModel);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -143,7 +152,7 @@ const PropViewport = forwardRef(function PropViewport(
     const resize = () => {
       const width = container.clientWidth;
       const height = container.clientHeight;
-      if (!width || !height) return;
+      if (!width || !height) return false;
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
@@ -151,6 +160,7 @@ const PropViewport = forwardRef(function PropViewport(
       resizeBloomPipeline(bloomPipeline, width, height, ratio);
       resizeAoPipeline(aoPipeline, width, height, ratio);
       stageApi.resize();
+      return true;
     };
 
     const draw = () => {
@@ -158,7 +168,15 @@ const PropViewport = forwardRef(function PropViewport(
       // Only the model casts: beams and coronas are light, not matter.
       if (current) applyShadowFlags(current.model, stageApi.castsShadows);
       if (aoPipeline?.enabled) setAoBounds(aoPipeline, current?.bounds() || null);
-      renderWithEffects({ renderer, scene, camera, ao: aoPipeline, bloom: bloomPipeline });
+      const hidden = hideModelRef.current && current?.model.visible ? current.model : null;
+      if (hidden) hidden.visible = false;
+      try {
+        renderWithEffects({ renderer, scene, camera, ao: aoPipeline, bloom: bloomPipeline });
+      } finally {
+        if (hidden) hidden.visible = true;
+      }
+      const stats = meshStatsRef.current;
+      stats.reporter.report(stats.on && current ? [current.model] : null, stats.onStats);
     };
     state.draw = draw;
 
@@ -187,11 +205,17 @@ const PropViewport = forwardRef(function PropViewport(
       state.frameId = requestAnimationFrame(tick);
     };
     state.requestRender = requestRender;
+
+    const renderNow = () => {
+      if (state.disposed || !activeRef.current) return requestRender();
+      if (state.frameId) cancelAnimationFrame(state.frameId);
+      tick(performance.now());
+    };
     controls.addEventListener("change", requestRender);
 
     const observer = new ResizeObserver(() => {
-      resize();
-      requestRender();
+      if (resize()) renderNow();
+      else requestRender();
     });
     observer.observe(container);
     resize();
@@ -279,6 +303,18 @@ const PropViewport = forwardRef(function PropViewport(
     const state = stateRef.current;
     if (state && animating && isActive) state.requestRender();
   }, [animating, isActive]);
+
+  useEffect(() => {
+    meshStatsRef.current.reporter.reset();
+    stateRef.current?.requestRender();
+  }, [showMeshStats, prop]);
+
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    state.renderer.shadowMap.needsUpdate = true;
+    state.requestRender();
+  }, [hideModel]);
 
   useEffect(() => {
     const state = stateRef.current;

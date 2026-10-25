@@ -1,6 +1,6 @@
 [package]
 name = "cortex-studio"
-version = "5.4.0"
+version = "5.5.0"
 description = "Cortex Studio — Livery Development Environment"
 authors = ["Ever3st"]
 license = "LicenseRef-Cortex-Studio-Source-Available-1.0"
