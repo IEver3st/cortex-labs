@@ -139,7 +139,7 @@
   overflow: hidden;
   font-size: calc(13.5 * var(--u));
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

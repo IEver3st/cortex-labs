@@ -269,6 +269,7 @@ export function skipsSolidWire(object) {
   if (!object) return true;
   if (object.isSprite || object.isPoints || object.isLine) return true;
   if (!object.isMesh) return false;
+  if (object.userData?.propHelper) return true;
   if (!object.geometry?.attributes?.position) return true;
   if (object.layers?.isEnabled?.(GLOW_LAYER) || object.layers?.isEnabled?.(FLOOR_LIGHT_LAYER)) return true;
   if (object.onBeforeRender !== defaultOnBeforeRender) return true;

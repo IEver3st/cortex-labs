@@ -4,7 +4,8 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls";
 import { computePedBounds } from "../../lib/ped-assembly";
 import { createViewerStage } from "../../lib/viewer-stage.js";
-import { applyShadowFlags, configureShadowLight } from "../../lib/viewer-render-effects.js";
+import { applyShadowFlags, configureShadowLight, createSolidWireMaterial, renderSolidWire } from "../../lib/viewer-render-effects.js";
+import { countDrawnGeometry, createMeshStatsReporter } from "../../lib/mesh-stats.js";
 import { shotFov } from "../../lib/eup-export.js";
 
 const MAX_PIXEL_RATIO = 1.5;
@@ -214,6 +215,8 @@ const EupViewport = forwardRef(function EupViewport(
     showShadows = true,
     animating = false,
     onAnimate = null,
+    showSolidWireframe = false,
+    onMeshStats = null,
   },
   ref,
 ) {
@@ -231,12 +234,15 @@ const EupViewport = forwardRef(function EupViewport(
   pickRef.current = { roots: pickRoots, onPick, objects: pickObjects, onPickObject, onGizmoEnd };
   const gizmoRef = useRef(gizmo);
   gizmoRef.current = gizmo;
+  const solidWireRef = useRef({ on: showSolidWireframe, onStats: onMeshStats, material: null, reporter: createMeshStatsReporter() });
+  solidWireRef.current.on = showSolidWireframe;
+  solidWireRef.current.onStats = onMeshStats;
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !enabled) return undefined;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, stencil: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
@@ -304,11 +310,12 @@ const EupViewport = forwardRef(function EupViewport(
     const resize = () => {
       const width = container.clientWidth;
       const height = container.clientHeight;
-      if (!width || !height) return;
+      if (!width || !height) return false;
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       stageApi.resize();
+      return true;
     };
 
     const tick = (now) => {
@@ -326,6 +333,16 @@ const EupViewport = forwardRef(function EupViewport(
       if (gizmoControls.object && !gizmoControls.object.parent) gizmoControls.detach();
       if (state.shadowsDirty) state.applyShadows();
       renderer.render(scene, camera);
+      const wire = solidWireRef.current;
+      if (wire.on && pedRoot) {
+        wire.material ||= createSolidWireMaterial();
+        renderSolidWire(renderer, scene, camera, { roots: [pedRoot], material: wire.material });
+      }
+      wire.reporter.report(wire.on && pedRoot ? [pedRoot] : null, (stats) => {
+        if (!stats) return wire.onStats?.(null);
+        const models = pedRoot.children.filter((figure) => countDrawnGeometry([figure]).meshes > 0).length;
+        wire.onStats?.({ ...stats, models, size: models > 1 ? null : stats.size });
+      });
       if (moved || animate) requestRender();
     };
 
@@ -339,6 +356,12 @@ const EupViewport = forwardRef(function EupViewport(
       state.frameId = requestAnimationFrame(tick);
     };
     state.requestRender = requestRender;
+
+    const renderNow = () => {
+      if (state.disposed || !activeRef.current) return requestRender();
+      if (state.frameId) cancelAnimationFrame(state.frameId);
+      tick(performance.now());
+    };
 
     controls.addEventListener("change", requestRender);
 
@@ -406,8 +429,8 @@ const EupViewport = forwardRef(function EupViewport(
     renderer.domElement.addEventListener("pointerup", onPointerUp);
 
     const observer = new ResizeObserver(() => {
-      resize();
-      requestRender();
+      if (resize()) renderNow();
+      else requestRender();
     });
     observer.observe(container);
     resize();
@@ -428,6 +451,9 @@ const EupViewport = forwardRef(function EupViewport(
       if (setRoot) scene.remove(setRoot);
       stageApi.dispose();
       key.shadow.map?.dispose?.();
+      solidWireRef.current.material?.dispose();
+      solidWireRef.current.material = null;
+      solidWireRef.current.reporter.reset();
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();
@@ -459,6 +485,11 @@ const EupViewport = forwardRef(function EupViewport(
     }
     state.requestRender();
   };
+
+  useEffect(() => {
+    solidWireRef.current.reporter.reset();
+    stateRef.current?.requestRender();
+  }, [showSolidWireframe]);
 
   useEffect(() => {
     syncGizmo();

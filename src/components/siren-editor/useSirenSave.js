@@ -3,6 +3,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { exists, readTextFile, writeFile } from "@tauri-apps/plugin-fs";
 import { createCarcolsFile, serializeSirenSetting, spliceSirenSetting } from "../../lib/siren-settings.js";
 import useSirenIssues from "./useSirenIssues.js";
+import useScopedStatus from "./useScopedStatus.js";
 
 // Save and Copy XML for the siren draft. Save writes only to the carcols.meta
 // the user picks in the dialog: an existing file gets this setting replaced or
@@ -21,30 +22,18 @@ export default function useSirenSave(s) {
   const draft = editor?.draft;
   const context = s.vehicleLights?.sirenContext || null;
   const { blocking } = useSirenIssues(s);
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useScopedStatus(s.modelPath);
   const [saving, setSaving] = useState(false);
+  const [pending, setPending] = useState(null);
 
   const modelDir = String(s.modelPath || "").replace(/[\\/][^\\/]+$/, "");
-  const defaultPath = editor?.base?.sourcePath || context?.carcolsPaths?.[0]
+  const defaultPath = !s.modelPath ? (editor?.base?.sourcePath || "carcols.meta") : editor?.base?.sourcePath || context?.carcolsPaths?.[0]
     || `${(context?.resourceRoot || modelDir).replace(/[\\/]$/, "")}/carcols.meta`;
   const disabledReason = !draft ? "No siren setting to save."
     : !s.isTauriRuntime ? "Saving carcols.meta needs the desktop app. Copy XML works here."
       : blocking.length ? blocking[0].message : "";
 
-  const saveToFile = useCallback(async () => {
-    if (disabledReason || saving) return;
-    let target = null;
-    try {
-      target = await save({
-        defaultPath,
-        title: "Save siren setting to carcols.meta",
-        filters: [{ name: "carcols.meta", extensions: ["meta"] }],
-      });
-    } catch (error) {
-      setStatus({ tone: "error", text: `Could not open the save dialog: ${String(error?.message || error)}` });
-      return;
-    }
-    if (!target) return;
+  const write = useCallback(async (target, confirmed) => {
     setSaving(true);
     setStatus({ tone: "busy", text: `Saving to ${fileName(target)}…` });
     try {
@@ -54,8 +43,18 @@ export default function useSirenSave(s) {
         const source = await readTextFile(target);
         const base = editor.base;
         // The file the setting came from: replace it in place even if its id changed.
-        const matchId = base && normalizePath(base.sourcePath) === normalizePath(target) ? base.id : draft.id;
-        ({ text, mode } = spliceSirenSetting(source, draft, { matchId }));
+        const fromFile = Boolean(base) && normalizePath(base.sourcePath) === normalizePath(target);
+        ({ text, mode } = spliceSirenSetting(source, draft, { matchId: fromFile ? base.id : draft.id }));
+        if (mode === "replaced" && !fromFile && !confirmed) {
+          setPending({ target, id: draft.id });
+          setStatus({
+            tone: "warn",
+            text: `${fileName(target)} already has a setting with id ${draft.id}. Replace it with this one, or change this setting's id in Setting and save again.`,
+            path: target,
+            confirm: "Replace it",
+          });
+          return;
+        }
       } else {
         text = createCarcolsFile(draft);
       }
@@ -72,7 +71,31 @@ export default function useSirenSave(s) {
     } finally {
       setSaving(false);
     }
-  }, [defaultPath, disabledReason, draft, editor, s, saving]);
+  }, [draft, editor, s]);
+
+  const saveToFile = useCallback(async () => {
+    if (disabledReason || saving) return;
+    setPending(null);
+    let target = null;
+    try {
+      target = await save({
+        defaultPath,
+        title: "Save siren setting to carcols.meta",
+        filters: [{ name: "carcols.meta", extensions: ["meta"] }],
+      });
+    } catch (error) {
+      setStatus({ tone: "error", text: `Could not open the save dialog: ${String(error?.message || error)}` });
+      return;
+    }
+    if (!target) return;
+    await write(target, false);
+  }, [defaultPath, disabledReason, saving, setStatus, write]);
+
+  const confirmReplace = useCallback(() => {
+    if (!pending || saving || disabledReason) return;
+    setPending(null);
+    write(pending.target, pending.id === draft?.id);
+  }, [disabledReason, draft?.id, pending, saving, write]);
 
   const copyXml = useCallback(async () => {
     if (!draft) return;
@@ -84,5 +107,6 @@ export default function useSirenSave(s) {
     }
   }, [draft]);
 
-  return { saveToFile, copyXml, saving, status, clearStatus: () => setStatus(null), disabledReason };
+  const clearStatus = () => { setPending(null); setStatus(null); };
+  return { saveToFile, confirmReplace, copyXml, saving, status, clearStatus, disabledReason };
 }

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { AlertTriangle, Aperture, Camera, Car, Check, ChevronUp, FolderOpen, FolderTree, Box, Boxes, LayoutGrid, PackagePlus, RefreshCw } from "lucide-react";
+import { AlertTriangle, Aperture, Camera, Car, Check, ChevronUp, FolderOpen, FolderTree, Box, Boxes, Hexagon, LayoutGrid, PackagePlus, RefreshCw } from "lucide-react";
 import { Toggle } from "../ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
@@ -30,6 +30,7 @@ import {
   Viewfinder,
   WorkspaceFrame,
   withShortcut,
+  CollisionSlip,
 } from "./parts";
 import { PaneResizer, usePaneWidths } from "./PaneResizer";
 import ReplacePrompt from "./ReplacePrompt";
@@ -612,8 +613,18 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             <DeckButton active={s.showCageWireframe} onClick={() => s.setShowCageWireframe((v) => !v)} title="Cage wireframe" className="is-icon">
               <Boxes aria-hidden="true" />
             </DeckButton>
+            <DeckButton active={s.showCollisions} onClick={() => s.setShowCollisions((v) => !v)} title="Collisions" className="is-icon">
+              <Hexagon aria-hidden="true" />
+            </DeckButton>
           </>
         )}
+        collisions={s.showCollisions ? (
+          <CollisionSlip
+            info={s.collisionInfo || { status: "loading" }}
+            showModel={!s.collisionsOnly}
+            onShowModelChange={(value) => s.setCollisionsOnly(!value)}
+          />
+        ) : null}
       />
 
       {/* ──── Inspector ──── */}

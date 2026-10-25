@@ -540,6 +540,118 @@
   top: calc(var(--lv-inset) + 48px);
 }
 
+.lv-slip-stack {
+  position: absolute;
+  top: calc(var(--lv-inset) + 50px);
+  left: var(--lv-inset);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: calc(100% - 2 * var(--lv-inset));
+  pointer-events: none;
+}
+
+.lv-slip-stack > .lv-slip {
+  position: static;
+}
+
+.lv-slip-stack.is-top {
+  top: var(--lv-inset);
+}
+
+.lv-collisions {
+  width: 240px;
+}
+
+.lv-collision-materials {
+  display: grid;
+  gap: 5px;
+  margin: 9px 0 0;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--lv-slip-line);
+  list-style: none;
+}
+
+.lv-collision-materials li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.lv-collision-chip {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+}
+
+.lv-collision-name {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-collision-count {
+  flex-shrink: 0;
+  color: var(--mg-muted);
+  font-family: var(--font-hud);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-collision-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 7px 0 0;
+  color: var(--mg-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.lv-collision-note:first-of-type {
+  margin-top: 0;
+}
+
+.lv-collision-note.is-error {
+  color: var(--mg-destructive);
+}
+
+.lv-collision-spin {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  animation: lv-collision-spin 0.9s linear infinite;
+}
+
+@keyframes lv-collision-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.lv-collision-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--lv-slip-line);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-collision-spin {
+    animation: none;
+  }
+}
+
 .lv-mesh-stats h3 {
   margin: 0 0 9px;
 }

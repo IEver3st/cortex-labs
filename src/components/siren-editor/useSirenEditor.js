@@ -55,17 +55,24 @@ function clampSelection(selection, primary, count) {
 }
 
 export default function useSirenEditor({ modelPath, fileSetting }) {
-  const [entry, setEntry] = useState(EMPTY);
-  const state = entry.path === modelPath ? entry : EMPTY;
+  const [entries, setEntries] = useState({ model: EMPTY, pattern: EMPTY });
+  const slot = modelPath ? "model" : "pattern";
+  const entry = entries[slot];
+  const state = entry.path === (modelPath || "") ? entry : EMPTY;
 
-  const update = useCallback((recipe) => setEntry((current) => {
-    const base = current.path === modelPath ? current : { ...EMPTY, path: modelPath };
-    return recipe(base);
-  }), [modelPath]);
+  const update = useCallback((recipe) => setEntries((current) => {
+    const own = current[slot];
+    const base = own.path === (modelPath || "") ? own : { ...EMPTY, path: modelPath || "" };
+    const next = recipe(base);
+    return next === own ? current : { ...current, [slot]: next };
+  }), [modelPath, slot]);
 
   const baseFingerprint = useMemo(() => fingerprint(state.base), [state.base]);
   const draftFingerprint = useMemo(() => fingerprint(state.draft), [state.draft]);
   const dirty = Boolean(state.draft) && (!state.base || baseFingerprint !== draftFingerprint);
+  const patternEntry = entries.pattern;
+  const patternDirty = useMemo(() => Boolean(patternEntry.draft)
+    && (!patternEntry.base || fingerprint(patternEntry.base) !== fingerprint(patternEntry.draft)), [patternEntry.base, patternEntry.draft]);
 
   // A rescan that changes the file: a clean draft follows it (same setting in
   // the same file) or steps aside so the preview shows the file again. Unsaved
@@ -90,7 +97,7 @@ export default function useSirenEditor({ modelPath, fileSetting }) {
     const base = created ? (asFile ? cloneSirenSetting(created) : null) : cloneSirenSetting(fileSetting);
     const draft = created ? cloneSirenSetting(created) : cloneSirenSetting(fileSetting);
     if (!draft) return current;
-    return { ...EMPTY, path: modelPath, open: true, base, draft, markers: current.markers, ...clampSelection([0], 0, draft.sirens.length) };
+    return { ...EMPTY, path: modelPath || "", open: true, base, draft, markers: current.markers, ...clampSelection([0], 0, draft.sirens.length) };
   }), [fileSetting, modelPath, update]);
 
   const close = useCallback(() => update((current) => ({ ...current, open: false })), [update]);
@@ -180,6 +187,9 @@ export default function useSirenEditor({ modelPath, fileSetting }) {
     setMarkerStyle,
     draft: state.draft,
     base: state.base,
+    patternOnly: !modelPath,
+    pattern: patternEntry.draft,
+    patternDirty,
     dirty,
     canUndo: state.past.length > 0,
     canRedo: state.future.length > 0,

@@ -2,7 +2,7 @@
   "name": "cortex-studio",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
-  "version": "5.4.0",
+  "version": "5.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

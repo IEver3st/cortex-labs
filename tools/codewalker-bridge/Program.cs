@@ -118,6 +118,8 @@ public static partial class Program
                 return new { available = GetSharedTextureArchive() != null };
             case "parseYft":
                 return ParseYft(RequireString(request, "input"), RequireString(request, "output"));
+            case "readCollisions":
+                return ReadCollisions(RequireString(request, "input"));
             case "listPedAssets":
                 return ListPedAssets(RequireString(request, "ped"));
             case "searchPeds":

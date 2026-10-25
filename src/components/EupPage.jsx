@@ -5,7 +5,7 @@ import { exists, readDir, readFile, stat, writeFile } from "@tauri-apps/plugin-f
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Group, MathUtils } from "three";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertTriangle, Aperture, Check, CircleHelp, Crosshair, Grid3x3, Images, LampCeiling, Loader2, Monitor, Pause, Play, Sun, X } from "lucide-react";
+import { AlertTriangle, Aperture, Check, CircleHelp, Crosshair, Grid3x3, Images, LampCeiling, Loader2, Monitor, Pause, Play, Sun, Triangle, X } from "lucide-react";
 import {
   EXPORT_FORMATS,
   VIDEO_FPS,
@@ -140,7 +140,7 @@ import {
 import { clampClipTime, isClipAtEnd, normalizePlayback } from "../lib/eup-playback";
 import { getOutfitLibrary, outfitLibraryError, subscribeOutfitLibrary, updateOutfitLibrary } from "../lib/eup-outfit-library";
 import { OUTFIT_STYLES, gameAvailability, generateOutfit, outfitSignature, overridesWithOutfit } from "../lib/eup-outfit-generator";
-import { ColorLine, DeckButton, FloorField, InspectorTabs, Slider, StageSection, WorkspaceFrame } from "./workspace/parts";
+import { ColorLine, DeckButton, FloorField, InspectorTabs, MeshStatsSlip, Slider, StageSection, WorkspaceFrame } from "./workspace/parts";
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
 import "./EupPage.css";
 
@@ -183,6 +183,7 @@ function normalizeScene(value, prefs) {
     floor: SHOWROOM_FLOORS.includes(source.floor) ? source.floor : start.floor,
     grid: typeof source.grid === "boolean" ? source.grid : true,
     shadows: typeof source.shadows === "boolean" ? source.shadows : true,
+    meshStats: typeof source.meshStats === "boolean" ? source.meshStats : false,
     backdrop: typeof source.backdrop === "string" && /^#[0-9a-f]{6}$/i.test(source.backdrop) ? source.backdrop : prefs.background,
     lightLevel: clampNumber(source.lightLevel, 0, 3, prefs.light),
   };
@@ -366,6 +367,7 @@ export default function EupPage({
   // Speed, loop and the paused frame are saved; a paused tab reopens paused on that frame.
   const [playback, setPlayback] = useState(() => normalizePlayback(initial.playback));
   const [playing, setPlaying] = useState(() => !normalizePlayback(initial.playback).paused);
+  const [meshStats, setMeshStats] = useState(null);
   const [clipRevision, setClipRevision] = useState(0);
   const [clipListing, setClipListing] = useState(IDLE_CLIP_LISTING);
   const propIdRef = useRef(0);
@@ -2689,6 +2691,8 @@ export default function EupPage({
               showShadows={scene.shadows}
               animating={playing && anyClip}
               onAnimate={handleAnimate}
+              showSolidWireframe={scene.meshStats}
+              onMeshStats={setMeshStats}
             />
           ) : (
             <div className="eup-stage-empty">
@@ -2734,34 +2738,42 @@ export default function EupPage({
             </div>
           ) : null}
 
-          {soloComponent || hiddenCount > 0 || loadingCount > 0 || errorCount > 0 ? (
-            <div className="lv-slip eup-modes" role="status" aria-live="polite">
-              {soloComponent ? (
-                <span className="eup-mode">
-                  <span>Only <b>{componentDisplayName(soloComponent)}</b></span>
-                  <button type="button" className="lv-link" onClick={() => setSoloComponent(null)}>Show all</button>
-                </span>
-              ) : null}
-              {hiddenCount > 0 ? (
-                <span className="eup-mode">
-                  <span>{hiddenCount} hidden</span>
-                  <button type="button" className="lv-link" onClick={() => setHiddenSlots({})}>Show</button>
-                </span>
-              ) : null}
-              {loadingCount > 0 ? (
-                <span className="eup-mode">
-                  <Loader2 className="eup-spin" aria-hidden="true" />
-                  <span>Loading {loadingCount} {loadingCount === 1 ? "slot" : "slots"}…</span>
-                </span>
-              ) : null}
-              {errorCount > 0 ? (
-                <span className="eup-mode is-error">
-                  <AlertTriangle aria-hidden="true" />
-                  <span>{errorCount} {errorCount === 1 ? "slot didn't" : "slots didn't"} load</span>
-                </span>
-              ) : null}
-            </div>
-          ) : null}
+          <div className="lv-slip-stack">
+            {soloComponent || hiddenCount > 0 || loadingCount > 0 || errorCount > 0 ? (
+              <div className="lv-slip eup-modes" role="status" aria-live="polite">
+                {soloComponent ? (
+                  <span className="eup-mode">
+                    <span>Only <b>{componentDisplayName(soloComponent)}</b></span>
+                    <button type="button" className="lv-link" onClick={() => setSoloComponent(null)}>Show all</button>
+                  </span>
+                ) : null}
+                {hiddenCount > 0 ? (
+                  <span className="eup-mode">
+                    <span>{hiddenCount} hidden</span>
+                    <button type="button" className="lv-link" onClick={() => setHiddenSlots({})}>Show</button>
+                  </span>
+                ) : null}
+                {loadingCount > 0 ? (
+                  <span className="eup-mode">
+                    <Loader2 className="eup-spin" aria-hidden="true" />
+                    <span>Loading {loadingCount} {loadingCount === 1 ? "slot" : "slots"}…</span>
+                  </span>
+                ) : null}
+                {errorCount > 0 ? (
+                  <span className="eup-mode is-error">
+                    <AlertTriangle aria-hidden="true" />
+                    <span>{errorCount} {errorCount === 1 ? "slot didn't" : "slots didn't"} load</span>
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {isTauriRuntime && scene.meshStats && meshStats?.meshes ? (
+              <MeshStatsSlip
+                stats={meshStats}
+                modelsLabel="Characters"
+              />
+            ) : null}
+          </div>
 
           <div className="lv-alerts" role="status" aria-live="polite">
             <AnimatePresence initial={false}>
@@ -2854,6 +2866,14 @@ export default function EupPage({
                   className="is-icon"
                 >
                   <Sun aria-hidden="true" />
+                </DeckButton>
+                <DeckButton
+                  active={scene.meshStats}
+                  onClick={() => updateScene({ meshStats: !scene.meshStats })}
+                  title="Solid wireframe and mesh stats"
+                  className="is-icon"
+                >
+                  <Triangle aria-hidden="true" />
                 </DeckButton>
               </div>
               <div className="lv-deck-group">

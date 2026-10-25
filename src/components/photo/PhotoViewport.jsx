@@ -212,7 +212,7 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     const resize = () => {
       const width = container.clientWidth;
       const height = container.clientHeight;
-      if (!width || !height) return;
+      if (!width || !height) return false;
       state.size = { width, height };
       callbacksRef.current.onResize?.({ width, height });
       renderer.setSize(width, height, false);
@@ -221,6 +221,7 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       resizeAoPipeline(aoPipeline, width, height, renderer.getPixelRatio());
       resizeBloomPipeline(state.bloom, width, height, renderer.getPixelRatio());
       stageApi.resize();
+      return true;
     };
 
     const tick = (now) => {
@@ -246,6 +247,12 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       state.frameId = requestAnimationFrame(tick);
     };
     state.requestRender = requestRender;
+
+    const renderNow = () => {
+      if (state.disposed || !activeRef.current) return requestRender();
+      if (state.frameId) cancelAnimationFrame(state.frameId);
+      tick(performance.now());
+    };
 
     let cameraTimer = 0;
     const handleControlsChange = () => {
@@ -314,8 +321,8 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     renderer.domElement.addEventListener("pointerup", handlePointerUp);
 
     const observer = new ResizeObserver(() => {
-      resize();
-      requestRender();
+      if (resize()) renderNow();
+      else requestRender();
     });
     observer.observe(container);
     resize();

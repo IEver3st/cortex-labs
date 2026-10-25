@@ -125,6 +125,40 @@ export function trafficAdvisorSequencers(count, mode, { period = 16 } = {}) {
   });
 }
 
+export const COLOUR_TURN_RHYTHMS = Object.freeze([
+  { id: "steady", label: "Steady", flashes: 0 },
+  { id: "double", label: "Double flash", flashes: 2 },
+  { id: "triple", label: "Triple flash", flashes: 3 },
+  { id: "quad", label: "Quad flash", flashes: 4 },
+]);
+
+export function colourKey(color) {
+  return String(color || "").trim().toLowerCase();
+}
+
+export function countColours(colors) {
+  return new Set((colors || []).map(colourKey)).size;
+}
+
+export function colourTurnSequencers(colors, rhythm = "steady") {
+  const list = Array.isArray(colors) ? colors.map(colourKey) : [];
+  const order = [...new Set(list)];
+  if (!order.length) return [];
+  const flashes = COLOUR_TURN_RHYTHMS.find((entry) => entry.id === rhythm)?.flashes ?? 0;
+  const turns = order.length;
+  return list.map((key) => {
+    const turn = order.indexOf(key);
+    const start = Math.floor((turn * SEQUENCER_STEPS) / turns);
+    const end = Math.floor(((turn + 1) * SEQUENCER_STEPS) / turns);
+    const bits = Array.from({ length: SEQUENCER_STEPS }, (_, step) => {
+      if (step < start || step >= end) return "0";
+      const offset = step - start;
+      return !flashes || (offset % 2 === 0 && offset < flashes * 2) ? "1" : "0";
+    }).join("");
+    return sequencerFromPattern(bits);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Colours and facings
 // ---------------------------------------------------------------------------
@@ -308,6 +342,7 @@ export function applySirenPreset(setting, indices, presetId) {
       rotation: { ...look.rotation, delta: light.rotation?.delta ?? 0 },
       flashiness: { ...look.flashiness, delta: light.flashiness?.delta ?? 0 },
       extraXml: [...(light.extraXml || [])],
+      ...(light.head ? { head: light.head } : {}),
     };
   });
 }
@@ -315,6 +350,138 @@ export function applySirenPreset(setting, indices, presetId) {
 // ---------------------------------------------------------------------------
 // Draft editing
 // ---------------------------------------------------------------------------
+
+export const DUAL_OFF = 0;
+export const DUAL_FIRST = 1;
+export const DUAL_SECOND = 2;
+export const DUAL_BOTH = 3;
+
+export function dualHeads(setting) {
+  const members = new Map();
+  (setting?.sirens || []).forEach((light, index) => {
+    if (!light?.head) return;
+    if (!members.has(light.head)) members.set(light.head, []);
+    members.get(light.head).push(index);
+  });
+  const heads = new Map();
+  for (const indices of members.values()) {
+    if (indices.length !== 2) continue;
+    heads.set(indices[0], indices);
+    heads.set(indices[1], indices);
+  }
+  return heads;
+}
+
+function freeHeadId(sirens) {
+  const used = new Set(sirens.map((light) => light?.head).filter(Boolean));
+  let id = 1;
+  while (used.has(`head${id}`)) id += 1;
+  return `head${id}`;
+}
+
+export function unpairSirens(setting, indices) {
+  const heads = dualHeads(setting);
+  const targets = new Set();
+  for (const index of indices) {
+    const pair = heads.get(index);
+    if (pair) pair.forEach((member) => targets.add(member));
+    else if (setting.sirens[index]?.head) targets.add(index);
+  }
+  if (!targets.size) return setting;
+  return updateSirens(setting, [...targets], (light) => {
+    delete light.head;
+  });
+}
+
+export function pairSirens(setting, first, second) {
+  const sirens = setting?.sirens || [];
+  if (first === second || !sirens[first] || !sirens[second]) return setting;
+  const head = freeHeadId(sirens);
+  return updateSirens(unpairSirens(setting, [first, second]), [first, second], (light) => {
+    light.head = head;
+  });
+}
+
+export function duplicateLights(sirens, indices) {
+  const sorted = [...new Set(indices)].sort((a, b) => a - b);
+  const heads = dualHeads({ sirens });
+  const fresh = new Map();
+  const taken = [...sirens];
+  return sorted.map((index) => {
+    const light = cloneSirenLight(sirens[index]);
+    const pair = heads.get(index);
+    if (pair && pair.every((member) => sorted.includes(member))) {
+      if (!fresh.has(light.head)) {
+        const head = freeHeadId(taken);
+        fresh.set(light.head, head);
+        taken.push({ head });
+      }
+      light.head = fresh.get(light.head);
+    } else delete light.head;
+    return light;
+  });
+}
+
+export function createDualHead(sirens = [], { colors = [red, blue] } = {}) {
+  const head = freeHeadId(sirens);
+  return [
+    createSirenLight({ color: colors[0], head, flashiness: { sequencer: phase("half", "a") } }),
+    createSirenLight({ color: colors[1], head, flashiness: { sequencer: phase("half", "b") } }),
+  ];
+}
+
+export function dualStep(first, second, step) {
+  return (sequencerStep(first, step) ? DUAL_FIRST : 0) | (sequencerStep(second, step) ? DUAL_SECOND : 0);
+}
+
+export function nextDualState(state) {
+  return state === DUAL_OFF ? DUAL_FIRST : state === DUAL_FIRST ? DUAL_SECOND : DUAL_OFF;
+}
+
+export function setDualStep(first, second, step, state) {
+  return [
+    setSequencerStep(first, step, (state & DUAL_FIRST) !== 0),
+    setSequencerStep(second, step, (state & DUAL_SECOND) !== 0),
+  ];
+}
+
+export function createPatternSetting() {
+  const sirens = [];
+  for (let index = 0; index < 4; index += 1) sirens.push(...createDualHead(sirens));
+  return { ...createSirenSetting({ id: 100, name: "pattern" }), sirens, sirenCount: sirens.length };
+}
+
+export function adoptPattern(target, pattern) {
+  const aims = (target?.sirens || []).map((light) => [light.rotation?.delta ?? 0, light.flashiness?.delta ?? 0]);
+  const lights = (pattern?.sirens || []).slice(0, MAX_SIRENS);
+  const tail = (target?.sirens || []).slice(lights.length).map(cloneSirenLight);
+  const taken = [...tail];
+  const heads = new Map();
+  const sirens = [
+    ...lights.map((light, index) => {
+      const next = cloneSirenLight(light);
+      if (aims[index]) [next.rotation.delta, next.flashiness.delta] = aims[index];
+      if (next.head) {
+        if (!heads.has(next.head)) {
+          const head = freeHeadId(taken);
+          heads.set(next.head, head);
+          taken.push({ head });
+        }
+        next.head = heads.get(next.head);
+      }
+      return next;
+    }),
+    ...tail,
+  ];
+  return {
+    ...target,
+    sequencerBpm: pattern.sequencerBpm,
+    timeMultiplier: pattern.timeMultiplier,
+    lamps: Object.fromEntries(Object.entries(pattern.lamps || {}).map(([key, lamp]) => [key, { ...lamp }])),
+    sirens,
+    sirenCount: sirens.length,
+  };
+}
 
 export function cloneSirenLight(light) {
   return {
@@ -520,12 +687,12 @@ const quietValue = (path) => /(?:sequencer|delta|start)$/.test(path);
  * What a siren setting draft changes against `base`, the setting in its file,
  * as short lines for the dock. A new setting (no base) says where it will go.
  */
-export function describeSirenChanges(base, draft) {
+export function describeSirenChanges(base, draft, { canInstall = true } = {}) {
   if (!draft) return [];
   const sirens = Array.isArray(draft.sirens) ? draft.sirens : [];
   if (!base) {
     return [
-      `New setting: no carcols.meta has it yet. Install or Save to carcols.meta adds it as id ${draft.id ?? "(none)"}.`,
+      `New setting: no carcols.meta has it yet. ${canInstall ? "Install or Save to carcols.meta adds" : "Save to file adds"} it as id ${draft.id ?? "(none)"}.`,
       `${sirens.length} ${sirens.length === 1 ? "siren" : "sirens"} at ${formatChangeValue(draft.sequencerBpm)} bpm`,
     ];
   }
@@ -545,7 +712,7 @@ export function describeSirenChanges(base, draft) {
   lines.push(...groupByChange(
     Array.from({ length: shared }, (_, index) => ({
       index: index + 1,
-      text: describeFields(leafChanges(before[index], sirens[index], { skip: ["extraXml"] }), sirenFieldLabel, quietValue),
+      text: describeFields(leafChanges(before[index], sirens[index], { skip: ["extraXml", "head"] }), sirenFieldLabel, quietValue),
     })),
     "Siren",
     "Sirens",

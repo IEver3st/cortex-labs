@@ -5,6 +5,7 @@ import { cloneSirenSetting, sirenImportTarget, spliceSirenSetting } from "../../
 import { backupPathFor, linkVariationSirenSetting } from "../../lib/siren-install.js";
 import { parseCarcolsMeta } from "../../lib/vehicle-meta.js";
 import useSirenIssues from "./useSirenIssues.js";
+import useScopedStatus from "./useScopedStatus.js";
 
 // Install and Import for the Sirens dock. Install writes the draft into the
 // resource's own carcols.meta and links it in carvariations.meta, after saving
@@ -33,7 +34,7 @@ export function useSirenInstall(s, resource) {
   const draft = editor?.draft;
   const context = s.vehicleLights?.sirenContext || null;
   const { blocking } = useSirenIssues(s);
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useScopedStatus(s.modelPath);
   const [busy, setBusy] = useState(false);
   const carcolsPath = (editor?.base?.sourcePath && context?.carcolsPaths?.some((path) => samePath(path, editor.base.sourcePath))
     ? editor.base.sourcePath : "") || context?.carcolsPaths?.[0] || "";
@@ -114,7 +115,7 @@ export function useCarcolsImport(s, resource) {
   const editor = s.sirenEditor;
   const context = s.vehicleLights?.sirenContext || null;
   const [choices, setChoices] = useState(null);
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useScopedStatus(s.modelPath);
 
   const apply = useCallback((setting, path) => {
     const imported = cloneSirenSetting(setting);
@@ -173,6 +174,6 @@ export function useCarcolsImport(s, resource) {
     cancel: () => setChoices(null),
     status,
     clearStatus: () => setStatus(null),
-    disabledReason: !s.isTauriRuntime ? "Importing needs the desktop app." : !s.modelPath ? "Load a vehicle first." : "",
+    disabledReason: !s.isTauriRuntime ? "Importing needs the desktop app." : "",
   };
 }

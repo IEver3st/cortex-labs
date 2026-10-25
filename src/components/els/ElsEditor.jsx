@@ -612,7 +612,7 @@ function StaticsCard({ els }) {
 
 /* ─── Editor ─── */
 
-export default function ElsEditor({ s, els }) {
+export default function ElsEditor({ s, els, stageAction = null }) {
   const draft = els.draft;
   const preview = els.preview;
   const pack = els.pack;
@@ -747,6 +747,7 @@ export default function ElsEditor({ s, els }) {
         <div className="se-actions">
           <IconButton label="Undo (Ctrl+Z)" onClick={els.undo} disabled={!els.canUndo}><Undo2 aria-hidden="true" /></IconButton>
           <IconButton label="Redo (Ctrl+Y)" onClick={els.redo} disabled={!els.canRedo}><Redo2 aria-hidden="true" /></IconButton>
+          {stageAction}
         </div>
       </header>
 

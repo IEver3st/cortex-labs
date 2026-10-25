@@ -50,7 +50,7 @@ Livery work is iterative, but repeated in-game testing turns small visual decisi
 | **EUP** | Preview clothing and Emergency Uniform Pack assets from `.ydd` models. |
 | **Multi-Model** | Line up to six vehicles in one scene, each with its own model, livery, glass design and paint. |
 | **Sirens** | Build and edit a vehicle's carcols.meta siren setting, or its ELS VCF, while it runs on the full textured model, in the workbench or the showroom. |
-| **Prop Studio** | Preview `.ydr`, `.ydd` and `.yft` props with their textures, emissives and authored lights, in a workbench or a showroom scaled to the prop, and export transparent PNGs. |
+| **Prop Studio** | Preview `.ydr`, `.ydd` and `.yft` props with their textures, emissives and authored lights, in a workbench or a showroom scaled to the prop, read live mesh stats and collision bounds, and export transparent PNGs. |
 | **Photo Mode** | Stage game vehicles, freemode peds and game props (or your own models) on one set, open doors, set paint and poses from the game's animations, and save framed PNGs up to 4K. |
 | **Template Generator** | Turn supported `.yft` and `.ydd` geometry into layered PSD or PNG templates. |
 | **PSD Variant Builder** | Toggle PSD layers, manage visual variants, and batch-export finished PNGs. |
@@ -68,7 +68,7 @@ Viewer controls include:
 - adjustable background, gloss, and light intensity;
 - an interactive light dome for azimuth and elevation;
 - GTA vehicle paint: primary, secondary, pearlescent, wheel, interior trim and dashboard colours from the game's palette or custom RGB, applied through each shader's paint layer;
-- model shadows, cage wireframes, a solid wireframe with live mesh stats (triangles, vertices, meshes, shaders, textures, size), and persistent camera state.
+- model shadows, cage wireframes, a solid wireframe with live mesh stats (triangles, vertices, meshes, shaders, textures, size), a collision bounds overlay coloured by material, and persistent camera state.
 
 ### Template generation
 
@@ -90,7 +90,7 @@ This is a best-effort preview of GTA materials, not full shader parity. Manual t
 
 ### Sirens
 
-The Sirens workspace edits a YFT vehicle's carcols.meta siren setting while the pattern runs on the whole model, loaded with its own textures as in Vehicle: a 32-step grid per siren with paint-to-edit cells, every carcols siren field (flash and rotation channels, corona, colour, intensity, scale, light spill and head/tail light sequencers), presets, traffic advisor arrows and chases, a lens palette, eight-way facings, undo, and numbered markers on the model. **Install to resource** writes the setting into the resource's carcols.meta and links it in carvariations.meta, keeping a .bak of each file; **Save to file…** writes into any carcols.meta you choose and leaves the rest of that file untouched. **Import…** reads a setting from any carcols.meta. The Lights tab lists the vehicle's equipment (extras) with a switch each, and resource tools build a ULC `ulc.lua` config and rename the vehicle across its meta files, scripts and stream files.
+The Sirens workspace edits a YFT vehicle's carcols.meta siren setting while the pattern runs on the whole model, loaded with its own textures as in Vehicle: a Siren Tool style grid with a column per light head, a row per step and a live lamp over each column, paint-to-edit cells, every carcols siren field (flash and rotation channels, corona, colour, intensity, scale, light spill and head/tail light sequencers), presets, traffic advisor arrows and chases, colours that take turns across a row, dual-colour heads (two sirens in one column), a lens palette, eight-way facings, undo, and numbered markers on the model. **Install to resource** writes the setting into the resource's carcols.meta and links it in carvariations.meta, keeping a .bak of each file; **Save to file…** writes into any carcols.meta you choose and leaves the rest of that file untouched. **Import…** reads a setting from any carcols.meta. With no vehicle open, **New pattern** builds a pattern with no model, saves it to a carcols.meta, and puts it on a vehicle later with **Use my pattern**. The Vehicle panel lists the vehicle's equipment (extras) with a switch each, and resource tools build a ULC `ulc.lua` config and rename the vehicle across its meta files, scripts and stream files.
 
 Vehicles built for ELS (LSPDFR's ELS V8, ELS-FiveM, ELS-Plus or MISS-ELS) switch Sirens to their VCF: Cortex Studio finds it beside the model or in ELS folders you add, flashes the model's extras by light stage, edits every VCF section, and saves only what changed after a .bak. ELS V8 pattern timings are imported from your own ELS-FiveM copy; none are bundled.
 
