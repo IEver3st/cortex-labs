@@ -16,7 +16,7 @@
 
 .mp-muted {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -35,7 +35,7 @@
   padding: 10px 12px;
   border-radius: 8px;
   background: var(--cx-wash);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -57,7 +57,7 @@
 .mp-model {
   margin: 0;
   overflow: hidden;
-  font-size: 22px;
+  font-size: var(--cx-fs-display-sm);
   line-height: 1.05;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -65,7 +65,7 @@
 
 .mp-sub {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -98,7 +98,7 @@
 .mp-section-title {
   flex: 1;
   margin: 0;
-  font-size: 10.5px;
+  font-size: var(--cx-fs-label);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -107,12 +107,12 @@
 
 .mp-count {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
 .mp-status {
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
 }
 
@@ -130,7 +130,7 @@
   background: transparent;
   color: var(--mg-primary);
   font-family: var(--font-main);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   cursor: pointer;
 }
@@ -151,7 +151,7 @@
 }
 
 .mp-absent {
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
 }
 
 /* ── Checks ── */
@@ -160,7 +160,7 @@
   align-items: center;
   gap: 8px;
   margin: -6px 0 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -225,7 +225,7 @@
 .mp-issue-message {
   display: -webkit-box;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -247,7 +247,7 @@
   display: grid;
   gap: 4px;
   padding: 0 4px 10px 19px;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -257,7 +257,7 @@
 }
 
 .mp-issue-more .mp-mono {
-  font-size: 10.5px;
+  font-size: var(--cx-fs-meta);
   overflow-wrap: anywhere;
 }
 
@@ -281,12 +281,12 @@
 }
 
 .mp-stepper-readout strong {
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
 }
 
 .mp-stepper-readout .mp-mono {
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -308,7 +308,7 @@
   min-height: 28px;
   padding: 0 8px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
 }
 
 .mp-row.is-current {
@@ -333,13 +333,13 @@
 
 .mp-row-name {
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mp-row-meta {
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   white-space: nowrap;
 }
@@ -402,7 +402,7 @@
 
 .mp-preset-name {
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -490,7 +490,7 @@
   display: grid;
   grid-template-columns: 104px minmax(0, 1fr);
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
 }
 
 .mp-fact dt {
@@ -508,7 +508,7 @@
 }
 
 .mp-fact dd.mp-mono {
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
 }
 
 .mp-ids {
@@ -522,7 +522,7 @@
   border-radius: 4px;
   background: var(--cx-wash-strong);
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
 }
 
 .mp-id.is-conflict {
@@ -568,13 +568,13 @@
 .mp-file-name {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mp-file-kind {
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -584,7 +584,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-destructive);
 }
 
@@ -593,13 +593,13 @@
   display: grid;
   gap: 8px;
   padding: 18px 2px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
 }
 
 .mp-empty strong {
-  font-size: 13.5px;
+  font-size: var(--cx-fs-row);
   color: var(--mg-fg);
 }
 

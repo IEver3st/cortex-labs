@@ -116,6 +116,7 @@ export default function useSirenResource({ modelPath, modelInfo, isTauriRuntime,
     sources: current ? scan.meta.sources : [],
     // Model names every vehicle in the resource registers (for the renamer).
     modelNames: current ? scan.meta.vehicles.map((vehicle) => vehicle.modelName).filter(Boolean) : [],
+    vehicleEntry: current ? scan.meta.vehicles.find((vehicle) => vehicle.modelName.toLowerCase() === modelName.toLowerCase()) || null : null,
     errors: current ? scan.meta.errors : [],
     setting,
     variationId,

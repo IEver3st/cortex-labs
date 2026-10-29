@@ -74,6 +74,12 @@ export function shotFov(fovDeg, viewAspect, outAspect) {
   return (Math.atan(Math.tan(half) * (viewAspect / outAspect)) * 360) / Math.PI;
 }
 
+export function containFov(fovDeg, viewAspect, outAspect) {
+  if (!(viewAspect > 0) || !(outAspect > 0) || outAspect >= viewAspect) return fovDeg;
+  const half = (fovDeg * Math.PI) / 360;
+  return (Math.atan(Math.tan(half) * (viewAspect / outAspect)) * 360) / Math.PI;
+}
+
 /** The viewfinder rectangle a capture covers, matching shotFov. */
 export function guideRect(viewWidth, viewHeight, outAspect) {
   if (!(viewWidth > 0) || !(viewHeight > 0) || !(outAspect > 0)) return null;

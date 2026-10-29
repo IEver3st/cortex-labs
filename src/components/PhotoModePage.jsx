@@ -17,7 +17,6 @@ import {
   Frame,
   Grid3x3,
   Lamp,
-  LampCeiling,
   Loader2,
   Monitor,
   Move,
@@ -52,7 +51,7 @@ import { exportRoofClip, readVehicleModFiles, readVehicleSetup } from "./photo/p
 import PhotoViewport from "./photo/PhotoViewport";
 import PhotoInspector from "./photo/PhotoInspector";
 import AddToSetDialog from "./photo/AddToSetDialog";
-import { DeckButton, WorkspaceFrame, splitPath } from "./workspace/parts";
+import { DeckButton, DeckViewMenu, deckButtonItems, FootFact, StageEmpty, StageToggle, WorkspaceFrame, splitPath } from "./workspace/parts";
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
 import "./PhotoModePage.css";
 
@@ -94,6 +93,7 @@ function readViewerPrefs() {
     background: typeof source.backgroundColor === "string" && source.backgroundColor ? source.backgroundColor : DEFAULT_BACKGROUND,
     light: Number.isFinite(source.lightIntensity) ? source.lightIntensity : 1,
     showroom: normalizeShowroomSubject(source.showroom?.vehicle, "vehicle"),
+    output: source.photoOutput,
   };
 }
 
@@ -742,41 +742,47 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
           <div className="pm-set-head">
             <h3 className="lv-group-title">On set</h3>
             <span className="pm-set-count">{objects.length}/{PHOTO_OBJECT_LIMIT}</span>
-            <button
-              type="button"
-              className="cx-btn lv-btn-sm pm-set-add"
-              onClick={() => setAdding("vehicle")}
-              disabled={!isTauriRuntime || objects.length >= PHOTO_OBJECT_LIMIT}
-              title={objects.length >= PHOTO_OBJECT_LIMIT ? "The set is full" : "Add a vehicle, person or prop"}
-            >
-              <Plus aria-hidden="true" />
-              Add
-            </button>
+            {objects.length > 0 ? (
+              <button
+                type="button"
+                className="cx-btn lv-btn-sm pm-set-add"
+                onClick={() => setAdding("vehicle")}
+                disabled={!isTauriRuntime || objects.length >= PHOTO_OBJECT_LIMIT}
+                title={objects.length >= PHOTO_OBJECT_LIMIT ? "The set is full" : "Add a vehicle, person or prop"}
+              >
+                <Plus aria-hidden="true" />
+                Add
+              </button>
+            ) : null}
           </div>
 
           {objects.length === 0 ? (
             <div className="pm-set-empty">
               <p className="lv-slot-note">
-                {isTauriRuntime
-                  ? "Bring vehicles, people and props from the game files, or your own models."
-                  : "Reading game files needs the desktop app."}
+                {isTauriRuntime ? "Nothing on set yet." : "Reading game files needs the desktop app."}
               </p>
-              {[
-                { kind: "vehicle", title: "Add a vehicle", hint: "Any car, bike, aircraft or boat in the game" },
-                { kind: "ped", title: "Add a person", hint: "A freemode ped, dressed and posed" },
-                { kind: "prop", title: "Add a prop", hint: "Cones, barriers, furniture and more" },
-              ].map((item) => {
-                const Icon = KIND_ICONS[item.kind];
-                return (
-                  <button key={item.kind} type="button" className="lv-drop pm-add-drop" onClick={() => setAdding(item.kind)} disabled={!isTauriRuntime}>
-                    <span className="lv-drop-title">
+              <div className="pm-add-list" role="group" aria-label="Add to set">
+                {[
+                  { kind: "vehicle", title: "Vehicle", hint: "Any car, bike, aircraft or boat in the game" },
+                  { kind: "ped", title: "Person", hint: "A freemode ped, dressed and posed" },
+                  { kind: "prop", title: "Prop", hint: "Cones, barriers, furniture and more" },
+                ].map((item) => {
+                  const Icon = KIND_ICONS[item.kind];
+                  return (
+                    <button
+                      key={item.kind}
+                      type="button"
+                      className="cx-btn is-quiet lv-btn-sm pm-add-btn"
+                      onClick={() => setAdding(item.kind)}
+                      disabled={!isTauriRuntime}
+                      title={item.hint}
+                    >
                       <Icon aria-hidden="true" />
                       {item.title}
-                    </span>
-                    <span className="lv-drop-hint">{item.hint}</span>
-                  </button>
-                );
-              })}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <ul className="pm-set-list" aria-label="Objects on set">
@@ -839,10 +845,8 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
         </div>
 
         <div className="lv-dock-foot pm-dock-foot">
-          <p className="pm-output-line">
-            <span>{output.width} × {output.height}</span>
-            <span>{settings.output.transparent && !showroomOn ? "transparent" : showroomOn ? "showroom" : "backdrop"}</span>
-          </p>
+          <FootFact label="Size">{output.width} × {output.height}</FootFact>
+          <FootFact label="Background">{settings.output.transparent && !showroomOn ? "transparent" : showroomOn ? "showroom" : "backdrop"}</FootFact>
           <button
             type="button"
             className="cx-btn is-primary lv-capture-btn"
@@ -854,7 +858,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
             {capturing ? "Rendering…" : "Take photo"}
             <kbd className="cx-keycap">P</kbd>
           </button>
-          {photoBlocked && isTauriRuntime ? <p className="lv-slot-note">{photoBlocked}</p> : null}
+          {photoBlocked && isTauriRuntime ? <p className="lv-foot-note">{photoBlocked}</p> : null}
         </div>
         <PaneResizer side="dock" label="Resize the on-set panel" setWidth={panes.setWidth} />
       </aside>
@@ -892,19 +896,16 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
               onResize={handleResize}
             />
           ) : (
-            <div className="pm-stage-empty">
-              <Monitor aria-hidden="true" />
-              <p className="pm-empty-title">Desktop app required</p>
-              <p className="pm-empty-desc">Photo Mode reads vehicles, peds, animations and props from your GTA V install, which needs the Cortex Studio desktop app.</p>
-            </div>
+            <StageEmpty
+              icon={Monitor}
+              title="Desktop app required"
+              line="Photo Mode reads vehicles, peds, animations and props from your GTA V install, which needs the Cortex Studio desktop app."
+            />
           )}
           {isTauriRuntime && objects.length === 0 ? (
-            <div className="pm-stage-empty">
-              <Aperture aria-hidden="true" />
-              <p className="pm-empty-title">The set is empty</p>
-              <p className="pm-empty-desc">Add a vehicle, a person or props from the game, then frame your shot.</p>
+            <StageEmpty icon={Aperture} title="The set is empty" line="Add a vehicle, a person or props from the game, then frame your shot.">
               <button type="button" className="cx-btn is-primary" onClick={() => setAdding("vehicle")}>Add to set</button>
-            </div>
+            </StageEmpty>
           ) : null}
         </div>
 
@@ -916,22 +917,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
           ) : null}
 
           {objects.length ? (
-            <div className="lv-stage-switch" role="radiogroup" aria-label="Stage">
-              <button type="button" role="radio" aria-checked={!showroomOn} className={!showroomOn ? "is-on" : ""} onClick={() => updateScene({ stage: "workbench" })}>
-                Workbench
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={showroomOn}
-                className={showroomOn ? "is-on" : ""}
-                onClick={() => updateScene({ stage: "showroom" })}
-                title="A dark studio with a reflective floor and a spotlight you can aim"
-              >
-                <LampCeiling aria-hidden="true" />
-                Showroom
-              </button>
-            </div>
+            <StageToggle showroom={showroomOn} onChange={(on) => updateScene({ stage: on ? "showroom" : "workbench" })} title="A dark studio with a reflective floor and a spotlight you can aim" />
           ) : null}
 
           {loadingCount > 0 ? (
@@ -994,25 +980,29 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
                   <RotateCw aria-hidden="true" />
                 </DeckButton>
               </div>
-              <div className="lv-deck-group" role="group" aria-label="View">
-                <DeckButton active={scene.grid && !showroomOn} onClick={() => updateScene({ grid: !scene.grid })} title={showroomOn ? "Ground grid (workbench only)" : "Ground grid"} disabled={showroomOn} className="is-icon">
-                  <Grid3x3 aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={scene.shadows || showroomOn} onClick={() => updateScene({ shadows: !scene.shadows })} title={showroomOn ? "Shadows are always on in the showroom" : "Ground shadows"} disabled={showroomOn} className="is-icon">
-                  <Sun aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={scene.ambientOcclusion} onClick={() => updateScene({ ambientOcclusion: !scene.ambientOcclusion })} title="Ambient occlusion" className="is-icon">
-                  <Contrast aria-hidden="true" />
-                </DeckButton>
-                <DeckButton
-                  active={settings.output.guides}
-                  onClick={() => setSettings((prev) => ({ ...prev, output: { ...prev.output, guides: !prev.output.guides } }))}
-                  title="Photo frame and thirds"
-                  className="is-icon"
-                >
-                  <Frame aria-hidden="true" />
-                </DeckButton>
-              </div>
+              <DeckViewMenu
+                groups={[deckButtonItems(
+                  <>
+                    <DeckButton active={scene.grid && !showroomOn} onClick={() => updateScene({ grid: !scene.grid })} title="Ground grid" note="Workbench only" disabled={showroomOn} className="is-icon">
+                      <Grid3x3 aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={scene.shadows || showroomOn} onClick={() => updateScene({ shadows: !scene.shadows })} title="Ground shadows" note="Always on in the showroom" disabled={showroomOn} className="is-icon">
+                      <Sun aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={scene.ambientOcclusion} onClick={() => updateScene({ ambientOcclusion: !scene.ambientOcclusion })} title="Ambient occlusion" className="is-icon">
+                      <Contrast aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton
+                      active={settings.output.guides}
+                      onClick={() => setSettings((prev) => ({ ...prev, output: { ...prev.output, guides: !prev.output.guides } }))}
+                      title="Photo frame and thirds"
+                      className="is-icon"
+                    >
+                      <Frame aria-hidden="true" />
+                    </DeckButton>
+                  </>,
+                )]}
+              />
               <div className="lv-deck-group">
                 <DeckButton active={helpOpen} onClick={() => setHelpOpen((value) => !value)} title="Mouse and keyboard controls" className="is-icon">
                   <CircleHelp aria-hidden="true" />

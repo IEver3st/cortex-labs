@@ -1132,16 +1132,26 @@ export function createEmergencyLightRig({ scene, model }) {
     }
     for (const index of [...indices].sort((a, b) => a - b)) {
       const siren = sirens.get(index);
-      const definition = definitions[index - 1];
-      const grow = definition?.scale ? sirenFlashScale(definition.scaleFactor) : 1;
-      const turn = siren && definition ? sirenTurn(siren, { rotate: false, spin: 0, yaw: sirenHeading(definition) }) : 0;
-      const local = siren
-        ? siren.restCenter.clone().sub(siren.pivot).multiplyScalar(grow).applyAxisAngle(siren.axis, turn).add(siren.pivot)
-        : bones.get(`siren${index}`).position.clone();
       if (siren && !isShown(siren.entries[0].mesh, model)) continue;
-      out.push({ siren: index, position: space.localToWorld(local) });
+      out.push({ siren: index, position: space.localToWorld(sirenLocalPoint(index, definitions[index - 1])) });
     }
     return out;
+  }
+
+  function sirenLocalPoint(index, definition) {
+    const siren = sirens.get(index);
+    if (!siren) return bones.get(`siren${index}`)?.position.clone() || null;
+    const grow = definition?.scale ? sirenFlashScale(definition.scaleFactor) : 1;
+    const turn = definition ? sirenTurn(siren, { rotate: false, spin: 0, yaw: sirenHeading(definition) }) : 0;
+    return siren.restCenter.clone().sub(siren.pivot).multiplyScalar(grow).applyAxisAngle(siren.axis, turn).add(siren.pivot);
+  }
+
+  function getSirenLocalPoints(definitions = state.setting?.sirens) {
+    const list = Array.isArray(definitions) ? definitions : [];
+    return {
+      bounds: footprint.isEmpty() ? null : footprint.clone(),
+      points: list.map((definition, offset) => ({ siren: offset + 1, position: sirenLocalPoint(offset + 1, definition) })),
+    };
   }
 
   /**
@@ -1220,6 +1230,7 @@ export function createEmergencyLightRig({ scene, model }) {
     setState,
     setTime,
     getSirenAnchors,
+    getSirenLocalPoints,
     scanFarSirens,
     update,
     dispose,

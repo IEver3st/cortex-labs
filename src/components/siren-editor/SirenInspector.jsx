@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { RotateCcw } from "lucide-react";
 import { Toggle } from "../ui/toggle";
 import { LensWriteDialog } from "./LensWriteDialog";
 import {
@@ -25,7 +26,7 @@ function cx(...parts) {
 }
 
 // Number entry that edits live while the text parses and snaps back on blur.
-export function NumberInput({ value, onChange, min = -Infinity, max = Infinity, step = 1, integer = false, label, scale = 1, digits = 3 }) {
+export function NumberInput({ value, onChange, min = -Infinity, max = Infinity, step = 1, integer = false, label, scale = 1, digits = 3, unit = "" }) {
   const shown = Number.isFinite(value) ? Number((value * scale).toFixed(digits)) : "";
   const [text, setText] = useState(String(shown));
   const focused = useRef(false);
@@ -39,8 +40,8 @@ export function NumberInput({ value, onChange, min = -Infinity, max = Infinity, 
     if (integer) next = Math.round(next);
     onChange(next / scale);
   };
-  return (
-    <input className="se-num" value={text} inputMode="decimal" spellCheck={false} aria-label={label}
+  const input = (
+    <input className={cx("se-num", unit && "has-unit")} value={text} inputMode="decimal" spellCheck={false} aria-label={label}
       onFocus={() => { focused.current = true; }}
       onBlur={() => { focused.current = false; setText(String(shown)); }}
       onChange={(event) => { setText(event.target.value); commit(event.target.value); }}
@@ -54,6 +55,13 @@ export function NumberInput({ value, onChange, min = -Infinity, max = Infinity, 
         setText(String(rounded));
         commit(String(rounded));
       }} />
+  );
+  if (!unit) return input;
+  return (
+    <span className="se-num-field" style={{ "--se-unit-ch": unit.length }}>
+      {input}
+      <span className="se-num-unit" aria-hidden="true">{unit}</span>
+    </span>
   );
 }
 
@@ -76,8 +84,7 @@ export function RangeField({ label, hint, value, onChange, min, max, step, integ
         style={{ "--fill": fill }} aria-label={label}
         onChange={(event) => onChange(Number(event.target.value) / scale)} />
       <NumberInput value={value} onChange={onChange} min={min} step={step}
-        integer={integer} label={`${label} value`} scale={scale} digits={digits} />
-      {unit ? <span className="se-unit">{unit}</span> : null}
+        integer={integer} label={`${label} value`} scale={scale} digits={digits} unit={unit} />
     </Field>
   );
 }
@@ -166,8 +173,9 @@ function LensFields({ s, light, sirens, primary }) {
   const tinted = Object.keys(tints).length;
   return (
     <Group title="Lens glow" trailing={tinted ? (
-      <button type="button" className="lv-link" onClick={() => s.updateVehicleLights({ lensTints: {} })}
+      <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={() => s.updateVehicleLights({ lensTints: {} })}
         title={`Back to the texture's colour on ${tinted === 1 ? "the 1 tinted siren" : `all ${tinted} tinted sirens`}`}>
+        <RotateCcw aria-hidden="true" />
         Reset all
       </button>
     ) : null}>
@@ -246,7 +254,7 @@ export function SirenPanel({ s }) {
   const editor = s.sirenEditor;
   const { setField, setLightPatch } = useSirenOps(editor);
   const light = editor?.draft?.sirens[editor.primary] || null;
-  if (!editor?.draft) return <p className="se-empty">Load a vehicle with a siren setting, or start a new one.</p>;
+  if (!editor?.draft) return <p className="se-empty">No siren setting open yet.</p>;
   if (!light) return <p className="se-empty">Select a siren in the grid or on the model.</p>;
   return (
     <div className="se-panel">
@@ -261,7 +269,7 @@ export function SirenPanel({ s }) {
 export function SettingPanel({ s }) {
   const editor = s.sirenEditor;
   const { setSettingField, setLampMultiples } = useSirenOps(editor);
-  if (!editor?.draft) return <p className="se-empty">Load a vehicle with a siren setting, or start a new one.</p>;
+  if (!editor?.draft) return <p className="se-empty">No siren setting open yet.</p>;
   return (
     <div className="se-panel">
       <SettingFields draft={editor.draft} setSettingField={setSettingField} setLampMultiples={setLampMultiples} />

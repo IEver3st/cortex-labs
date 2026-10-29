@@ -56,7 +56,7 @@
   gap: 2px 14px;
   margin: 0;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
@@ -77,7 +77,7 @@
 }
 
 .kr-open-error {
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-destructive);
 }
 
@@ -149,7 +149,7 @@
 
 .kr-rail-title {
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -158,7 +158,7 @@
 .kr-rail-sub {
   grid-column: 1;
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -173,7 +173,7 @@
   grid-row: 1;
   grid-column: 2;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -188,7 +188,7 @@
   background: color-mix(in srgb, var(--cx-caution) 18%, transparent);
   color: var(--cx-caution);
   font-family: var(--font-hud);
-  font-size: 10.5px;
+  font-size: var(--cx-fs-meta);
   line-height: 16px;
   text-align: center;
 }
@@ -252,7 +252,7 @@
 
 .kr-pos {
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -357,7 +357,7 @@ video.kr-stage-img {
   border-radius: 7px;
   background: var(--lv-slip, var(--cx-raised));
   color: var(--mg-fg);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -423,7 +423,7 @@ video.kr-stage-img {
   border: 1px dashed var(--mg-border);
   border-radius: 6px;
   color: var(--mg-muted);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
 }
 
 .kr-hole.is-error {
@@ -473,7 +473,7 @@ video.kr-stage-img {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
 }
 
 .kr-issues li {
@@ -557,7 +557,7 @@ video.kr-stage-img {
 
 .kr-thumb-label {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   color: var(--mg-muted);
   text-overflow: ellipsis;
@@ -576,7 +576,7 @@ video.kr-stage-img {
   border-radius: 4px;
   background: var(--cx-invert-bg);
   color: var(--cx-invert-fg);
-  font-size: 10.5px;
+  font-size: var(--cx-fs-meta);
   font-weight: 700;
 }
 
@@ -613,7 +613,7 @@ video.kr-stage-img {
   align-items: center;
   gap: 9px;
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: var(--cx-fs-title);
   font-weight: 650;
 }
 
@@ -624,14 +624,14 @@ video.kr-stage-img {
 .kr-check-title code {
   margin-left: auto;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   color: var(--mg-muted);
 }
 
 .kr-count {
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 400;
   color: var(--mg-muted);
 }
@@ -649,7 +649,7 @@ video.kr-stage-img {
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.45;
   text-align: left;
 }
@@ -685,13 +685,13 @@ button.kr-check-row:focus-visible {
 
 .kr-empty-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--cx-fs-title);
   font-weight: 650;
 }
 
 .kr-empty-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   color: var(--mg-muted);
 }
 

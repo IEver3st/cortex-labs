@@ -14,7 +14,7 @@ The vehicle loads the way it does in Vehicle: the whole model, with its own GTA 
 - **Preview.** A small live view of the model at the top of the right column, with the pattern running and a marker on each siren. By default each light gets a dot and, on a short leader beside it, its number in the siren's colour; heads that sit together share one label, and lights on the far side of the body fade back. Click a number to select that siren (Ctrl-click adds it to the selection). The pin menu over the sequencer's grid switches between these callouts, the **Classic** chips (a dot per siren, numbered when selected) and **Off**. Cortex Studio remembers the style you pick. Drag the preview's bottom edge to make it taller or shorter (double-click for the default). **Expand** (top-right of the preview, or the focus key **\\**) fills the workspace with the preview and its camera controls, with play and the Sirens switch at hand; **Esc** or the same button comes back.
 - **Panel.** Under the preview. Its top row is the vehicle's file, with buttons to replace or unload it. Below it, the panel is named for what it shows and follows your selection: it edits the selected sirens. The buttons beside the name switch it to **Setting** (the rest of the setting), **Vehicle** and **Mods** (with a vehicle open) or **Scene**; click the lit button again, or select a siren, to go back. **Vehicle** holds the **Model's own textures**, **Warnings** and **Saved vehicle** rows (a [saved vehicle](/docs/user-guide/workspaces#saved-vehicles) keeps the mods, livery, paint, extras and plate to reopen from Home), the [Equipment](#equipment) list, the switches for the headlights, indicators, brakes, reverse, extra lights and a ULC config's buttons with Glow, Light spill and Fog, and **Resource tools**, which open the [ULC builder](#ulc-builder) and [Rename vehicle](#rename-vehicle). **Mods** switches the vehicle's in-game livery and fits its mod kit parts as in [All](/docs/user-guide/viewer-modes#mod-kits) (lightbars, push bars and antennas often live there), and **Scene** holds the stage, backdrop, lighting and paint slots.
 
-The right column starts wider than the inspector in the other workspaces. Drag its inner edge to resize it, or focus the edge and use the arrow keys; double-click returns it to the default width. The size is remembered. The close button at the end of the panel's buttons, or the inspector toggle in the frame, hides the preview and the panel so the grid gets the room; the button over the grid brings them back.
+The right column starts wider than the inspector in the other workspaces. Drag its inner edge to resize it, or focus the edge and use the arrow keys; double-click returns it to the default width. The size is remembered. The close button at the end of the panel's buttons, or the right half of the layout icon in the top bar, hides the preview and the panel so the grid gets the room; the button over the grid brings them back. A playing pattern keeps playing while they are hidden.
 
 ## The grid
 
@@ -207,6 +207,18 @@ A new VCF saved into ELS-FiveM's `vcf` folder is added to the `vcf_files` list i
 ### ELS accuracy
 
 ELS switches whole extras, so the preview does too. Lit ELS extras glow at siren brightness, and their environment lights take the VCF colour and offset (read as metres from the extra). Imported tables play at ELS-FiveM's timing, one character every 15 ms. The preview applies the VCF as written; ELS-FiveM itself starts every group at pattern 1 rather than the stage presets, ignores **Off at stage 3** on light groups, and runs the carcols siren lights only at exactly the stage set under **Misc**. Miscs (MISS-ELS mod kit lights) are edited and saved but not shown on the model.
+
+## Cortex Forge
+
+Design and preview lights on the car in Cortex Studio. Check, link and install across your server in Cortex Forge.
+
+**Open in Cortex Studio** on a vehicle in Cortex Forge opens Sirens on that vehicle's carcols.meta with its siren setting selected and its model loaded, in a new tab if Cortex Studio is already running. If the file can't be read, Sirens says so and opens the model alone; if the file has no setting with that id, it lists the settings the file has.
+
+**Check in Forge** opens the resource that holds the open carcols.meta (the nearest folder with an `fxmanifest.lua` or `__resource.lua`) in Cortex Forge, to check it against your server. It sits under **Install to resource**, and in **Rename vehicle…** once the rename is done. It shows only when Cortex Forge 0.1.0 or later is installed, and waits while the setting has unsaved edits, because Forge reads the files on disk.
+
+## Juno
+
+While signed in to **Settings > Cortex account**, the rail gets a **Describe the lights** field that writes flash patterns from a sentence about where the lights sit on the car. See [Juno in Sirens](/docs/user-guide/juno).
 
 ## Accuracy
 

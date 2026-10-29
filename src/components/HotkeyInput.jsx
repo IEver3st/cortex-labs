@@ -77,13 +77,18 @@ export default function HotkeyInput({ value, pending = null, onChange, onClear }
     onClear?.();
   };
 
-  const displayValue = tempValue
+  const shownHotkey = tempValue && !tempValue.invalid
+    ? tempValue
+    : !tempValue && !isCapturing
+      ? pending?.key ? pending : value
+      : null;
+  const message = tempValue?.invalid
     ? tempValue.invalid
-      ? tempValue.invalid
-      : formatHotkey(tempValue)
-    : isCapturing
+    : isCapturing && !tempValue
       ? "Press keys..."
-      : formatHotkey(pending?.key ? pending : value);
+      : shownHotkey?.key
+        ? null
+        : "Not set";
 
   return (
     <div className="hotkey-input-wrapper">
@@ -93,8 +98,17 @@ export default function HotkeyInput({ value, pending = null, onChange, onClear }
         className={`hotkey-input ${isCapturing ? "is-capturing" : ""} ${tempValue?.invalid ? "is-invalid" : ""}`}
         onClick={startCapture}
         onBlur={stopCapture}
+        aria-label={shownHotkey?.key ? `Shortcut ${formatHotkey(shownHotkey)}. Click to change` : message}
       >
-        <span className="hotkey-input-value">{displayValue}</span>
+        {message ? (
+          <span className="hotkey-input-value">{message}</span>
+        ) : (
+          <span className="cx-keys hotkey-input-keys" aria-hidden="true">
+            {formatHotkey(shownHotkey).split(" + ").map((part) => (
+              <kbd className="cx-keycap" key={part}>{part}</kbd>
+            ))}
+          </span>
+        )}
       </button>
       {value && value.key && !isCapturing && (
         <button

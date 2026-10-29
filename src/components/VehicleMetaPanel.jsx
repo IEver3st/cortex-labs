@@ -9,7 +9,7 @@ import VehicleLightsPanel from "./VehicleLightsPanel";
 import VehiclePlatePanel from "./VehiclePlatePanel";
 import VehiclePartsPanel from "./VehiclePartsPanel";
 
-export default function VehicleMetaPanel({ modelPath, modelInfo, isTauriRuntime, onApplyLivery, onApplyColors, onToggleExtra, steeringAngle = 0, onSteeringChange, vehicleParts = null, vehiclePartControls = null, roofClip = null, lights, onLightsChange, getLightTime, plate, onPlateChange, plateStatus, extrasPlan, extrasState, onExtrasStateChange, els = null }) {
+export default function VehicleMetaPanel({ modelPath, modelInfo, isTauriRuntime, onApplyLivery, onApplyColors, onToggleExtra, steeringAngle = 0, onSteeringChange, vehicleParts = null, vehiclePartControls = null, roofClip = null, lights, onLightsChange, getLightTime, plate, onPlateChange, plateStatus, extrasPlan, extrasState, onExtrasStateChange, els = null, active = true }) {
   const [scan, setScan] = useState(() => ({ path: "", status: "idle", root: "", meta: createEmptyResourceMeta() }));
   const [revision, setRevision] = useState(0);
   const [textures, setTextures] = useState(null);
@@ -97,7 +97,7 @@ export default function VehicleMetaPanel({ modelPath, modelInfo, isTauriRuntime,
       <VehicleLightsPanel lights={lights} onChange={onLightsChange} modelLights={modelInfo?.lights}
         setting={lights?.setting || null} getTime={getLightTime}
         ulc={lights?.ulc || null} ulcPath={ulcResult.path} ulcError={ulcResult.error}
-        extrasPlan={extrasPlan} extrasState={extrasState} onExtrasStateChange={onExtrasStateChange} els={els}
+        extrasPlan={extrasPlan} extrasState={extrasState} onExtrasStateChange={onExtrasStateChange} els={els} active={active}
         sirenStatus={!isTauriRuntime ? "Siren patterns come from carcols.meta, which the desktop app reads."
           : scan.status === "scanning" ? "Reading carcols.meta…"
             : sim?.ids?.sirenIds?.length ? `Siren setting id ${sim.ids.sirenIds[0]} is not defined in this resource's carcols.meta.`

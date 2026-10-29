@@ -17,6 +17,8 @@ export const RETIRED_DEFAULT_KEYS = Object.freeze([
   "showHints",
   "toolbarInTitlebar",
   "glossiness",
+  "windowTemplateEnabled",
+  "windowTextureTarget",
 ]);
 
 /** Stored `defaults` without retired keys; anything that is not an object reads as `{}`. */

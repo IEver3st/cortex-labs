@@ -497,11 +497,8 @@ function MissPatternCard({ els, patternKey }) {
         <div className="se-tools-group">
           <span className="sw-meta">{current ? `Flash ${index + 1}` : "No flashes"}</span>
           {current ? (
-            <>
-              <NumberInput value={current.duration} min={1} max={10000} step={10} integer digits={0} label={`Flash ${index + 1} duration`}
-                onChange={(value) => editPattern((target) => { target.flashes[index].duration = value; }, `${patternKey}:duration${index}`)} />
-              <span className="se-unit">ms</span>
-            </>
+            <NumberInput value={current.duration} min={1} max={10000} step={10} integer digits={0} label={`Flash ${index + 1} duration`} unit="ms"
+              onChange={(value) => editPattern((target) => { target.flashes[index].duration = value; }, `${patternKey}:duration${index}`)} />
           ) : null}
         </div>
         <div className="se-tools-group">
@@ -612,7 +609,7 @@ function StaticsCard({ els }) {
 
 /* ─── Editor ─── */
 
-export default function ElsEditor({ s, els, stageAction = null }) {
+export default function ElsEditor({ s, els }) {
   const draft = els.draft;
   const preview = els.preview;
   const pack = els.pack;
@@ -670,7 +667,7 @@ export default function ElsEditor({ s, els, stageAction = null }) {
       }
     };
     place();
-    if (!(animates && speed > 0)) return undefined;
+    if (s.isActive === false || !(animates && speed > 0)) return undefined;
     let frame = requestAnimationFrame(function tick() {
       place();
       frame = requestAnimationFrame(tick);
@@ -747,7 +744,6 @@ export default function ElsEditor({ s, els, stageAction = null }) {
         <div className="se-actions">
           <IconButton label="Undo (Ctrl+Z)" onClick={els.undo} disabled={!els.canUndo}><Undo2 aria-hidden="true" /></IconButton>
           <IconButton label="Redo (Ctrl+Y)" onClick={els.redo} disabled={!els.canRedo}><Redo2 aria-hidden="true" /></IconButton>
-          {stageAction}
         </div>
       </header>
 

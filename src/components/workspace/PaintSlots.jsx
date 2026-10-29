@@ -51,11 +51,13 @@ function HexInput({ value, onCommit, label }) {
 function PaintLine({ slot, paint, unused, selected, onSelect, onChange, onReset }) {
   const display = paintDisplayColor(paint);
   const custom = paint?.index == null;
-  const detail = unused ? "Not on this model" : custom ? `Custom · ${finishLabel(paint?.finish)}` : paintLabel(paint);
+  const detail = custom ? `Custom · ${finishLabel(paint?.finish)}` : paintLabel(paint);
   const setCustom = (hex) => onChange(customPaint(hex, paint?.finish));
+  const title = custom ? detail : `${detail}, palette colour ${paint.index}`;
   return (
     <div
-      className={`lv-color lv-paint ${selected ? "is-selected" : ""}`}
+      className={`lv-color lv-paint ${selected ? "is-selected" : ""} ${unused ? "is-unused" : ""}`}
+      title={unused ? `Not on this model: no mesh in it uses the ${slot.label.toLowerCase()} slot` : undefined}
       onClick={onSelect}
       role="button"
       tabIndex={0}
@@ -77,12 +79,9 @@ function PaintLine({ slot, paint, unused, selected, onSelect, onChange, onReset 
       </label>
       <span className="lv-paint-text">
         <span className="lv-color-label">{slot.label}</span>
-        <span className="lv-paint-detail" title={custom || unused ? detail : `${detail}, palette colour ${paint.index}`}>
-          <span className="lv-paint-name">{detail}</span>
-          {custom || unused ? null : <span className="lv-paint-index">{paint.index}</span>}
-        </span>
+        <span className="lv-paint-detail" title={title}>{unused ? "Not on this model" : detail}</span>
       </span>
-      <span onClick={(event) => event.stopPropagation()}>
+      <span className="lv-paint-hex" onClick={(event) => event.stopPropagation()}>
         <HexInput value={display} onCommit={setCustom} label={slot.label} />
       </span>
       <button
@@ -130,34 +129,54 @@ function moveFocus(event) {
   buttons[to].focus();
 }
 
-const Palette = memo(function Palette({ slotLabel, selectedIndex, onPick }) {
-  const focusIndex = selectedIndex ?? PAINT_PALETTE_GROUPS[0].colors[0].index;
+function paintFamily(paint) {
+  if (!paint) return null;
+  if (paint.index != null) return PAINT_PALETTE_GROUPS.find((group) => group.colors.some((entry) => entry.index === paint.index))?.label ?? null;
+  return PAINT_PALETTE_GROUPS.find((group) => group.colors.some((entry) => entry.finish === paint.finish))?.label ?? null;
+}
+
+const Palette = memo(function Palette({ slotLabel, selectedIndex, family, onFamilyChange, onPick }) {
+  const group = PAINT_PALETTE_GROUPS.find((entry) => entry.label === family) || PAINT_PALETTE_GROUPS[0];
+  const inGroup = group.colors.some((entry) => entry.index === selectedIndex);
+  const focusIndex = inGroup ? selectedIndex : group.colors[0].index;
   return (
-    <div className="lv-palette" onKeyDown={moveFocus}>
-      {PAINT_PALETTE_GROUPS.map((group) => (
-        <div key={group.label} className="lv-palette-group" role="group" aria-label={`${group.label} colours`}>
-          <span className="cx-label">{group.label}</span>
-          <div className="lv-palette-grid">
-            {group.colors.map((entry) => {
-              const on = entry.index === selectedIndex;
-              const name = `${entry.name} (${entry.index})`;
-              return (
-                <button
-                  key={entry.index}
-                  type="button"
-                  className={`lv-pal ${on ? "is-on" : ""}`}
-                  style={{ "--chip": paintDisplayColor(paintFromIndex(entry.index)) }}
-                  tabIndex={entry.index === focusIndex ? 0 : -1}
-                  aria-pressed={on}
-                  aria-label={`Set ${slotLabel.toLowerCase()} to ${name}`}
-                  title={name}
-                  onClick={() => onPick(entry.index)}
-                />
-              );
-            })}
-          </div>
+    <div className="lv-palette">
+      <div className="lv-seg lv-palette-families" role="radiogroup" aria-label="Palette">
+        {PAINT_PALETTE_GROUPS.map((entry) => (
+          <button
+            key={entry.label}
+            type="button"
+            role="radio"
+            aria-checked={entry.label === group.label}
+            className={`lv-seg-btn ${entry.label === group.label ? "is-on" : ""}`}
+            onClick={() => onFamilyChange(entry.label)}
+            title={`${entry.label} colours`}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+      <div className="lv-palette-group" role="group" aria-label={`${group.label} colours`} onKeyDown={moveFocus}>
+        <div className="lv-palette-grid">
+          {group.colors.map((entry) => {
+            const on = entry.index === selectedIndex;
+            const name = `${entry.name} (${entry.index})`;
+            return (
+              <button
+                key={entry.index}
+                type="button"
+                className={`lv-pal ${on ? "is-on" : ""}`}
+                style={{ "--chip": paintDisplayColor(paintFromIndex(entry.index)) }}
+                tabIndex={entry.index === focusIndex ? 0 : -1}
+                aria-pressed={on}
+                aria-label={`Set ${slotLabel.toLowerCase()} to ${name}`}
+                title={name}
+                onClick={() => onPick(entry.index)}
+              />
+            );
+          })}
         </div>
-      ))}
+      </div>
     </div>
   );
 });
@@ -170,6 +189,11 @@ export default function PaintSlots({ paint, onChange, onReset, usedSlots = null,
   const pickRef = useRef(null);
   pickRef.current = (index) => onChange(slot.key, paintFromIndex(index));
   const [onPick] = useState(() => (index) => pickRef.current(index));
+  const currentFamily = paintFamily(current);
+  const [family, setFamily] = useState(currentFamily ?? PAINT_PALETTE_GROUPS[0].label);
+  useEffect(() => {
+    if (currentFamily) setFamily(currentFamily);
+  }, [slot.key, currentFamily]);
 
   return (
     <section className="lv-group" id="panel-colors">
@@ -210,7 +234,7 @@ export default function PaintSlots({ paint, onChange, onReset, usedSlots = null,
       ) : slot.key === "pearlescent" ? (
         <p className="lv-slot-note">Shows as a sheen on glossy primary paint.</p>
       ) : null}
-      <Palette slotLabel={slot.label} selectedIndex={current?.index ?? null} onPick={onPick} />
+      <Palette slotLabel={slot.label} selectedIndex={current?.index ?? null} family={family} onFamilyChange={setFamily} onPick={onPick} />
     </section>
   );
 }

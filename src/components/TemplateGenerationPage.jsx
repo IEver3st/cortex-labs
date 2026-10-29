@@ -11,7 +11,6 @@ import {
   FolderInput,
   FolderOpen,
   MousePointer2,
-  PanelLeft,
   Redo2,
   RefreshCw,
   SquareDashedMousePointer,
@@ -46,8 +45,9 @@ import useEditHistory from "./useEditHistory";
 import { loadPrefs } from "../lib/prefs";
 import { openFolderPath } from "../lib/open-folder";
 import { isFsScopeError } from "../lib/capture-output";
-import { AssetSlot, DeckButton } from "./workspace/parts";
+import { AssetSlot, DeckButton, FootFact, PanelLayout, StageEmpty, splitPath } from "./workspace/parts";
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
+import { usePaneMotion } from "./workspace/usePaneMotion";
 import "./TemplateGenerationPage.css";
 // Corner handle size on a selected marker box, in CSS px.
 const MARKER_HANDLE_PX = 9;
@@ -1427,6 +1427,7 @@ export default function TemplateGenerationPage({
 
   const [dockOpen, setDockOpen] = useState(true);
   const panes = usePaneWidths("cortex.template.panes");
+  const rootRef = useRef(null);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   useEffect(() => setNoticeDismissed(false), [saveNotice]);
 
@@ -1528,25 +1529,19 @@ export default function TemplateGenerationPage({
     isActive && contextBarTarget
       ? createPortal(
           <div className="ctx-bar-inner lv-ctx">
-            <button
-              type="button"
-              className={`lv-ctx-btn ${dockOpen ? "is-on" : ""}`}
-              onClick={() => setDockOpen((open) => !open)}
-              title={dockOpen ? "Hide the template steps" : "Show the template steps"}
-              aria-label={dockOpen ? "Hide the template steps" : "Show the template steps"}
-              aria-pressed={dockOpen}
-            >
-              <PanelLeft aria-hidden="true" />
-            </button>
-            <div className="ctx-bar-drag-pad" aria-hidden="true" />
+            <PanelLayout start={{ shown: dockOpen, onToggle: () => setDockOpen((open) => !open), label: dockOpen ? "Hide the template steps" : "Show the template steps" }} />
           </div>,
           contextBarTarget,
         )
       : null;
 
+  const rootClass = `lv-root tm-root ${dockOpen ? "" : "is-dock-closed"}`;
+  usePaneMotion(rootRef, rootClass);
+
   return (
     <main
-      className={`lv-root tm-root ${dockOpen ? "" : "is-dock-closed"}`}
+      ref={rootRef}
+      className={rootClass}
       style={panes.style}
       aria-label="Template Generator"
     >
@@ -1567,10 +1562,7 @@ export default function TemplateGenerationPage({
             onUnload={handleUnloadModel}
           >
             {!modelPath && !isTauriRuntime ? (
-              <p className="lv-slot-note is-warn">
-                <span className="lv-dot" aria-hidden="true" />
-                Opening models needs the desktop app.
-              </p>
+              <p className="lv-slot-note">Opening models needs the desktop app.</p>
             ) : null}
             {modelPath ? (
               modelLoading ? (
@@ -1605,7 +1597,8 @@ export default function TemplateGenerationPage({
             title="Paint area"
             done={modelPath ? targetDone : false}
             disabled={!modelPath}
-            note="Choose what the template covers once a model is open."
+            note="Open a model to choose what the template covers."
+            hint="What the template covers: the body or garment, or the glass you pick"
           >
             <div className="lv-seg" role="radiogroup" aria-label="Paint area">
               <button
@@ -1632,8 +1625,8 @@ export default function TemplateGenerationPage({
 
             {isWindowTemplate ? (
               <>
-                <p className="lv-slot-note">
-                  Click glass on the model to add or remove it. Every pane you pick shares one texture.
+                <p className="lv-slot-note" title="Every pane you pick shares one texture">
+                  Click glass on the model to add or remove it.
                 </p>
                 {selectedTemplatePartNames.length > 0 ? (
                   <ul className="tm-parts" aria-label="Selected window parts">
@@ -1722,20 +1715,19 @@ export default function TemplateGenerationPage({
               note={
                 modelPath
                   ? "Draw markers once the template is built."
-                  : "Box small pieces so they show up on the texture."
+                  : "Open a model to add markers."
               }
+              hint="Box small pieces so they show up on the texture. The paint inside a box takes the marker colour, exactly where you drew it."
               trailing={
                 templateMarkers.length > 0 ? (
-                  <button type="button" className="lv-link" onClick={handleClearMarkers}>
+                  <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={handleClearMarkers}>
+                    <X aria-hidden="true" />
                     Clear
                   </button>
                 ) : null
               }
             >
-              <p className="lv-slot-note">
-                Optional. Drag a box over pieces on the template. The paint inside the box takes the marker
-                colour, exactly where you drew it.
-              </p>
+              <p className="lv-slot-note">Optional. Drag a box over pieces on the template.</p>
               <button
                 type="button"
                 className={`cx-btn lv-btn-sm tm-draw-btn ${markerToolActive ? "is-on" : ""}`}
@@ -1832,7 +1824,8 @@ export default function TemplateGenerationPage({
             title="Output"
             done={Boolean(autoSavedPath)}
             disabled={!modelPath}
-            note="Resolution and layers for the generated file."
+            note="Open a model to set the output."
+            hint="Resolution and layers for the generated file"
           >
             <div className="lv-field">
               <span className="cx-label">Resolution</span>
@@ -1877,10 +1870,10 @@ export default function TemplateGenerationPage({
               </div>
               {templatePolicy.includeVehicleLayers ? (
                 <div className="tm-option-block">
-                  <div className="tm-option">
+                  <div className="tm-option" title="Solid panel shapes, at least 5 px past every edge. Also saved as its own PNG.">
                     <span>
                       <strong>Vehicle overlay</strong>
-                      <small>Solid panel shapes, at least 5 px past every edge. Also saved as its own PNG.</small>
+                      <small>Solid panel shapes, also as a PNG</small>
                     </span>
                     <Toggle
                       checked={includeVehicleOverlay}
@@ -1935,19 +1928,18 @@ export default function TemplateGenerationPage({
                 </div>
               ) : null}
             </div>
-            <p className="tm-format">
-              Saves as <strong>{outputFormatLabel}</strong>. Change the format in Settings.
+            <p className="tm-format" title="Change the format in Settings">
+              Saves as <strong>{outputFormatLabel}</strong>
             </p>
           </Step>
         </div>
 
         {/* Export is the dock's exit, pinned under the steps. */}
         <footer className="lv-dock-foot tm-export">
-          <div className="tm-dest">
-            <span className="cx-label">Save to</span>
+          <FootFact label="Save to" title={outputFolder || undefined}>
             {outputFolder ? (
-              <div className="tm-dest-row">
-                <span className="tm-dest-name" title={outputFolder}>{getFileLabel(outputFolder, outputFolder)}</span>
+              <>
+                <span className="tm-dest-name">{splitPath(outputFolder).name || outputFolder}</span>
                 <button
                   type="button"
                   className="cx-icon-btn"
@@ -1969,54 +1961,56 @@ export default function TemplateGenerationPage({
                     <FolderOpen aria-hidden="true" />
                   </button>
                 ) : null}
-              </div>
+              </>
             ) : isTauriRuntime ? (
-              <button type="button" className="cx-btn lv-btn-sm tm-dest-pick" onClick={handleSelectOutputFolder}>
+              <button
+                type="button"
+                className="cx-btn lv-btn-sm"
+                onClick={handleSelectOutputFolder}
+                title="With a folder set, every build saves itself"
+              >
                 <FolderInput aria-hidden="true" />
                 Choose a folder
               </button>
             ) : (
-              <span className="tm-dest-note">Browser downloads</span>
+              "Browser downloads"
             )}
+          </FootFact>
+          <div className="tm-save-live" aria-live="polite" aria-atomic="true">
+            {exportDisabledReason ? null : savedSummary ? (
+              <FootFact label="Saved" title={autoSavedPath || undefined}>
+                <span className="tm-saved">{`${savedSummary}${updatedLabel ? ` at ${updatedLabel}` : ""}`}</span>
+              </FootFact>
+            ) : buildSummary ? (
+              <FootFact label="Template">{`${buildSummary}${updatedLabel ? ` · ${updatedLabel}` : ""}`}</FootFact>
+            ) : null}
           </div>
-          {!outputFolder && isTauriRuntime ? (
-            <p className="tm-dest-note">With a folder set, every build saves itself.</p>
-          ) : null}
 
-          <div className="tm-export-actions">
+          <button
+            type="button"
+            className="cx-btn is-primary"
+            onClick={handleSaveTemplate}
+            disabled={exportDisabled}
+            aria-describedby={exportDisabledReason ? "tm-export-status" : undefined}
+          >
+            <Download aria-hidden="true" />
+            {isSaving ? "Exporting…" : saveButtonLabel}
+          </button>
+          <div className="lv-foot-row">
             <button
               type="button"
-              className="cx-btn is-primary tm-export-btn"
-              onClick={handleSaveTemplate}
-              disabled={exportDisabled}
-              aria-describedby="tm-export-status"
-            >
-              <Download aria-hidden="true" />
-              {isSaving ? "Exporting…" : saveButtonLabel}
-            </button>
-            <button
-              type="button"
-              className="cx-btn tm-rebuild-btn"
+              className="cx-btn"
               onClick={handleRegenerateTemplate}
               disabled={!canRegenerate}
-              aria-label="Rebuild template"
-              title="Rebuild template"
+              title="Build the template again from the model"
             >
               <RefreshCw className={generating ? "is-spinning" : ""} aria-hidden="true" />
+              Rebuild
             </button>
           </div>
-
-          <p
-            id="tm-export-status"
-            className={`tm-export-status ${savedSummary && !exportDisabledReason ? "is-saved" : ""}`}
-            aria-live="polite"
-            title={autoSavedPath || undefined}
-          >
-            {exportDisabledReason ||
-              (savedSummary
-                ? `Saved ${savedSummary}${updatedLabel ? ` at ${updatedLabel}` : ""}`
-                : `${buildSummary}${updatedLabel ? ` · built ${updatedLabel}` : ""}`)}
-          </p>
+          {exportDisabledReason ? (
+            <p id="tm-export-status" className="lv-foot-note" role="status">{exportDisabledReason}</p>
+          ) : null}
         </footer>
         <PaneResizer side="dock" label="Resize the template steps panel" setWidth={panes.setWidth} />
       </aside>
@@ -2024,11 +2018,7 @@ export default function TemplateGenerationPage({
       {/* ──── Stage ──── */}
       <section className={`tm-stage is-${viewMode}`} aria-label="Template work area">
         {!modelPath ? (
-          <div className="tm-empty">
-            <p className="tm-empty-title">No model open</p>
-            <p className="tm-empty-copy">
-              Open a vehicle or clothing model. Cortex flattens its UVs into a layered template you can paint on.
-            </p>
+          <StageEmpty title="No model open" line="Its UVs become a layered template you can paint on.">
             <button
               type="button"
               className="cx-btn is-primary"
@@ -2039,7 +2029,7 @@ export default function TemplateGenerationPage({
               <Box aria-hidden="true" />
               Open model
             </button>
-          </div>
+          </StageEmpty>
         ) : null}
 
         <div className="tm-panes" hidden={!modelPath}>
@@ -2419,14 +2409,14 @@ export default function TemplateGenerationPage({
 }
 
 /* A pipeline step without a file: same disc, line and title as AssetSlot. */
-function Step({ id, step, title, done, disabled, note, trailing, children }) {
+function Step({ id, step, title, hint, done, disabled, note, trailing, children }) {
   return (
     <section id={id} className={`lv-slot ${disabled ? "is-disabled" : ""}`}>
       <header className="lv-slot-head">
         <span className={`lv-step ${done ? "is-done" : ""}`} aria-hidden="true">
           {done ? <Check /> : step}
         </span>
-        <h3 className="lv-slot-title">{title}</h3>
+        <h3 className="lv-slot-title" title={hint}>{title}</h3>
         {disabled ? null : trailing}
       </header>
       <div className="lv-slot-body">

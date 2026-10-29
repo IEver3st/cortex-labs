@@ -22,7 +22,7 @@
 .vl-subtitle {
   flex: 1;
   margin: 0;
-  font-size: 10.5px;
+  font-size: var(--cx-fs-label);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -31,7 +31,7 @@
 
 .vl-count {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -39,7 +39,7 @@
 
 .vl-muted {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -77,13 +77,13 @@
 }
 
 .vl-row-label {
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
 }
 
 .vl-row-hint {
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   line-height: 1.35;
   color: var(--mg-muted);
   text-overflow: ellipsis;
@@ -152,7 +152,7 @@
 
 .vl-siren-index {
   font-family: var(--font-hud);
-  font-size: 10.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -252,7 +252,7 @@
 }
 
 .vl-plate-hint {
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -293,7 +293,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   cursor: pointer;
   transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease), border-color 120ms var(--cx-ease);
@@ -336,7 +336,7 @@
 
 .vl-extras-on {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
 }
 
 @media (prefers-reduced-motion: reduce) {

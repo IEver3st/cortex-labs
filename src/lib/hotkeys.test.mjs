@@ -129,7 +129,7 @@ test("every new-tab action opens one workspace with its canonical name", () => {
     assert.ok(mode, `${action} opens no workspace`);
     const route = workspaceModeRoute(mode.id);
     assert.equal(workspaceLabel(route.page, route.textureMode), mode.label);
-    assert.equal(HOTKEY_LABELS[action], `New ${mode.label} Tab`, "the hotkey label uses the workspace name");
+    assert.equal(HOTKEY_LABELS[action], `New ${mode.label} tab`, "the hotkey label uses the workspace name");
   }
   assert.deepEqual(workspaceModeRoute("vehicle"), { page: "viewer", textureMode: "vehicle" });
   // Livery and All were merged into Vehicle; their old ids still open it.

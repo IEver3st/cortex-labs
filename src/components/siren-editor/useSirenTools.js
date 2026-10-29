@@ -147,6 +147,34 @@ export function useCarcolsImport(s, resource) {
     setStatus({ tone: "ok", text: `Imported ${label} from ${fileName(path)} as a new setting with id ${target.id}.` });
   }, [context, editor, resource.variationId]);
 
+  const openOwn = useCallback((setting, path) => {
+    setChoices(null);
+    const own = { ...cloneSirenSetting(setting), sourcePath: path };
+    if (!editor.draft || !editor.canUndo) editor.start(own, { asFile: true });
+    else editor.edit(() => own);
+  }, [editor]);
+
+  const openRequest = useCallback(async ({ path, setting }) => {
+    setStatus(null);
+    const name = fileName(path);
+    let sirens = [];
+    try {
+      ({ sirens } = parseCarcolsMeta(await readTextFile(path), path));
+    } catch {
+      setStatus({ tone: "error", text: `Couldn't read ${name}.` });
+      return;
+    }
+    const id = /^\d+$/.test(String(setting ?? "").trim()) ? Number(setting) : null;
+    const match = id != null ? sirens.find((entry) => entry.id === id) : !setting && sirens.length === 1 ? sirens[0] : null;
+    if (match) {
+      openOwn(match, path);
+      return;
+    }
+    if (setting) setStatus({ tone: "warn", text: `${name} has no siren setting ${setting}.` });
+    else if (!sirens.length) setStatus({ tone: "error", text: `${name} has no siren settings.` });
+    if (sirens.length) setChoices({ path, sirens, own: true });
+  }, [openOwn]);
+
   const pick = useCallback(async () => {
     setStatus(null);
     let path = null;
@@ -169,8 +197,9 @@ export function useCarcolsImport(s, resource) {
 
   return {
     pick,
+    openRequest,
     choices,
-    choose: (setting) => apply(setting, choices?.path),
+    choose: (setting) => (choices?.own ? openOwn(setting, choices.path) : apply(setting, choices?.path)),
     cancel: () => setChoices(null),
     status,
     clearStatus: () => setStatus(null),

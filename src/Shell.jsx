@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { AnimatePresence, MotionConfig, motion, useMotionValue, useTransform, useSpring } from "motion/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -47,19 +47,31 @@ import {
 } from "./lib/hotkeys";
 
 // Secondary pages and modals load on first use so the viewer shell boots lighter.
-const VariantsPage = lazy(() => import("./components/VariantsPage"));
-const App = lazy(() => import("./App"));
-const EupPage = lazy(() => import("./components/EupPage"));
-const PropStudioPage = lazy(() => import("./components/PropStudioPage"));
-const PhotoModePage = lazy(() => import("./components/PhotoModePage"));
-const TemplateGenerationPage = lazy(() => import("./components/TemplateGenerationPage"));
+const lazyPage = (load) => lazy(() => load().then((module) => ({ default: memo(module.default) })));
+const PAGE_LOADERS = {
+  viewer: () => import("./App"),
+  eupstudio: () => import("./components/EupPage"),
+  propstudio: () => import("./components/PropStudioPage"),
+  photo: () => import("./components/PhotoModePage"),
+  variants: () => import("./components/VariantsPage"),
+  templategen: () => import("./components/TemplateGenerationPage"),
+};
+const VariantsPage = lazyPage(PAGE_LOADERS.variants);
+const App = lazyPage(PAGE_LOADERS.viewer);
+const EupPage = lazyPage(PAGE_LOADERS.eupstudio);
+const PropStudioPage = lazyPage(PAGE_LOADERS.propstudio);
+const PhotoModePage = lazyPage(PAGE_LOADERS.photo);
+const TemplateGenerationPage = lazyPage(PAGE_LOADERS.templategen);
+const MemoHomePage = memo(HomePage);
+const EMPTY_STATE = Object.freeze({});
 const WhatsNew = lazy(() => import("./components/WhatsNew"));
 const BugReportModal = lazy(() => import("./components/BugReportModal"));
 const Onboarding = lazy(() => import("./components/Onboarding"));
 const SettingsMenu = lazy(() => import("./components/SettingsMenu"));
 
-// Long enough for the intro to land its lockup; nothing else waits on it.
-const MIN_BOOT_MS = 1500;
+// Long enough for the intro to land its lockup; boot also waits for the front tab's page chunk.
+const MIN_BOOT_MS = 800;
+const MAX_BOOT_WAIT_MS = 3000;
 function generateTabId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
@@ -74,6 +86,7 @@ const HOME_TAB = { id: "home", type: "home", label: "Home", workspaceId: null, c
 // tab's. A file opened with the app (open-with) still takes the front.
 function restoreOpenTabs() {
   clearSession();
+  if (loadPrefs()?.defaults?.reopenTabs === false) return { tabs: [HOME_TAB], activeTabId: HOME_TAB.id, keepSavedTabs: true };
   const plan = planOpenTabs(loadOpenTabs(), loadWorkspaces());
   const restored = plan.tabs.map((entry) => ({
     id: generateTabId(),
@@ -113,6 +126,23 @@ function tabIconFor(tab) {
   return TAB_ICONS[tab.type] || Car;
 }
 
+const FILE_LABEL_EXTENSION = /\.(yft|ydd|ydr|ytd|ymt|ybn|ypt|ycd|ytyp|ymap|meta|xml|dds|png|psd|pdn|zip|rpf|json|dff|clmesh|ai|jpg|jpeg|tga|webp)$/i;
+function tabDisplayLabel(label) {
+  const text = String(label ?? "");
+  return text.replace(FILE_LABEL_EXTENSION, "") || text;
+}
+
+const TAB_LABEL_TAIL = 5;
+
+function TabLabel({ text, isFile }) {
+  if (!isFile || text.length <= TAB_LABEL_TAIL * 2 + 2) return <span className="shell-tab-label">{text}</span>;
+  return (
+    <span className="shell-tab-label is-split">
+      <span className="shell-tab-label-head">{text.slice(0, -TAB_LABEL_TAIL)}</span>
+      <span className="shell-tab-label-tail">{text.slice(-TAB_LABEL_TAIL)}</span>
+    </span>
+  );
+}
 
 const MIN_UI_SCALE = 0.5;
 const MAX_UI_SCALE = 1.4;
@@ -156,9 +186,20 @@ export default function Shell() {
 
   // Tab system
   const [startupTabs] = useState(restoreOpenTabs);
+  const keepSavedTabsRef = useRef(startupTabs.keepSavedTabs === true);
   const [tabs, setTabs] = useState(startupTabs.tabs);
   const [activeTabId, setActiveTabId] = useState(startupTabs.activeTabId);
   const [editingTabId, setEditingTabId] = useState(null);
+  const [tabDetails, setTabDetails] = useState({});
+  const tabDetailSetters = useRef(new Map());
+  const tabDetailSetter = useCallback((tabId) => {
+    let setter = tabDetailSetters.current.get(tabId);
+    if (!setter) {
+      setter = (detail) => setTabDetails((prev) => (prev[tabId] === (detail || undefined) ? prev : { ...prev, [tabId]: detail || undefined }));
+      tabDetailSetters.current.set(tabId, setter);
+    }
+    return setter;
+  }, []);
   const editTabRef = useRef(null);
   const toolbarDragGestureRef = useRef(null);
   const lastToolbarDragAtRef = useRef(0);
@@ -166,17 +207,9 @@ export default function Shell() {
   const pendingActiveRef = useRef(null);
   const lastExternalFileOpenRef = useRef({ path: "", at: 0 });
 
-  // Per-tab variant state cache
-  const [variantStates, setVariantStates] = useState({});
-  const [templateGenStates, setTemplateGenStates] = useState({});
-  const [eupStates, setEupStates] = useState({});
-  const [propStates, setPropStates] = useState({});
-  const [photoStates, setPhotoStates] = useState({});
-
   // Settings change counter — bumped when settings are saved so children re-read prefs
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsPageTarget, setSettingsPageTarget] = useState(null);
 
   // Map of tabId -> pane element for focus management
   const paneRefs = useRef(new Map());
@@ -272,11 +305,26 @@ export default function Shell() {
     };
   }, [isTauriRuntime]);
 
+  useEffect(() => {
+    if (isTauriRuntime) void getCurrentWindow().show().catch(() => {});
+  }, [isTauriRuntime]);
+
   // Boot
   useEffect(() => {
-    const timer = setTimeout(() => setBooted(true), MIN_BOOT_MS);
-    return () => clearTimeout(timer);
-  }, []);
+    let cancelled = false;
+    const timers = [];
+    const wait = (ms) => new Promise((resolve) => timers.push(setTimeout(resolve, ms)));
+    const reduceMotion = reduceMotionPref || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const front = startupTabs.tabs.find((tab) => tab.id === startupTabs.activeTabId);
+    const frontPage = PAGE_LOADERS[front?.type]?.().catch(() => {});
+    Promise.all([wait(reduceMotion ? 0 : MIN_BOOT_MS), Promise.race([frontPage, wait(MAX_BOOT_WAIT_MS)])]).then(() => {
+      if (!cancelled) setBooted(true);
+    });
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [reduceMotionPref, startupTabs]);
 
   useEffect(() => {
     const handlePrefsUpdated = () => {
@@ -289,6 +337,7 @@ export default function Shell() {
 
   // Open a new tab (or focus existing for same workspace)
   const openTab = useCallback((type, label, workspaceId, state, defaultMode) => {
+    PAGE_LOADERS[type]?.().catch(() => {});
     setTabs((prev) => {
       const existing = workspaceId ? prev.find((t) => t.workspaceId === workspaceId) : null;
       if (existing) {
@@ -320,23 +369,6 @@ export default function Shell() {
         defaultMode: defaultMode || null,
         initialState: state || null,
       };
-
-      if (state && type === "variants") {
-        setVariantStates((s) => ({ ...s, [newTab.id]: state }));
-      }
-      if (state && type === "templategen") {
-        setTemplateGenStates((s) => ({ ...s, [newTab.id]: state }));
-      }
-      if (state && type === "eupstudio") {
-        setEupStates((s) => ({ ...s, [newTab.id]: state }));
-      }
-      if (state && type === "propstudio") {
-        setPropStates((s) => ({ ...s, [newTab.id]: state }));
-      }
-      if (state && type === "photo") {
-        setPhotoStates((s) => ({ ...s, [newTab.id]: state }));
-      }
-
 
       pendingActiveRef.current = newTab.id;
       return [...prev, newTab];
@@ -370,6 +402,24 @@ export default function Shell() {
     openTab("viewer", fileName, wsId, initialState, mode);
   }, [openTab]);
 
+  const handleSirenOpen = useCallback((request) => {
+    const sirens = typeof request?.sirens === "string" ? request.sirens : "";
+    if (!sirens) return;
+    const model = typeof request.model === "string" && request.model ? request.model : "";
+    const setting = typeof request.setting === "string" ? request.setting : "";
+
+    const key = `${sirens}|${model}|${setting}`;
+    const now = Date.now();
+    const last = lastExternalFileOpenRef.current;
+    if (last.path === key && now - last.at < 1200) return;
+    lastExternalFileOpenRef.current = { path: key, at: now };
+
+    const label = model ? model.split(/[\\/]/).pop() : workspaceLabel("viewer", "sirens");
+    const state = model ? { textureMode: "sirens", modelPath: model, openFile: model } : { textureMode: "sirens" };
+    const wsId = createWorkspace(label, "viewer", state);
+    openTab("viewer", label, wsId, { ...state, sirenOpen: { path: sirens, model, setting } }, "sirens");
+  }, [openTab]);
+
   // File-open handler (startup + running instance)
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -399,6 +449,22 @@ export default function Shell() {
       } catch {
         // no-op: command may not be available in web preview
       }
+
+      try {
+        const sirensUnlisten = await listen("siren-open", (event) => handleSirenOpen(event.payload));
+        if (cancelled) {
+          sirensUnlisten();
+          return;
+        }
+        const fileUnlisten = unlisten;
+        unlisten = () => {
+          fileUnlisten();
+          sirensUnlisten();
+        };
+        handleSirenOpen(await invoke("consume_pending_siren_open"));
+      } catch {
+        // no-op: command may not be available in web preview
+      }
     };
 
     start();
@@ -407,7 +473,7 @@ export default function Shell() {
       cancelled = true;
       if (unlisten) unlisten();
     };
-  }, [isTauriRuntime, handleExternalFileOpen]);
+  }, [isTauriRuntime, handleExternalFileOpen, handleSirenOpen]);
 
   // Flush pending tab activation after tabs state updates
   useEffect(() => {
@@ -433,31 +499,6 @@ export default function Shell() {
       // opened while the unsaved-edits dialog was up must keep the front.
       const newIdx = Math.min(idx, next.length - 1);
       setActiveTabId((current) => (current === tabId ? next[newIdx]?.id || "home" : current));
-      return next;
-    });
-    setVariantStates((s) => {
-      const next = { ...s };
-      delete next[tabId];
-      return next;
-    });
-    setTemplateGenStates((s) => {
-      const next = { ...s };
-      delete next[tabId];
-      return next;
-    });
-    setEupStates((s) => {
-      const next = { ...s };
-      delete next[tabId];
-      return next;
-    });
-    setPropStates((s) => {
-      const next = { ...s };
-      delete next[tabId];
-      return next;
-    });
-    setPhotoStates((s) => {
-      const next = { ...s };
-      delete next[tabId];
       return next;
     });
   }, []);
@@ -558,6 +599,17 @@ export default function Shell() {
       prev.map((t) => (t.id === tabId ? { ...t, label: newLabel.trim() } : t))
     );
   }, []);
+
+  const tabRenameSetters = useRef(new Map());
+  const tabRenameSetter = useCallback((tabId) => {
+    let setter = tabRenameSetters.current.get(tabId);
+    if (!setter) {
+      setter = (label) => renameTab(tabId, label);
+      tabRenameSetters.current.set(tabId, setter);
+    }
+    return setter;
+  }, [renameTab]);
+  const openPackBuilder = useCallback(() => openTab("eupstudio", null, null, { inspectorTab: "pack" }), [openTab]);
 
   // Start interactive rename
   const startRenameTab = useCallback((tabId) => {
@@ -660,10 +712,10 @@ export default function Shell() {
     addRecent(id, entry.name, "viewer");
   }, [openTab]);
 
-  // Variant/template state per-tab.
+  // Page state per tab, saved to the workspace store.
   // These handlers must stay referentially stable: the pages call them from a
-  // debounced persist effect, and a fresh callback per Shell render would turn
-  // every setVariantStates/setTemplateGenStates into another persist cycle.
+  // debounced persist effect, and a fresh callback per Shell render would start
+  // another persist cycle.
   // Tabs are read through a ref so the callbacks never need `tabs` as a dep.
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -686,13 +738,30 @@ export default function Shell() {
       : prev));
   }, [activeTabId, booted]);
 
+  useEffect(() => {
+    if (!booted) return undefined;
+    const types = new Set(tabsRef.current.filter((tab) => tab.deferred).map((tab) => tab.type));
+    if (!types.size) return undefined;
+    const preload = () => types.forEach((type) => PAGE_LOADERS[type]?.().catch(() => {}));
+    if (typeof window.requestIdleCallback !== "function") {
+      const timer = window.setTimeout(preload, 1000);
+      return () => window.clearTimeout(timer);
+    }
+    const idle = window.requestIdleCallback(preload, { timeout: 3000 });
+    return () => window.cancelIdleCallback(idle);
+  }, [booted]);
+
   // Remember the open project tabs for the next start.
   useEffect(() => {
+    if (keepSavedTabsRef.current) {
+      if (tabs.every((tab) => tab.type === "home")) return;
+      keepSavedTabsRef.current = false;
+    }
     const active = tabs.find((tab) => tab.id === activeTabId);
     saveOpenTabs(tabs.map((tab) => tab.workspaceId).filter(Boolean), active?.workspaceId || null);
   }, [tabs, activeTabId]);
 
-  const persistPageState = useCallback((tabId, state, page, setStates) => {
+  const persistPageState = useCallback((tabId, state, page) => {
     let serialized = "";
     try {
       serialized = JSON.stringify(state);
@@ -702,30 +771,9 @@ export default function Shell() {
     const key = `${page}:${tabId}`;
     if (serialized && lastPersistedPageStateRef.current.get(key) === serialized) return;
     lastPersistedPageStateRef.current.set(key, serialized);
-    setStates((s) => ({ ...s, [tabId]: state }));
     const tab = tabsRef.current.find((t) => t.id === tabId);
     if (tab?.workspaceId) updateWorkspace(tab.workspaceId, { state, page });
   }, []);
-
-  const handleVariantStateChange = useCallback((tabId, state) => {
-    persistPageState(tabId, state, "variants", setVariantStates);
-  }, [persistPageState]);
-
-  const handleTemplateGenStateChange = useCallback((tabId, state) => {
-    persistPageState(tabId, state, "templategen", setTemplateGenStates);
-  }, [persistPageState]);
-
-  const handleEupStateChange = useCallback((tabId, state) => {
-    persistPageState(tabId, state, "eupstudio", setEupStates);
-  }, [persistPageState]);
-
-  const handlePropStateChange = useCallback((tabId, state) => {
-    persistPageState(tabId, state, "propstudio", setPropStates);
-  }, [persistPageState]);
-
-  const handlePhotoStateChange = useCallback((tabId, state) => {
-    persistPageState(tabId, state, "photo", setPhotoStates);
-  }, [persistPageState]);
 
   // Per-tab bound callbacks, cached so the page props stay stable across renders.
   const pageStateCallbacksRef = useRef(new Map());
@@ -734,29 +782,19 @@ export default function Shell() {
     const cache = pageStateCallbacksRef.current;
     let fn = cache.get(key);
     if (!fn) {
-      const handler = type === "variants"
-        ? handleVariantStateChange
-        : type === "eupstudio"
-          ? handleEupStateChange
-          : type === "propstudio"
-            ? handlePropStateChange
-            : type === "photo"
-              ? handlePhotoStateChange
-              : handleTemplateGenStateChange;
-      fn = (state) => handler(tabId, state);
+      fn = (state) => persistPageState(tabId, state, type);
       cache.set(key, fn);
     }
     return fn;
-  }, [handleVariantStateChange, handleTemplateGenStateChange, handleEupStateChange, handlePropStateChange, handlePhotoStateChange]);
+  }, [persistPageState]);
 
   useEffect(() => {
     const liveIds = new Set(tabs.map((tab) => tab.id));
     for (const cache of [pageStateCallbacksRef.current, lastPersistedPageStateRef.current]) {
       for (const key of cache.keys()) if (!liveIds.has(key.slice(key.indexOf(":") + 1))) cache.delete(key);
     }
-    for (const setStates of [setVariantStates, setTemplateGenStates, setEupStates, setPropStates, setPhotoStates]) {
-      setStates((current) => Object.keys(current).some((id) => !liveIds.has(id))
-        ? Object.fromEntries(Object.entries(current).filter(([id]) => liveIds.has(id))) : current);
+    for (const setters of [tabRenameSetters.current, tabDetailSetters.current]) {
+      for (const id of setters.keys()) if (!liveIds.has(id)) setters.delete(id);
     }
   }, [tabs]);
 
@@ -856,7 +894,6 @@ export default function Shell() {
     if (!(target instanceof Element)) return false;
     if (!isWindowDragGestureTarget(target)) return false;
     if (target.closest(".shell-new-tab-menu")) return false;
-    if (target.closest(".settings-page")) return false;
     return true;
   }, [isWindowDragGestureTarget]);
 
@@ -947,6 +984,18 @@ export default function Shell() {
   // end). Keep the active tab in view once the toolbar mounts, when it
   // changes, a tab opens, or the window narrows.
   const tabStripRef = useRef(null);
+  const homeTab = tabs.find((tab) => tab.type === "home");
+  const sharedLabels = useMemo(() => {
+    const seen = new Set();
+    const shared = new Set();
+    for (const tab of tabs) {
+      if (tab.type === "home") continue;
+      const label = tabDisplayLabel(tab.label);
+      if (seen.has(label)) shared.add(label);
+      seen.add(label);
+    }
+    return shared;
+  }, [tabs]);
   useEffect(() => {
     const strip = tabStripRef.current;
     if (!booted || !strip || settingsOpen) return undefined;
@@ -961,6 +1010,25 @@ export default function Shell() {
       observer?.disconnect();
     };
   }, [booted, activeTabId, tabs.length, settingsOpen]);
+
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    if (!booted || !strip) return undefined;
+    const mark = () => {
+      strip.dataset.overflowStart = String(strip.scrollLeft > 1);
+      strip.dataset.overflowEnd = String(strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1);
+    };
+    mark();
+    strip.addEventListener("scroll", mark, { passive: true });
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(mark) : null;
+    observer?.observe(strip);
+    const timer = window.setTimeout(mark, 240);
+    return () => {
+      strip.removeEventListener("scroll", mark);
+      observer?.disconnect();
+      window.clearTimeout(timer);
+    };
+  }, [booted, tabs.length, activeTabId]);
 
   // Close new-tab dropdown on outside click
   useEffect(() => {
@@ -1055,6 +1123,22 @@ export default function Shell() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           >
+            {homeTab ? (
+              <button
+                type="button"
+                className={`shell-tab shell-tab-home ${homeTab.id === activeTabId ? "is-active" : ""}`}
+                onClick={() => {
+                  setSettingsOpen(false);
+                  setActiveTabId(homeTab.id);
+                }}
+                aria-label="Home"
+                aria-current={homeTab.id === activeTabId ? "page" : undefined}
+                title="Home"
+              >
+                <img src={cortexLogo} alt="" className="shell-tab-logo" draggable={false} />
+              </button>
+            ) : null}
+
             {/* Tab strip — inline in the single row */}
             <div
               className="shell-tabs"
@@ -1069,28 +1153,10 @@ export default function Shell() {
               <AnimatePresence initial={false}>
                 {tabs.map((tab, index) => {
                   const Icon = tabIconFor(tab);
-                  const isTabActive = tab.id === activeTabId && !settingsOpen;
+                  const isTabActive = tab.id === activeTabId;
                   const isEditing = editingTabId === tab.id;
 
-                  // The Cortex mark is the Home tab.
-                  if (tab.type === "home") {
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        className={`shell-tab shell-tab-home ${isTabActive ? "is-active" : ""}`}
-                        onClick={() => {
-                          setSettingsOpen(false);
-                          setActiveTabId(tab.id);
-                        }}
-                        aria-label="Home"
-                        aria-current={isTabActive ? "page" : undefined}
-                        title="Home"
-                      >
-                        <img src={cortexLogo} alt="" className="shell-tab-logo" draggable={false} />
-                      </button>
-                    );
-                  }
+                  if (tab.type === "home") return null;
 
                   const tabElement = (
                     <motion.div
@@ -1101,7 +1167,7 @@ export default function Shell() {
                         setActiveTabId(tab.id);
                       }}
                       onDoubleClick={() => tab.closable && startRenameTab(tab.id)}
-                      title={isEditing ? undefined : tab.label}
+                      title={isEditing ? undefined : sharedLabels.has(tabDisplayLabel(tab.label)) && tabDetails[tab.id] ? `${tab.label} · ${tabDetails[tab.id]}` : tab.label}
                       layout="position"
                       initial={{ opacity: 0, width: 0 }}
                       animate={{ opacity: 1, width: "auto" }}
@@ -1143,7 +1209,10 @@ export default function Shell() {
                           }}
                         >
                           <Icon className="shell-tab-icon" aria-hidden="true" />
-                          <span className="shell-tab-label">{tab.label}</span>
+                          <TabLabel text={tabDisplayLabel(tab.label)} isFile={tabDisplayLabel(tab.label) !== tab.label} />
+                          {sharedLabels.has(tabDisplayLabel(tab.label)) && tabDetails[tab.id] ? (
+                            <span className="shell-tab-detail">{tabDetails[tab.id]}</span>
+                          ) : null}
                         </button>
                       )}
                       {tab.closable && (
@@ -1239,9 +1308,8 @@ export default function Shell() {
             </div>
             </div>
 
-            {/* Context bar — page-specific controls portaled here */}
             <div
-              className={`shell-context ${settingsOpen ? "is-hidden" : ""}`}
+              className="shell-context"
               ref={(node) => {
                 contextBarRef.current = node;
                 if (node && !contextBarReady) setContextBarReady(true);
@@ -1280,7 +1348,6 @@ export default function Shell() {
             {/* Settings */}
             <Suspense fallback={null}>
               <SettingsMenu
-                pageTarget={settingsPageTarget}
                 pageOpen={settingsOpen}
                 onOpenChange={setSettingsOpen}
                 onSettingsSaved={handleSettingsSaved}
@@ -1336,7 +1403,7 @@ export default function Shell() {
               return (
                 <div
                   key={tab.id}
-                  className={`shell-pane ${isActive ? "is-visible" : "is-hidden"}`}
+                  className={`shell-pane ${tab.id === activeTabId ? "is-visible" : "is-hidden"}`}
                   aria-hidden={!isActive}
                   inert={!isActive}
                   ref={(node) => {
@@ -1345,7 +1412,7 @@ export default function Shell() {
                   }}
                 >
                   {tab.type === "home" && (
-                    <HomePage
+                    <MemoHomePage
                       isActive={isActive}
                       onNavigate={handleNavigate}
                       onOpenWorkspace={handleOpenWorkspace}
@@ -1360,8 +1427,9 @@ export default function Shell() {
                       isActive={isActive}
                       defaultTextureMode={tab.defaultMode || "vehicle"}
                       initialState={tab.initialState || null}
-                      onRenameTab={(label) => renameTab(tab.id, label)}
-                      onOpenPackBuilder={() => openTab("eupstudio", null, null, { inspectorTab: "pack" })}
+                      onRenameTab={tabRenameSetter(tab.id)}
+                      onTabDetail={tabDetailSetter(tab.id)}
+                      onOpenPackBuilder={openPackBuilder}
                       settingsVersion={settingsVersion}
                       contextBarTarget={contextBarRef.current}
                     />
@@ -1370,10 +1438,9 @@ export default function Shell() {
                   {tab.type === "eupstudio" && (
                     <Suspense fallback={<AppLoader variant="pane" />}>
                       <EupPage
-                        workspaceState={eupStates[tab.id] || tab.initialState || {}}
+                        workspaceState={tab.initialState || EMPTY_STATE}
                         onStateChange={getPageStateCallback(tab.id, "eupstudio")}
-                        onRenameTab={(label) => renameTab(tab.id, label)}
-                        settingsVersion={settingsVersion}
+                        onRenameTab={tabRenameSetter(tab.id)}
                         isActive={isActive}
                         contextBarTarget={contextBarRef.current}
                       />
@@ -1382,9 +1449,9 @@ export default function Shell() {
                   {tab.type === "propstudio" && (
                     <Suspense fallback={<AppLoader variant="pane" />}>
                       <PropStudioPage
-                        workspaceState={propStates[tab.id] || tab.initialState || {}}
+                        workspaceState={tab.initialState || EMPTY_STATE}
                         onStateChange={getPageStateCallback(tab.id, "propstudio")}
-                        onRenameTab={(label) => renameTab(tab.id, label)}
+                        onRenameTab={tabRenameSetter(tab.id)}
                         isActive={isActive}
                         contextBarTarget={contextBarRef.current}
                       />
@@ -1393,7 +1460,7 @@ export default function Shell() {
                   {tab.type === "photo" && (
                     <Suspense fallback={<AppLoader variant="pane" />}>
                       <PhotoModePage
-                        workspaceState={photoStates[tab.id] || tab.initialState || {}}
+                        workspaceState={tab.initialState || EMPTY_STATE}
                         onStateChange={getPageStateCallback(tab.id, "photo")}
                         isActive={isActive}
                         contextBarTarget={contextBarRef.current}
@@ -1403,9 +1470,9 @@ export default function Shell() {
                   {tab.type === "variants" && (
                     <Suspense fallback={<AppLoader variant="pane" />}>
                       <VariantsPage
-                        workspaceState={variantStates[tab.id] || tab.initialState || {}}
+                        workspaceState={tab.initialState || EMPTY_STATE}
                         onStateChange={getPageStateCallback(tab.id, "variants")}
-                        onRenameTab={(label) => renameTab(tab.id, label)}
+                        onRenameTab={tabRenameSetter(tab.id)}
                         settingsVersion={settingsVersion}
                         isActive={isActive}
                         contextBarTarget={contextBarRef.current}
@@ -1415,9 +1482,9 @@ export default function Shell() {
                   {tab.type === "templategen" && (
                     <Suspense fallback={<AppLoader variant="pane" />}>
                       <TemplateGenerationPage
-                        workspaceState={templateGenStates[tab.id] || tab.initialState || {}}
+                        workspaceState={tab.initialState || EMPTY_STATE}
                         onStateChange={getPageStateCallback(tab.id, "templategen")}
-                        onRenameTab={(label) => renameTab(tab.id, label)}
+                        onRenameTab={tabRenameSetter(tab.id)}
                         settingsVersion={settingsVersion}
                         isActive={isActive}
                         contextBarTarget={contextBarRef.current}
@@ -1428,11 +1495,6 @@ export default function Shell() {
                 </div>
               );
             })}
-            <div
-              className={`settings-page-host ${settingsOpen ? "is-active" : ""}`}
-              aria-hidden={!settingsOpen}
-              ref={setSettingsPageTarget}
-            />
           </div>
         </>
       )}

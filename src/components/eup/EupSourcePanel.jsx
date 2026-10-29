@@ -6,14 +6,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { DropButton, SelectField, splitPath } from "../workspace/parts";
 import EupCharacterPicker from "./EupCharacterPicker";
 
-export function EupStep({ step, done, title, trailing, children }) {
+export function EupStep({ step, done, title, hint, trailing, children }) {
   return (
     <section className="lv-slot">
       <header className="lv-slot-head">
         <span className={`lv-step ${done ? "is-done" : ""}`} aria-hidden="true">
           {done ? <Check /> : step}
         </span>
-        <h3 className="lv-slot-title">{title}</h3>
+        <h3 className="lv-slot-title" title={hint}>{title}</h3>
         {trailing}
       </header>
       <div className="lv-slot-body">{children}</div>
@@ -112,11 +112,7 @@ function EupSourcePanel({
           <p className="lv-slot-note">Reading clothing files needs the desktop app.</p>
         ) : !hasSources ? (
           <>
-            <DropButton
-              title="Open an EUP folder"
-              hint="A resource folder with .ydd and .ytd files. Subfolders are read too."
-              onClick={onOpenFolder}
-            />
+            <DropButton title="Open an EUP folder" hint=".ydd and .ytd folder" onClick={onOpenFolder} detail="A resource folder with .ydd and .ytd files. Subfolders are read too." />
             <button type="button" className="lv-link eup-alt-link" onClick={onAddFiles}>
               Or pick .ydd and .ytd files
             </button>
@@ -199,7 +195,12 @@ function EupSourcePanel({
         ) : null}
       </EupStep>
 
-      <EupStep step={2} done={custom ? characterReady : pedReady} title={pedTitle}>
+      <EupStep
+        step={2}
+        done={custom ? characterReady : pedReady}
+        title={pedTitle}
+        hint={custom ? undefined : "The game's default ped fills every slot your clothing doesn't replace"}
+      >
         <EupCharacterPicker
           isTauriRuntime={isTauriRuntime}
           model={model}
@@ -215,14 +216,13 @@ function EupSourcePanel({
         {custom ? null : (
         <>
         <div className="eup-import-entry">
-          <button type="button" className="cx-btn lv-btn-sm" onClick={onImportCharacter}>
+          <button type="button" className="cx-btn lv-btn-sm" onClick={onImportCharacter} title="Wear a vMenu character from FiveM, for photos of your own character">
             <UserRound aria-hidden="true" />
             Import character…
           </button>
-          <p className="lv-slot-note">Wear a vMenu character from FiveM, for photos of your own character.</p>
         </div>
         <div className="lv-field">
-          <span className="eup-field-head">
+          <span className="eup-field-head" title="Skin colours from the game's heritage faces, applied to the head and arms">
             <span className="cx-label" id="eup-tone-label">Skin tone</span>
             <span className="eup-field-value">{SKIN_TONES.find((tone) => tone.id === skinTone)?.label}</span>
           </span>
@@ -241,12 +241,11 @@ function EupSourcePanel({
               />
             ))}
           </div>
-          <p className="lv-slot-note">Skin colours from the game's heritage faces, applied to the head and arms.</p>
         </div>
         {packRaces.some((id) => id !== "whi") ? (
           <SelectField label="Race textures">
             <Select value={race} onValueChange={onRaceChange}>
-              <SelectTrigger className="lv-select eup-mono" aria-label="Race texture variant for race-dependent drawables">
+              <SelectTrigger className="lv-select eup-mono" aria-label="Race texture variant for race-dependent drawables" title={`Your clothing ships textures for ${packRaces.join(", ")}`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="lv-select-content">
@@ -255,7 +254,6 @@ function EupSourcePanel({
                 ))}
               </SelectContent>
             </Select>
-            <p className="lv-slot-note">Your clothing ships textures for {packRaces.join(", ")}.</p>
           </SelectField>
         ) : null}
         {baseError ? (
@@ -264,9 +262,7 @@ function EupSourcePanel({
             <span>{baseError}</span>
             <button type="button" className="lv-link eup-note-action" onClick={onRetryBase}>Retry</button>
           </p>
-        ) : (
-          <p className="lv-slot-note">The game's default ped fills every slot your clothing doesn't replace.</p>
-        )}
+        ) : null}
         </>
         )}
       </EupStep>

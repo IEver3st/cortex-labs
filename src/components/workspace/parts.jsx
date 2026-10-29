@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { Children, Fragment, isValidElement, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { usePaneMotion } from "./usePaneMotion";
 import { AnimatePresence, motion } from "motion/react";
 import {
   AlertTriangle,
   Check,
+  ChevronUp,
   CircleHelp,
   Contrast,
   Crosshair,
@@ -13,8 +15,6 @@ import {
   ImagePlus,
   LampCeiling,
   Loader2,
-  PanelLeft,
-  PanelRight,
   Plus,
   RotateCcw,
   Sun,
@@ -225,7 +225,7 @@ export function SelectField({ label, children }) {
 
 /** One pipeline step. A loaded file's card carries Replace and Unload;
     `facts` (fact rows about the file) follow it. */
-export function AssetSlot({ id, step, title, path, emptyTitle, emptyHint, hotkey, onPick, onUnload, done, children, trailing, disabled, disabledNote, facts }) {
+export function AssetSlot({ id, step, title, path, emptyTitle, emptyHint, emptyDetail, hotkey, onPick, onUnload, done, children, trailing, disabled, disabledNote, facts }) {
   const { name, folder } = splitPath(path);
   const subject = title.toLowerCase();
   const fileActions = (
@@ -265,7 +265,7 @@ export function AssetSlot({ id, step, title, path, emptyTitle, emptyHint, hotkey
         </div>
       ) : (
         <div className="lv-slot-body">
-          <DropButton title={emptyTitle} hint={emptyHint} hotkey={hotkey} onClick={onPick} />
+          <DropButton title={emptyTitle} hint={emptyHint} detail={emptyDetail} hotkey={hotkey} onClick={onPick} />
           {children}
         </div>
       )}
@@ -291,9 +291,44 @@ export function FileCard({ path, name, folder, title, actions }) {
   );
 }
 
-export function DropButton({ title, hint, hotkey, onClick }) {
+export function StageToggle({ showroom, onChange, title }) {
   return (
-    <button type="button" className="lv-drop" onClick={onClick}>
+    <button
+      type="button"
+      className={`lv-stage-toggle ${showroom ? "is-on" : ""}`}
+      aria-pressed={showroom}
+      onClick={() => onChange(!showroom)}
+      title={`${title}. ${showroom ? "Click for the workbench." : "Click for the showroom."}`}
+    >
+      <LampCeiling aria-hidden="true" />
+      Showroom
+    </button>
+  );
+}
+
+export function StageEmpty({ icon: Icon, title, line, tone, children }) {
+  return (
+    <div className={`lv-stage-empty ${tone === "error" ? "is-error" : ""}`} role="status">
+      {Icon ? <Icon className="lv-stage-empty-icon" aria-hidden="true" /> : null}
+      <p className="lv-stage-empty-title">{title}</p>
+      {line ? <p className="lv-stage-empty-line">{line}</p> : null}
+      {children ? <div className="lv-stage-empty-actions">{children}</div> : null}
+    </div>
+  );
+}
+
+export function FootFact({ label, children, title }) {
+  return (
+    <div className="lv-foot-fact" title={title}>
+      <span className="cx-label">{label}</span>
+      <span className="lv-foot-value">{children}</span>
+    </div>
+  );
+}
+
+export function DropButton({ title, hint, detail, hotkey, onClick }) {
+  return (
+    <button type="button" className="lv-drop" onClick={onClick} title={detail}>
       <span className="lv-drop-title">
         <Plus aria-hidden="true" />
         {title}
@@ -308,12 +343,66 @@ export function DropButton({ title, hint, hotkey, onClick }) {
 
 // `viewSwitch` leads the frame's context slot; `panelControls` false hides the
 // panel toggles while something else (the Pack view) covers the panels.
+export function PanelLayout({ start = null, end = null }) {
+  const half = (side, panel) => (
+    <button
+      type="button"
+      className={`lv-layout-half is-${side}`}
+      onClick={panel.onToggle}
+      title={`${panel.label}${panel.hint || ""}`}
+      aria-label={panel.label}
+      aria-pressed={panel.shown}
+    />
+  );
+  return (
+    <div className={`lv-layout ${start && end ? "" : "is-single"}`} role="group" aria-label="Panels">
+      <svg className="lv-layout-glyph" viewBox="0 0 22 16" aria-hidden="true">
+        <rect className="lv-layout-frame" x="0.75" y="0.75" width="20.5" height="14.5" rx="2.5" />
+        {start ? <path className={`lv-layout-col is-start ${start.shown ? "is-on" : ""}`} d="M3.25 0.75H5.25V15.25H3.25A2.5 2.5 0 0 1 0.75 12.75V3.25A2.5 2.5 0 0 1 3.25 0.75Z" /> : null}
+        {end ? <path className={`lv-layout-col is-end ${end.shown ? "is-on" : ""}`} d="M16.75 0.75H18.75A2.5 2.5 0 0 1 21.25 3.25V12.75A2.5 2.5 0 0 1 18.75 15.25H16.75Z" /> : null}
+        {start ? <path className="lv-layout-edge" d="M5.25 0.75V15.25" /> : null}
+        {end ? <path className="lv-layout-edge" d="M16.75 0.75V15.25" /> : null}
+      </svg>
+      {start ? half(start && end ? "start" : "all", start) : null}
+      {end ? half(start && end ? "end" : "all", end) : null}
+    </div>
+  );
+}
+
 export function WorkspaceFrame({ s, inspectorOpen, setInspectorOpen, children, className = "", style = null, viewSwitch = null, panelControls = true }) {
   const focusMode = s.panelCollapsed;
   const hk = s.hotkeys || {};
+  const rootRef = useRef(null);
+  const [hasDock, setHasDock] = useState(true);
+  const [dockOpen, setDockOpen] = useState(true);
+  useLayoutEffect(() => {
+    const found = Boolean(rootRef.current?.querySelector(":scope > .lv-dock"));
+    if (found !== hasDock) setHasDock(found);
+  });
+  const dockShown = hasDock && dockOpen && !focusMode;
+  const inspectorShown = inspectorOpen && !focusMode;
+  const focusKey = hotkeyLabel(hk[HOTKEY_ACTIONS.TOGGLE_PANEL]);
+  const focusHint = focusKey ? `. ${focusKey} hides both panels` : "";
+  const toggleDock = () => {
+    if (focusMode) {
+      s.setPanelCollapsed(false);
+      setDockOpen(true);
+      setInspectorOpen(false);
+    } else setDockOpen((open) => !open);
+  };
+  const toggleInspector = () => {
+    if (focusMode) {
+      s.setPanelCollapsed(false);
+      setDockOpen(false);
+      setInspectorOpen(true);
+    } else setInspectorOpen((open) => !open);
+  };
+  const rootClass = `lv-root ${focusMode ? "is-focus" : ""} ${hasDock && !dockOpen ? "is-dock-hidden" : ""} ${inspectorOpen ? "" : "is-inspector-closed"} ${className}`;
+  usePaneMotion(rootRef, rootClass);
   return (
     <motion.div
-      className={`lv-root ${focusMode ? "is-focus" : ""} ${inspectorOpen ? "" : "is-inspector-closed"} ${className}`}
+      ref={rootRef}
+      className={rootClass}
       initial={{ opacity: 0 }}
       animate={s.isBooting ? { opacity: 0 } : { opacity: 1 }}
       transition={{ duration: 0.4, ease: [0.2, 0.8, 0.2, 1] }}
@@ -324,33 +413,11 @@ export function WorkspaceFrame({ s, inspectorOpen, setInspectorOpen, children, c
             <div className="ctx-bar-inner lv-ctx">
               {viewSwitch}
               {panelControls ? (
-              <>
-              <button
-                type="button"
-                className={`lv-ctx-btn ${focusMode ? "" : "is-on"}`}
-                onClick={() => s.setPanelCollapsed((prev) => !prev)}
-                title={withShortcut(focusMode ? "Show panels" : "Focus on the viewfinder", hk[HOTKEY_ACTIONS.TOGGLE_PANEL])}
-                aria-pressed={!focusMode}
-              >
-                <PanelLeft aria-hidden="true" />
-              </button>
-              <div className="ctx-bar-drag-pad" aria-hidden="true" />
-              <button
-                type="button"
-                className={`lv-ctx-btn ${inspectorOpen && !focusMode ? "is-on" : ""}`}
-                onClick={() => {
-                  if (focusMode) {
-                    s.setPanelCollapsed(false);
-                    setInspectorOpen(true);
-                  } else setInspectorOpen((open) => !open);
-                }}
-                title={inspectorOpen ? "Hide inspector" : "Show inspector"}
-                aria-pressed={inspectorOpen && !focusMode}
-              >
-                <PanelRight aria-hidden="true" />
-              </button>
-              </>
-              ) : <div className="ctx-bar-drag-pad" aria-hidden="true" />}
+                <PanelLayout
+                  start={hasDock ? { shown: dockShown, onToggle: toggleDock, label: dockShown ? "Hide the dock" : "Show the dock", hint: focusHint } : null}
+                  end={{ shown: inspectorShown, onToggle: toggleInspector, label: inspectorShown ? "Hide the inspector" : "Show the inspector", hint: focusHint }}
+                />
+              ) : null}
             </div>,
             s.contextBarTarget,
           )
@@ -432,17 +499,144 @@ function HelpPopover() {
   );
 }
 
+function flattenNodes(nodes) {
+  return Children.toArray(nodes).flatMap((node) =>
+    isValidElement(node) && node.type === Fragment ? flattenNodes(node.props.children) : [node]);
+}
+
+export function deckButtonItems(nodes) {
+  return flattenNodes(nodes).map((node, index) => {
+    if (!isValidElement(node) || node.type !== DeckButton) return { key: node?.key ?? `node-${index}`, node };
+    const { active, onClick, title, label, hotkey, note, disabled, children } = node.props;
+    return { key: node.key ?? title, label: label ?? title, title, hotkey, note, icon: children, on: Boolean(active), onToggle: onClick, disabled };
+  });
+}
+
+function ViewRow({ item }) {
+  return (
+    <label className={`lv-view-row ${item.disabled ? "is-disabled" : ""}`} title={item.title && item.title !== item.label ? item.title : undefined}>
+      <span className="lv-view-icon" aria-hidden="true">{item.icon}</span>
+      <span className="lv-view-text">
+        <span className="lv-view-label">{item.label}</span>
+        {item.disabled && item.note ? <span className="lv-view-note">{item.note}</span> : null}
+      </span>
+      <Keycaps hotkey={item.hotkey} />
+      <Toggle checked={item.on} onChange={() => item.onToggle()} disabled={item.disabled} ariaLabel={item.label} />
+    </label>
+  );
+}
+
+export function DeckViewMenu({ groups, open: controlled, onOpenChange }) {
+  const [own, setOwn] = useState(false);
+  const open = controlled ?? own;
+  const setOpen = onOpenChange ?? setOwn;
+  const rootRef = useRef(null);
+  const buttonRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event) => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [open, setOpen]);
+  const sections = groups.map((items) => items.filter(Boolean)).filter((items) => items.length);
+  return (
+    <div
+      ref={rootRef}
+      className="lv-deck-group lv-view"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !open) return;
+        event.stopPropagation();
+        setOpen(false);
+        buttonRef.current?.focus();
+      }}
+    >
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`lv-deck-btn lv-view-btn ${open ? "is-on" : ""}`}
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        title="View: wireframes, grid, shadow and guides"
+      >
+        View
+        <ChevronUp className="lv-view-chev" aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="lv-view-menu" role="dialog" aria-label="View">
+          {sections.map((items, index) => (
+            <div key={index} className="lv-view-section">
+              {items.map((item) => (item.node
+                ? <div key={item.key} className="lv-view-extra">{item.node}</div>
+                : <ViewRow key={item.key} item={item} />))}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * The 3D view plus everything floating over it. `deckStart` holds the
  * workspace's own deck groups (camera, rotate, snap...), `viewButtons` its
  * view toggles; grid, shadow, guides and help are shared.
  */
-export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, viewButtons, progress, stageSwitch = true, collisions = null }) {
+export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, viewButtons, progress, stageSwitch = true, collisions = null, empty = null }) {
   const [guides, setGuides] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
+  const [popover, setPopover] = useState(null);
+  const helpOpen = popover === "help";
   const hk = s.hotkeys || {};
   const showroom = s.stage === "showroom";
   const capturing = Boolean(progress);
+  const modelItems = [
+    ...deckButtonItems(viewButtons),
+    s.setShowSolidWireframe ? {
+      key: "solid",
+      label: "Solid wireframe and stats",
+      title: "Solid wireframe with the mesh stats slip",
+      icon: <Triangle />,
+      on: Boolean(s.showSolidWireframe),
+      onToggle: () => s.setShowSolidWireframe((v) => !v),
+    } : null,
+  ];
+  const sceneItems = [
+    {
+      key: "grid",
+      label: "Ground grid",
+      icon: <Grid3x3 />,
+      on: s.showGrid && !showroom,
+      onToggle: () => s.toggleRenderEffect("showGrid"),
+      disabled: showroom,
+      note: "Workbench only",
+    },
+    {
+      key: "shadow",
+      label: "Ground shadow",
+      icon: <Sun />,
+      hotkey: hk[HOTKEY_ACTIONS.TOGGLE_SHADOWS],
+      on: s.showShadows || showroom,
+      onToggle: () => s.toggleRenderEffect("showShadows"),
+      disabled: showroom,
+      note: "Always on in the showroom",
+    },
+    {
+      key: "ao",
+      label: "Ambient occlusion",
+      icon: <Contrast />,
+      on: Boolean(s.ambientOcclusion),
+      onToggle: () => s.toggleRenderEffect("ambientOcclusion"),
+    },
+    {
+      key: "guides",
+      label: "Framing guides",
+      icon: <Frame />,
+      on: guides,
+      onToggle: () => setGuides((v) => !v),
+    },
+  ];
 
   return (
     <section
@@ -464,28 +658,7 @@ export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, v
         ) : null}
 
         {hasModel && stageSwitch ? (
-          <div className="lv-stage-switch" role="radiogroup" aria-label="Stage">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={!showroom}
-              className={!showroom ? "is-on" : ""}
-              onClick={() => s.setStage("workbench")}
-            >
-              Workbench
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={showroom}
-              className={showroom ? "is-on" : ""}
-              onClick={() => s.setStage("showroom")}
-              title="The vehicle parked in a dark studio on a satin floor under a spotlight you can aim"
-            >
-              <LampCeiling aria-hidden="true" />
-              Showroom
-            </button>
-          </div>
+          <StageToggle showroom={showroom} onChange={(on) => s.setStage(on ? "showroom" : "workbench")} title="The vehicle parked in a dark studio on a satin floor under a spotlight you can aim" />
         ) : null}
 
         {hasModel && ((s.showSolidWireframe && s.meshStats) || collisions) ? (
@@ -545,53 +718,18 @@ export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, v
           </div>
         ) : null}
 
+        {hasModel ? null : empty}
+
         {hasModel ? (
-          <div className="lv-deck" role="toolbar" aria-label="Camera and view">
+          <div className="lv-deck" id="panel-visibility" role="toolbar" aria-label="Camera and view">
             {deckStart}
-            <div className="lv-deck-group" id="panel-visibility" role="group" aria-label="View">
-              {viewButtons}
-              {s.setShowSolidWireframe ? (
-                <DeckButton
-                  active={Boolean(s.showSolidWireframe)}
-                  onClick={() => s.setShowSolidWireframe((v) => !v)}
-                  title="Solid wireframe and mesh stats"
-                  className="is-icon"
-                >
-                  <Triangle aria-hidden="true" />
-                </DeckButton>
-              ) : null}
-              <DeckButton
-                active={s.showGrid && !showroom}
-                onClick={() => s.toggleRenderEffect("showGrid")}
-                title={showroom ? "Ground grid (workbench only)" : "Ground grid"}
-                disabled={showroom}
-                className="is-icon"
-              >
-                <Grid3x3 aria-hidden="true" />
-              </DeckButton>
-              <DeckButton
-                active={s.showShadows || showroom}
-                onClick={() => s.toggleRenderEffect("showShadows")}
-                title={showroom ? "Shadows are always on in the showroom" : withShortcut("Ground shadow", hk[HOTKEY_ACTIONS.TOGGLE_SHADOWS])}
-                disabled={showroom}
-                className="is-icon"
-              >
-                <Sun aria-hidden="true" />
-              </DeckButton>
-              <DeckButton
-                active={Boolean(s.ambientOcclusion)}
-                onClick={() => s.toggleRenderEffect("ambientOcclusion")}
-                title="Ambient occlusion"
-                className="is-icon"
-              >
-                <Contrast aria-hidden="true" />
-              </DeckButton>
-              <DeckButton active={guides} onClick={() => setGuides((v) => !v)} title="Framing guides" className="is-icon">
-                <Frame aria-hidden="true" />
-              </DeckButton>
-            </div>
+            <DeckViewMenu
+              groups={[modelItems, sceneItems]}
+              open={popover === "view"}
+              onOpenChange={(next) => setPopover(next ? "view" : null)}
+            />
             <div className="lv-deck-group">
-              <DeckButton active={helpOpen} onClick={() => setHelpOpen((v) => !v)} title="Mouse and keyboard controls" className="is-icon">
+              <DeckButton active={helpOpen} onClick={() => setPopover((open) => (open === "help" ? null : "help"))} title="Mouse and keyboard controls" className="is-icon">
                 <CircleHelp aria-hidden="true" />
               </DeckButton>
             </div>
@@ -724,8 +862,31 @@ export function CollisionSlip({ info, showModel, onShowModelChange }) {
 /* ─── Inspector ─── */
 
 export function InspectorTabs({ tabs, active, onChange }) {
+  const listRef = useRef(null);
+  useEffect(() => {
+    const list = listRef.current;
+    const tab = list?.querySelector(".lv-tab.is-active");
+    if (!tab || list.scrollWidth <= list.clientWidth) return;
+    const bounds = list.getBoundingClientRect();
+    const rect = tab.getBoundingClientRect();
+    if (rect.left < bounds.left) list.scrollLeft -= bounds.left - rect.left + 12;
+    else if (rect.right > bounds.right) list.scrollLeft += rect.right - bounds.right + 12;
+  }, [active]);
+  const labels = tabs.map((tab) => tab.label).join("|");
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    const fit = () => {
+      list.classList.remove("is-tight");
+      list.classList.toggle("is-tight", list.scrollWidth > list.clientWidth);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [labels]);
   return (
-    <div className="lv-tabs" role="tablist" aria-label="Inspector sections">
+    <div className="lv-tabs" role="tablist" aria-label="Inspector sections" ref={listRef}>
       {tabs.map((tab) => (
         <button
           key={tab.id}

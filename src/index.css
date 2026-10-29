@@ -44,13 +44,6 @@
   --panel-accent: var(--mg-primary);
   --panel-accent-soft: rgba(var(--mg-primary-rgb), 0.2);
   --panel-ink: var(--mg-fg);
-  --settings-nav-width: clamp(
-    calc(180px * var(--es-ui-scale)),
-    22vw,
-    calc(260px * var(--es-ui-scale))
-  );
-  --settings-shell-pad: calc(20px * var(--es-ui-scale));
-  --settings-top-pad: calc(56px * var(--es-ui-scale));
   /* ── Animation Easing Curves ── */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
@@ -260,6 +253,10 @@ body {
   flex: 1;
   height: 100%;
   -webkit-app-region: drag;
+}
+
+:is(button, input, select, textarea, a, label, summary, [role="button"], [role="menuitem"], [role="tab"], [role="radio"], [role="switch"], [role="checkbox"], [contenteditable="true"]) {
+  -webkit-app-region: no-drag;
 }
 
 .titlebar-btn {
@@ -2795,7 +2792,6 @@ html.dark .gen-preview-btn--close:hover {
   position: relative;
   z-index: 30;
   display: flex;
-  width: calc(128px * var(--es-ui-scale));
   height: 100%;
   flex: 0 0 auto;
   align-items: center;
@@ -2807,28 +2803,26 @@ html.dark .gen-preview-btn--close:hover {
   position: relative;
   display: flex;
   width: 100%;
-  height: calc(24px * var(--es-ui-scale));
+  height: 26px;
   min-width: 0;
   align-items: center;
   justify-content: center;
-  gap: calc(5px * var(--es-ui-scale));
+  gap: calc(6px * var(--es-ui-scale));
   overflow: hidden;
-  padding: 0 calc(7px * var(--es-ui-scale));
-  border: 1px solid color-mix(in srgb, var(--mg-primary) 28%, var(--mg-border));
-  border-radius: calc(4px * var(--es-ui-scale));
-  background: color-mix(in srgb, var(--mg-primary) 8%, var(--mg-surface));
+  padding: 0 calc(8px * var(--es-ui-scale));
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: var(--mg-fg);
-  font-family: var(--font-hud);
-  font-size: calc(8px * var(--es-ui-scale));
+  font-family: var(--font-main);
+  font-size: var(--cx-fs-control);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
-  letter-spacing: 0.02em;
   line-height: 1;
   white-space: nowrap;
   -webkit-app-region: no-drag;
   transition:
     background-color 140ms ease-out,
-    border-color 140ms ease-out,
     color 140ms ease-out;
 }
 
@@ -2837,8 +2831,8 @@ button.shell-update-control {
 }
 
 .shell-update-control:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--mg-primary) 72%, white);
-  outline-offset: -2px;
+  outline: none;
+  box-shadow: var(--cx-focus);
 }
 
 .shell-update-control-content {
@@ -2850,9 +2844,10 @@ button.shell-update-control {
 }
 
 .shell-update-icon {
-  width: calc(11px * var(--es-ui-scale));
-  height: calc(11px * var(--es-ui-scale));
+  width: calc(15px * var(--es-ui-scale));
+  height: calc(15px * var(--es-ui-scale));
   flex: 0 0 auto;
+  color: var(--mg-primary);
 }
 
 .shell-update-label {
@@ -2863,13 +2858,14 @@ button.shell-update-control {
 
 .shell-update-version {
   color: var(--mg-muted);
-  font-size: calc(7px * var(--es-ui-scale));
+  font-size: var(--cx-fs-meta);
+  font-weight: 400;
 }
 
 .shell-update-percent {
   min-width: calc(28px * var(--es-ui-scale));
   margin-left: auto;
-  color: var(--mg-primary);
+  color: var(--mg-muted);
   text-align: right;
 }
 
@@ -2890,27 +2886,19 @@ button.shell-update-control {
   transition: width 180ms ease-out;
 }
 
-.shell-update-control.is-ready {
-  border-color: var(--mg-primary);
-  background: var(--mg-primary);
-  color: #fffaf6;
-}
-
-.shell-update-control.is-ready.has-error {
-  border-color: var(--mg-destructive);
-  background: var(--mg-destructive);
-}
-
 .shell-update-control.is-installing {
   cursor: wait;
-  border-color: color-mix(in srgb, var(--mg-primary) 38%, var(--mg-border));
-  color: var(--mg-primary);
+  color: var(--mg-muted);
   opacity: 1;
 }
 
-.shell-update-control.is-error {
-  border-color: color-mix(in srgb, var(--mg-destructive) 42%, var(--mg-border));
-  background: color-mix(in srgb, var(--mg-destructive) 9%, var(--mg-surface));
+.shell-update-control.is-error,
+.shell-update-control.is-ready.has-error {
+  color: var(--mg-destructive);
+}
+
+.shell-update-control.is-error .shell-update-icon,
+.shell-update-control.is-ready.has-error .shell-update-icon {
   color: var(--mg-destructive);
 }
 
@@ -2923,27 +2911,12 @@ button.shell-update-control {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .shell-update-control.is-ready:hover {
-    border-color: color-mix(in srgb, var(--mg-primary) 86%, black);
-    background: color-mix(in srgb, var(--mg-primary) 86%, black);
-  }
-
-  .shell-update-control.is-ready.has-error:hover {
-    border-color: color-mix(in srgb, var(--mg-destructive) 86%, black);
-    background: color-mix(in srgb, var(--mg-destructive) 86%, black);
-  }
-
-  .shell-update-control.is-error:hover {
-    border-color: var(--mg-destructive);
-    background: color-mix(in srgb, var(--mg-destructive) 15%, var(--mg-surface));
+  button.shell-update-control:not(:disabled):hover {
+    background: var(--cx-wash);
   }
 }
 
 @media (max-width: 1080px) {
-  .shell-update-slot {
-    width: calc(112px * var(--es-ui-scale));
-  }
-
   .shell-update-version {
     display: none;
   }
@@ -3008,12 +2981,9 @@ button.shell-update-control {
 }
 
 @media (forced-colors: active) {
-  .shell-update-control {
-    border-color: ButtonText;
-  }
-
   .shell-update-control:focus-visible {
-    outline-color: Highlight;
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 
   .shell-update-progress-fill {

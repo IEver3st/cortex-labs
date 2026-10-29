@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useMemo, useRef } from "react";
+import { useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Car,
@@ -132,6 +132,15 @@ function getModelName(ws) {
   const path = getModelPath(ws);
   if (!path) return null;
   return path.split(/[\\/]/).pop();
+}
+
+function fileStem(name) {
+  return String(name || "").trim().replace(/\.[a-z0-9]{2,5}$/i, "").toLowerCase();
+}
+
+function sameFileLabel(fileName, label) {
+  if (!fileName || !label) return false;
+  return fileStem(fileName) === fileStem(label);
 }
 
 function getProjectFolder(ws) {
@@ -313,12 +322,27 @@ export default function HomePage({
     return () => window.clearInterval(timer);
   }, [isActive]);
 
+  const isActiveRef = useRef(isActive);
+  const staleRef = useRef({ workspaces: false, recent: false });
+  const refreshStale = useCallback(() => {
+    const stale = staleRef.current;
+    if (stale.workspaces) refreshWorkspaceState();
+    else if (stale.recent) setRecent(loadRecent());
+    staleRef.current = { workspaces: false, recent: false };
+  }, [refreshWorkspaceState]);
+  useLayoutEffect(() => {
+    isActiveRef.current = isActive;
+    if (isActive) refreshStale();
+  }, [isActive, refreshStale]);
+
   useEffect(() => {
     const handleWorkspaceStorage = (event) => {
-      refreshWorkspaceState();
       // Opening a project hands the focus panel back to the latest one.
       const reason = event?.detail?.reason;
       if (reason === "recent-add" || reason === "recent-touch") setSelectedProject(null);
+      if (reason?.startsWith("recent")) staleRef.current.recent = true;
+      else staleRef.current.workspaces = true;
+      if (isActiveRef.current) refreshStale();
     };
     window.addEventListener(WORKSPACE_STORAGE_EVENT, handleWorkspaceStorage);
     return () =>
@@ -326,7 +350,7 @@ export default function HomePage({
         WORKSPACE_STORAGE_EVENT,
         handleWorkspaceStorage,
       );
-  }, [refreshWorkspaceState]);
+  }, [refreshStale]);
 
   // Close sort dropdown on outside click
   useEffect(() => {
@@ -562,8 +586,10 @@ export default function HomePage({
     const Icon = modeIconFor(entry, ws);
     const isPinned = pinnedIds.includes(entry.workspaceId);
     const tag = getModeTag(entry, ws);
-    const model = getModelName(ws);
+    const modelName = getModelName(ws);
+    const model = sameFileLabel(modelName, ws.name) ? null : modelName;
     const folder = getProjectFolder(ws);
+    const startedAt = tag === "Sirens" && !getModelPath(ws) && Number.isFinite(ws.createdAt) ? ws.createdAt : null;
     const openedAt = entry.openedAt;
     const isChecked = selecting && checkedIds.has(entry.workspaceId);
     const isSelected = selecting ? isChecked : focusEntry?.workspaceId === entry.workspaceId;
@@ -612,6 +638,19 @@ export default function HomePage({
                   <span className="hp-row-meta">
                     {model ? <span className="hp-row-model" title={getModelPath(ws)}>{model}</span> : null}
                     {folder ? <span className="hp-row-folder">/{folder}</span> : null}
+                  </span>
+                ) : startedAt ? (
+                  <span className="hp-row-meta">
+                    <span className="hp-row-model">No vehicle</span>
+                    <span className="hp-row-folder" title={`Started ${new Date(startedAt).toLocaleString()}`}>
+                      Started{" "}
+                      {new Date(startedAt).toLocaleString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
                   </span>
                 ) : null}
               </span>
@@ -905,6 +944,7 @@ export default function HomePage({
                       data-cat={mode.cat}
                       onClick={() => handleLaunch(mode.id)}
                       aria-keyshortcuts={hotkeyLabel(hotkeys[mode.action])}
+                      title={mode.desc}
                     >
                       <Icon className="hp-mode-icon" aria-hidden="true" />
                       <span className="hp-mode-label">{mode.label}</span>

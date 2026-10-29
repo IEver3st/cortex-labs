@@ -61,7 +61,7 @@
 
 .wn-mono {
   font-family: var(--font-hud);
-  font-size: calc(11.5 * var(--u));
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -134,7 +134,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   outline: none;
 }
 
@@ -312,13 +312,13 @@
 }
 
 .wn-release-date {
-  font-size: calc(11 * var(--u));
+  font-size: var(--cx-fs-meta);
 }
 
 .wn-release-name {
   min-width: 0;
   overflow: hidden;
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   font-weight: 650;
   letter-spacing: 0.04em;
   text-overflow: ellipsis;
@@ -331,7 +331,7 @@
   gap: calc(8 * var(--u));
   margin-left: auto;
   font-family: var(--font-hud);
-  font-size: calc(10.5 * var(--u));
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -355,7 +355,7 @@
 .wn-rail-empty {
   margin: 0;
   padding: calc(4 * var(--u)) calc(16 * var(--u)) calc(16 * var(--u));
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   color: var(--mg-muted);
 }
 
@@ -410,7 +410,7 @@
   display: inline-flex;
   align-items: center;
   gap: calc(6 * var(--u));
-  font-size: calc(11.5 * var(--u));
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   color: var(--mg-fg);
 }
@@ -431,7 +431,7 @@
   max-width: 66ch;
   margin: calc(14 * var(--u)) 0 0;
   overflow: hidden;
-  font-size: calc(13 * var(--u));
+  font-size: var(--cx-fs-row);
   line-height: 1.5;
   color: var(--mg-muted);
   -webkit-box-orient: vertical;
@@ -477,7 +477,7 @@
   background: transparent;
   color: var(--mg-muted);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   font-weight: 500;
   cursor: pointer;
   transition: color 140ms var(--cx-ease);
@@ -512,7 +512,7 @@
 
 .wn-filter-num {
   font-family: var(--font-hud);
-  font-size: calc(10.5 * var(--u));
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -558,7 +558,7 @@
   border-radius: calc(4 * var(--u));
   background: color-mix(in srgb, var(--wn-kind) 10%, transparent);
   color: color-mix(in srgb, var(--wn-kind) 55%, var(--mg-fg));
-  font-size: calc(10.5 * var(--u));
+  font-size: var(--cx-fs-label);
   font-weight: 700;
   letter-spacing: 0.12em;
   line-height: 1;
@@ -593,7 +593,7 @@
 
 .wn-item-title {
   margin: 0;
-  font-size: calc(13.5 * var(--u));
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   line-height: 1.35;
 }
@@ -601,7 +601,7 @@
 .wn-item-desc {
   max-width: 76ch;
   margin: calc(3 * var(--u)) 0 0;
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -628,13 +628,13 @@
 
 .wn-empty-title {
   margin: 0;
-  font-size: calc(14 * var(--u));
+  font-size: var(--cx-fs-title);
   font-weight: 650;
 }
 
 .wn-empty-text {
   margin: 0 0 calc(4 * var(--u));
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -656,7 +656,7 @@
   flex-shrink: 0;
   align-items: center;
   gap: calc(6 * var(--u));
-  font-size: calc(11.5 * var(--u));
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -668,7 +668,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   text-align: right;
   text-overflow: ellipsis;

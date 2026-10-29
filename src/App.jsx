@@ -25,7 +25,9 @@ import { emitRenderEffectChanged, loadPrefs, RENDER_EFFECT_EVENT, sanitizeStored
 import { openFolderPath } from "./lib/open-folder";
 import { captureTemporaryViewerFrame, captureViewerFrameBytes } from "./lib/preview-capture";
 import { countExistingFiles, downloadBytes } from "./lib/capture-output";
-import { DEFAULT_WATERMARK, hasDrawableWatermark } from "./lib/watermark";
+import { hasDrawableWatermark } from "./lib/watermark";
+import { BUILT_IN_DEFAULTS as SETTINGS_DEFAULTS } from "./lib/settings-defaults";
+import { CAPTURE_ANGLES, CAPTURE_ANGLE_KEYS, captureDimensions, normalizeCaptureAngles, normalizeCaptureZoom } from "./lib/capture-settings";
 
 import { ensurePreviewExportFolder, resolveExistingPreviewFolderPath } from "./lib/preview-folder";
 import { updateWorkspace, WORKSPACE_SAVE_FAILED_EVENT } from "./lib/workspace";
@@ -95,15 +97,8 @@ const SUPPORTED_TEXTURE_EXTS = [
   "pdn",
 ];
 
-const PREVIEW_CAPTURE_PRESETS = [
-  { key: "front", label: "Front" },
-  { key: "back", label: "Back" },
-  { key: "side", label: "Side" },
-  { key: "angle", label: "3/4" },
-  { key: "top", label: "Top" },
-];
-
-const PREVIEW_CAPTURE_PRESET_KEYS = PREVIEW_CAPTURE_PRESETS.map((preset) => preset.key);
+const PREVIEW_CAPTURE_PRESETS = CAPTURE_ANGLES;
+const PREVIEW_CAPTURE_PRESET_KEYS = CAPTURE_ANGLE_KEYS;
 const PREVIEW_CAPTURE_PRESET_LABELS = PREVIEW_CAPTURE_PRESETS.reduce((acc, preset) => {
   acc[preset.key] = preset.label;
   return acc;
@@ -126,27 +121,7 @@ function clampBackgroundImageBlur(value) {
   return Math.max(0, Math.min(MAX_BACKGROUND_IMAGE_BLUR, Math.round(parsed)));
 }
 
-const BUILT_IN_DEFAULTS = {
-  textureMode: "vehicle",
-  liveryExteriorOnly: false,
-  windowTemplateEnabled: false,
-  windowTextureTarget: "auto",
-  bodyColor: DEFAULT_BODY,
-  backgroundColor: DEFAULT_BG,
-  showGrid: false,
-  showShadows: false,
-  ambientOcclusion: false,
-  showRecents: true,
-  lightIntensity: 1.0,
-  lightAzimuth: 54,
-  lightElevation: 46,
-  windowControlsStyle: "windows",
-  variantExportFolder: "",
-  cameraControlsInPanel: false,
-  eupAutoTextures: true,
-  warnStandardModel: true,
-  watermark: { ...DEFAULT_WATERMARK },
-};
+const BUILT_IN_DEFAULTS = { textureMode: "vehicle", ...SETTINGS_DEFAULTS };
 
 const BUILT_IN_UI = {
 
@@ -184,7 +159,7 @@ function UnloadButton({ onClick, title, className }) {
   );
 }
 
-function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null, settingsVersion, defaultTextureMode = "vehicle", initialState = null, contextBarTarget = null }) {
+function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpenPackBuilder = null, settingsVersion, defaultTextureMode = "vehicle", initialState = null, contextBarTarget = null }) {
 
   const viewerApiRef = useRef(null);
   const reloadTimerRef = useRef({ primary: null, window: null });
@@ -239,7 +214,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
   const [generatedTemplateMap, setGeneratedTemplateMap] = useState(null);
   const [templateMapError, setTemplateMapError] = useState("");
   const [texturePath, setTexturePath] = useState("");
-  const [windowTemplateEnabled, setWindowTemplateEnabled] = useState(() => Boolean(getInitialDefaults().windowTemplateEnabled));
+  const [windowTemplateEnabled, setWindowTemplateEnabled] = useState(false);
   const [windowTexturePath, setWindowTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
   const [vehiclePaint, setVehiclePaint] = useState(() => buildVehiclePaint(getInitialDefaults().bodyColor));
@@ -355,14 +330,19 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
   const fileSirenSetting = lightPreview.settingPath === modelPath ? lightPreview.setting : null;
   // The siren editor's draft replaces the file's setting in the preview while it exists.
   const sirenEditor = useSirenEditor({ modelPath, fileSetting: fileSirenSetting });
+  const [sirenTrialEntry, setSirenTrialEntry] = useState(null);
+  const sirenTrial = sirenTrialEntry?.path === (modelPath || "") ? sirenTrialEntry.setting : null;
+  const setSirenTrial = useCallback((setting) => setSirenTrialEntry(setting ? { path: modelPath || "", setting } : null), [modelPath]);
+  const [sirenOpen, setSirenOpen] = useState(() => initialState?.sirenOpen || null);
+  const clearSirenOpen = useCallback(() => setSirenOpen(null), []);
   const vehicleLights = useMemo(() => ({
     ...lightPreview,
-    setting: sirenEditor.draft ?? fileSirenSetting,
+    setting: sirenTrial ?? sirenEditor.draft ?? fileSirenSetting,
     fileSetting: fileSirenSetting,
     ulc: lightPreview.settingPath === modelPath ? lightPreview.ulc : null,
     sirenContext: lightPreview.settingPath === modelPath ? lightPreview.sirenContext : null,
     lens: lightPreview.lens?.path === modelPath ? lightPreview.lens.tints : null,
-  }), [lightPreview, modelPath, fileSirenSetting, sirenEditor.draft]);
+  }), [lightPreview, modelPath, fileSirenSetting, sirenEditor.draft, sirenTrial]);
   // `lensTints` (siren number to "siren" or "#rrggbb") belongs to the open model.
   const updateVehicleLights = useCallback(({ lensTints, ...patch }) => setLightPreview((current) => ({
     ...current,
@@ -373,6 +353,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
   const getLightTime = useCallback(() => viewerApiRef.current?.getLightTime?.() ?? null, []);
   const setLightTime = useCallback((seconds) => viewerApiRef.current?.setLightTime?.(seconds), []);
   const getSirenMarkers = useCallback(() => viewerApiRef.current?.getSirenMarkers?.() ?? [], []);
+  const getSirenLocalPoints = useCallback((definitions) => viewerApiRef.current?.getSirenLocalPoints?.(definitions) ?? null, []);
   // Overlays that track the camera lay out right after the viewer draws a frame.
   const viewerFrameListenersRef = useRef(new Set());
   const handleViewerFrame = useCallback(() => {
@@ -559,7 +540,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
   const [textureTarget, setTextureTarget] = useState(() => (textureMode === "vehicle" ? PAINT_TARGET : "all"));
   const [liveryTarget, setLiveryTarget] = useState("");
   const [liveryLabel, setLiveryLabel] = useState("");
-  const [windowTextureTarget, setWindowTextureTarget] = useState(() => getInitialDefaults().windowTextureTarget || "auto");
+  const [windowTextureTarget, setWindowTextureTarget] = useState("auto");
 
   const [cameraControlsInPanel, setCameraControlsInPanel] = useState(() => Boolean(getInitialDefaults().cameraControlsInPanel));
   const [showGrid, setShowGrid] = useState(() => Boolean(getInitialDefaults().showGrid));
@@ -599,9 +580,9 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
   const [previewFolderOpening, setPreviewFolderOpening] = useState(false);
   const [previewFolderOpenError, setPreviewFolderOpenError] = useState("");
   const [previewPromptOpen, setPreviewPromptOpen] = useState(false);
-  const [previewZoom, setPreviewZoom] = useState(1);
-  const [previewZoomDraft, setPreviewZoomDraft] = useState(1);
-  const [previewCapturePresets, setPreviewCapturePresets] = useState(() => [...PREVIEW_CAPTURE_PRESET_KEYS]);
+  const [previewZoom, setPreviewZoom] = useState(() => normalizeCaptureZoom(getInitialDefaults().captureZoom));
+  const [previewZoomDraft, setPreviewZoomDraft] = useState(previewZoom);
+  const [previewCapturePresets, setPreviewCapturePresets] = useState(() => normalizeCaptureAngles(getInitialDefaults().captureAngles));
   const [previewZoomPreview, setPreviewZoomPreview] = useState("");
   const [previewZoomLoading, setPreviewZoomLoading] = useState(false);
   const lightIntensityRafRef = useRef(0);
@@ -705,8 +686,6 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
       const after = normalize(merged[key]);
       if (before !== after) setValue((current) => (current === before ? after : current));
     };
-    followDefault("windowTemplateEnabled", setWindowTemplateEnabled, Boolean);
-    followDefault("windowTextureTarget", setWindowTextureTarget, (value) => value || "auto");
     followDefault("backgroundColor", setBackgroundColor, (value) => value || DEFAULT_BG);
     setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
     setShowGrid(Boolean(merged.showGrid));
@@ -749,7 +728,11 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
     textureMode === "eup"
       ? ["yft", "clmesh", "dff", "ydd"]
       : ["yft", "clmesh", "dff"];
-  const modelDropLabel = modelExtensions.map((ext) => `.${ext}`).join(" / ");
+  const modelDropLabel = ["ydd", "yft", "dff", "clmesh"]
+    .filter((ext) => modelExtensions.includes(ext))
+    .map((ext) => `.${ext}`)
+    .join(", ")
+    .replace(/, ([^,]+)$/, " or $1");
 
   // `rename: false` keeps the tab's name, for a tab reopened from a saved vehicle.
   const loadModel = useCallback(
@@ -787,8 +770,8 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
       setTextureTarget(textureModeRef.current === "vehicle" ? PAINT_TARGET : "all");
       setLiveryTarget("");
       setLiveryLabel("");
-      // A new model starts from the Settings default; restore applies a saved pick after this.
-      setWindowTextureTarget(defaultsRef.current.windowTextureTarget || "auto");
+      // Restore applies a saved pick after this.
+      setWindowTextureTarget("auto");
       setWindowLiveryTarget("");
       setWindowLiveryLabel("");
       setModelSourcePath(path);
@@ -1070,7 +1053,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
     });
     setWindowTextureTarget((prev) => {
       if (prev === "all" || prev === "none" || prev === "auto") return prev;
-      return targets.some((target) => target.value === prev) ? prev : defaultsRef.current.windowTextureTarget || "auto";
+      return targets.some((target) => target.value === prev) ? prev : "auto";
     });
 
     if (Object.prototype.hasOwnProperty.call(info || {}, "nativeMaterials")) {
@@ -1198,27 +1181,6 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
     }
   }, [generatedTemplateMap, modelPath, modelSourcePath, showToast]);
 
-  const applyAndPersistDefaults = useCallback((next) => {
-    const merged = { ...BUILT_IN_DEFAULTS, ...(next || {}) };
-    setDefaults(merged);
-    setLiveryExteriorOnly(Boolean(merged.liveryExteriorOnly));
-    setWindowTemplateEnabled(Boolean(merged.windowTemplateEnabled));
-    setWindowTextureTarget(merged.windowTextureTarget || "auto");
-
-
-    setCameraControlsInPanel(Boolean(merged.cameraControlsInPanel));
-    setShowGrid(Boolean(merged.showGrid));
-    setShowShadows(Boolean(merged.showShadows));
-    setAmbientOcclusion(Boolean(merged.ambientOcclusion));
-    setBodyColor(merged.bodyColor);
-    setVehiclePaint(buildVehiclePaint(merged.bodyColor));
-    multi.repaintAll(merged.bodyColor);
-    setBackgroundColor(merged.backgroundColor);
-    const prefs = loadPrefs() || {};
-
-    savePrefs({ ...prefs, defaults: merged });
-  }, []);
-
   const saveHotkeys = useCallback((next) => {
     setHotkeys(next);
     const prefs = loadPrefs() || {};
@@ -1231,7 +1193,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
     const mergedDefaults = { ...BUILT_IN_DEFAULTS, ...storedDefaults };
     const resolvedValue =
       typeof nextValue === "function" ? Boolean(nextValue(Boolean(mergedDefaults[key]))) : Boolean(nextValue);
-    const nextDefaults = { ...mergedDefaults, [key]: resolvedValue };
+    const nextDefaults = { ...storedDefaults, [key]: resolvedValue };
 
     savePrefs({ ...currentPrefs, defaults: nextDefaults });
     // Not emitPrefsUpdated: that reloads every default and drops view state
@@ -2060,6 +2022,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
         delayMs: 0,
         watermark: defaults.watermark || null,
         thumbWidth: 720,
+        size: captureDimensions(defaults.captureSize),
       });
       if (token !== previewSnapTokenRef.current) return;
       setPreviewZoomPreview(dataUrl || "");
@@ -2097,6 +2060,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
           zoomFactor: zoomLevel,
           delayMs: 0,
           watermark: defaults.watermark || null,
+          size: captureDimensions(defaults.captureSize),
         });
         if (!bytes) {
           skipped.push(label);
@@ -2172,7 +2136,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
     }
 
     const job = { modelPath, zoomLevel, presetKeys, modelName, outputFolder, folderNote };
-    const conflicts = await countExistingFiles(
+    const conflicts = defaults.replaceExports === true ? 0 : await countExistingFiles(
       presetKeys.map((preset) => `${outputFolder}/${modelName}_${preset}.png`),
       fsExists,
     );
@@ -2182,7 +2146,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
       return;
     }
     await runPreviewCapture(job);
-  }, [modelPath, generatingPreview, isTauriRuntime, ensurePreviewFolderReady, runPreviewCapture]);
+  }, [modelPath, generatingPreview, isTauriRuntime, ensurePreviewFolderReady, runPreviewCapture, defaults.replaceExports]);
 
   const confirmPreviewReplace = useCallback(() => {
     const pending = previewReplace;
@@ -2219,6 +2183,7 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
       const fileName = `${modelName}_photo_${stamp}.png`;
       const bytes = await captureViewerFrameBytes(viewerApi, {
         watermark: defaults.watermark || null,
+        size: captureDimensions(defaults.captureSize),
       });
       if (!bytes) throw new Error("the viewer returned no image");
       if (!isTauriRuntime) {
@@ -2466,6 +2431,11 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
     ? getFileLabel(windowTexturePath, "No overlay selected")
     : "Off";
   const viewLabel = liveryExteriorOnly ? "Exterior only" : "Full model";
+  const sirenDraftName = sirenEditor.draft ? sirenEditor.draft.name || "Untitled setting" : null;
+  const tabDetail = textureMode !== "sirens" ? null : els?.enabled ? "ELS" : sirenDraftName || "No setting";
+  useEffect(() => {
+    onTabDetail?.(tabDetail);
+  }, [onTabDetail, tabDetail]);
   const showVehicleSlotColorCards = textureMode === "vehicle" || textureMode === "sirens";
   const nativeMaterialsAvailable = Boolean(nativeMaterialsStatus.available);
   const nativeMaterialsActive = Boolean(nativeMaterialsEnabled && (textureMode === "vehicle" || textureMode === "sirens"));
@@ -2846,8 +2816,9 @@ function App({ shellTab, isActive = true, onRenameTab, onOpenPackBuilder = null,
       extrasPlan, extrasState, updateExtrasState,
       steeringAngle, setSteeringAngle,
       vehicleParts, vehiclePartControls, roofClip: roofClip.path === modelPath ? roofClip : null,
-      vehicleLights, updateVehicleLights, getLightTime, setLightTime, getSirenMarkers, onViewerFrame,
-      sirenEditor, els, metaRescanToken, requestMetaRescan, showToast,
+      vehicleLights, updateVehicleLights, getLightTime, setLightTime, getSirenMarkers, getSirenLocalPoints, onViewerFrame,
+      sirenTrial, setSirenTrial,
+      sirenEditor, sirenOpen, clearSirenOpen, els, metaRescanToken, requestMetaRescan, showToast,
       // Reopens a model by path, e.g. after the vehicle renamer moves its file.
       loadModel, reloadMovedModel, reloadModel,
       licensePlate, updateLicensePlate, licensePlateStatus,

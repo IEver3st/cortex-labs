@@ -142,7 +142,9 @@ export default function useEls({ modelPath, isTauriRuntime, modelExtras = [], ac
     });
   }, [modelPath]);
 
+  const [carcolsFor, setCarcolsFor] = useState("");
   const remember = useCallback((patch) => {
+    if (patch.enabled !== undefined) setCarcolsFor("");
     const next = withLink(linksRef.current, modelPath, patch);
     linksRef.current = next;
     setLinks(next);
@@ -193,8 +195,9 @@ export default function useEls({ modelPath, isTauriRuntime, modelExtras = [], ac
 
   // Carcols stays the default: ELS takes over a vehicle's lights only once the
   // user picks it (or opens or creates a VCF) for that vehicle.
-  const enabled = link?.enabled === true;
+  const enabled = link?.enabled === true && carcolsFor !== modelPath;
   const setEnabled = useCallback((value) => remember({ enabled: Boolean(value) }), [remember]);
+  const showCarcolsForNow = useCallback(() => setCarcolsFor(modelPath || ""), [modelPath]);
 
   const edit = useCallback((recipe, key = null) => {
     update((current) => {
@@ -575,6 +578,7 @@ export default function useEls({ modelPath, isTauriRuntime, modelExtras = [], ac
     toolStatus: status,
     clearStatus: () => setStatus(null),
     setEnabled,
+    showCarcolsForNow,
     edit,
     undo,
     redo,

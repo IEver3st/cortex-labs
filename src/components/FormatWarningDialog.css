@@ -70,7 +70,7 @@
 }
 
 .fw-text {
-  font-size: calc(13 * var(--u));
+  font-size: var(--cx-fs-row);
   line-height: 1.55;
 }
 
@@ -80,7 +80,7 @@
 
 .fw-note,
 .fw-status {
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -101,7 +101,7 @@
 
 .fw-code {
   font-family: var(--font-hud);
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   color: var(--mg-fg);
   white-space: nowrap;
 }
@@ -115,7 +115,7 @@
 .fw-facts dd {
   margin: 0;
   font-family: var(--font-hud);
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.5;
   color: var(--mg-muted);
 }

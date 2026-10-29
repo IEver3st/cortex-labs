@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Settings, Car, AlertTriangle, Monitor, Clock, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Check, Bug, Lightbulb, Sparkles, Aperture } from "lucide-react";
+import { Search, X, Settings, Car, AlertTriangle, Monitor, Keyboard, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Bug, Lightbulb, Sparkles, Aperture, UserRound } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { exists as fsExists } from "@tauri-apps/plugin-fs";
 import HotkeyInput from "./HotkeyInput";
 import WatermarkSettings from "./WatermarkSettings";
 import StudioDefaultsSettings from "./StudioDefaultsSettings";
+import CortexAccountSettings from "./CortexAccountSettings";
 import { ColorField } from "./SettingsColorField";
 import { Toggle } from "./ui/toggle";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
 import "./SettingsMenu.css";
 import {
@@ -32,56 +34,26 @@ import {
 } from "../lib/theme";
 import { hasSeenWhatsNew, hasNotesForAppVersion, getAppVersion } from "../lib/changelog";
 import { useUpdateChecker } from "../lib/updater";
-import { DEFAULT_WATERMARK, normalizeWatermarkConfig } from "../lib/watermark";
+import { normalizeWatermarkConfig } from "../lib/watermark";
 import {
-  DEFAULT_LIGHT,
-  DEFAULT_PLATE,
   normalizeLightDefaults,
   normalizePlateDefault,
   normalizeShowroomDefaults,
   normalizeSteeringDefault,
 } from "../lib/studio-defaults";
+import { BUILT_IN_DEFAULTS } from "../lib/settings-defaults";
+import {
+  CAPTURE_ANGLES,
+  CAPTURE_SIZES,
+  CAPTURE_ZOOM_MAX,
+  CAPTURE_ZOOM_MIN,
+  normalizeCaptureAngles,
+  normalizeCaptureSize,
+  normalizeCaptureZoom,
+} from "../lib/capture-settings";
+import { PREVIEW_DETAIL_LEVELS, normalizePreviewDetail } from "../lib/preview-detail";
+import { OUTPUT_PRESETS, normalizeOutputPreset } from "../lib/photo-mode";
 
-/* ─── Built-in defaults (canonical source) ─── */
-const BUILT_IN_DEFAULTS = {
-  colorScheme: "dark",
-  themePreset: "cortex",
-  darkMode: true,
-  liveryExteriorOnly: false,
-  windowTemplateEnabled: false,
-  windowTextureTarget: "auto",
-  bodyColor: "#e7ebf0",
-  autoTemplateColor: "#c9d8ee",
-  autoTemplateBackgroundColor: "#000000",
-  backgroundColor: "#141414",
-  showGrid: false,
-  showShadows: false,
-  ambientOcclusion: false,
-  showRecents: true,
-  lightIntensity: DEFAULT_LIGHT.intensity,
-  lightAzimuth: DEFAULT_LIGHT.azimuth,
-  lightElevation: DEFAULT_LIGHT.elevation,
-  showroom: normalizeShowroomDefaults(null),
-  licensePlate: { ...DEFAULT_PLATE },
-  steeringAngle: 0,
-  windowControlsStyle: "windows",
-  uiScale: 1.0,
-  previewFolder: "",
-  variantExportFolder: "",
-  autoTemplateExportFormat: "psd",
-  cameraControlsInPanel: false,
-  eupAutoTextures: true,
-  warnStandardModel: true,
-  legacyLayersLayout: false,
-  watermark: { ...DEFAULT_WATERMARK },
-  homeSort: "recent",
-  confirmProjectDelete: true,
-  reduceMotion: "system",
-  showKeycaps: true,
-  showWhatsNewOnUpdate: true,
-  autoCheckUpdates: true,
-  feedbackIncludeLogs: false,
-};
 
 const HOME_SORT_OPTIONS = [
   ["recent", "Last opened"],
@@ -101,6 +73,16 @@ function clampUiScale(value) {
 function normalizeAutoTemplateExportFormat(value) {
   if (value === "png" || value === "psd_png") return value;
   return BUILT_IN_DEFAULTS.autoTemplateExportFormat;
+}
+
+function normalizeCaptureDefaults(source) {
+  return {
+    captureAngles: normalizeCaptureAngles(source.captureAngles),
+    captureZoom: normalizeCaptureZoom(source.captureZoom),
+    captureSize: normalizeCaptureSize(source.captureSize),
+    photoOutput: normalizeOutputPreset(source.photoOutput),
+    previewDetail: normalizePreviewDetail(source.previewDetail),
+  };
 }
 
 // Studio defaults (Settings > Studio) clamped to values the workspaces accept.
@@ -130,6 +112,7 @@ function getStoredDefaults() {
     autoTemplateExportFormat: normalizeAutoTemplateExportFormat(merged.autoTemplateExportFormat),
     watermark: normalizeWatermarkConfig(merged.watermark),
     ...normalizeStudioDefaults(merged),
+    ...normalizeCaptureDefaults(merged),
     homeSort: HOME_SORT_OPTIONS.some(([id]) => id === merged.homeSort) ? merged.homeSort : "recent",
     reduceMotion: merged.reduceMotion === "always" ? "always" : "system",
   };
@@ -163,30 +146,114 @@ const SETTINGS_SECTION_GROUPS = [
     id: "workspace",
     label: "Workspace",
     items: [
-      { id: "general", label: "System", description: "Interface scaling and core behavior.", icon: Monitor },
-      { id: "viewer", label: "Viewer", description: "Interaction and rendering defaults.", icon: Car },
-      { id: "studio", label: "Studio", description: "Showroom, lighting, plate, and steering that new work starts with.", icon: Aperture },
-      { id: "appearance", label: "Appearance", description: "Theme, window chrome, and studio colors.", icon: Palette },
-      { id: "watermark", label: "Watermark", description: "Stamp captures with your text or logo.", icon: Stamp },
+      {
+        id: "general",
+        label: "System",
+        description: "Interface scaling and core behavior.",
+        icon: Monitor,
+        keywords: ["UI scale", "Interface size>UI scale", "Zoom>UI scale", "Show projects", "Home>Show projects", "Default order", "Sort>Default order", "Confirm before deleting", "Reopen tabs on launch", "Restore>Reopen tabs on launch", "Session>Reopen tabs on launch", "Capture folder", "Screenshots>Capture folder", "Variant and template folder", "Export folder>Variant and template folder", "Auto template format", "PSD>Auto template format", "PNG>Auto template format", "Replace existing files", "Overwrite>Replace existing files", "Capture size", "Resolution>Capture size", "4K>Capture size", "Capture angles", "Capture framing", "Zoom>Capture framing", "Photo Mode size", "Reset all settings"],
+      },
+      {
+        id: "viewer",
+        label: "Viewer",
+        description: "Interaction and rendering defaults.",
+        icon: Car,
+        keywords: ["Start in exterior only", "Load EUP textures", "Standard model warning", "_hi>Standard model warning", "Camera presets in the panel", "Variant Builder layers at the bottom", "Layers>Variant Builder layers at the bottom", "Preview detail", "Performance>Preview detail", "Resolution>Preview detail", "Sharp>Preview detail", "Zoom toward cursor", "Scroll>Zoom toward cursor", "Render effects", "3D grid", "Ground shadows", "Ambient occlusion"],
+      },
+      {
+        id: "studio",
+        label: "Studio",
+        description: "Showroom, lighting, plate, and steering that new work starts with.",
+        icon: Aperture,
+        keywords: ["Showroom", "Open in", "Light from", "Spotlight", "Floor reflections", "Light beam", "Floor", "Rim light", "Dark room", "Light intensity", "Light direction", "Light height", "Plate style", "Plate text", "Front wheel angle", "Steering>Front wheel angle"],
+      },
+      {
+        id: "appearance",
+        label: "Appearance",
+        description: "Theme, window chrome, and studio colors.",
+        icon: Palette,
+        keywords: ["Color scheme", "Theme>Color scheme", "Dark mode>Color scheme", "Light mode>Color scheme", "Studio palette", "Preset>Studio palette", "Window controls", "Reduce motion", "Animations>Reduce motion", "Show shortcut keys", "Keycaps>Show shortcut keys", "Starting colors", "Base body>Starting colors", "Base background>Starting colors", "Auto template fill>Starting colors", "Auto template background>Starting colors"],
+      },
+      {
+        id: "watermark",
+        label: "Watermark",
+        description: "Stamp captures with your text or logo.",
+        icon: Stamp,
+        keywords: ["Stamp captures", "Presets", "Content", "Text", "Logo", "Logo size", "Match watermark color", "Font", "Weight", "Italic", "Capitals", "Letter spacing", "Finish", "Opacity", "Size", "Rotation", "Placement", "Position", "Edge margin", "Tile spacing"],
+      },
     ],
   },
   {
     id: "input",
     label: "Input",
     items: [
-      { id: "hotkeys", label: "Shortcuts", description: "Global keyboard configurations.", icon: Clock },
+      {
+        id: "hotkeys",
+        label: "Shortcuts",
+        description: "Global keyboard configurations.",
+        icon: Keyboard,
+        keywords: ["Keyboard", "Hotkeys", "Keybindings", ...Object.values(HOTKEY_LABELS)],
+      },
+    ],
+  },
+  {
+    id: "account",
+    label: "Account",
+    items: [
+      {
+        id: "account",
+        label: "Cortex account",
+        description: "Optional. Sign in to use Juno in the Sirens editor.",
+        icon: UserRound,
+        keywords: ["Sign in>Not signed in", "Sign out", "Discord", "Juno", "Status>Juno", "Ready>Juno", "Plan>This month", "This month", "Allowance>This month", "Usage>This month", "Used>This month", "Resets>This month"],
+      },
     ],
   },
   {
     id: "support",
     label: "Support",
     items: [
-      { id: "about", label: "About", description: "Version, updates, release notes, and feedback.", icon: Info },
+      {
+        id: "about",
+        label: "About",
+        description: "Version, updates, release notes, and feedback.",
+        icon: Info,
+        keywords: ["Version>Updates", "Software update>Updates", "Check for updates>Check automatically", "Check automatically", "Changelog", "Release notes>Changelog", "Show after updates", "Feedback", "Send feedback", "Report a bug>Send feedback", "Request a feature>Send feedback", "Console logs>Attach console logs by default"],
+      },
     ],
   },
 ];
 
 const SETTINGS_SECTIONS = SETTINGS_SECTION_GROUPS.flatMap((group) => group.items);
+
+const SAVE_DELAY_MS = 350;
+
+const FOCUSABLE =
+  'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+function normalizeQuery(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function searchSections(query) {
+  const needle = normalizeQuery(query);
+  if (!needle) return [];
+  return SETTINGS_SECTIONS.flatMap((section) => {
+    const hits = [...new Set(
+      section.keywords
+        .map((keyword) => keyword.split(">"))
+        .filter(([term]) => term.toLowerCase().includes(needle))
+        .map(([term, target]) => target ?? term),
+    )];
+    const named = section.label.toLowerCase().includes(needle);
+    if (!named && !hits.length) return [];
+    return [{ section, hits }];
+  });
+}
+
+function isTypingTarget(target) {
+  return Boolean(target?.closest?.('input, textarea, select, [contenteditable="true"]'));
+}
 
 function ThemeChoice({ option, selected, onSelect }) {
   return (
@@ -209,30 +276,25 @@ function ThemeChoice({ option, selected, onSelect }) {
           <span className="settings-theme-preview-control" />
         </span>
       </span>
-      <span className="settings-theme-choice-copy">
-        <span className="settings-theme-choice-label">{option.label}</span>
-        <span className="settings-theme-choice-description">{option.description}</span>
-      </span>
-      <span className="settings-theme-choice-check" aria-hidden="true">
-        {selected ? <Check /> : null}
-      </span>
+      <span className="settings-theme-choice-label">{option.label}</span>
     </button>
   );
 }
 
-function ThemePresetChoice({ option, selected, onSelect }) {
+function ThemePresetChoice({ option, scheme, selected, onSelect }) {
+  const mode = option.modes[scheme] ?? option.modes.dark;
   const previewStyle = {
-    "--theme-preset-dark": option.modes.dark.background,
-    "--theme-preset-surface": option.modes.dark.surface,
-    "--theme-preset-ink": option.modes.dark.foreground,
-    "--theme-preset-light": option.modes.light.background,
-    "--theme-preset-accent": option.modes.dark.primary,
+    "--theme-preset-bg": mode.background,
+    "--theme-preset-surface": mode.surface,
+    "--theme-preset-ink": mode.foreground,
+    "--theme-preset-accent": mode.primary,
   };
 
   return (
     <label
       className={`settings-preset-choice ${selected ? "is-selected" : ""}`}
       style={previewStyle}
+      title={option.description}
     >
       <input
         type="radio"
@@ -254,18 +316,7 @@ function ThemePresetChoice({ option, selected, onSelect }) {
           <span className="settings-preset-preview-action" />
         </span>
       </span>
-      <span className="settings-preset-choice-copy">
-        <span className="settings-preset-choice-label">{option.name}</span>
-        <span className="settings-preset-choice-description">{option.description}</span>
-      </span>
-      <span className="settings-preset-swatches" aria-hidden="true">
-        <span style={{ background: option.modes.dark.background }} />
-        <span style={{ background: option.modes.light.background }} />
-        <span style={{ background: option.modes.dark.primary }} />
-      </span>
-      <span className="settings-preset-choice-check" aria-hidden="true">
-        {selected ? <Check /> : null}
-      </span>
+      <span className="settings-preset-choice-label">{option.name}</span>
     </label>
   );
 }
@@ -276,7 +327,6 @@ function ThemePresetChoice({ option, selected, onSelect }) {
  * Shell renders this in the chrome bar; it emits onSettingsSaved when prefs are persisted.
  */
 export default function SettingsMenu({
-  pageTarget,
   pageOpen = false,
   onOpenChange,
   onSettingsSaved,
@@ -288,6 +338,8 @@ export default function SettingsMenu({
   const [confirmReset, setConfirmReset] = useState(false);
   const [previewFolderExists, setPreviewFolderExists] = useState(true);
   const [saveError, setSaveError] = useState("");
+  const [query, setQuery] = useState("");
+  const [uiScaleInput, setUiScaleInput] = useState(null);
   const updater = useUpdateChecker();
   const prefersReducedMotion = useReducedMotion();
 
@@ -296,9 +348,21 @@ export default function SettingsMenu({
   const [savedSignature, setSavedSignature] = useState(() =>
     settingsSignature(getStoredDefaults(), getStoredHotkeys()),
   );
-  const pageRef = useRef(null);
+  const dialogRef = useRef(null);
+  const bodyRef = useRef(null);
+  const searchRef = useRef(null);
   const settingsButtonRef = useRef(null);
+  const returnFocusRef = useRef(null);
+  const resetButtonRef = useRef(null);
   const wasOpenRef = useRef(false);
+  const closeAnywayRef = useRef(false);
+  const savedSignatureRef = useRef(savedSignature);
+  savedSignatureRef.current = savedSignature;
+  const latestRef = useRef({ draft, hotkeysDraft });
+  latestRef.current = {
+    draft: uiScaleInput === null ? draft : { ...draft, uiScale: clampUiScale(uiScaleInput) },
+    hotkeysDraft,
+  };
 
   const setOpen = useCallback((nextOpen) => {
     onOpenChange?.(Boolean(nextOpen));
@@ -308,17 +372,66 @@ export default function SettingsMenu({
     typeof window !== "undefined" &&
     typeof window.__TAURI_INTERNALS__ !== "undefined";
 
-  const closeSettings = useCallback(() => {
-    const stored = getStoredDefaults();
-    applyAppearance({
-      colorScheme: stored.colorScheme,
-      themePreset: stored.themePreset,
-      legacyDarkMode: stored.darkMode,
-    });
-    setOpen(false);
-  }, [setOpen]);
+  const persist = useCallback((nextDraft, nextHotkeys) => {
+    const normalizedUiScale = clampUiScale(nextDraft.uiScale);
+    const normalizedDraft = {
+      ...nextDraft,
+      colorScheme: normalizeColorScheme(nextDraft.colorScheme, nextDraft.darkMode),
+      themePreset: normalizeThemePreset(nextDraft.themePreset),
+      uiScale: normalizedUiScale,
+      autoTemplateExportFormat: normalizeAutoTemplateExportFormat(nextDraft.autoTemplateExportFormat),
+      watermark: normalizeWatermarkConfig(nextDraft.watermark),
+      ...normalizeStudioDefaults(nextDraft),
+      ...normalizeCaptureDefaults(nextDraft),
+    };
+    normalizedDraft.darkMode = resolveColorScheme(normalizedDraft.colorScheme) === "dark";
+    const prefs = loadPrefs() || {};
+    if (!savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: nextHotkeys })) {
+      setSaveError(
+        normalizedDraft.watermark?.image
+          ? "Couldn't save. Storage may be full; try a smaller watermark logo. Closing will discard unsaved changes."
+          : "Couldn't save. Storage may be full or unavailable. Closing will discard unsaved changes.",
+      );
+      closeAnywayRef.current = true;
+      return false;
+    }
+    closeAnywayRef.current = false;
+    savedSignatureRef.current = settingsSignature(nextDraft, nextHotkeys);
+    setSaveError("");
+    emitPrefsUpdated();
+    document.documentElement.style.setProperty("--es-ui-scale", String(normalizedUiScale));
+    window.dispatchEvent(
+      new CustomEvent("cortex:ui-scale-changed", { detail: { scale: normalizedUiScale } }),
+    );
+    setSavedSignature(settingsSignature(nextDraft, nextHotkeys));
+    onSettingsSaved?.();
+    return true;
+  }, [onSettingsSaved]);
 
-  // Refresh draft from storage when the dialog opens
+  const draftSignature = useMemo(
+    () => settingsSignature(draft, hotkeysDraft),
+    [draft, hotkeysDraft],
+  );
+  const hasChanges = draftSignature !== savedSignature;
+
+  useEffect(() => {
+    if (!open || !hasChanges) return undefined;
+    const timer = window.setTimeout(() => persist(draft, hotkeysDraft), SAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft, hotkeysDraft, hasChanges, open, persist]);
+
+  const flushPending = useCallback(() => {
+    const { draft: latestDraft, hotkeysDraft: latestHotkeys } = latestRef.current;
+    if (settingsSignature(latestDraft, latestHotkeys) === savedSignatureRef.current) return true;
+    return persist(latestDraft, latestHotkeys);
+  }, [persist]);
+
+  const closeSettings = useCallback(() => {
+    const discardArmed = closeAnywayRef.current;
+    if (!flushPending() && !discardArmed) return;
+    setOpen(false);
+  }, [flushPending, setOpen]);
+
   useEffect(() => {
     if (open) {
       const nextDraft = getStoredDefaults();
@@ -328,32 +441,46 @@ export default function SettingsMenu({
       setSavedSignature(settingsSignature(nextDraft, nextHotkeys));
       setConfirmReset(false);
       setSaveError("");
-      window.setTimeout(() => {
-        (pageRef.current ?? document.querySelector(".settings-page"))?.focus();
-      }, 0);
+      setQuery("");
+      setUiScaleInput(null);
+      closeAnywayRef.current = false;
+      returnFocusRef.current = document.activeElement;
+      window.setTimeout(() => dialogRef.current?.focus({ preventScroll: true }), 0);
     } else if (wasOpenRef.current) {
+      flushPending();
       const stored = getStoredDefaults();
       applyAppearance({
         colorScheme: stored.colorScheme,
         themePreset: stored.themePreset,
         legacyDarkMode: stored.darkMode,
       });
-      // Return focus to the gear only when it was in the page (Escape, Close)
-      // or fell to the body; a tab or control the user clicked keeps it.
-      const pageNode = pageRef.current;
+      const previous = returnFocusRef.current;
+      const dialogNode = dialogRef.current;
       window.setTimeout(() => {
         const active = document.activeElement;
-        if (active && active !== document.body && !pageNode?.contains(active)) return;
-        (settingsButtonRef.current ?? document.querySelector('button[aria-label="Settings"]'))?.focus();
+        if (active && active !== document.body && !dialogNode?.contains(active)) return;
+        const target = previous?.isConnected ? previous : settingsButtonRef.current;
+        target?.focus?.({ preventScroll: true });
       }, 0);
     }
     wasOpenRef.current = open;
-  }, [open]);
+  }, [flushPending, open]);
+
+  const focusResetButton = () => {
+    window.requestAnimationFrame(() => resetButtonRef.current?.focus({ preventScroll: true }));
+  };
+
+  const cancelReset = useCallback(() => {
+    setConfirmReset(false);
+    window.requestAnimationFrame(() => resetButtonRef.current?.focus({ preventScroll: true }));
+  }, []);
 
   const performReset = () => {
     setDraft({ ...BUILT_IN_DEFAULTS });
     setHotkeysDraft({ ...DEFAULT_HOTKEYS });
+    setUiScaleInput(null);
     setConfirmReset(false);
+    focusResetButton();
     applyAppearance({
       colorScheme: BUILT_IN_DEFAULTS.colorScheme,
       themePreset: BUILT_IN_DEFAULTS.themePreset,
@@ -385,6 +512,12 @@ export default function SettingsMenu({
     setDraft((prev) => ({ ...prev, watermark }));
   }, []);
 
+  const commitUiScale = useCallback(() => {
+    if (uiScaleInput === null) return;
+    setDraft((prev) => ({ ...prev, uiScale: clampUiScale(uiScaleInput) }));
+    setUiScaleInput(null);
+  }, [uiScaleInput]);
+
   const openFromSettings = useCallback((eventName, detail) => {
     closeSettings();
     window.setTimeout(() => {
@@ -392,18 +525,86 @@ export default function SettingsMenu({
     }, 220);
   }, [closeSettings]);
 
+  const results = useMemo(() => searchSections(query), [query]);
+  const searching = normalizeQuery(query).length > 0;
+
+  const changeQuery = useCallback((value) => {
+    setQuery(value);
+    const matches = searchSections(value);
+    if (matches.length && !matches.some((match) => match.section.id === activeSection)) {
+      setActiveSection(matches[0].section.id);
+    }
+  }, [activeSection]);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        // Don't close if walkthrough is controlling this dialog
-        if (document.querySelector(".settings-page.is-walkthrough-elevated")) return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const { key, target } = event;
+      if (key === "Escape") {
+        if (event.defaultPrevented) return;
+        event.preventDefault();
+        if (target === searchRef.current && searchRef.current.value) {
+          changeQuery("");
+          return;
+        }
+        if (confirmReset) {
+          cancelReset();
+          return;
+        }
         closeSettings();
+        return;
+      }
+      if (key === "Tab") {
+        const focusable = [...dialog.querySelectorAll(FOCUSABLE)].filter((node) => node.offsetParent !== null);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!dialog.contains(document.activeElement) || document.activeElement === dialog) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+      if (key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !isTypingTarget(target)) {
+        event.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeSettings, open]);
+  }, [cancelReset, changeQuery, closeSettings, confirmReset, open]);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!open || !body) return;
+    const needle = normalizeQuery(query);
+    const hits = needle
+      ? (searchSections(query).find((result) => result.section.id === activeSection)?.hits ?? []).map(normalizeQuery)
+      : [];
+    const matches = (text) => {
+      const value = normalizeQuery(text);
+      return Boolean(needle) && (value.includes(needle) || hits.includes(value));
+    };
+    let first = null;
+    body.querySelectorAll(".settings-panel-title, .settings-row").forEach((node) => {
+      const hit = node.classList.contains("settings-row")
+        ? matches(node.querySelector(".settings-row-title")?.textContent) ||
+          (Boolean(needle) && normalizeQuery(node.querySelector(".settings-row-desc")?.textContent).includes(needle))
+        : matches(node.textContent);
+      node.toggleAttribute("data-match", hit);
+      if (hit && !first) first = node;
+    });
+    first?.scrollIntoView({ block: "nearest" });
+  }, [activeSection, open, query]);
 
   useEffect(() => {
     if (!open || !isTauriRuntime) return;
@@ -439,11 +640,11 @@ export default function SettingsMenu({
         setActiveSection(e.detail.section === "experimental" ? "about" : e.detail.section);
       }
     };
-    
+
     window.addEventListener("cortex:open-settings", handleOpen);
     window.addEventListener("cortex:close-settings", handleClose);
     window.addEventListener("cortex:nav-settings", handleNav);
-    
+
     return () => {
       window.removeEventListener("cortex:open-settings", handleOpen);
       window.removeEventListener("cortex:close-settings", handleClose);
@@ -452,49 +653,6 @@ export default function SettingsMenu({
   }, [closeSettings, setOpen]);
 
   const activeMeta = SETTINGS_SECTIONS.find((section) => section.id === activeSection) ?? SETTINGS_SECTIONS[0];
-  const draftSignature = useMemo(
-    () => settingsSignature(draft, hotkeysDraft),
-    [draft, hotkeysDraft],
-  );
-  const hasChanges = draftSignature !== savedSignature;
-
-  const save = useCallback(() => {
-    const normalizedUiScale = clampUiScale(draft.uiScale);
-    const normalizedDraft = {
-      ...draft,
-      colorScheme: normalizeColorScheme(draft.colorScheme, draft.darkMode),
-      themePreset: normalizeThemePreset(draft.themePreset),
-      uiScale: normalizedUiScale,
-      autoTemplateExportFormat: normalizeAutoTemplateExportFormat(draft.autoTemplateExportFormat),
-      watermark: normalizeWatermarkConfig(draft.watermark),
-      ...normalizeStudioDefaults(draft),
-    };
-    const { resolvedTheme } = applyAppearance({
-      colorScheme: normalizedDraft.colorScheme,
-      themePreset: normalizedDraft.themePreset,
-      legacyDarkMode: normalizedDraft.darkMode,
-    });
-    normalizedDraft.darkMode = resolvedTheme === "dark";
-    const prefs = loadPrefs() || {};
-    if (!savePrefs({ ...prefs, defaults: normalizedDraft, hotkeys: hotkeysDraft })) {
-      setSaveError(
-        normalizedDraft.watermark?.image
-          ? "Settings could not be saved. Storage may be full; try a smaller watermark logo."
-          : "Settings could not be saved. Storage may be full or unavailable.",
-      );
-      return;
-    }
-    setSaveError("");
-    emitPrefsUpdated();
-    // Apply UI scale immediately
-    document.documentElement.style.setProperty("--es-ui-scale", String(normalizedUiScale));
-    window.dispatchEvent(
-      new CustomEvent("cortex:ui-scale-changed", { detail: { scale: normalizedUiScale } }),
-    );
-    setDraft(normalizedDraft);
-    setSavedSignature(settingsSignature(normalizedDraft, hotkeysDraft));
-    onSettingsSaved?.();
-  }, [draft, hotkeysDraft, onSettingsSaved]);
 
   // Keys already bound to another action wait here until the user swaps or
   // cancels. The offer belongs to the draft it was made against, so reopening
@@ -560,34 +718,31 @@ export default function SettingsMenu({
     } catch {}
   }, [isTauriRuntime]);
 
-  const toggleShowRecents = useCallback(() => {
-    const nextShowRecents = draft.showRecents === false;
-    setDraft((prev) => ({ ...prev, showRecents: nextShowRecents }));
+  const uiScaleValue = clampUiScale(uiScaleInput ?? draft.uiScale);
+  const dialogTransition = { duration: prefersReducedMotion ? 0 : 0.18, ease: [0.2, 0.8, 0.2, 1] };
 
-    const prefs = loadPrefs() || {};
-    const storedDefaults = prefs?.defaults && typeof prefs.defaults === "object" ? prefs.defaults : {};
-    savePrefs({
-      ...prefs,
-      defaults: {
-        ...storedDefaults,
-        showRecents: nextShowRecents,
-      },
-    });
-
-    setSavedSignature((signature) => {
-      try {
-        const saved = JSON.parse(signature);
-        return settingsSignature(
-          { ...saved.defaults, showRecents: nextShowRecents },
-          saved.hotkeys,
-        );
-      } catch {
-        return signature;
-      }
-    });
-
-    onSettingsSaved?.();
-  }, [draft.showRecents, onSettingsSaved]);
+  const renderNavItem = (section, hint) => {
+    const Icon = section.icon;
+    const isActive = activeSection === section.id;
+    return (
+      <button
+        key={section.id}
+        type="button"
+        className={`settings-nav-item ${isActive ? "is-active" : ""}`}
+        onClick={() => setActiveSection(section.id)}
+        aria-current={isActive ? "page" : undefined}
+      >
+        <Icon className="settings-nav-item-icon" aria-hidden="true" />
+        <span className="settings-nav-item-copy">
+          <span className="settings-nav-item-label">{section.label}</span>
+          {hint ? <span className="settings-nav-item-hint">{hint}</span> : null}
+        </span>
+        {section.id === "about" && updater.available ? (
+          <span className="settings-nav-item-dot" title="Update available" />
+        ) : null}
+      </button>
+    );
+  };
 
   return (
     <div className="settings-anchor">
@@ -611,123 +766,164 @@ export default function SettingsMenu({
         </motion.span>
       </motion.button>
 
-      {pageTarget
+      {typeof document !== "undefined"
         ? createPortal(
             <AnimatePresence>
               {open ? (
-                <motion.section
-                  ref={pageRef}
+                <motion.div
+                  key="settings"
                   className="settings-page"
-                  aria-labelledby="settings-page-title"
-                  tabIndex={-1}
-                  autoFocus
                   initial={prefersReducedMotion ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={prefersReducedMotion ? { opacity: 1 } : { opacity: 0 }}
-                  transition={{ duration: prefersReducedMotion ? 0 : 0.16, ease: [0.22, 1, 0.36, 1] }}
+                  transition={dialogTransition}
                 >
-                  <motion.div
-                    className="settings-dialog"
-                    initial={prefersReducedMotion ? false : { opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={prefersReducedMotion ? { opacity: 1, x: 0 } : { opacity: 0, x: 8 }}
-                    transition={{ duration: prefersReducedMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] }}
-                  >
-                    <div className="settings-shell">
+                  <div className="settings-scrim" aria-hidden="true" onPointerDown={closeSettings} />
+                  <div className="settings-center">
+                    <motion.div
+                      ref={dialogRef}
+                      className="settings-dialog"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="settings-page-title"
+                      tabIndex={-1}
+                      initial={prefersReducedMotion ? false : { opacity: 0, scale: 0.985, y: 6 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.985, y: 6 }}
+                      transition={dialogTransition}
+                    >
                       <aside className="settings-nav">
-                        <div className="settings-dialog-header">
-                          <button
-                            type="button"
-                            className="settings-back"
-                            onClick={closeSettings}
-                            aria-label="Back to workspace"
-                          >
-                            <ArrowLeft className="settings-back-icon" aria-hidden="true" />
-                          </button>
-                          <div className="settings-dialog-title-group">
-                            <h1 className="settings-dialog-title cx-display" id="settings-page-title">Settings</h1>
-                            <div className="settings-dialog-sub">Cortex Studio</div>
-                          </div>
-                        </div>
-                        <nav className="settings-nav-list" aria-label="Settings sections">
-                          {SETTINGS_SECTION_GROUPS.map((group) => (
-                            <div className="settings-nav-group" key={group.id}>
-                              <div className="settings-nav-group-label">{group.label}</div>
-                              {group.items.map((section) => {
-                                const Icon = section.icon;
-                                const isActive = activeSection === section.id;
-                                return (
-                                  <motion.button
-                                    key={section.id}
-                                    type="button"
-                                    className={`settings-nav-item ${isActive ? "is-active" : ""}`}
-                                    onClick={() => setActiveSection(section.id)}
-                                    aria-current={isActive ? "page" : undefined}
-                                    title={section.description}
-                                  >
-                                    <Icon className="settings-nav-item-icon" aria-hidden="true" />
-                                    <span className="settings-nav-item-copy">
-                                      <span className="settings-nav-item-label">{section.label}</span>
-                                    </span>
-                                  </motion.button>
-                                );
-                              })}
-                            </div>
-                          ))}
+                        <label className="settings-search">
+                          <Search className="settings-search-icon" aria-hidden="true" />
+                          <input
+                            ref={searchRef}
+                            className="settings-search-input"
+                            type="text"
+                            value={query}
+                            placeholder="Search settings"
+                            aria-label="Search settings"
+                            spellCheck={false}
+                            autoComplete="off"
+                            onChange={(event) => changeQuery(event.currentTarget.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" && results.length) {
+                                event.preventDefault();
+                                setActiveSection(results[0].section.id);
+                              }
+                            }}
+                          />
+                          {query ? (
+                            <button
+                              type="button"
+                              className="settings-search-clear"
+                              aria-label="Clear search"
+                              onClick={() => {
+                                changeQuery("");
+                                searchRef.current?.focus();
+                              }}
+                            >
+                              <X aria-hidden="true" />
+                            </button>
+                          ) : (
+                            <kbd className="cx-keycap" aria-hidden="true">/</kbd>
+                          )}
+                        </label>
+
+                        <nav className="settings-nav-list custom-scrollbar" aria-label="Settings sections">
+                          {searching ? (
+                            results.length ? (
+                              <div className="settings-nav-group">
+                                <div className="settings-nav-group-label" aria-live="polite">
+                                  {results.length === 1 ? "1 section" : `${results.length} sections`}
+                                </div>
+                                {results.map(({ section, hits }) =>
+                                  renderNavItem(section, hits.slice(0, 2).join(" · ")),
+                                )}
+                              </div>
+                            ) : (
+                              <p className="settings-nav-empty" aria-live="polite">
+                                Nothing matches “{query.trim()}”.
+                              </p>
+                            )
+                          ) : (
+                            SETTINGS_SECTION_GROUPS.map((group) => (
+                              <div className="settings-nav-group" key={group.id}>
+                                <div className="settings-nav-group-label">{group.label}</div>
+                                {group.items.map((section) => renderNavItem(section))}
+                              </div>
+                            ))
+                          )}
                         </nav>
+
                       </aside>
 
                       <main className="settings-content">
-                        <div className="settings-content-header">
-                          <div className="settings-content-heading">
+                        <header className="settings-content-header">
+                          <div className="settings-crumbs">
+                            <span className="settings-crumb" id="settings-page-title">Settings</span>
+                            <span className="settings-crumb-sep" aria-hidden="true">/</span>
                             <h2 className="settings-content-title cx-display">{activeMeta.label}</h2>
-                            <div className="settings-content-sub">{activeMeta.description}</div>
                           </div>
+
                           {saveError ? (
-                            <div className="settings-save-state has-error" role="alert">
+                            <span className="settings-save-state has-error" role="alert">
                               <AlertCircle className="settings-save-icon" aria-hidden="true" />
                               {saveError}
-                            </div>
-                          ) : hasChanges ? (
-                            <div className="settings-save-state has-changes" aria-live="polite">
-                              <span className="settings-save-dot" aria-hidden="true" />
-                              Unsaved changes
-                            </div>
+                            </span>
                           ) : null}
-                        </div>
+                        </header>
+                        <button
+                          type="button"
+                          className="cx-icon-btn settings-close"
+                          onClick={closeSettings}
+                          aria-label="Close settings"
+                          title="Close (Esc)"
+                        >
+                          <X aria-hidden="true" />
+                        </button>
 
                         <div
                           key={activeSection}
+                          ref={bodyRef}
                           className="settings-content-body custom-scrollbar"
                         >
+                            {activeSection === "account" ? (
+                              <div className="settings-stack">
+                                <CortexAccountSettings isTauriRuntime={isTauriRuntime} />
+                              </div>
+                            ) : null}
+
                             {/* ─── General (System) ─── */}
                             {activeSection === "general" ? (
                               <div className="settings-stack">
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Interface Configuration</div>
+                                  <div className="settings-panel-title">Interface</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">UI Scaling</div>
-                                      <div className="settings-row-desc">Adjust interface density (Default 100%)</div>
+                                      <div className="settings-row-title">UI scale</div>
+                                      <div className="settings-row-desc">Size of every panel, menu and label. Applies when you let go. Default 100%.</div>
                                     </div>
                                     <div className="settings-slider-field">
                                       <input
                                         type="range"
                                         className="settings-slider"
-                                        min={0.5}
-                                        max={1.4}
+                                        min={MIN_UI_SCALE}
+                                        max={MAX_UI_SCALE}
                                         step={0.05}
-                                        value={clampUiScale(draft.uiScale)}
-                                        onChange={(e) => setDraft((p) => ({ ...p, uiScale: clampUiScale(parseFloat(e.target.value)) }))}
+                                        value={uiScaleValue}
+                                        aria-label="UI scale"
+                                        onChange={(e) => setUiScaleInput(clampUiScale(parseFloat(e.target.value)))}
+                                        onPointerUp={commitUiScale}
+                                        onKeyUp={commitUiScale}
+                                        onBlur={commitUiScale}
                                       />
-                                      <span className="settings-slider-value">{Math.round(clampUiScale(draft.uiScale) * 100)}%</span>
+                                      <span className="settings-slider-value">{Math.round(uiScaleValue * 100)}%</span>
                                     </div>
                                   </div>
-
                                 </section>
 
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Projects on Home</div>
+                                  <div className="settings-panel-title">Home</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="settings-row-title">Show projects</div>
@@ -735,7 +931,7 @@ export default function SettingsMenu({
                                     </div>
                                     <Toggle
                                       checked={draft.showRecents !== false}
-                                      onChange={toggleShowRecents}
+                                      onChange={(v) => setDraft((p) => ({ ...p, showRecents: v }))}
                                       ariaLabel="Show projects on Home"
                                     />
                                   </div>
@@ -770,13 +966,24 @@ export default function SettingsMenu({
                                       ariaLabel="Confirm before deleting projects"
                                     />
                                   </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Reopen tabs on launch</div>
+                                      <div className="settings-row-desc">Bring back the tabs that were open when you last closed Cortex. Off starts on Home.</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.reopenTabs !== false}
+                                      onChange={(v) => setDraft((p) => ({ ...p, reopenTabs: v }))}
+                                      ariaLabel="Reopen tabs on launch"
+                                    />
+                                  </div>
                                 </section>
 
                                   <section className="settings-panel">
-                                    <div className="settings-panel-title">Data & Storage</div>
+                                    <div className="settings-panel-title">Exports</div>
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="settings-row-title">Preview Export Path</div>
+                                        <div className="settings-row-title">Capture folder</div>
                                         <div className={`settings-row-desc ${draft.previewFolder ? "settings-path" : ""}`.trim()}>
                                           {draft.previewFolder || "Not set. You'll be asked where to save each capture."}
                                         </div>
@@ -832,8 +1039,8 @@ export default function SettingsMenu({
 
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="settings-row-title">Variant Export Path</div>
-                                        <div className={`settings-row-desc ${draft.variantExportFolder ? "settings-path" : ""}`.trim()}>{draft.variantExportFolder || "Not set. You'll choose a folder on each export."}</div>
+                                        <div className="settings-row-title">Variant and template folder</div>
+                                        <div className={`settings-row-desc ${draft.variantExportFolder ? "settings-path" : ""}`.trim()}>{draft.variantExportFolder || "Not set. Variant Builder and Template Generator ask for a folder on each export."}</div>
                                       </div>
                                       <div className="settings-row-actions">
                                         <button
@@ -857,12 +1064,14 @@ export default function SettingsMenu({
 
                                     <div className="settings-row">
                                       <div className="settings-row-label">
-                                        <div className="settings-row-title">Auto Template Save Format</div>
-                                        <div className="settings-row-desc">Choose which files are exported when templates auto-save</div>
+                                        <div className="settings-row-title">Auto template format</div>
+                                        <div className="settings-row-desc">Files written when a template auto-saves</div>
                                       </div>
-                                    <div className="settings-seg">
+                                    <div className="settings-seg" role="radiogroup" aria-label="Auto template format">
                                         <button
                                           type="button"
+                                          role="radio"
+                                          aria-checked={draft.autoTemplateExportFormat === "psd"}
                                           className={`settings-seg-btn ${draft.autoTemplateExportFormat === "psd" ? "is-on" : ""}`}
                                           onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "psd" }))}
                                         >
@@ -870,6 +1079,8 @@ export default function SettingsMenu({
                                         </button>
                                         <button
                                           type="button"
+                                          role="radio"
+                                          aria-checked={draft.autoTemplateExportFormat === "png"}
                                           className={`settings-seg-btn ${draft.autoTemplateExportFormat === "png" ? "is-on" : ""}`}
                                           onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "png" }))}
                                         >
@@ -877,6 +1088,8 @@ export default function SettingsMenu({
                                         </button>
                                         <button
                                           type="button"
+                                          role="radio"
+                                          aria-checked={draft.autoTemplateExportFormat === "psd_png"}
                                           className={`settings-seg-btn ${draft.autoTemplateExportFormat === "psd_png" ? "is-on" : ""}`}
                                           onClick={() => setDraft((p) => ({ ...p, autoTemplateExportFormat: "psd_png" }))}
                                         >
@@ -884,7 +1097,136 @@ export default function SettingsMenu({
                                         </button>
                                       </div>
                                     </div>
+
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="settings-row-title">Replace existing files</div>
+                                        <div className="settings-row-desc">Skip the replace prompt for angle captures, variant exports, EUP shots and EUP thumbnails</div>
+                                      </div>
+                                      <Toggle
+                                        checked={draft.replaceExports === true}
+                                        onChange={(v) => setDraft((p) => ({ ...p, replaceExports: v }))}
+                                        ariaLabel="Replace existing files without asking"
+                                      />
+                                    </div>
                                   </section>
+
+                                  <section className="settings-panel">
+                                    <div className="settings-panel-title">Captures</div>
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="settings-row-title">Capture size</div>
+                                        <div className="settings-row-desc">Size of angle captures and Save this view. Multi lineups always use Window.</div>
+                                      </div>
+                                      <Select value={draft.captureSize} onValueChange={(value) => setDraft((p) => ({ ...p, captureSize: value }))}>
+                                        <SelectTrigger className="settings-select" aria-label="Capture size"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                          {CAPTURE_SIZES.map((size) => (
+                                            <SelectItem key={size.id} value={size.id}>{size.label}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="settings-row-title">Capture angles</div>
+                                        <div className="settings-row-desc">Angles that are on when a Vehicle or EUP workspace opens</div>
+                                      </div>
+                                      <div className="settings-chips" role="group" aria-label="Default capture angles">
+                                        {CAPTURE_ANGLES.map((angle) => {
+                                          const on = draft.captureAngles.includes(angle.key);
+                                          const last = on && draft.captureAngles.length === 1;
+                                          return (
+                                            <button
+                                              key={angle.key}
+                                              type="button"
+                                              aria-pressed={on}
+                                              aria-disabled={last || undefined}
+                                              title={last ? "At least one angle stays on" : undefined}
+                                              className={`settings-chip ${on ? "is-on" : ""}`}
+                                              onClick={() => {
+                                                if (last) return;
+                                                setDraft((p) => ({
+                                                  ...p,
+                                                  captureAngles: normalizeCaptureAngles(
+                                                    on ? p.captureAngles.filter((key) => key !== angle.key) : [...p.captureAngles, angle.key],
+                                                  ),
+                                                }));
+                                              }}
+                                            >
+                                              {angle.label}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="settings-row-title">Capture framing</div>
+                                        <div className="settings-row-desc">How tightly angle captures frame the vehicle when a workspace opens</div>
+                                      </div>
+                                      <div className="settings-slider-field">
+                                        <input
+                                          type="range"
+                                          className="settings-slider"
+                                          min={CAPTURE_ZOOM_MIN}
+                                          max={CAPTURE_ZOOM_MAX}
+                                          step={0.02}
+                                          value={draft.captureZoom}
+                                          aria-label="Default capture framing"
+                                          onChange={(e) => setDraft((p) => ({ ...p, captureZoom: normalizeCaptureZoom(e.target.value) }))}
+                                        />
+                                        <span className="settings-slider-value">{draft.captureZoom.toFixed(2)}×</span>
+                                      </div>
+                                    </div>
+                                    <div className="settings-row">
+                                      <div className="settings-row-label">
+                                        <div className="settings-row-title">Photo Mode size</div>
+                                        <div className="settings-row-desc">Output size a new Photo Mode scene starts with. Saved scenes keep their own.</div>
+                                      </div>
+                                      <Select value={draft.photoOutput} onValueChange={(value) => setDraft((p) => ({ ...p, photoOutput: value }))}>
+                                        <SelectTrigger className="settings-select" aria-label="Photo Mode output size"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                          {OUTPUT_PRESETS.map((preset) => (
+                                            <SelectItem key={preset.id} value={preset.id}>{preset.label}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Reset</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Reset all settings</div>
+                                      <div className="settings-row-desc">
+                                        {confirmReset
+                                          ? "Every setting and shortcut in every section goes back to its default."
+                                          : "Projects and files on disk stay as they are."}
+                                      </div>
+                                    </div>
+                                    {confirmReset ? (
+                                      <div className="settings-row-actions" role="group" aria-label="Confirm reset">
+                                        <button type="button" className="settings-mini" onClick={cancelReset} autoFocus>
+                                          Cancel
+                                        </button>
+                                        <button type="button" className="settings-mini is-danger is-solid" onClick={performReset}>
+                                          Reset all
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        ref={resetButtonRef}
+                                        type="button"
+                                        className="settings-mini is-danger"
+                                        onClick={() => setConfirmReset(true)}
+                                      >
+                                        Reset all
+                                      </button>
+                                    )}
+                                  </div>
+                                </section>
                               </div>
                             ) : null}
 
@@ -892,17 +1234,10 @@ export default function SettingsMenu({
                             {activeSection === "viewer" ? (
                               <div className="settings-stack">
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Workspace Defaults</div>
+                                  <div className="settings-panel-title">Workspaces</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Free-Cam</div>
-                                      <div className="settings-row-desc">Focus the preview: WASD flies, RMB looks, Q/E elevates, Alt refines, Shift boosts</div>
-                                    </div>
-                                    <div className="settings-row-note">Enabled in Studio previews</div>
-                                  </div>
-                                  <div className="settings-row">
-                                    <div className="settings-row-label">
-                                      <div className="settings-row-title">Start in Exterior Only</div>
+                                      <div className="settings-row-title">Start in exterior only</div>
                                       <div className="settings-row-desc">New Vehicle workspaces open with interior, glass and wheels hidden. The camera deck toggles it per workspace.</div>
                                     </div>
                                     <Toggle
@@ -913,7 +1248,7 @@ export default function SettingsMenu({
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Load EUP Textures</div>
+                                      <div className="settings-row-title">Load EUP textures</div>
                                       <div className="settings-row-desc">Picking a clothing model in EUP also loads the texture dictionary beside it (its _diff_ .ytd). A texture you choose yourself is never replaced.</div>
                                     </div>
                                     <Toggle
@@ -924,7 +1259,7 @@ export default function SettingsMenu({
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Standard Model Warning</div>
+                                      <div className="settings-row-title">Standard model warning</div>
                                       <div className="settings-row-desc">Opening a vehicle .yft that isn't the _hi model says so, and offers the _hi model when it is in the same folder.</div>
                                     </div>
                                     <Toggle
@@ -935,7 +1270,7 @@ export default function SettingsMenu({
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Panel Camera Controls</div>
+                                      <div className="settings-row-title">Camera presets in the panel</div>
                                       <div className="settings-row-desc">Move the camera presets to the side panel. Rotate buttons stay on the bottom bar.</div>
                                     </div>
                                     <Toggle
@@ -946,8 +1281,8 @@ export default function SettingsMenu({
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Legacy Layers Layout</div>
-                                      <div className="settings-row-desc">Place the layers panel at the bottom instead of the right side</div>
+                                      <div className="settings-row-title">Variant Builder layers at the bottom</div>
+                                      <div className="settings-row-desc">The older Variant Builder layout, with layers under the viewer instead of on the right</div>
                                     </div>
                                     <Toggle
                                       checked={draft.legacyLayersLayout}
@@ -958,13 +1293,48 @@ export default function SettingsMenu({
                                 </section>
 
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Render Effects</div>
+                                  <div className="settings-panel-title">Camera and detail</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Preview detail</div>
+                                      <div className="settings-row-desc">Sharpness of 3D viewers on scaled and high-DPI screens. Performance keeps orbiting smooth; Sharp uses more GPU.</div>
+                                    </div>
+                                    <div className="settings-seg" role="radiogroup" aria-label="Preview detail">
+                                      {PREVIEW_DETAIL_LEVELS.map((level) => (
+                                        <button
+                                          key={level.id}
+                                          type="button"
+                                          role="radio"
+                                          aria-checked={draft.previewDetail === level.id}
+                                          className={`settings-seg-btn ${draft.previewDetail === level.id ? "is-on" : ""}`}
+                                          onClick={() => setDraft((p) => ({ ...p, previewDetail: level.id }))}
+                                        >
+                                          {level.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Zoom toward cursor</div>
+                                      <div className="settings-row-desc">Scrolling zooms toward the point under the mouse instead of the center of the view</div>
+                                    </div>
+                                    <Toggle
+                                      checked={draft.zoomToCursor === true}
+                                      onChange={(v) => setDraft((p) => ({ ...p, zoomToCursor: v }))}
+                                      ariaLabel="Zoom toward cursor"
+                                    />
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
+                                  <div className="settings-panel-title">Render effects</div>
                                   <p className="settings-panel-description">
-                                    Vehicle, EUP, Multi and Sirens tabs share these, and their camera deck buttons change them too. EUP Studio, Prop Studio and Photo Mode keep their own with each workspace.
+                                    Shared by Vehicle, EUP, Multi and Sirens; other workspaces keep their own.
                                   </p>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Show 3D Grid</div>
+                                      <div className="settings-row-title">3D grid</div>
                                       <div className="settings-row-desc">Display the ground grid on the workbench</div>
                                     </div>
                                     <Toggle
@@ -975,7 +1345,7 @@ export default function SettingsMenu({
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Ground Shadows</div>
+                                      <div className="settings-row-title">Ground shadows</div>
                                       <div className="settings-row-desc">Project a floor shadow under the vehicle on the workbench. The showroom always has shadows.</div>
                                     </div>
                                     <Toggle
@@ -986,8 +1356,8 @@ export default function SettingsMenu({
                                   </div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Ambient Occlusion</div>
-                                      <div className="settings-row-desc">Darken creases, panel gaps, and wheel wells on the model. Uses more GPU while orbiting</div>
+                                      <div className="settings-row-title">Ambient occlusion</div>
+                                      <div className="settings-row-desc">Darkens creases, panel gaps and wheel wells. Uses more GPU while orbiting.</div>
                                     </div>
                                     <Toggle
                                       checked={draft.ambientOcclusion}
@@ -1061,10 +1431,7 @@ export default function SettingsMenu({
                             {activeSection === "appearance" ? (
                               <div className="settings-appearance-stack">
                                 <section className="settings-panel settings-theme-panel">
-                                  <div className="settings-panel-title">Color Scheme</div>
-                                  <p className="settings-panel-description">
-                                    Choose how Cortex Studio looks. System follows your operating system automatically.
-                                  </p>
+                                  <div className="settings-panel-title">Color scheme</div>
                                   <div className="settings-theme-grid" role="group" aria-label="Color scheme">
                                     {THEME_OPTIONS.map((option) => (
                                       <ThemeChoice
@@ -1080,7 +1447,7 @@ export default function SettingsMenu({
                                 <section className="settings-panel settings-preset-panel">
                                   <div className="settings-panel-heading-row">
                                     <div>
-                                      <div className="settings-panel-title">Studio Palette</div>
+                                      <div className="settings-panel-title">Studio palette</div>
                                       <p className="settings-panel-description">
                                         Recolor the full workbench while preserving your selected light or dark mode.
                                       </p>
@@ -1093,6 +1460,7 @@ export default function SettingsMenu({
                                       <ThemePresetChoice
                                         key={option.id}
                                         option={option}
+                                        scheme={resolveColorScheme(draft.colorScheme)}
                                         selected={draft.themePreset === option.id}
                                         onSelect={selectThemePreset}
                                       />
@@ -1101,15 +1469,17 @@ export default function SettingsMenu({
                                 </section>
 
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Window Chrome</div>
+                                  <div className="settings-panel-title">Window</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
-                                      <div className="settings-row-title">Window Controls Style</div>
-                                      <div className="settings-row-desc">Choose the visual style for minimize, maximize, and close</div>
+                                      <div className="settings-row-title">Window controls</div>
+                                      <div className="settings-row-desc">Style of minimize, maximize and close</div>
                                     </div>
-                                    <div className="settings-seg">
+                                    <div className="settings-seg" role="radiogroup" aria-label="Window controls">
                                       <button
                                         type="button"
+                                        role="radio"
+                                        aria-checked={draft.windowControlsStyle !== "mac"}
                                         className={`settings-seg-btn ${draft.windowControlsStyle !== "mac" ? "is-on" : ""}`}
                                         onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "windows" }))}
                                       >
@@ -1117,6 +1487,8 @@ export default function SettingsMenu({
                                       </button>
                                       <button
                                         type="button"
+                                        role="radio"
+                                        aria-checked={draft.windowControlsStyle === "mac"}
                                         className={`settings-seg-btn ${draft.windowControlsStyle === "mac" ? "is-on" : ""}`}
                                         onClick={() => setDraft((p) => ({ ...p, windowControlsStyle: "mac" }))}
                                       >
@@ -1136,7 +1508,7 @@ export default function SettingsMenu({
                                     <div className="settings-seg" role="radiogroup" aria-label="Reduce motion">
                                       {[
                                         ["system", "Follow system"],
-                                        ["always", "Always"],
+                                        ["always", "Always reduce"],
                                       ].map(([value, label]) => (
                                         <button
                                           key={value}
@@ -1165,31 +1537,31 @@ export default function SettingsMenu({
                                 </section>
 
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Studio Defaults</div>
+                                  <div className="settings-panel-title">Starting colors</div>
                                   <p className="settings-panel-description">
-                                    Set the starting colors used by viewers and generated templates.
+                                    Used by new viewers and generated templates.
                                   </p>
                                    <div className="settings-color-grid">
                                     <ColorField
-                                      label="Base Body"
+                                      label="Base body"
                                       value={draft.bodyColor}
                                       onChange={(value) => setDraft((p) => ({ ...p, bodyColor: value }))}
                                       onReset={() => setDraft((p) => ({ ...p, bodyColor: BUILT_IN_DEFAULTS.bodyColor }))}
                                     />
                                     <ColorField
-                                      label="Base Background"
+                                      label="Base background"
                                       value={draft.backgroundColor}
                                       onChange={(value) => setDraft((p) => ({ ...p, backgroundColor: value }))}
                                       onReset={() => setDraft((p) => ({ ...p, backgroundColor: BUILT_IN_DEFAULTS.backgroundColor }))}
                                     />
                                     <ColorField
-                                      label="Auto Template Fill"
+                                      label="Auto template fill"
                                       value={draft.autoTemplateColor}
                                       onChange={(value) => setDraft((p) => ({ ...p, autoTemplateColor: value }))}
                                       onReset={() => setDraft((p) => ({ ...p, autoTemplateColor: BUILT_IN_DEFAULTS.autoTemplateColor }))}
                                     />
                                     <ColorField
-                                      label="Auto Template Background"
+                                      label="Auto template background"
                                       value={draft.autoTemplateBackgroundColor}
                                       onChange={(value) => setDraft((p) => ({ ...p, autoTemplateBackgroundColor: value }))}
                                       onReset={() =>
@@ -1231,7 +1603,7 @@ export default function SettingsMenu({
 
                                 {/* ─── Update Panel ─── */}
                                 <section className="settings-panel settings-update-panel">
-                                  <div className="settings-panel-title">Software Update</div>
+                                  <div className="settings-panel-title">Updates</div>
 
                                   {/* Published feed behind installed build */}
                                   {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind === "ahead" ? (
@@ -1503,41 +1875,13 @@ export default function SettingsMenu({
                               </div>
                             ) : null}
                         </div>
-
-                        <div className="settings-footer">
-                          {confirmReset ? (
-                            <div className="settings-confirm-overlay">
-                              <div className="settings-confirm-content">
-                                <AlertTriangle className="settings-status-icon" aria-hidden="true" />
-                                <span>Reset every setting and shortcut to its default? This cannot be undone.</span>
-                              </div>
-                              <div className="settings-confirm-actions">
-                                <button type="button" className="settings-mini" onClick={() => setConfirmReset(false)}>
-                                  Cancel
-                                </button>
-                                <button type="button" className="settings-danger-btn" onClick={performReset}>
-                                  Reset everything
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="settings-actions">
-                              <button type="button" className="settings-secondary" onClick={() => setConfirmReset(true)}>
-                                Reset all
-                              </button>
-                              <button type="button" className="settings-primary" onClick={save} disabled={!hasChanges}>
-                                Save changes
-                              </button>
-                            </div>
-                          )}
-                        </div>
                       </main>
-                    </div>
-                  </motion.div>
-                </motion.section>
+                    </motion.div>
+                  </div>
+                </motion.div>
               ) : null}
             </AnimatePresence>,
-            pageTarget,
+            document.body,
           )
         : null}
     </div>

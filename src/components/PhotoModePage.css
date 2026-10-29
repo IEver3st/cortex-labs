@@ -39,7 +39,7 @@
 
 .pm-set-count {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--mg-muted);
 }
@@ -58,13 +58,14 @@
   gap: 10px;
 }
 
-.pm-add-drop .lv-drop-title svg {
-  color: var(--mg-primary);
+.pm-add-list {
+  display: grid;
+  gap: 2px;
 }
 
-.pm-add-drop:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+.pm-add-btn {
+  justify-content: flex-start;
+  width: 100%;
 }
 
 .pm-set-list {
@@ -129,7 +130,7 @@
 
 .pm-row-name {
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -138,7 +139,7 @@
 .pm-row-meta {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -193,29 +194,13 @@
   grid-column: 1 / -1;
   margin: 0;
   padding: 0 10px 8px 35px;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: color-mix(in srgb, var(--mg-destructive) 70%, var(--cx-invert-fg));
   overflow-wrap: anywhere;
 }
 
 /* ── Dock foot: the photo ── */
-.pm-dock-foot {
-  display: grid;
-  gap: 10px;
-}
-
-.pm-output-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0;
-  font-family: var(--font-hud);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  color: var(--mg-muted);
-}
-
 .pm-dock-foot .lv-capture-btn {
   display: inline-flex;
   align-items: center;
@@ -234,54 +219,17 @@
   color: var(--cx-on-primary);
 }
 
-/* ── Empty stage ── */
-.pm-stage-empty {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 8px;
-  padding: 24px;
-  text-align: center;
-  color: var(--mg-muted);
-}
-
-.pm-stage-empty > svg {
-  width: 20px;
-  height: 20px;
-}
-
-.pm-stage-empty .cx-btn {
-  margin-top: 6px;
-}
-
-.pm-empty-title {
-  margin: 0;
-  font-size: 13.5px;
-  font-weight: 650;
-  color: var(--mg-fg);
-}
-
-.pm-empty-desc {
-  max-width: 340px;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 /* ── Viewfinder slips ── */
 .pm-status {
   position: absolute;
-  top: calc(var(--lv-inset) + 50px);
+  top: calc(var(--lv-inset) + 38px);
   left: var(--lv-inset);
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
   border-radius: 10px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
 }
 
 .pm-status svg {
@@ -297,7 +245,7 @@
   min-width: 0;
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -353,7 +301,7 @@
   padding: 3px 8px;
   border-radius: 6px;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--mg-fg);
 }
@@ -379,7 +327,7 @@
 
 .pm-inspector-empty {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -387,7 +335,7 @@
 .pm-object-name {
   margin: -4px 0 0;
   overflow: hidden;
-  font-size: 13.5px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -422,7 +370,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   text-align: left;
   overflow-wrap: anywhere;
   cursor: pointer;
@@ -473,7 +421,7 @@
   background: transparent;
   color: var(--mg-fg);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   text-align: left;
   cursor: pointer;
 }
@@ -494,7 +442,7 @@
 .pm-shot-lens {
   margin-left: auto;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
@@ -538,7 +486,7 @@
   background: transparent;
   color: var(--mg-fg);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
 }
 
 /* ── Add to set dialog ── */
@@ -588,7 +536,7 @@
 
 .pm-dialog-title {
   margin: 0;
-  font-size: 28px;
+  font-size: var(--cx-fs-display-md);
 }
 
 .pm-add-kinds {
@@ -644,7 +592,7 @@
   gap: 8px;
   margin: 0;
   padding: 14px 12px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -689,7 +637,7 @@
 
 .pm-result-name {
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -698,7 +646,7 @@
 .pm-result-meta {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-align: right;
   text-overflow: ellipsis;
@@ -725,14 +673,14 @@
 
 .pm-add-count {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--mg-muted);
 }
 
 .pm-dialog-note {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.5;
   color: var(--mg-muted);
 }

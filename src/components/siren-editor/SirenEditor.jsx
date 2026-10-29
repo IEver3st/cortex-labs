@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ArrowRight,
-  Check,
   ChevronDown,
   ChevronUp,
   ClipboardCopy,
@@ -22,6 +20,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { Toggle } from "../ui/toggle";
+import { Menu, MenuItem } from "./SirenMenu";
 import { NumberInput, useSirenOps } from "./SirenInspector";
 import { beatsPerSecond, evaluateSirens, normalizeLightSwitches } from "../../lib/emergency-lights.js";
 import {
@@ -68,7 +67,7 @@ import "./SirenEditor.css";
 // model shows each change as it is made. Saving lives in the workspace dock.
 
 const SPEEDS = [[0.25, "¼×"], [0.5, "½×"], [1, "1×"]];
-const COLUMN_MIN = 15;
+const COLUMN_MIN = 16;
 const COLUMN_MAX = 44;
 const COLUMN_TIGHT = 24;
 const COLUMN_GAP = 4;
@@ -101,78 +100,6 @@ function isTextTarget(target) {
 }
 
 /* ─── Small controls ─── */
-
-function Menu({ label, icon, disabled, title, children, ariaLabel, pressed, className }) {
-  const [open, setOpen] = useState(false);
-  const [place, setPlace] = useState(null);
-  const trigger = useRef(null);
-  const panel = useRef(null);
-  useLayoutEffect(() => {
-    if (!open || !trigger.current) return;
-    const rect = trigger.current.getBoundingClientRect();
-    const height = panel.current?.offsetHeight || 0;
-    const below = rect.bottom + 4 + height < window.innerHeight;
-    setPlace({ left: Math.min(rect.left, window.innerWidth - 240), top: below ? rect.bottom + 4 : Math.max(8, rect.top - 4 - height) });
-  }, [open]);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => {
-      if (panel.current?.contains(event.target) || trigger.current?.contains(event.target)) return;
-      setOpen(false);
-    };
-    const key = (event) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        trigger.current?.focus();
-      }
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", key);
-    };
-  }, [open]);
-  useEffect(() => {
-    if (open && place) panel.current?.querySelector("button:not(:disabled)")?.focus();
-  }, [open, place]);
-  return (
-    <>
-      <button ref={trigger} type="button" className={cx("cx-btn lv-btn-sm se-menu-trigger", className, pressed && "is-on")} disabled={disabled}
-        title={title} aria-label={ariaLabel} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        {icon}
-        {label}
-        <ChevronDown aria-hidden="true" />
-      </button>
-      {open ? createPortal(
-        <div ref={panel} className="se-menu" role="menu" style={place ? { left: place.left, top: place.top } : { visibility: "hidden" }}
-          onClick={(event) => { if (event.target.closest("button")) setOpen(false); }}
-          onKeyDown={(event) => {
-            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-            event.preventDefault();
-            const items = [...panel.current.querySelectorAll("button:not(:disabled)")];
-            const at = items.indexOf(document.activeElement);
-            items[(at + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
-          }}>
-          {children}
-        </div>,
-        document.body,
-      ) : null}
-    </>
-  );
-}
-
-function MenuItem({ children, hint, onSelect, disabled, checked }) {
-  const radio = checked !== undefined;
-  return (
-    <button type="button" role={radio ? "menuitemradio" : "menuitem"} aria-checked={radio ? checked : undefined}
-      className="se-menu-item" onClick={onSelect} disabled={disabled}>
-      <span>{children}</span>
-      {hint ? <span className="se-menu-hint">{hint}</span> : null}
-      {checked ? <Check className="se-menu-check" aria-hidden="true" /> : null}
-    </button>
-  );
-}
 
 function IconButton({ label, onClick, disabled, children, pressed }) {
   return (
@@ -276,7 +203,7 @@ function lampInitials(label) {
 
 /* ─── Sequencer ─── */
 
-export default function SirenEditor({ s, head = null, foot = null, stageAction = null }) {
+export default function SirenEditor({ s, head = null, assist = null, foot = null }) {
   const editor = s.sirenEditor;
   const draft = editor.draft;
   const lights = s.vehicleLights || {};
@@ -289,6 +216,8 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
   const selected = useMemo(() => new Set(selection), [selection]);
   const primary = draft?.sirens[editor.primary] || null;
   const bps = beatsPerSecond(draft);
+  const playing = s.sirenTrial || draft;
+  const playBps = beatsPerSecond(playing);
   const [seekTick, setSeekTick] = useState(0);
   const sheet = useRef(null);
   const clipboard = useRef(null);
@@ -298,6 +227,7 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
   const stepLabel = useRef(null);
   const strip = useRef(null);
   const canvas = useRef(null);
+  const fade = useRef(null);
   const resumeSpeed = useRef(speed > 0 ? speed : 1);
   const { edit, select } = editor;
   const notify = (message) => s.showToast?.(message);
@@ -309,20 +239,20 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
   /* Playback. The step column, step number and live strip follow the light
      clock through refs, so playing does not re-render the grid. */
   const setLights = s.updateVehicleLights;
-  const running = switches.sirens && speed > 0 && bps > 0;
+  const running = s.isActive !== false && switches.sirens && speed > 0 && bps > 0;
   const togglePlay = useCallback(() => setLights({ speed: speed > 0 ? 0 : resumeSpeed.current }), [setLights, speed]);
   const seekStep = useCallback((step) => {
-    if (!(bps > 0)) return;
+    if (!(playBps > 0)) return;
     if (!switches.sirens) setLights({ switches: { ...switches, sirens: true } });
-    s.setLightTime?.(((step % SEQUENCER_STEPS) + SEQUENCER_STEPS) % SEQUENCER_STEPS / bps);
+    s.setLightTime?.(((step % SEQUENCER_STEPS) + SEQUENCER_STEPS) % SEQUENCER_STEPS / playBps);
     setSeekTick((value) => value + 1);
-  }, [bps, s, setLights, switches]);
+  }, [playBps, s, setLights, switches]);
   const stepBy = useCallback((delta) => {
     const time = s.getLightTime?.();
-    const beat = Number.isFinite(time) && bps > 0 ? Math.floor(time * bps + 1e-6) : 0;
+    const beat = Number.isFinite(time) && playBps > 0 ? Math.floor(time * playBps + 1e-6) : 0;
     if (speed > 0) setLights({ speed: 0 });
     seekStep(beat + delta);
-  }, [bps, s, seekStep, setLights, speed]);
+  }, [playBps, s, seekStep, setLights, speed]);
   useEffect(() => {
     if (!draft) return undefined;
     let placed = { step: -1, height: 0, width: 0 };
@@ -350,13 +280,13 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
     };
     const place = () => {
       const time = s.getLightTime?.();
-      const live = switches.sirens && Number.isFinite(time) && bps > 0;
-      const step = live ? Math.floor(time * bps + 1e-6) % SEQUENCER_STEPS : 0;
+      const live = switches.sirens && Number.isFinite(time) && playBps > 0;
+      const step = live ? Math.floor(time * playBps + 1e-6) % SEQUENCER_STEPS : 0;
       placeRow(step, live);
       if (stepLabel.current) stepLabel.current.textContent = live ? String(step + 1).padStart(2, "0") : "--";
       const lamps = strip.current?.querySelectorAll("[data-members]");
       if (!lamps) return;
-      const states = live ? evaluateSirens(draft, time) : [];
+      const states = live ? evaluateSirens(playing, time) : [];
       for (const lamp of lamps) {
         const lit = lamp.dataset.members.split(",").map(Number)
           .filter((index) => states[index]?.on && !muted.has(index + 1))
@@ -384,7 +314,7 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
       cancelAnimationFrame(frame);
       cleanup();
     };
-  }, [draft, bps, running, muted, switches.sirens, s, seekTick]);
+  }, [draft, playing, playBps, running, muted, switches.sirens, s, seekTick]);
 
   /* Draft operations. */
   const count = draft?.sirens.length || 0;
@@ -441,6 +371,26 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
     watch.observe(box);
     return () => watch.disconnect();
   }, [columns.length, rotating]);
+  const hasDraft = Boolean(draft);
+  useLayoutEffect(() => {
+    const box = canvas.current;
+    const edge = fade.current;
+    if (!box || !edge) return undefined;
+    const mark = () => {
+      edge.hidden = box.scrollWidth - box.clientWidth - box.scrollLeft <= 1;
+      edge.style.right = `${box.offsetWidth - box.clientWidth}px`;
+      edge.style.bottom = `${box.offsetHeight - box.clientHeight}px`;
+    };
+    mark();
+    const watch = new ResizeObserver(mark);
+    watch.observe(box);
+    if (strip.current) watch.observe(strip.current);
+    box.addEventListener("scroll", mark, { passive: true });
+    return () => {
+      watch.disconnect();
+      box.removeEventListener("scroll", mark);
+    };
+  }, [hasDraft]);
   const [brush, setBrush] = useState(SIREN_PALETTE[0].color);
   const paintGhost = (step) => {
     if (count >= MAX_SIRENS) return;
@@ -683,149 +633,136 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
         if (!(event.target instanceof Element) || event.target.closest("button, input, select, textarea, [tabindex]:not(.se-sheet)")) return;
         if (!sheet.current.contains(document.activeElement)) sheet.current.focus({ preventScroll: true });
       }}>
-      <aside className="se-rail custom-scrollbar" aria-label="Siren setting and sequencer tools">
-        {head}
-        <div className="se-rail-block se-rail-tempo">
-          <div className="se-tempo">
-            <div className="se-tempo-field" title="Steps per minute: one sequencer bit per step">
-              <span className="cx-label">BPM</span>
-              <NumberInput value={draft.sequencerBpm ?? 0} onChange={(value) => setSettingField("sequencerBpm", value)} min={0} step={10}
-                integer label="Sequencer bpm" />
+      <aside className="se-rail has-foot" aria-label="Siren setting and sequencer tools">
+        <div className="se-rail-scroll custom-scrollbar">
+          {head}
+          {assist}
+          <div className="se-rail-block se-rail-tempo">
+            <div className="se-tempo">
+              <div className="se-tempo-field" title="Steps per minute: one sequencer bit per step">
+                <span className="cx-label">BPM</span>
+                <NumberInput value={draft.sequencerBpm ?? 0} onChange={(value) => setSettingField("sequencerBpm", value)} min={0} step={10}
+                  integer label="Sequencer bpm" />
+              </div>
+              <div className="se-tempo-field is-multiplier" title="Multiplies the bpm in game">
+                <span className="cx-label">Multiplier</span>
+                <NumberInput value={draft.timeMultiplier ?? 1} min={0} max={10} step={0.05} label="Time multiplier"
+                  onChange={(value) => setSettingField("timeMultiplier", value)} />
+              </div>
             </div>
-            <div className="se-tempo-field is-multiplier" title="Multiplies the bpm in game">
-              <span className="cx-label">Multiplier</span>
-              <NumberInput value={draft.timeMultiplier ?? 1} min={0} max={10} step={0.05} label="Time multiplier"
-                onChange={(value) => setSettingField("timeMultiplier", value)} />
-            </div>
+            <span className="se-rail-meta">
+              {bps > 0 ? `${(draft.timeMultiplier ?? 1) !== 1 ? `${Math.round((draft.sequencerBpm || 0) * (draft.timeMultiplier ?? 1))} bpm in game · ` : ""}${(SEQUENCER_STEPS / bps).toFixed(2)} s loop` : "Stopped: set a bpm to play"}
+            </span>
           </div>
-          <span className="se-rail-meta">
-            {bps > 0 ? `${(draft.timeMultiplier ?? 1) !== 1 ? `${Math.round((draft.sequencerBpm || 0) * (draft.timeMultiplier ?? 1))} bpm in game · ` : ""}${(SEQUENCER_STEPS / bps).toFixed(2)} s loop` : "Stopped: set a bpm to play"}
-          </span>
-        </div>
 
-        <dl className="se-rail-block se-keys" aria-label="Shortcuts">
-          {SHORTCUTS.map(([keys, action]) => (
-            <div key={action} className="se-key">
-              <dt>{keys.map((cap) => <kbd key={cap} className="cx-keycap">{cap}</kbd>)}</dt>
-              <dd>{action}</dd>
+          <dl className="se-rail-block se-keys" aria-label="Shortcuts">
+            {SHORTCUTS.map(([keys, action]) => (
+              <div key={action} className="se-key">
+                <dt>{keys.map((cap) => <kbd key={cap} className="cx-keycap">{cap}</kbd>)}</dt>
+                <dd>{action}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="se-rail-block se-rail-tools" role="toolbar" aria-label="Sirens">
+            <div className="se-rail-head">
+              <span className="cx-label">Sirens</span>
+              <span className="se-rail-meta">{count}/{MAX_SIRENS}</span>
             </div>
-          ))}
-        </dl>
-        <div className="se-rail-block se-rail-tools" role="toolbar" aria-label="Sirens">
-          <div className="se-rail-head">
-            <span className="cx-label">Sirens</span>
-            <span className="se-rail-meta">{count}/{MAX_SIRENS}</span>
-          </div>
-          <div className="se-rail-grid">
-            <button type="button" className="cx-btn lv-btn-sm" onClick={addSiren} disabled={count >= MAX_SIRENS}
-              title={count >= MAX_SIRENS ? "A setting holds up to 32 sirens" : "Add a siren after the last one"}>
-              <Plus aria-hidden="true" />
-              Siren
-            </button>
-            <Menu label="Dual colour" title="Heads that flash two colours: two sirens in one column">
-              <MenuItem hint="2 sirens" disabled={count + 2 > MAX_SIRENS} onSelect={addDualHead}>Add a dual-colour head</MenuItem>
-              <MenuItem disabled={!canPair} onSelect={pairSelection}
-                hint={selectionPair ? `${selectionPair[0] + 1}+${selectionPair[1] + 1}` : "select 2"}>Pair the selected sirens</MenuItem>
-              <MenuItem disabled={!canSplit} onSelect={splitSelection}>Split into single sirens</MenuItem>
-            </Menu>
-            <Menu label="Presets" disabled={!selection.length && count >= MAX_SIRENS}
-              title={selection.length
-                ? `Restyle the ${selection.length === 1 ? "selected siren" : `${selection.length} selected sirens`} with a preset. Each keeps its aim.`
-                : "Add a set of preset sirens after the last one"}>
-              <span className="cx-label se-menu-label">
-                {selection.length ? `Restyle ${selection.length === 1 ? "siren" : "sirens"} ${compactNumbers(selection.map((index) => index + 1))}` : "Add after the last siren"}
-              </span>
-              {SIREN_LIGHT_PRESETS.map((preset) => (
-                <MenuItem key={preset.id} hint={!selection.length ? `${preset.lights.length}`
-                  : selection.length < countColours(preset.lights.map((light) => light.color)) ? `${countColours(preset.lights.map((light) => light.color))}+ sirens` : undefined}
-                  disabled={!selection.length && count + preset.lights.length > MAX_SIRENS}
-                  onSelect={() => applyLightPreset(preset.id)}>{preset.label}</MenuItem>
-              ))}
-            </Menu>
-            <Menu label="Pattern" disabled={!selection.length} title="Set the selected sirens' pattern">
-              {SEQUENCER_PRESETS.map((preset) => (
-                <MenuItem key={preset.id} onSelect={() => applyPreset(preset, false)}>{preset.label}</MenuItem>
-              ))}
-              <div className="se-menu-rule" role="separator" />
-              <span className="cx-label se-menu-label">Colours take turns</span>
-              {COLOUR_TURN_RHYTHMS.map((rhythm) => (
-                <MenuItem key={`turns-${rhythm.id}`} hint={selectionColours > 1 ? `${selectionColours} colours` : "2+ colours"} disabled={selectionColours < 2}
-                  onSelect={() => applyColourTurns(rhythm.id)}>{rhythm.label}</MenuItem>
-              ))}
-              <div className="se-menu-rule" role="separator" />
-              {SEQUENCER_PRESETS.filter((preset) => preset.a !== preset.b).map((preset) => (
-                <MenuItem key={`${preset.id}-alt`} hint="A/B" disabled={selection.length < 2}
-                  onSelect={() => applyPreset(preset, true)}>{preset.label}, alternating</MenuItem>
-              ))}
-              <div className="se-menu-rule" role="separator" />
-              <span className="cx-label se-menu-label">Traffic advisor</span>
-              {TRAFFIC_ADVISOR_MODES.map((mode) => (
-                <MenuItem key={mode.id} hint={selection.length > 1 ? `${selection.length} heads` : "2+"} disabled={selection.length < 2}
-                  onSelect={() => applyTrafficAdvisor(mode.id)}>{mode.label}</MenuItem>
-              ))}
-            </Menu>
-          </div>
-          <div className="se-rail-icons">
-            <IconButton label="Duplicate (Ctrl+D)" onClick={duplicate} disabled={!selection.length || count + selection.length > MAX_SIRENS}><Copy aria-hidden="true" /></IconButton>
-            <IconButton label="Move left: earlier siren bone (Alt+Left)" onClick={() => move(-1)} disabled={!canMoveLeft}><ArrowLeft aria-hidden="true" /></IconButton>
-            <IconButton label="Move right: later siren bone (Alt+Right)" onClick={() => move(1)} disabled={!canMoveRight}><ArrowRight aria-hidden="true" /></IconButton>
-            <IconButton label="Delete (Del). Later sirens move up a bone." onClick={remove} disabled={!selection.length}><Trash2 aria-hidden="true" /></IconButton>
-            <IconButton label="Shift pattern a step earlier ([)" onClick={() => patternEdit((value) => shiftSequencer(value, -1))} disabled={!selection.length}><ChevronUp aria-hidden="true" /></IconButton>
-            <IconButton label="Shift pattern a step later (])" onClick={() => patternEdit((value) => shiftSequencer(value, 1))} disabled={!selection.length}><ChevronDown aria-hidden="true" /></IconButton>
-            <IconButton label="Invert pattern (I)" onClick={() => patternEdit(invertSequencer)} disabled={!selection.length}><FlipHorizontal2 aria-hidden="true" /></IconButton>
-            <IconButton label="Copy pattern (Ctrl+C)" onClick={copyPattern} disabled={!primary}><ClipboardCopy aria-hidden="true" /></IconButton>
-            <IconButton label="Paste pattern (Ctrl+V)" onClick={pastePattern} disabled={clipboard.current == null || !selection.length}><ClipboardPaste aria-hidden="true" /></IconButton>
-          </div>
-          <div className="se-rail-row">
-            <button type="button" className={cx("cx-btn lv-btn-sm se-solo", soloed && "is-on")} onClick={toggleSolo} disabled={!selection.length}
-              aria-pressed={soloed} title="Light only the selected sirens on the model">Solo</button>
-            {muted.size && !soloed ? (
-              <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={() => setLights({ muted: [] })}>Unmute all</button>
-            ) : null}
-            <div className="se-switches">
-              <label className="se-switch">
-                <span>Sirens</span>
-                <Toggle checked={switches.sirens} onChange={(value) => setLights({ switches: { ...switches, sirens: value } })} ariaLabel="Sirens" />
-              </label>
-              <label className="se-switch">
-                <span>Night</span>
-                <Toggle checked={switches.night} onChange={(value) => setLights({ switches: { ...switches, night: value } })} ariaLabel="Night" />
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div className="se-rail-dock">
-          <div className="se-rail-block se-rail-pad">
-            <div className="se-pad se-colours" role="group" aria-label="Colour for new sirens and the selected sirens">
+            <div className="se-colours" role="group" aria-label="Colour for new sirens and the selected sirens">
               {SIREN_PALETTE.map((entry, rank) => (
-                <button key={entry.id} type="button" className={cx("se-tile se-colour", brush === entry.color && "is-on")} style={{ "--se-swatch": entry.color }}
+                <button key={entry.id} type="button" className={cx("se-colour", brush === entry.color && "is-on")} style={{ "--se-swatch": entry.color }}
                   onClick={() => pickColour(entry.color)} aria-pressed={brush === entry.color}
                   aria-label={`${entry.label} (${rank + 1})`} title={`${entry.label}: sirens you paint into an empty column, and the selected sirens (${rank + 1})`}>
-                  <span className="se-colour-chip" aria-hidden="true" />
-                  <span className="cx-display se-colour-key" aria-hidden="true">{rank + 1}</span>
+                  <kbd className="cx-keycap se-colour-key" aria-hidden="true">{rank + 1}</kbd>
                 </button>
               ))}
             </div>
-            <div className="se-pad" role="group" aria-label="Playback">
-              <button type="button" className="se-tile" onClick={() => stepBy(-1)} disabled={!(bps > 0)}
-                aria-label="Previous step (Up arrow)" title="Previous step (Up arrow)"><StepBack aria-hidden="true" /></button>
-              <button type="button" className={cx("se-tile", !(speed > 0) && "is-on")} onClick={togglePlay}
-                aria-label={speed > 0 ? "Pause (Space or P)" : "Play (Space or P)"} title={speed > 0 ? "Pause (Space or P)" : "Play (Space or P)"}>
-                {speed > 0 ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+            <div className="se-rail-grid">
+              <button type="button" className="cx-btn lv-btn-sm" onClick={addSiren} disabled={count >= MAX_SIRENS}
+                title={count >= MAX_SIRENS ? "A setting holds up to 32 sirens" : "Add a siren after the last one"}>
+                <Plus aria-hidden="true" />
+                Siren
               </button>
-              <button type="button" className="se-tile" onClick={() => stepBy(1)} disabled={!(bps > 0)}
-                aria-label="Next step (Down arrow)" title="Next step (Down arrow)"><StepForward aria-hidden="true" /></button>
+              <Menu label="Dual colour" title="Heads that flash two colours: two sirens in one column">
+                <MenuItem hint="2 sirens" disabled={count + 2 > MAX_SIRENS} onSelect={addDualHead}>Add a dual-colour head</MenuItem>
+                <MenuItem disabled={!canPair} onSelect={pairSelection}
+                  hint={selectionPair ? `${selectionPair[0] + 1}+${selectionPair[1] + 1}` : "select 2"}>Pair the selected sirens</MenuItem>
+                <MenuItem disabled={!canSplit} onSelect={splitSelection}>Split into single sirens</MenuItem>
+              </Menu>
+              <Menu label="Presets" disabled={!selection.length && count >= MAX_SIRENS}
+                title={selection.length
+                  ? `Restyle the ${selection.length === 1 ? "selected siren" : `${selection.length} selected sirens`} with a preset. Each keeps its aim.`
+                  : "Add a set of preset sirens after the last one"}>
+                <span className="cx-label se-menu-label">
+                  {selection.length ? `Restyle ${selection.length === 1 ? "siren" : "sirens"} ${compactNumbers(selection.map((index) => index + 1))}` : "Add after the last siren"}
+                </span>
+                {SIREN_LIGHT_PRESETS.map((preset) => (
+                  <MenuItem key={preset.id} hint={!selection.length ? `${preset.lights.length}`
+                    : selection.length < countColours(preset.lights.map((light) => light.color)) ? `${countColours(preset.lights.map((light) => light.color))}+ sirens` : undefined}
+                    disabled={!selection.length && count + preset.lights.length > MAX_SIRENS}
+                    onSelect={() => applyLightPreset(preset.id)}>{preset.label}</MenuItem>
+                ))}
+              </Menu>
+              <Menu label="Pattern" disabled={!selection.length} title="Set the selected sirens' pattern">
+                {SEQUENCER_PRESETS.map((preset) => (
+                  <MenuItem key={preset.id} onSelect={() => applyPreset(preset, false)}>{preset.label}</MenuItem>
+                ))}
+                <div className="se-menu-rule" role="separator" />
+                <span className="cx-label se-menu-label">Colours take turns</span>
+                {COLOUR_TURN_RHYTHMS.map((rhythm) => (
+                  <MenuItem key={`turns-${rhythm.id}`} hint={selectionColours > 1 ? `${selectionColours} colours` : "2+ colours"} disabled={selectionColours < 2}
+                    onSelect={() => applyColourTurns(rhythm.id)}>{rhythm.label}</MenuItem>
+                ))}
+                <div className="se-menu-rule" role="separator" />
+                {SEQUENCER_PRESETS.filter((preset) => preset.a !== preset.b).map((preset) => (
+                  <MenuItem key={`${preset.id}-alt`} hint="A/B" disabled={selection.length < 2}
+                    onSelect={() => applyPreset(preset, true)}>{preset.label}, alternating</MenuItem>
+                ))}
+                <div className="se-menu-rule" role="separator" />
+                <span className="cx-label se-menu-label">Traffic advisor</span>
+                {TRAFFIC_ADVISOR_MODES.map((mode) => (
+                  <MenuItem key={mode.id} hint={selection.length > 1 ? `${selection.length} heads` : "2+"} disabled={selection.length < 2}
+                    onSelect={() => applyTrafficAdvisor(mode.id)}>{mode.label}</MenuItem>
+                ))}
+              </Menu>
             </div>
-            <div className="lv-seg se-seg" role="radiogroup" aria-label="Playback speed">
-              {SPEEDS.map(([value, text]) => (
-                <button key={value} type="button" role="radio" aria-checked={speed === value}
-                  className={cx("lv-seg-btn", speed === value && "is-on")} onClick={() => setLights({ speed: value })}>{text}</button>
-              ))}
+            <div className="se-rail-icons">
+              <div className="se-icon-group" role="group" aria-label="Edit">
+                <IconButton label="Duplicate (Ctrl+D)" onClick={duplicate} disabled={!selection.length || count + selection.length > MAX_SIRENS}><Copy aria-hidden="true" /></IconButton>
+                <IconButton label="Delete (Del). Later sirens move up a bone." onClick={remove} disabled={!selection.length}><Trash2 aria-hidden="true" /></IconButton>
+              </div>
+              <div className="se-icon-group" role="group" aria-label="Order">
+                <IconButton label="Move left: earlier siren bone (Alt+Left)" onClick={() => move(-1)} disabled={!canMoveLeft}><ArrowLeft aria-hidden="true" /></IconButton>
+                <IconButton label="Move right: later siren bone (Alt+Right)" onClick={() => move(1)} disabled={!canMoveRight}><ArrowRight aria-hidden="true" /></IconButton>
+              </div>
+              <div className="se-icon-group is-wide" role="group" aria-label="Pattern">
+                <IconButton label="Shift pattern a step earlier ([)" onClick={() => patternEdit((value) => shiftSequencer(value, -1))} disabled={!selection.length}><ChevronUp aria-hidden="true" /></IconButton>
+                <IconButton label="Shift pattern a step later (])" onClick={() => patternEdit((value) => shiftSequencer(value, 1))} disabled={!selection.length}><ChevronDown aria-hidden="true" /></IconButton>
+                <IconButton label="Invert pattern (I)" onClick={() => patternEdit(invertSequencer)} disabled={!selection.length}><FlipHorizontal2 aria-hidden="true" /></IconButton>
+                <IconButton label="Copy pattern (Ctrl+C)" onClick={copyPattern} disabled={!primary}><ClipboardCopy aria-hidden="true" /></IconButton>
+                <IconButton label="Paste pattern (Ctrl+V)" onClick={pastePattern} disabled={clipboard.current == null || !selection.length}><ClipboardPaste aria-hidden="true" /></IconButton>
+              </div>
+            </div>
+            <div className="se-rail-row">
+              <button type="button" className={cx("cx-btn lv-btn-sm se-solo", soloed && "is-on")} onClick={toggleSolo} disabled={!selection.length}
+                aria-pressed={soloed} title="Light only the selected sirens on the model">Solo</button>
+              {muted.size && !soloed ? (
+                <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={() => setLights({ muted: [] })}>Unmute all</button>
+              ) : null}
+              <div className="se-switches">
+                <label className="se-switch">
+                  <span>Sirens</span>
+                  <Toggle checked={switches.sirens} onChange={(value) => setLights({ switches: { ...switches, sirens: value } })} ariaLabel="Sirens" />
+                </label>
+                <label className="se-switch">
+                  <span>Night</span>
+                  <Toggle checked={switches.night} onChange={(value) => setLights({ switches: { ...switches, night: value } })} ariaLabel="Night" />
+                </label>
+              </div>
             </div>
           </div>
-          {foot}
         </div>
+        {foot}
       </aside>
 
       <div className="se-stage">
@@ -834,11 +771,24 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
             <span ref={stepLabel} className="cx-display se-counter-step">--</span>
             <span className="se-counter-total">/ {SEQUENCER_STEPS}</span>
           </div>
+          <div className="se-transport" role="group" aria-label="Playback">
+            <IconButton label="Previous step (Up arrow)" onClick={() => stepBy(-1)} disabled={!(bps > 0)}><StepBack aria-hidden="true" /></IconButton>
+            <IconButton label={speed > 0 ? "Pause (Space or P)" : "Play (Space or P)"} onClick={togglePlay}>
+              {speed > 0 ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+            </IconButton>
+            <IconButton label="Next step (Down arrow)" onClick={() => stepBy(1)} disabled={!(bps > 0)}><StepForward aria-hidden="true" /></IconButton>
+          </div>
+          <div className="lv-seg se-seg se-speed" role="radiogroup" aria-label="Playback speed">
+            {SPEEDS.map(([value, text]) => (
+              <button key={value} type="button" role="radio" aria-checked={speed === value}
+                className={cx("lv-seg-btn", speed === value && "is-on")} onClick={() => setLights({ speed: value })}>{text}</button>
+            ))}
+          </div>
           <span className="se-tools-count">
             {count} {count === 1 ? "siren" : "sirens"} · {columns.length} {columns.length === 1 ? "head" : "heads"}
             {selection.length > 1 ? ` · ${selection.length} selected` : ""}
           </span>
-          {count < MAX_SIRENS ? <span className="se-tools-hint">Paint the next empty column to add a siren</span> : null}
+          {count === 0 ? <span className="se-tools-hint">Paint the next empty column to add a siren</span> : null}
           <div className="se-actions">
             <Menu icon={<MapPin aria-hidden="true" />} ariaLabel="Siren markers" title="Siren markers on the model"
               pressed={editor.markers} className="se-marker-menu">
@@ -851,101 +801,105 @@ export default function SirenEditor({ s, head = null, foot = null, stageAction =
             </Menu>
             <IconButton label="Undo (Ctrl+Z)" onClick={editor.undo} disabled={!editor.canUndo}><Undo2 aria-hidden="true" /></IconButton>
             <IconButton label="Redo (Ctrl+Y)" onClick={editor.redo} disabled={!editor.canRedo}><Redo2 aria-hidden="true" /></IconButton>
-            {stageAction}
           </div>
         </div>
 
-      <div ref={canvas} className="se-canvas custom-scrollbar" onContextMenu={(event) => event.preventDefault()}>
-        <div ref={strip} className="se-cols" role="group" aria-label="Siren patterns: a column per head, a row per step">
-          <div className="se-col se-col-steps">
-            <div className="se-col-top" aria-hidden="true">
-              <span className="se-col-head is-steps">Step</span>
-            </div>
-            <div ref={ruler} className="se-step-cells" title={bps > 0 ? "Jump to a step" : "Set a bpm to scrub the pattern"}>
-              {Array.from({ length: SEQUENCER_STEPS }, (_, step) => (
-                <button key={step} type="button" className={cx("se-step-cell", step % 4 === 0 && "is-beat")} tabIndex={-1}
-                  disabled={!(bps > 0)} onClick={() => seekStep(step)} aria-label={`Step ${step + 1}`} data-label={step + 1}>
-                  {step % 4 === 0 ? step + 1 : ""}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <span className="se-step-track" aria-hidden="true">
-            <span ref={column} className="se-step-band" hidden />
-          </span>
-
-          <div className="se-col-group" role="group" aria-label="Sirens">
-            {columns.map((members) => {
-              const [first, second] = members;
-              const light = draft.sirens[first];
-              const partner = second == null ? null : draft.sirens[second];
-              const isSelected = members.some((member) => selected.has(member));
-              const isMuted = members.every((member) => muted.has(member + 1));
-              const names = members.map((member) => member + 1).join("+");
-              const unbound = modelLights ? members.filter((member) => !meshSirens.has(member + 1)).map((member) => member + 1) : [];
-              const title = partner
-                ? `Dual-colour head: sirens ${names}. Click a step for the first colour, again for the second, again for off; right-click clears it. In game each colour needs its own siren bone.${unbound.length ? ` Siren ${unbound.join(", ")} has no light on the model.` : ""}`
-                : sirenTitle(light, first + 1, !unbound.length);
-              const muteColumn = () => setLights({
-                muted: isMuted
-                  ? [...muted].filter((entry) => !members.includes(entry - 1))
-                  : [...new Set([...muted, ...members.map((member) => member + 1)])].sort((a, b) => a - b),
-              });
-              return (
-                <div key={first} className={cx("se-head-cols", isSelected && "is-selected", isMuted && "is-muted")}>
-                  <div className={cx("se-col", partner && "is-dual")}>
-                    <div className="se-col-top">
-                      <button type="button" className="se-col-head" onClick={(event) => (partner ? clickHead(event, members) : clickRow(event, first))}
-                        title={title} aria-pressed={isSelected}>
-                        <span className="se-col-index">{names}</span>
-                        <span className={cx("se-col-swatch", partner && "is-dual")} aria-hidden="true"
-                          style={{ "--se-a": light.color || "#ffffff", "--se-b": (partner || light).color || "#ffffff", opacity: partner ? 1 : Math.max(0.25, light.alpha ?? 1) }} />
-                        {unbound.length ? <span className="se-unbound" title={partner ? "Not every colour has a light on the model" : "No light on the model"} aria-label={partner ? "Not every colour has a light on the model" : "No light on the model"}>∅</span> : null}
-                      </button>
-                      <button type="button" className={cx("se-mute", isMuted && "is-on")} onClick={partner ? muteColumn : () => toggleMute(first + 1)}
-                        aria-pressed={isMuted} aria-label={`Mute ${partner ? "sirens" : "siren"} ${names}`} title={isMuted ? "Unmute" : "Mute on the model"}>M</button>
-                      <span className="se-col-lamp" data-members={members.join(",")} aria-hidden="true" />
-                    </div>
-                    {partner ? (
-                      <DualLane first={light} second={partner} dim={!light.flash && !partner.flash}
-                        label={`Sirens ${names} dual-colour flash pattern`} onPaint={paintDual(members)} />
-                    ) : (
-                      <Lane sequencer={light.flashiness.sequencer} color={light.color} dim={!light.flash} kind="flash"
-                        label={`Siren ${names} flash pattern`} onPaint={paintSiren(first, "flashiness")} />
-                    )}
-                  </div>
-                  {members.filter((member) => draft.sirens[member].rotate).map((member) => (
-                    <div key={member} className="se-col is-sub">
-                      <div className="se-col-top">
-                        <span className="se-col-head is-sub" title={`Siren ${member + 1} rotation pattern`}>
-                          <RotateCw aria-hidden="true" />
-                        </span>
-                      </div>
-                      <Lane sequencer={draft.sirens[member].rotation.sequencer} color={draft.sirens[member].color} kind="rotation"
-                        label={`Siren ${member + 1} rotation pattern`} onPaint={paintSiren(member, "rotation")} />
-                    </div>
+        <div className="se-canvas-wrap">
+          <div ref={canvas} className="se-canvas custom-scrollbar" onContextMenu={(event) => event.preventDefault()}>
+            <div ref={strip} className="se-cols" role="group" aria-label="Siren patterns: a column per head, a row per step">
+              <div className="se-col se-col-steps">
+                <div className="se-col-top" aria-hidden="true">
+                  <span className="se-col-head is-steps">Step</span>
+                </div>
+                <div ref={ruler} className="se-step-cells" title={bps > 0 ? "Jump to a step" : "Set a bpm to scrub the pattern"}>
+                  {Array.from({ length: SEQUENCER_STEPS }, (_, step) => (
+                    <button key={step} type="button" className={cx("se-step-cell", step % 4 === 0 && "is-beat")} tabIndex={-1}
+                      disabled={!(bps > 0)} onClick={() => seekStep(step)} aria-label={`Step ${step + 1}`} data-label={step + 1}>
+                      {step % 4 === 0 ? step + 1 : ""}
+                    </button>
                   ))}
                 </div>
-              );
-            })}
-          </div>
-
-          {ghosts}
-
-          <div className="se-col-group se-lamp-group" role="group" aria-label="Head and tail lights">
-            {LAMP_KEYS.map((key) => (
-              <div key={key} className="se-col is-lamp">
-                <div className="se-col-top">
-                  <span className="se-col-head is-lamp" title={`${LAMP_LABELS[key]} sequencer while the sirens run`}>{lampInitials(LAMP_LABELS[key])}</span>
-                </div>
-                <Lane sequencer={draft.lamps?.[key]?.sequencer ?? 0} color={key.includes("Head") ? "#fff4e0" : "#ff1a0a"} kind="lamp"
-                  label={`${LAMP_LABELS[key]} pattern`} onPaint={paintLamp(key)} />
               </div>
-            ))}
+
+              <span className="se-step-track" aria-hidden="true">
+                <span ref={column} className="se-step-band" hidden />
+              </span>
+
+              <div className="se-col-group" role="group" aria-label="Sirens">
+                {columns.map((members) => {
+                  const [first, second] = members;
+                  const light = draft.sirens[first];
+                  const partner = second == null ? null : draft.sirens[second];
+                  const isSelected = members.some((member) => selected.has(member));
+                  const isMuted = members.every((member) => muted.has(member + 1));
+                  const names = members.map((member) => member + 1).join("+");
+                  const unbound = modelLights ? members.filter((member) => !meshSirens.has(member + 1)).map((member) => member + 1) : [];
+                  const title = partner
+                    ? `Dual-colour head: sirens ${names}. Click a step for the first colour, again for the second, again for off; right-click clears it. In game each colour needs its own siren bone.${unbound.length ? ` Siren ${unbound.join(", ")} has no light on the model.` : ""}`
+                    : sirenTitle(light, first + 1, !unbound.length);
+                  const muteColumn = () => setLights({
+                    muted: isMuted
+                      ? [...muted].filter((entry) => !members.includes(entry - 1))
+                      : [...new Set([...muted, ...members.map((member) => member + 1)])].sort((a, b) => a - b),
+                  });
+                  return (
+                    <div key={first} className={cx("se-head-cols", isSelected && "is-selected", isMuted && "is-muted")}>
+                      <div className={cx("se-col", partner && "is-dual")}>
+                        <div className="se-col-top">
+                          <button type="button" className={cx("se-col-head", partner && "is-dual")} onClick={(event) => (partner ? clickHead(event, members) : clickRow(event, first))}
+                            title={title} aria-label={`${partner ? "Sirens" : "Siren"} ${names}`} aria-pressed={isSelected}>
+                            <span className="se-col-index" aria-hidden="true">
+                              {members.map((member) => <span key={member}>{member + 1}</span>)}
+                            </span>
+                            <span className={cx("se-col-swatch", partner && "is-dual")} aria-hidden="true"
+                              style={{ "--se-a": light.color || "#ffffff", "--se-b": (partner || light).color || "#ffffff", opacity: partner ? 1 : Math.max(0.25, light.alpha ?? 1) }} />
+                            {unbound.length ? <span className="se-unbound" title={partner ? "Not every colour has a light on the model" : "No light on the model"} aria-label={partner ? "Not every colour has a light on the model" : "No light on the model"}>∅</span> : null}
+                          </button>
+                          <button type="button" className={cx("se-mute", isMuted && "is-on")} onClick={partner ? muteColumn : () => toggleMute(first + 1)}
+                            aria-pressed={isMuted} aria-label={`Mute ${partner ? "sirens" : "siren"} ${names}`} title={isMuted ? "Unmute" : "Mute on the model"}>M</button>
+                          <span className="se-col-lamp" data-members={members.join(",")} aria-hidden="true" />
+                        </div>
+                        {partner ? (
+                          <DualLane first={light} second={partner} dim={!light.flash && !partner.flash}
+                            label={`Sirens ${names} dual-colour flash pattern`} onPaint={paintDual(members)} />
+                        ) : (
+                          <Lane sequencer={light.flashiness.sequencer} color={light.color} dim={!light.flash} kind="flash"
+                            label={`Siren ${names} flash pattern`} onPaint={paintSiren(first, "flashiness")} />
+                        )}
+                      </div>
+                      {members.filter((member) => draft.sirens[member].rotate).map((member) => (
+                        <div key={member} className="se-col is-sub">
+                          <div className="se-col-top">
+                            <span className="se-col-head is-sub" title={`Siren ${member + 1} rotation pattern`}>
+                              <RotateCw aria-hidden="true" />
+                            </span>
+                          </div>
+                          <Lane sequencer={draft.sirens[member].rotation.sequencer} color={draft.sirens[member].color} kind="rotation"
+                            label={`Siren ${member + 1} rotation pattern`} onPaint={paintSiren(member, "rotation")} />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {ghosts}
+
+              <div className="se-col-group se-lamp-group" role="group" aria-label="Head and tail lights">
+                {LAMP_KEYS.map((key) => (
+                  <div key={key} className="se-col is-lamp">
+                    <div className="se-col-top">
+                      <span className="se-col-head is-lamp" title={`${LAMP_LABELS[key]} sequencer while the sirens run`}>{lampInitials(LAMP_LABELS[key])}</span>
+                    </div>
+                    <Lane sequencer={draft.lamps?.[key]?.sequencer ?? 0} color={key.includes("Head") ? "#fff4e0" : "#ff1a0a"} kind="lamp"
+                      label={`${LAMP_LABELS[key]} pattern`} onPaint={paintLamp(key)} />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
+          <span ref={fade} className="se-canvas-fade" aria-hidden="true" hidden />
         </div>
-      </div>
       </div>
     </section>
   );

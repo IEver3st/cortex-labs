@@ -1,0 +1,54 @@
+---
+title: Juno in Sirens
+description: Describe a light show by where the lights sit on the car, preview Juno's pattern on the model, then keep or discard it.
+---
+
+Juno is the AI in Cortex Forge and Cortex Studio. In Studio it does one thing: it writes a siren setting's flash patterns from a description. It is optional and off until you sign in. Everything else in Cortex Studio works without an account or a network connection.
+
+## Sign in
+
+Open **Settings > Cortex account** and choose **Sign in with Discord**. Before anything is sent, the **Juno** panel there shows what Juno sends:
+
+> Juno writes siren patterns from a description. It needs a free Cortex account, signed in with Discord (verified email). Each request sends the vehicle's name and details, its resource folder and setting name, the number of lights and where they sit, the timing and colours, and your sentence, to the AI model Juno runs on. Never your models, textures or files. Requests and answers are kept for 30 days, then deleted. It's the same account and monthly allowance as Cortex Forge. Each new description uses a little of the allowance; Juno's one automatic retry after a failed check is free, and so is asking the exact same thing again unless that answer failed its checks. [Terms](https://api.cortexsoftware.net/terms) · [Privacy](https://api.cortexsoftware.net/privacy)
+
+**Sign in with Discord** opens your browser to approve the sign-in; Settings shows the code to look for. The sign-in is kept in Windows Credential Manager, not in Cortex Studio's settings. Studio never reads Cortex Forge's sign-in.
+
+While signed in, the section shows your display name, plan, how much of this month's allowance is used and when it resets.
+
+## Describe the lights
+
+**Describe the lights** sits in the Sirens rail under the setting's name. It shows when Juno is on, a vehicle model is open and a carcols.meta siren setting is being edited. It is not there for ELS VCFs or for patterns built without a vehicle.
+
+Describe the look by where the lights are, in up to 700 characters. For example: "front takedowns steady white, roof reds left quad flash, blues right, rear deck amber arrow to the right, grille alternates with the roof". Several groups picked by position in one step is what the **Pattern** and **Presets** menus can't do.
+
+Studio tells Juno where each flashing light sits, worked out from the model: roof or body, front, middle or rear, left, centre or right, and the way it faces, as short labels like `roof front L>front`. No coordinates, models or files are sent. A light with neither geometry nor a bone on the model is sent as `unplaced`.
+
+**Generate** (or **Ctrl + Enter**) asks Juno. Studio checks the answer first: one 32-step row per flashing light, at least one lit step, a BPM from 60 to 1500, and colours either left out or one per light. If the answer fails, Juno tries once more for free; if that fails too, Studio says what was wrong and nothing changes.
+
+A pattern that passes plays on the car straight away, with Juno's name for it and a sentence on how it looks. Your setting is not touched yet, so it shows no unsaved edits and nothing is added to undo.
+
+- **Keep** applies the flash patterns, colours and BPM to the setting as one undo step. Rotation, multiples, aim and everything else stay as they are. Nothing is written to disk until you save or install.
+- **Discard** drops the preview. The same description gives the same pattern; change the wording to get a different one.
+
+Lights that only rotate are not sent and not changed; the result says how many were left as they are. A setting with only rotating lights shows "Juno writes flash patterns; this setting has only rotating lights." instead of the field. Lights the pattern leaves dark are noted under the result, since "takedowns off" is a fair thing to ask for.
+
+## Allowance and limits
+
+Juno uses the same free Cortex account and monthly allowance as Cortex Forge. Each new description uses a little of it. Asking the exact same thing again is free unless that answer failed its checks, and so is the automatic retry.
+
+When a request can't run, Studio says why:
+
+| Message | What to do |
+| --- | --- |
+| You've used this month's Juno allowance. It resets on (date). | Wait for the reset date. |
+| You've used today's Juno allowance. It resets at midnight UTC. | Try again after midnight UTC. |
+| Juno has reached today's limit for Cortex Studio. It resets at midnight UTC; nothing was used. | Try again after midnight UTC. |
+| Juno is busy right now. Try again later; nothing was used. | Try again later. |
+| Can't reach Juno. Check your connection and try again. | Check your connection. |
+| You've been signed out of your Cortex account. Sign in again in Settings > Cortex account. | Sign in again. |
+
+The **Pattern** and **Presets** menus and every other Sirens tool keep working in every case.
+
+## Sign out
+
+Choose **Sign out** in **Settings > Cortex account**. Studio ends this PC's session on the server, deletes the sign-in from Windows Credential Manager and hides **Describe the lights**. If the server can't be reached, Studio deletes the sign-in on this PC and ends the old session the next time you sign in with the same account.
