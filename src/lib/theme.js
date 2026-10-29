@@ -1,3 +1,5 @@
+import { prefersReducedMotion } from "./motion.js";
+
 export const COLOR_SCHEMES = ["system", "light", "dark"];
 
 export const DEFAULT_THEME_PRESET = "cortex";
@@ -185,42 +187,78 @@ function applyThemeTokens(themePreset, resolvedTheme) {
   });
 }
 
-export function applyColorScheme(colorScheme, legacyDarkMode = true) {
+let pendingAppearance = null;
+
+function shownAppearance(root) {
+  return pendingAppearance ?? {
+    colorScheme: root.dataset.colorScheme,
+    resolvedTheme: root.dataset.resolvedTheme,
+    themePreset: root.dataset.themePreset,
+  };
+}
+
+function writePendingAppearance() {
+  const next = pendingAppearance;
+  if (!next) return;
+  pendingAppearance = null;
+  const root = document.documentElement;
+  root.dataset.colorScheme = next.colorScheme;
+  root.dataset.resolvedTheme = next.resolvedTheme;
+  root.dataset.themePreset = next.themePreset;
+  root.classList.toggle("dark", next.resolvedTheme === "dark");
+  applyThemeTokens(next.themePreset, next.resolvedTheme);
+}
+
+function commitAppearance(next) {
+  const root = document.documentElement;
+  const shown = shownAppearance(root);
+  const firstPaint = !root.dataset.resolvedTheme;
+  const repaints = shown.resolvedTheme !== next.resolvedTheme || shown.themePreset !== next.themePreset;
+  const scheduled = pendingAppearance !== null;
+  pendingAppearance = next;
+  if (scheduled) return;
+  const fades = repaints && !firstPaint && document.visibilityState === "visible"
+    && typeof document.startViewTransition === "function" && !prefersReducedMotion();
+  if (!fades) {
+    writePendingAppearance();
+    return;
+  }
+  try {
+    document.startViewTransition(writePendingAppearance).updateCallbackDone.catch(writePendingAppearance);
+  } catch {
+    writePendingAppearance();
+  }
+}
+
+export function applyAppearance({ colorScheme, themePreset, legacyDarkMode = true } = {}) {
   const normalized = normalizeColorScheme(colorScheme, legacyDarkMode);
   const resolved = resolveColorScheme(normalized);
-
+  const preset = normalizeThemePreset(themePreset);
   if (typeof document !== "undefined") {
-    const root = document.documentElement;
-    const themePreset = normalizeThemePreset(root.dataset.themePreset);
-    root.dataset.colorScheme = normalized;
-    root.dataset.resolvedTheme = resolved;
-    root.dataset.themePreset = themePreset;
-    root.classList.toggle("dark", resolved === "dark");
-    applyThemeTokens(themePreset, resolved);
+    commitAppearance({ colorScheme: normalized, resolvedTheme: resolved, themePreset: preset });
   }
+  return { colorScheme: normalized, resolvedTheme: resolved, themePreset: preset };
+}
 
-  return { colorScheme: normalized, resolvedTheme: resolved };
+export function applyColorScheme(colorScheme, legacyDarkMode = true) {
+  const themePreset = typeof document === "undefined" ? DEFAULT_THEME_PRESET : shownAppearance(document.documentElement).themePreset;
+  const { colorScheme: normalized, resolvedTheme } = applyAppearance({ colorScheme, themePreset, legacyDarkMode });
+  return { colorScheme: normalized, resolvedTheme };
 }
 
 export function applyThemePreset(themePreset) {
   const normalized = normalizeThemePreset(themePreset);
 
   if (typeof document !== "undefined") {
-    const root = document.documentElement;
-    const resolvedTheme = root.dataset.resolvedTheme === "light" ? "light" : "dark";
-    root.dataset.themePreset = normalized;
-    applyThemeTokens(normalized, resolvedTheme);
+    const shown = shownAppearance(document.documentElement);
+    commitAppearance({
+      colorScheme: normalizeColorScheme(shown.colorScheme),
+      resolvedTheme: shown.resolvedTheme === "light" ? "light" : "dark",
+      themePreset: normalized,
+    });
   }
 
   return normalized;
-}
-
-export function applyAppearance({ colorScheme, themePreset, legacyDarkMode = true } = {}) {
-  if (typeof document !== "undefined") {
-    document.documentElement.dataset.themePreset = normalizeThemePreset(themePreset);
-  }
-  const appearance = applyColorScheme(colorScheme, legacyDarkMode);
-  return { ...appearance, themePreset: normalizeThemePreset(themePreset) };
 }
 
 export function setSystemTheme(theme) {
@@ -228,7 +266,7 @@ export function setSystemTheme(theme) {
   if (typeof document === "undefined") return;
 
   document.documentElement.dataset.systemTheme = theme;
-  if (document.documentElement.dataset.colorScheme === "system") {
+  if (shownAppearance(document.documentElement).colorScheme === "system") {
     applyColorScheme("system");
   }
 }

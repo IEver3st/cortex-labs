@@ -354,7 +354,8 @@ export default function LiveriesPanel({ s, head = null }) {
         {highest < MAX_LIVERY_NUMBER ? (
           <DropButton
             title="Add liveries"
-            hint={`Drop images to add them as ${nextNumber}, ${nextNumber + 1} and on. Drop one on a livery to replace it.`}
+            hint={`Adds ${nextNumber}, ${nextNumber + 1} and on`}
+            detail={`Drop images to add them as ${nextNumber}, ${nextNumber + 1} and on. Drop one on a livery to replace it.`}
             onClick={pickImages}
           />
         ) : null}

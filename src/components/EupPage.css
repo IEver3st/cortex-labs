@@ -17,23 +17,6 @@
   height: 100% !important;
 }
 
-.eup-stage-empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 6px;
-  padding: 24px;
-  text-align: center;
-  color: var(--mg-muted);
-}
-
-.eup-stage-empty > svg {
-  width: 20px;
-  height: 20px;
-}
-
 .eup-mono {
   font-family: var(--font-hud) !important;
 }
@@ -41,7 +24,7 @@
 .eup-code {
   margin-left: 7px;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   color: var(--mg-muted);
 }
@@ -113,20 +96,20 @@
 }
 
 .eup-source-name {
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
 }
 
 .eup-source-folder {
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
 /* ── Dock: addon pieces ── */
 .eup-step-count {
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--mg-muted);
 }
@@ -165,7 +148,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -187,7 +170,7 @@
   gap: 8px;
   min-width: 0;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
 }
 
 .eup-piece-texture svg {
@@ -220,7 +203,7 @@
 
 .eup-comp-note {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -246,7 +229,7 @@
   background: transparent;
   color: var(--mg-muted);
   font-family: var(--font-main);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   cursor: pointer;
   transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
@@ -279,7 +262,7 @@
 .eup-files-list li > span {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -324,7 +307,7 @@
 }
 
 .eup-field-value {
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -377,7 +360,7 @@
   background: var(--mg-input-bg);
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   outline: none;
   transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
 }
@@ -419,7 +402,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-align: left;
   text-overflow: ellipsis;
@@ -436,14 +419,14 @@
 /* Sits under the Workbench / Showroom switch. */
 .eup-modes {
   position: absolute;
-  top: calc(var(--lv-inset) + 50px);
+  top: calc(var(--lv-inset) + 38px);
   left: var(--lv-inset);
   display: grid;
   gap: 6px;
   max-width: min(280px, 40%);
   padding: 9px 12px;
   border-radius: 10px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
 }
 
 .eup-mode {
@@ -482,7 +465,7 @@
 .eup-tab-count {
   margin-left: 6px;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   color: var(--mg-muted);
 }
@@ -498,7 +481,7 @@
   flex-shrink: 0;
   padding: 11px 16px 12px;
   border-top: 1px solid var(--mg-border);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -556,7 +539,7 @@
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: 13.5px;
+  font-size: var(--cx-fs-row);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -574,7 +557,7 @@
 
 .eup-comp-count {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -604,7 +587,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition: background-color 120ms var(--cx-ease), border-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
@@ -649,7 +632,7 @@
 }
 
 .eup-variants-empty {
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -673,7 +656,7 @@
   margin: 0;
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -715,7 +698,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -743,7 +726,7 @@
 
 .eup-body-note {
   margin: -2px 0 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -763,7 +746,7 @@
   background: var(--mg-bg);
   color: var(--mg-fg);
   font-family: var(--font-hud);
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   text-align: center;
   font-variant-numeric: tabular-nums;
   outline: none;
@@ -790,13 +773,13 @@
 }
 
 .eup-body-pack {
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
 }
 
 .eup-body-count {
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
@@ -831,7 +814,7 @@
 
 .eup-hair-custom::after {
   content: "+";
-  font-size: 14px;
+  font-size: var(--cx-fs-title);
   line-height: 1;
   color: var(--mg-muted);
   pointer-events: none;
@@ -863,7 +846,7 @@
   display: inline-flex;
   gap: 10px;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
@@ -905,7 +888,7 @@
 }
 
 .eup-issue-message {
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -913,7 +896,7 @@
 .eup-issue-path {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -940,7 +923,7 @@
 
 .eup-empty-title {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--cx-fs-row);
   font-weight: 650;
   color: var(--mg-fg);
 }
@@ -948,7 +931,7 @@
 .eup-empty-desc {
   max-width: 300px;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -993,7 +976,7 @@
 
 .eup-dialog-title {
   margin: 0;
-  font-size: 28px;
+  font-size: var(--cx-fs-display-md);
 }
 
 .eup-dialog-body {
@@ -1011,7 +994,7 @@
 }
 
 .eup-dialog-label {
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 500;
 }
 
@@ -1020,7 +1003,7 @@
 .eup-dialog-error,
 .eup-dialog-dest {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.5;
   color: var(--mg-muted);
   overflow-wrap: anywhere;
@@ -1029,7 +1012,7 @@
 .eup-dialog-note code,
 .eup-dialog-failures code {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-fg);
 }
 
@@ -1038,7 +1021,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   color: var(--mg-fg);
 }
@@ -1062,7 +1045,7 @@
 .eup-dialog-dest {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1077,7 +1060,7 @@
   margin: 6px 0 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -1173,7 +1156,7 @@
 .eup-import-name {
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1182,7 +1165,7 @@
 .eup-import-meta {
   flex-shrink: 0;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
@@ -1204,7 +1187,7 @@
   background: var(--mg-input-bg);
   color: var(--mg-fg);
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   line-height: 1.45;
   resize: vertical;
   word-break: break-all;
@@ -1250,7 +1233,7 @@
   margin: 4px 0 0 20px;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -1320,7 +1303,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   line-height: 1.25;
   text-align: left;
@@ -1390,7 +1373,7 @@
 .eup-gen-kind {
   margin: 0 0 6px;
   color: var(--mg-muted);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
 }
 
@@ -1409,7 +1392,7 @@
   display: grid;
   gap: 2px;
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.4;
 }
 
@@ -1483,7 +1466,7 @@
   background: rgb(0 0 0 / 0.62);
   color: #ffffff;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   letter-spacing: 0.02em;
 }
 
@@ -1492,7 +1475,7 @@
   margin: -6px 0 0;
   color: var(--mg-muted);
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
 }
 
 .eup-export-secondary {
@@ -1518,14 +1501,14 @@
 .eup-run p {
   margin: 0;
   color: var(--mg-fg);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.45;
 }
 
 .eup-run code,
 .eup-run-error {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   overflow-wrap: anywhere;
 }
 
@@ -1623,7 +1606,7 @@
   border-radius: 4px;
   background: transparent;
   color: var(--mg-fg);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1647,7 +1630,7 @@
 .eup-clip-duration {
   color: var(--mg-muted);
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
 }
 
 .eup-emote-toggle {
@@ -1666,7 +1649,7 @@
   height: auto;
   min-height: 76px;
   padding: 7px 10px;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   line-height: 1.4;
   resize: vertical;
 }
@@ -1705,7 +1688,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1714,7 +1697,7 @@
 .eup-held-source {
   flex-shrink: 0;
   color: var(--mg-muted);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
 }
 
 .eup-held-bone {
@@ -1738,13 +1721,13 @@
 
 .eup-num-label {
   color: var(--mg-muted);
-  font-size: 10.5px;
+  font-size: var(--cx-fs-meta);
 }
 
 .eup-num .eup-input {
   width: 100%;
   padding: 0 6px;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
 }
 
 /* ── Pose: selected held prop (the gizmo is on it) ── */
@@ -1771,7 +1754,7 @@
 
 .eup-timeline-scrub .lv-slider-label {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--mg-muted);
 }
@@ -1809,15 +1792,10 @@
 }
 
 /* Four characters in two rows: the dock is too narrow for four labels side by side. */
-.eup-character-seg {
-  grid-auto-flow: row;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 /* ── Scene: props on set ── */
 .eup-set-count {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--mg-muted);
 }
@@ -1883,7 +1861,7 @@
 
 .eup-set-name {
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1892,7 +1870,7 @@
 .eup-set-meta {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1951,7 +1929,7 @@
   grid-column: 1 / -1;
   margin: 0;
   padding: 0 10px 8px 35px;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-destructive);
   overflow-wrap: anywhere;
@@ -1972,7 +1950,7 @@
 .eup-set-selected {
   min-width: 0;
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;

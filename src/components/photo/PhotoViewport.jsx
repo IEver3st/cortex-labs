@@ -19,8 +19,8 @@ import {
   setAoBounds,
 } from "../../lib/viewer-render-effects.js";
 import { lensToFov, litObjectIds } from "../../lib/photo-mode.js";
+import { onViewerControlsChange, previewPixelRatio, readViewerControls } from "../../lib/preview-detail.js";
 
-const MAX_PIXEL_RATIO = 1.5;
 // Pointer travel (px) under which a press and release counts as a click.
 const CLICK_SLOP = 5;
 const FIT_PADDING = 1.15;
@@ -112,7 +112,8 @@ const PhotoViewport = forwardRef(function PhotoViewport(
 
     // Alpha so a transparent capture keeps its alpha; the clear colour is opaque otherwise.
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+    let viewerControls = readViewerControls();
+    renderer.setPixelRatio(previewPixelRatio(viewerControls.detail));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -129,6 +130,7 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
     controls.minDistance = 0.2;
+    controls.zoomToCursor = viewerControls.zoomToCursor;
     controls.maxDistance = 120;
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.5);
@@ -327,11 +329,19 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     observer.observe(container);
     resize();
     requestRender();
+    const stopViewerControls = onViewerControlsChange(viewerControls, (next) => {
+      viewerControls = next;
+      controls.zoomToCursor = next.zoomToCursor;
+      renderer.setPixelRatio(previewPixelRatio(next.detail));
+      if (resize()) renderNow();
+      else requestRender();
+    });
 
     return () => {
       state.disposed = true;
       clearTimeout(cameraTimer);
       observer.disconnect();
+      stopViewerControls();
       controls.removeEventListener("change", handleControlsChange);
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
       renderer.domElement.removeEventListener("pointerup", handlePointerUp);

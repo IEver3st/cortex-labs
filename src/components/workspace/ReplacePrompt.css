@@ -13,12 +13,12 @@
 .lv-replace p {
   margin: 0;
   color: var(--mg-fg);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.45;
 }
 
 .lv-replace code {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   overflow-wrap: anywhere;
 }

@@ -3,25 +3,34 @@ title: Settings
 description: System, Viewer, Studio, Appearance, Watermark, Shortcuts, and About settings.
 ---
 
-Open Settings from the top bar (gear icon). Changes apply when you choose **Save changes**; leaving Settings without saving discards them. **Reset all** puts every setting and shortcut back to its default, and **Save changes** keeps that.
+Open Settings from the top bar (gear icon). It opens over your work; press **Esc**, click outside it, or choose the close button to go back. Changes apply and are saved as you make them. If a change can't be saved, Settings says so and stays open; closing it again discards the change.
+
+The rail lists every section. Type in **Search settings** (or press **/**) to narrow it to the sections that match: the first match opens, and the matching settings are highlighted.
 
 ## System
 
-- **UI Scaling**: scales the interface from 50% to 140%.
-- **Projects on Home**: **Show projects** lists saved projects on Home and is saved as soon as you switch it. **Default order** sorts the list by last opened, name, or type. **Confirm before deleting** asks first when you delete a project from Home; files on disk are never touched.
-- **Preview Export Path**: the folder preview captures are saved to. When it is empty, Cortex Studio asks where to save each capture. If the folder no longer exists, Settings warns you, and captures can't be saved until you choose a folder that exists or clear the path.
-- **Variant Export Path**: the output folder new Variant Builder and Template Generator workspaces start with. When it is empty, you choose a folder on each export.
-- **Auto Template Save Format**: whether the Template Generator saves templates as PSD, PNG, or both.
+- **UI scale**: scales the interface from 50% to 140%. It applies when you let go of the slider.
+- **Home**: **Show projects** lists saved projects on Home. **Default order** sorts the list by last opened, name, or type. **Confirm before deleting** asks first when you delete a project from Home; files on disk are never touched. **Reopen tabs on launch** brings back the tabs that were open when you last closed Cortex Studio; turn it off to start on Home. The list of those tabs is kept until you open a new one, so turning the setting back on still restores them.
+- **Capture folder**: the folder preview captures are saved to. When it is empty, Cortex Studio asks where to save each capture. If the folder no longer exists, Settings warns you, and captures can't be saved until you choose a folder that exists or clear the path.
+- **Variant and template folder**: the output folder new Variant Builder and Template Generator workspaces start with. When it is empty, you choose a folder on each export.
+- **Auto template format**: whether the Template Generator saves templates as PSD, PNG, or both.
+- **Replace existing files**: skips the "Replace N files?" prompt for angle captures, Variant Builder exports, EUP Studio shots and EUP Studio thumbnails, so a repeat run overwrites files with the same name. Off by default.
+- **Captures**:
+  - **Capture size**: the size of Vehicle angle captures and **Save this view**. **Window** (the default) saves what the viewer draws, so the size follows the window. 1920 × 1080, 2560 × 1440 and 3840 × 2160 always save at that size; angle captures are framed for it, and **Save this view** keeps everything in the viewer and fills the rest of the frame. Multi lineups always save at window size.
+  - **Capture angles** and **Capture framing**: the angles that are on, and the framing, when a Vehicle or EUP workspace opens (EUP Studio has its own shots). At least one angle stays on. The capture options in each workspace still change them for that workspace.
+  - **Photo Mode size**: the output size a new Photo Mode scene starts with. Saved scenes keep their own size.
+- **Reset all settings**: puts every setting and shortcut, in every section, back to its default after you confirm. Projects and files on disk are not touched.
 
 ## Viewer
 
-- **Free-Cam**: always on in Studio previews. Focus a model preview, then fly with WASD, look with the right mouse button, rise and drop with Q/E, hold Alt for precision, and hold Shift to boost.
-- **Start in Exterior Only**: new Vehicle workspaces open with interior, glass and wheels hidden. Each workspace still toggles it from the camera deck, and saved projects keep their own setting.
-- **Load EUP Textures**: picking a clothing model in EUP also loads the texture dictionary beside it into the Uniform slot. A texture you choose yourself is never replaced.
-- **Standard Model Warning**: opening a vehicle `.yft` that isn't the `_hi` model says so, because up close the game draws the `_hi` model and the standard one can lack its window template, material slots and detail. When the `_hi` model is in the same folder, **Open _hi model** loads it instead. **Never show this again** in the warning turns this off.
-- **Panel Camera Controls**: moves the camera shots from the camera deck into the side panel in Vehicle, EUP, Multi, and Sirens. The rotate buttons stay on the bottom bar.
-- **Legacy Layers Layout**: places the Variant Builder layers panel at the bottom instead of on the right.
-- **Render Effects**: **Show 3D Grid**, **Ground Shadows**, and **Ambient Occlusion**. Vehicle, EUP, Multi, and Sirens tabs share these: a change here, or from the matching camera deck button, applies to every open tab of those kinds. The grid and ground shadow are workbench options; the showroom always has shadows and never shows the grid. EUP Studio, Prop Studio, and Photo Mode have their own grid, shadow, and ambient occlusion buttons, saved with each workspace.
+- **Start in exterior only**: new Vehicle workspaces open with interior, glass and wheels hidden. Each workspace still toggles it from the camera deck, and saved projects keep their own setting.
+- **Load EUP textures**: picking a clothing model in EUP also loads the texture dictionary beside it into the Uniform slot. A texture you choose yourself is never replaced.
+- **Standard model warning**: opening a vehicle `.yft` that isn't the `_hi` model says so, because up close the game draws the `_hi` model and the standard one can lack its window template, material slots and detail. When the `_hi` model is in the same folder, **Open _hi model** loads it instead. **Never show this again** in the warning turns this off.
+- **Camera presets in the panel**: moves the camera shots from the camera deck into the side panel in Vehicle, EUP, Multi, and Sirens. The rotate buttons stay on the bottom bar.
+- **Variant Builder layers at the bottom**: places the Variant Builder layers panel at the bottom instead of on the right. Other workspaces are not affected.
+- **Preview detail**: how sharp every 3D viewer draws on scaled and high-DPI screens. **Performance** draws at the screen's base resolution and keeps orbiting smooth on laptops and scaled 4K screens; **Balanced** (the default) allows up to 1.5×; **Sharp** allows up to 2× and uses more GPU. At 100% Windows scaling all three look the same. It applies to open tabs straight away. Captures at Window size follow it; fixed sizes are not affected.
+- **Zoom toward cursor**: scrolling zooms toward the point under the mouse instead of the center of the view, in every 3D viewer.
+- **Render effects**: **3D grid**, **Ground shadows**, and **Ambient occlusion**. Vehicle, EUP, Multi, and Sirens tabs share these: a change here, or from the matching camera deck button, applies to every open tab of those kinds. The grid and ground shadow are workbench options; the showroom always has shadows and never shows the grid. EUP Studio, Prop Studio, and Photo Mode have their own grid, shadow, and ambient occlusion buttons, saved with each workspace.
 
 ## Studio
 
@@ -34,18 +43,16 @@ The scene, light, plate, and steering that new work starts with. Open workspaces
 
 ## Shortcuts
 
-Customize all key actions (new tabs, file selection, viewer toggles).
+Click a binding, then press the new key combination. Hover a row to clear its binding. See [Hotkeys](./hotkeys) for every action and its default.
 
 ## Appearance
 
 - **Color scheme**: follow the operating system or keep the interface in Light or Dark mode.
-- **Studio palette**: choose from 12 full-workbench color presets. Palette and color scheme are independent, so every preset supports both light and dark surfaces.
-- **Window chrome**: switch between Standard and Elegant window controls.
-- **Studio defaults**: **Base Body** and **Base Background** set the starting paint and backdrop colors. **Auto Template Fill** and **Auto Template Background** set the UV fill and background colors of templates the Template Generator builds; open Template Generator tabs rebuild with the new colors when you save.
-- **Reduce motion**: follow the Windows animation setting, or always turn interface animations off.
+- **Studio palette**: choose from 13 full-workbench color presets. Palette and color scheme are independent, so every preset supports both light and dark surfaces; the previews show the mode you are in.
+- **Window controls**: switch between Standard and Elegant window controls.
+- **Starting colors**: **Base body** and **Base background** set the starting paint and backdrop colors. **Auto template fill** and **Auto template background** set the UV fill and background colors of templates the Template Generator builds; open Template Generator tabs rebuild with the new colors.
+- **Reduce motion**: follow the Windows animation setting, or **Always reduce** to keep interface animations off.
 - **Show shortcut keys**: hide the keycaps shown next to actions. Shortcuts keep working.
-
-Palette and color-scheme changes preview immediately. Use **Save changes** to keep them; leaving Settings without saving restores the previous appearance.
 
 ## Watermark
 
@@ -61,9 +68,13 @@ With **Stamp captures** on, the watermark goes on every still image you capture 
 
 Sizes are relative to the captured image's short side, so the watermark looks the same on small and large captures. The live preview shows the mark on a dark or light 16:9 scene. Watermarks saved by earlier versions keep their look, with their pixel size converted against a 1080 px capture.
 
+## Cortex account
+
+Optional. **Sign in with Discord** to use [Juno in Sirens](/docs/user-guide/juno) with a free Cortex account. The **Juno** panel shows whether Juno is ready and what each request sends, before you sign in. While signed in, the section shows your display name, plan, how much of this month's Juno allowance is used and when it resets. **Sign out** signs this PC out of the account.
+
 ## About
 
-About shows the installed version, software-update status, and release notes. Turn off **Check automatically** to stop background update checks; **Check now** still works. **Open changelog** shows every release on a timeline, and **Show after updates** controls whether it opens once after an update. When a release is available, Cortex Studio downloads it in the background and shows progress in the main toolbar; once ready, choose **Restart to update** to install it and reopen the app.
+About shows the installed version, software-update status, and release notes. A dot on About in the rail means an update is ready. Turn off **Check automatically** to stop background update checks; **Check now** still works. **Open changelog** shows every release on a timeline, and **Show after updates** controls whether it opens once after an update. When a release is available, Cortex Studio downloads it in the background and shows progress in the main toolbar; once ready, choose **Restart to update** to install it and reopen the app.
 
 ## Feedback
 
@@ -79,4 +90,4 @@ Use **Send feedback** in the top bar, or **Report a bug** / **Request a feature*
 
 Settings are saved locally (no cloud, no accounts).
 
-Show 3D Grid, Ground Shadows, and Ambient Occlusion are not stored per workspace in Vehicle, EUP, Multi, and Sirens; those tabs always follow the current setting. EUP Studio, Prop Studio, and Photo Mode save their own values with each workspace.
+3D grid, Ground shadows, and Ambient occlusion are not stored per workspace in Vehicle, EUP, Multi, and Sirens; those tabs always follow the current setting. EUP Studio, Prop Studio, and Photo Mode save their own values with each workspace.

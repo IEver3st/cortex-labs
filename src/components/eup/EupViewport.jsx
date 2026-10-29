@@ -7,8 +7,8 @@ import { createViewerStage } from "../../lib/viewer-stage.js";
 import { applyShadowFlags, configureShadowLight, createSolidWireMaterial, renderSolidWire } from "../../lib/viewer-render-effects.js";
 import { countDrawnGeometry, createMeshStatsReporter } from "../../lib/mesh-stats.js";
 import { shotFov } from "../../lib/eup-export.js";
+import { onViewerControlsChange, previewPixelRatio, readViewerControls } from "../../lib/preview-detail.js";
 
-const MAX_PIXEL_RATIO = 1.5;
 const FOV = 40;
 const FIT_PADDING = 1.15;
 // A press that moves further than this (in CSS pixels) is an orbit, not a pick.
@@ -243,7 +243,8 @@ const EupViewport = forwardRef(function EupViewport(
     if (!container || !enabled) return undefined;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, stencil: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+    let viewerControls = readViewerControls();
+    renderer.setPixelRatio(previewPixelRatio(viewerControls.detail));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -257,6 +258,7 @@ const EupViewport = forwardRef(function EupViewport(
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
     controls.minDistance = 0.15;
+    controls.zoomToCursor = viewerControls.zoomToCursor;
     controls.maxDistance = 20;
     controls.target.set(0, 0.9, 0);
 
@@ -435,10 +437,19 @@ const EupViewport = forwardRef(function EupViewport(
     observer.observe(container);
     resize();
     requestRender();
+    const stopViewerControls = onViewerControlsChange(viewerControls, (next) => {
+      viewerControls = next;
+      controls.zoomToCursor = next.zoomToCursor;
+      if (state.recording) return;
+      renderer.setPixelRatio(previewPixelRatio(next.detail));
+      if (resize()) renderNow();
+      else requestRender();
+    });
 
     return () => {
       state.disposed = true;
       observer.disconnect();
+      stopViewerControls();
       controls.removeEventListener("change", requestRender);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);

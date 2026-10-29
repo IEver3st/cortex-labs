@@ -1,3 +1,24 @@
+version: 5.6.0
+date: 2026-10-28
+> Settings now opens over your work, the top bar and workspaces are tidier, the showroom runs much faster with sirens playing, and Juno can write siren patterns from a description.
+
+## New
+- Juno in Sirens | Sign in with a free Cortex account in Settings, then use Describe the lights to say where the lights sit and what they should do. Juno writes the patterns, they play on the car first, and Keep applies them as one undo step. Optional, desktop app only.
+- Cortex Forge handoff | Forge can open a vehicle's siren setting straight in Sirens, and Check in Forge opens the resource in Forge to check it against your server.
+- More settings | Reopen tabs on launch, Replace existing files, capture size and framing, Photo Mode size, Preview detail and Zoom toward cursor.
+
+## Improved
+- Settings over your work | Settings opens as a window over the workspace. Press / to search it, and changes save as you make them.
+- Faster showroom | With sirens playing, the showroom went from 25 to 69 frames per second and the workbench from 32 to 119 on a busy test PC, with the picture unchanged.
+- A quieter top bar | Tabs sit in one flat strip, long names are shortened in the middle, two tabs on the same file show their siren setting, and one small icon shows or hides each panel.
+- Tidier workspaces | Every workspace has the same row of view buttons and the same empty card, and Workbench and Showroom are one switch.
+- Faster launch | Cortex Studio is ready about a second sooner, and the window no longer flashes white.
+
+## Fixed
+- Sirens with the inspector hidden | Hiding the inspector no longer pauses the pattern.
+
+---
+
 version: 5.5.0
 date: 2026-10-25
 > Sirens now lays out like Siren Tool, with dual-colour heads and patterns you can build without a vehicle, and a new overlay shows a model's collision bounds.

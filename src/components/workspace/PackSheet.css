@@ -58,7 +58,7 @@
   margin-right: 8px;
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -91,7 +91,7 @@
   align-items: center;
   margin: 0;
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   white-space: nowrap;
 }
@@ -131,7 +131,7 @@
   align-items: center;
   gap: 7px;
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   white-space: nowrap;
 }
 
@@ -151,7 +151,7 @@
 
 .lv-pack-figure {
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -199,7 +199,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   outline: none;
 }
 
@@ -263,7 +263,7 @@
 
 .lv-pack-group-count {
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
@@ -364,7 +364,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -384,7 +384,7 @@
 .lv-pack-staged {
   flex-shrink: 0;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--cx-caution);
   white-space: nowrap;
 }
@@ -394,7 +394,7 @@
   padding: 0 6px;
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -421,7 +421,7 @@
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   color: var(--mg-muted);
 }
 
@@ -442,7 +442,7 @@
 
 .lv-pack-empty-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -453,7 +453,7 @@
 
 .lv-pack-empty-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -512,7 +512,7 @@
 .lv-packbar-name {
   min-width: 0;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -549,7 +549,7 @@
   background: transparent;
   color: var(--mg-muted);
   font-family: var(--font-main);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   cursor: pointer;
   transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);

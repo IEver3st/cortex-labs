@@ -12,45 +12,6 @@
   height: 100% !important;
 }
 
-/* ── Empty stage ── */
-.ps-stage-empty {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 8px;
-  padding: 24px;
-  text-align: center;
-  color: var(--mg-muted);
-}
-
-.ps-stage-empty > svg {
-  width: 20px;
-  height: 20px;
-}
-
-.ps-stage-empty .cx-btn {
-  margin-top: 6px;
-}
-
-.ps-empty-title {
-  margin: 0;
-  font-size: 13.5px;
-  font-weight: 650;
-  color: var(--mg-fg);
-}
-
-.ps-empty-desc {
-  max-width: 320px;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--mg-muted);
-  overflow-wrap: anywhere;
-}
-
 .ps-spin {
   animation: ps-spin 0.8s linear infinite;
 }
@@ -64,14 +25,14 @@
 /* ── Viewfinder slips ── */
 .ps-status {
   position: absolute;
-  top: calc(var(--lv-inset) + 50px);
+  top: calc(var(--lv-inset) + 38px);
   left: var(--lv-inset);
   display: grid;
   gap: 6px;
   max-width: min(300px, 45%);
   padding: 8px 12px;
   border-radius: 10px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
 }
 
 .ps-status-row {
@@ -114,7 +75,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -128,7 +89,7 @@
 
 .ps-inspector-empty {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -136,7 +97,7 @@
 .ps-row-note {
   display: block;
   margin-top: 2px;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   font-weight: 400;
   color: var(--mg-muted);
 }
@@ -193,7 +154,7 @@
 
 .ps-row-label {
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -202,7 +163,7 @@
 .ps-row-meta {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -215,7 +176,7 @@
   border-radius: 4px;
   background: color-mix(in srgb, var(--cx-caution) 10%, transparent);
   color: var(--cx-caution);
-  font-size: 10.5px;
+  font-size: var(--cx-fs-meta);
   font-weight: 650;
 }
 
@@ -247,14 +208,14 @@
 }
 
 .ps-facts dt {
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
 .ps-facts dd {
   margin: 0;
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
@@ -265,7 +226,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-destructive);
 }
 
@@ -324,7 +285,7 @@
 
 .ps-dialog-title {
   margin: 0;
-  font-size: 28px;
+  font-size: var(--cx-fs-display-md);
 }
 
 .ps-dialog-body {
@@ -342,7 +303,7 @@
 }
 
 .ps-dialog-label {
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 500;
 }
 
@@ -387,7 +348,7 @@
 .ps-dialog-status,
 .ps-dialog-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.5;
   color: var(--mg-muted);
   overflow-wrap: anywhere;
@@ -399,7 +360,7 @@
   gap: 8px;
   min-width: 0;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-fg);
 }
 

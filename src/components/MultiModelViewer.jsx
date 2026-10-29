@@ -42,6 +42,7 @@ import { loadPropAsset } from "../lib/prop-model.js";
 import { loadNativeMaterialView } from "../lib/native-materials.js";
 import { getModelExtras } from "../lib/vehicle-mod-parts.js";
 import { TURNTABLE_DEFAULT_SPEED, stepTurntable, withTurntableAtRest } from "../lib/turntable.js";
+import { onViewerControlsChange, previewPixelRatio, readViewerControls } from "../lib/preview-detail.js";
 
 // Pointer travel (px) under which a press-release on the canvas counts as a
 // click that selects the vehicle under the cursor, not an orbit.
@@ -371,7 +372,8 @@ function MultiModelViewer({
     const scene = new THREE.Scene();
     // The stencil lets the solid wireframe tint each pixel once (renderSolidWire).
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, stencil: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    let viewerControls = readViewerControls();
+    renderer.setPixelRatio(previewPixelRatio(viewerControls.detail));
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = Boolean(shadowsEnabled);
@@ -384,6 +386,7 @@ function MultiModelViewer({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
+    controls.zoomToCursor = viewerControls.zoomToCursor;
     controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
     controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
 
@@ -574,13 +577,18 @@ function MultiModelViewer({
     };
     requestRenderRef.current = requestRenderFrame;
 
-    const resize = () => {
+    const resizeBuffers = () => {
       const { clientWidth, clientHeight } = container;
-      if (clientWidth === 0 || clientHeight === 0) return;
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+      if (clientWidth === 0 || clientHeight === 0) return false;
+      renderer.setPixelRatio(previewPixelRatio(viewerControls.detail));
       renderer.setSize(clientWidth, clientHeight);
       resizeAoPipeline(aoRef.current, clientWidth, clientHeight, renderer.getPixelRatio());
       stageRef.current?.resize();
+      return true;
+    };
+    const resize = () => {
+      if (!resizeBuffers()) return;
+      const { clientWidth, clientHeight } = container;
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
       if (fitRef.current?.bounds) {
@@ -591,6 +599,11 @@ function MultiModelViewer({
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(container);
     resize();
+    const stopViewerControls = onViewerControlsChange(viewerControls, (next) => {
+      viewerControls = next;
+      controls.zoomToCursor = next.zoomToCursor;
+      if (resizeBuffers()) requestRenderFrame();
+    });
 
     controls.addEventListener("start", requestRenderFrame);
     controls.addEventListener("change", requestRenderFrame);
@@ -655,6 +668,7 @@ function MultiModelViewer({
       disposedRef.current = true;
       if (frameId) cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
+      stopViewerControls();
       controls.removeEventListener("start", requestRenderFrame);
       controls.removeEventListener("change", requestRenderFrame);
       controls.removeEventListener("end", requestRenderFrame);

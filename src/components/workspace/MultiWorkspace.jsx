@@ -6,6 +6,7 @@ import {
   ArrowUp,
   Box,
   Boxes,
+  Car,
   Copy,
   Eye,
   EyeOff,
@@ -18,7 +19,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { SelectItem, Select, SelectContent, SelectTrigger, SelectValue } from "../ui/select";
-import { Keycaps } from "../ui/keycaps";
+import { hotkeyLabel } from "../ui/keycaps";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import { MAX_LINEUP_SLOTS, slotLetter } from "../../lib/multi-lineup";
 import { buildVehiclePaint } from "../../lib/vehicle-paint.js";
@@ -31,10 +32,12 @@ import {
   CameraSection,
   CameraShots,
   DeckButton,
+  FootFact,
   InspectorTabs,
   LightSection,
   SelectField,
   FloorField,
+  StageEmpty,
   StageSection,
   TurntableSection,
   Viewfinder,
@@ -56,7 +59,7 @@ const SHOWROOM_LIGHT_MODES = [
   { id: "one", label: "Whole lineup", title: "One wide spotlight over the whole lineup" },
 ];
 
-function LineupRow({ slot, index, selected, status, onSelect, onToggleVisible }) {
+function LineupRow({ slot, index, selected, status, onSelect, onToggleVisible, selectHint }) {
   const letter = slotLetter(index);
   const model = slot.modelPath ? splitPath(slot.modelPath).name : "No model";
   const livery = slot.liveryPath ? splitPath(slot.liveryPath).name : "";
@@ -68,7 +71,7 @@ function LineupRow({ slot, index, selected, status, onSelect, onToggleVisible })
         className="mw-row-main"
         onClick={onSelect}
         aria-pressed={selected}
-        title={slot.modelPath || `Vehicle ${letter}`}
+        title={`${slot.modelPath || `Vehicle ${letter}`}\n${selectHint}`}
       >
         <span className="mw-letter cx-display" aria-hidden="true">{letter}</span>
         <span className="mw-row-text">
@@ -168,8 +171,9 @@ function SelectedVehicle({ s, slot, index }) {
         step={1}
         title="Model"
         path={slot.modelPath}
-        emptyTitle="Open a vehicle"
-        emptyHint={`${s.modelDropLabel}. Drop several to add them all.`}
+        emptyTitle="Open a vehicle model"
+        emptyHint={s.modelDropLabel}
+        emptyDetail={`${s.modelDropLabel}. Drop several on the viewfinder to add them all.`}
         hotkey={hk[HOTKEY_ACTIONS.SELECT_MODEL]}
         onPick={() => s.selectMultiModel(slot.id)}
         onUnload={() => L.setModel(slot.id, "")}
@@ -193,7 +197,8 @@ function SelectedVehicle({ s, slot, index }) {
         title="Livery"
         path={slot.liveryPath}
         emptyTitle="Choose a livery"
-        emptyHint="PNG, PSD, PDN, DDS and more. Reloads when you save it."
+        emptyHint="PSD, PDN, PNG or DDS"
+        emptyDetail="PNG, PSD, PDN, DDS and more. Reloads when you save it."
         hotkey={hk[HOTKEY_ACTIONS.SELECT_LIVERY]}
         onPick={() => s.selectMultiLivery(slot.id)}
         onUnload={() => L.updateSlot(slot.id, { liveryPath: "" })}
@@ -201,7 +206,7 @@ function SelectedVehicle({ s, slot, index }) {
         trailing={slot.liveryPath && others ? (
           <button
             type="button"
-            className="lv-link"
+            className="cx-btn is-quiet lv-btn-sm lv-use-all"
             onClick={() => L.copyToAll(slot.id, ["liveryPath"])}
             title="Put this livery on every vehicle in the lineup"
           >
@@ -218,7 +223,8 @@ function SelectedVehicle({ s, slot, index }) {
         title="Glass"
         path={slot.windowPath}
         emptyTitle="Choose a window design"
-        emptyHint="Optional. Printed on the glass you pick below."
+        emptyHint="Optional"
+        emptyDetail="Optional. Printed on the glass you pick below."
         hotkey={hk[HOTKEY_ACTIONS.SELECT_GLASS]}
         onPick={() => s.selectMultiWindow(slot.id)}
         onUnload={() => L.updateSlot(slot.id, { windowPath: "" })}
@@ -279,6 +285,10 @@ export default function MultiWorkspace({ s, viewer, overlays }) {
     if (s.photoError) list.push({ id: "photo", label: "Photo not saved", text: s.photoError, clear: () => s.setPhotoError("") });
     return list;
   }, [s, L.movedClothing, L.dismissMovedClothing]);
+
+  const swapKey = hotkeyLabel(hk[HOTKEY_ACTIONS.SWAP_DUAL_SLOT]);
+  const selectHint = `You can also click a vehicle in the viewfinder${swapKey ? `; ${swapKey} steps through the lineup` : ""}.`;
+  const anyLoading = L.slots.some((slot) => L.status[slot.id]?.loading);
 
   const cameraShots = <CameraShots s={s} disabled={!s.viewerReady} />;
   // Arranging stays on the deck even when camera controls live in the panel,
@@ -341,15 +351,10 @@ export default function MultiWorkspace({ s, viewer, overlays }) {
                   status={L.status[slot.id]}
                   onSelect={() => L.select(slot.id)}
                   onToggleVisible={() => L.updateSlot(slot.id, { visible: !slot.visible })}
+                  selectHint={selectHint}
                 />
               ))}
             </ol>
-            <p className="lv-slot-note mw-tip">
-              <span>
-                Click a vehicle in the viewfinder to select it.
-                {hk[HOTKEY_ACTIONS.SWAP_DUAL_SLOT] ? <> <Keycaps hotkey={hk[HOTKEY_ACTIONS.SWAP_DUAL_SLOT]} /> steps through the lineup.</> : null}
-              </span>
-            </p>
           </section>
 
           {selected ? <SelectedVehicle s={s} slot={selected} index={selectedIndex} /> : null}
@@ -368,13 +373,12 @@ export default function MultiWorkspace({ s, viewer, overlays }) {
           <section id="panel-multi-capture" className={`lv-capture ${hasModel ? "" : "is-disabled"} ${captureOpen || s.savingPhoto ? "is-open" : "is-collapsed"}`}>
             <CaptureHead bodyId="panel-multi-capture-body" open={captureOpen} locked={Boolean(s.savingPhoto)} onToggle={setCaptureOpen} />
             {captureOpen || s.savingPhoto ? (
-              <div className="lv-slot-body" id="panel-multi-capture-body">
+              <div className="lv-slot-body lv-capture-body" id="panel-multi-capture-body">
                 {hasModel ? (
                   <>
-                    <p className="lv-sheet-dest" title={s.previewFolder || undefined}>
-                      <FolderOpen aria-hidden="true" />
-                      {s.previewFolder ? <span className="is-path">{s.previewFolder}</span> : <span>You'll choose a folder when you save.</span>}
-                    </p>
+                    <FootFact label="Save to" title={s.previewFolder || "You'll choose a folder when you save"}>
+                      {s.previewFolder ? <span className="lv-foot-path">{splitPath(s.previewFolder).name || s.previewFolder}</span> : "Chosen on save"}
+                    </FootFact>
                     <button
                       type="button"
                       className="cx-btn is-primary lv-capture-btn"
@@ -387,7 +391,7 @@ export default function MultiWorkspace({ s, viewer, overlays }) {
                     </button>
                   </>
                 ) : (
-                  <p className="lv-slot-note">Load a vehicle to save a photo of the lineup.</p>
+                  <p className="lv-foot-note">Load a vehicle to save a photo of the lineup.</p>
                 )}
               </div>
             ) : null}
@@ -403,6 +407,15 @@ export default function MultiWorkspace({ s, viewer, overlays }) {
         alerts={alerts}
         dropHint={`${s.modelDropLabel} to add vehicles, or an image for vehicle ${slotLetter(selectedIndex)}'s livery`}
         progress={null}
+        empty={anyLoading || !selected ? null : (
+          <StageEmpty icon={Car} title="No vehicles in the lineup" line={`Open up to ${MAX_LINEUP_SLOTS} vehicles, or drop several here at once.`}>
+            <button type="button" className="cx-btn is-primary" onClick={() => s.selectMultiModel(selected.id)}
+              title={withShortcut("Open a vehicle model", hk[HOTKEY_ACTIONS.SELECT_MODEL])}>
+              <FolderOpen aria-hidden="true" />
+              Open a vehicle model
+            </button>
+          </StageEmpty>
+        )}
         deckStart={s.cameraControlsInPanel ? arrangeGroup : <>{cameraShots}{arrangeGroup}</>}
         viewButtons={(
           <>
@@ -436,9 +449,11 @@ export default function MultiWorkspace({ s, viewer, overlays }) {
               {L.slots.length > 1 ? (
                 <button
                   type="button"
-                  className="lv-link mw-copy-all"
+                  className="cx-btn is-quiet lv-btn-sm mw-copy-all"
                   onClick={() => L.copyToAll(selected.id, ["paint"])}
+                  title="Put this vehicle's paint on every vehicle in the lineup"
                 >
+                  <Copy aria-hidden="true" />
                   Use this paint on every vehicle
                 </button>
               ) : null}

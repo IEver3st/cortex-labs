@@ -1,9 +1,8 @@
 /* Cortex Studio 5 application frame.
    One ink row: the Cortex mark is the Home tab, documents sit as tabs, page
    tools portal into the context slot, and window chrome closes the row. The
-   active tab and an open Settings page take ink and an accent underline on
-   the frame's bottom hairline, so the frame always says where you are. All
-   panes stay mounted. */
+   open tab joins the page below it and an open Settings page takes opposite
+   ink, so the frame always says where you are. All panes stay mounted. */
 
 .shell-root {
   position: relative;
@@ -40,25 +39,58 @@
 }
 
 /* ── Tabs ──
-   Same grammar as the inspector tabs and Home filters: quiet text on the
-   frame, ink when active, and a 2px accent rule that scales in on the frame's
-   bottom hairline. No filled card, so the strip reads as one calm row. */
+   A flat strip of quiet text on the frame. The open tab takes the page fill
+   and a 2px accent cap, so it reads as the top of the workspace below it. */
 .shell-tabs {
   display: flex;
   align-items: stretch;
-  gap: calc(2 * var(--u));
   min-width: 0;
   height: 100%;
   flex-shrink: 1;
   overflow-x: auto;
   overflow-y: hidden;
   /* Revealing the active tab keeps it clear of the pinned New tab button. */
-  scroll-padding-inline-end: calc(40 * var(--u));
+  scroll-padding-inline: calc(30 * var(--u)) calc(40 * var(--u));
   scrollbar-width: none;
 }
 
 .shell-tabs::-webkit-scrollbar {
   display: none;
+}
+
+.shell-tabs::before {
+  content: "";
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  flex: 0 0 calc(28 * var(--u));
+  margin-right: calc(-28 * var(--u));
+  margin-bottom: 1px;
+  background: linear-gradient(to left, transparent, var(--cx-frame));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms var(--cx-ease);
+}
+
+.shell-tabs[data-overflow-start="true"]::before {
+  opacity: 1;
+}
+
+.shell-new-tab-wrap::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  width: calc(28 * var(--u));
+  background: linear-gradient(to right, transparent, var(--cx-frame));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms var(--cx-ease);
+}
+
+.shell-tabs[data-overflow-end="true"] .shell-new-tab-wrap::before {
+  opacity: 1;
 }
 
 .shell-tab {
@@ -68,15 +100,15 @@
   align-items: center;
   /* Tabs give up label width before the strip scrolls. */
   flex-shrink: 1;
-  min-width: calc(112 * var(--u));
-  max-width: calc(240 * var(--u));
+  min-width: calc(104 * var(--u));
+  max-width: calc(180 * var(--u));
   height: 100%;
   padding: 0 calc(5 * var(--u)) 0 0;
   border: 0;
   background: transparent;
   color: var(--mg-muted);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -87,12 +119,11 @@
 .shell-tab::after {
   content: "";
   position: absolute;
-  right: calc(10 * var(--u));
-  bottom: 0;
-  left: calc(10 * var(--u));
+  top: 0;
+  right: 0;
+  left: 0;
   z-index: 1;
   height: 2px;
-  border-radius: 2px 2px 0 0;
   background: var(--mg-primary);
   transform: scaleX(0);
   transition: transform 180ms var(--cx-ease);
@@ -105,7 +136,30 @@
 
 .shell-tab.is-active {
   z-index: 2;
+  flex-shrink: 0;
+  max-width: calc(220 * var(--u));
+  background: var(--mg-bg);
   color: var(--mg-fg);
+  box-shadow:
+    inset 1px 0 0 var(--mg-border),
+    inset -1px 0 0 var(--mg-border);
+}
+
+.shell-tab-home.is-active {
+  box-shadow: inset -1px 0 0 var(--mg-border);
+}
+
+.shell-tab.is-active:hover {
+  background: var(--mg-bg);
+}
+
+.shell-tab:has(.shell-tab-detail) {
+  min-width: calc(150 * var(--u));
+  max-width: calc(240 * var(--u));
+}
+
+.shell-tab.is-active:has(.shell-tab-detail) {
+  max-width: calc(300 * var(--u));
 }
 
 .shell-tab.is-active::after {
@@ -148,6 +202,32 @@
 .shell-tab-label {
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-tab-label.is-split {
+  display: flex;
+}
+
+.shell-tab-label-head {
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell-tab-label-tail {
+  flex: none;
+}
+
+.shell-tab-detail {
+  flex: 0 1 auto;
+  min-width: 6ch;
+  margin-left: calc(-2 * var(--u));
+  overflow: hidden;
+  color: var(--mg-muted);
+  font-size: var(--cx-fs-meta);
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -222,6 +302,46 @@
   box-shadow: inset 0 0 0 2px var(--mg-primary);
 }
 
+.shell-tab:not(.is-active, .is-editing, .shell-tab-home) {
+  padding-right: 0;
+}
+
+.shell-tab:not(.is-active, .is-editing, .shell-tab-home):hover {
+  background: color-mix(in srgb, var(--mg-fg) 5%, var(--cx-frame));
+}
+
+.shell-tab:not(.is-active, .is-editing) .shell-tab-select {
+  padding-right: calc(8 * var(--u));
+}
+
+.shell-tab:not(.is-active, .is-editing) .shell-tab-close {
+  position: absolute;
+  top: 50%;
+  right: calc(5 * var(--u));
+  z-index: 2;
+  background: var(--cx-frame);
+  pointer-events: none;
+  transform: translateY(-50%);
+  box-shadow: calc(-6 * var(--u)) 0 calc(4 * var(--u)) calc(-2 * var(--u)) var(--cx-frame);
+}
+
+.shell-tab:not(.is-active, .is-editing):hover .shell-tab-close {
+  background: color-mix(in srgb, var(--mg-fg) 5%, var(--cx-frame));
+  box-shadow: calc(-6 * var(--u)) 0 calc(4 * var(--u)) calc(-2 * var(--u)) color-mix(in srgb, var(--mg-fg) 5%, var(--cx-frame));
+}
+
+.shell-tab:not(.is-active, .is-editing):is(:hover, :focus-within) .shell-tab-close {
+  pointer-events: auto;
+}
+
+.shell-tab:not(.is-active, .is-editing) .shell-tab-close:hover {
+  background: color-mix(in srgb, var(--mg-fg) 9%, var(--cx-frame));
+}
+
+.shell-tab:not(.is-active, .is-editing) .shell-tab-close:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
+}
+
 /* The Cortex mark as Home. A hairline separates the fixed brand cell from the
    closable documents. */
 .shell-tab.shell-tab-home {
@@ -242,6 +362,11 @@
   width: 1px;
   background: var(--mg-border);
   pointer-events: none;
+}
+
+.shell-tab-home.is-active::before,
+.shell-tab-home:has(+ .shell-tabs > .shell-tab:first-child.is-active)::before {
+  opacity: 0;
 }
 
 .shell-tab-logo {
@@ -271,7 +396,8 @@
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  height: 100%;
+  align-self: flex-start;
+  height: calc(100% - 1px);
   /* Carries the strip's end gap, so no tab shows between it and the edge. */
   padding: 0 calc(8 * var(--u)) 0 calc(4 * var(--u));
   background: var(--cx-frame);
@@ -345,7 +471,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   text-align: left;
   cursor: pointer;
 }
@@ -391,7 +517,7 @@
   position: relative;
   z-index: 20;
   display: flex;
-  flex: 1;
+  flex: 0 0 auto;
   align-items: center;
   /* Keeps the page's panel toggles their width; the tab strip gives way. */
   min-width: max-content;
@@ -400,15 +526,34 @@
   -webkit-app-region: drag;
 }
 
-.shell-context.is-hidden > * {
-  display: none;
+.shell-toolbar-spacer {
+  flex: 1 0 calc(48 * var(--u));
+  min-width: calc(48 * var(--u));
+  height: 100%;
 }
 
-.shell-toolbar-spacer {
-  flex-shrink: 999;
-  width: calc(16 * var(--u));
-  min-width: 8px;
-  height: 100%;
+.shell-context:has(button)::before,
+.shell-window-controls::before {
+  content: "";
+  flex-shrink: 0;
+  align-self: center;
+  width: 1px;
+  height: calc(16 * var(--u));
+  background: var(--mg-border);
+  pointer-events: none;
+}
+
+.shell-context:has(button)::before {
+  margin: 0 calc(4 * var(--u)) 0 0;
+}
+
+.shell-window-controls::before {
+  margin-right: calc(4 * var(--u));
+}
+
+[data-window-style="mac"] .shell-window-controls::before {
+  order: 1;
+  margin: 0 calc(6 * var(--u)) 0 0;
 }
 
 /* ── Frame actions: feedback and settings ── */
@@ -416,7 +561,7 @@
 .shell-toolbar .settings-anchor {
   position: relative;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   flex-shrink: 0;
   height: 100%;
 }
@@ -426,10 +571,14 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: calc(38 * var(--u));
-  height: 100%;
+  flex: none;
+  align-self: center;
+  width: 30px;
+  height: 26px;
+  margin: 0 1px;
   padding: 0;
   border: 0;
+  border-radius: 5px;
   background: transparent;
   color: var(--mg-muted);
   cursor: pointer;
@@ -440,8 +589,8 @@
 
 .shell-frame-btn svg,
 .shell-toolbar .settings-cog-svg {
-  width: calc(16 * var(--u));
-  height: calc(16 * var(--u));
+  width: 16px;
+  height: 16px;
 }
 
 .shell-toolbar .settings-cog-icon {
@@ -458,29 +607,14 @@
 .shell-frame-btn:focus-visible,
 .shell-toolbar .settings-cog:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--mg-primary);
+  box-shadow: var(--cx-focus);
 }
 
-/* An open Settings page reads as the active tab: ink glyph, accent rule. */
-.shell-toolbar .settings-cog.is-active {
-  color: var(--mg-fg);
-}
-
-.shell-toolbar .settings-cog::after {
-  content: "";
-  position: absolute;
-  right: calc(8 * var(--u));
-  bottom: 0;
-  left: calc(8 * var(--u));
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: var(--mg-primary);
-  transform: scaleX(0);
-  transition: transform 180ms var(--cx-ease);
-}
-
-.shell-toolbar .settings-cog.is-active::after {
-  transform: scaleX(1);
+/* An open Settings page is the current place, so its cog takes opposite ink. */
+.shell-toolbar .settings-cog.is-active,
+.shell-toolbar .settings-cog.is-active:hover {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
 }
 
 /* ── Window controls ── */
@@ -596,23 +730,10 @@
   pointer-events: none;
 }
 
-.settings-page-host {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.settings-page-host.is-active {
-  visibility: visible;
-  pointer-events: auto;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .shell-tab,
   .shell-tab::after,
-  .shell-toolbar .settings-cog::after,
+  .shell-toolbar .settings-cog,
   .shell-tab-logo,
   .shell-tab-close,
   .shell-new-tab-btn svg,
@@ -623,8 +744,11 @@
 }
 
 @media (forced-colors: active) {
-  .shell-tab.is-active::after,
-  .shell-toolbar .settings-cog.is-active::after {
+  .shell-tab.is-active::after {
     background: Highlight;
+  }
+
+  .shell-toolbar .settings-cog.is-active {
+    outline: 2px solid Highlight;
   }
 }

@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { createViewerStage } from "../../lib/viewer-stage.js";
 import { createMeshStatsReporter } from "../../lib/mesh-stats.js";
+import { onViewerControlsChange, previewPixelRatio, readViewerControls } from "../../lib/preview-detail.js";
 import {
   GLOW_LAYER,
   applyShadowFlags,
@@ -17,7 +18,6 @@ import {
   setAoBounds,
 } from "../../lib/viewer-render-effects.js";
 
-const MAX_PIXEL_RATIO = 1.5;
 const FOV = 35;
 const FIT_PADDING = 1.2;
 const THUMBNAIL_FOV = 30;
@@ -99,7 +99,8 @@ const PropViewport = forwardRef(function PropViewport(
     if (!container) return undefined;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+    let viewerControls = readViewerControls();
+    renderer.setPixelRatio(previewPixelRatio(viewerControls.detail));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -114,6 +115,7 @@ const PropViewport = forwardRef(function PropViewport(
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
     controls.minDistance = 0.02;
+    controls.zoomToCursor = viewerControls.zoomToCursor;
     controls.maxDistance = 20;
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.5 * lightIntensity);
@@ -220,10 +222,18 @@ const PropViewport = forwardRef(function PropViewport(
     observer.observe(container);
     resize();
     requestRender();
+    const stopViewerControls = onViewerControlsChange(viewerControls, (next) => {
+      viewerControls = next;
+      controls.zoomToCursor = next.zoomToCursor;
+      renderer.setPixelRatio(previewPixelRatio(next.detail));
+      if (resize()) renderNow();
+      else requestRender();
+    });
 
     return () => {
       state.disposed = true;
       observer.disconnect();
+      stopViewerControls();
       controls.removeEventListener("change", requestRender);
       if (state.frameId) cancelAnimationFrame(state.frameId);
       controls.dispose();

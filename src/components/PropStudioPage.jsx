@@ -20,7 +20,6 @@ import {
   Grid3x3,
   Hexagon,
   ImageDown,
-  LampCeiling,
   Loader2,
   Monitor,
   Moon,
@@ -61,11 +60,14 @@ import {
   AssetSlot,
   ColorLine,
   DeckButton,
+  DeckViewMenu,
+  deckButtonItems,
   FloorField,
   CollisionSlip,
   InspectorTabs,
   MeshStatsSlip,
   Slider,
+  StageEmpty, StageToggle,
   StageSection,
   WorkspaceFrame,
   splitPath,
@@ -818,11 +820,11 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
               <span className={`lv-step ${nativeStatus.state === "ready" && !nativeStatus.missing ? "is-done" : ""}`} aria-hidden="true">
                 {nativeStatus.state === "ready" && !nativeStatus.missing ? <Check /> : 2}
               </span>
-              <h3 className="lv-slot-title">Textures</h3>
+              <h3 className="lv-slot-title" title="Found next to the model, through its .ytyp archetype, and in the game files">Textures</h3>
             </header>
             <div className="lv-slot-body">
               {!settings.modelPath ? (
-                <p className="lv-slot-note">Textures are found next to the model, through its .ytyp archetype, and in the game files.</p>
+                <p className="lv-slot-note">Open a prop to find its textures.</p>
               ) : (
                 <>
                   {textureNote ? (
@@ -854,22 +856,23 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
           </section>
         </div>
         <div className="lv-dock-foot">
-          <section className={`lv-capture ${exportBlocked ? "is-disabled" : ""}`}>
-            <header className="lv-slot-head">
-              <h3 className="lv-slot-title">Export</h3>
-            </header>
-            <div className="lv-slot-body">
-              <p className="lv-slot-note">{exportBlocked || "A transparent PNG for inventories and stores, or the view as framed."}</p>
-              <button type="button" className="cx-btn is-primary lv-capture-btn" disabled={Boolean(exportBlocked)} onClick={() => setExportOpen(true)}>
-                <ImageDown aria-hidden="true" />
-                Export image
-              </button>
-              <button type="button" className="cx-btn lv-capture-btn" disabled={Boolean(exportBlocked)} onClick={handleScreenshot} title="Save the viewfinder exactly as framed now">
-                <Aperture aria-hidden="true" />
-                Save this view
-              </button>
-            </div>
-          </section>
+          <button
+            type="button"
+            className="cx-btn is-primary"
+            disabled={Boolean(exportBlocked)}
+            onClick={() => setExportOpen(true)}
+            title="A transparent PNG for inventories and stores"
+          >
+            <ImageDown aria-hidden="true" />
+            Export image
+          </button>
+          <div className="lv-foot-row">
+            <button type="button" className="cx-btn" disabled={Boolean(exportBlocked)} onClick={handleScreenshot} title="Save the viewfinder exactly as framed now">
+              <Aperture aria-hidden="true" />
+              Save this view
+            </button>
+          </div>
+          {exportBlocked ? <p className="lv-foot-note">{exportBlocked}</p> : null}
         </div>
         <PaneResizer side="dock" label="Resize the prop files panel" setWidth={panes.setWidth} />
       </aside>
@@ -899,41 +902,22 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
               hideModel={view.collisions && collisionsOnly && collisionInfo?.status === "ready"}
             />
           ) : (
-            <div className="ps-stage-empty">
-              <Monitor aria-hidden="true" />
-              <p className="ps-empty-title">Desktop app required</p>
-              <p className="ps-empty-desc">Reading game models, textures and lights needs the Cortex Studio desktop app.</p>
-            </div>
+            <StageEmpty icon={Monitor} title="Desktop app required" line="Reading game models, textures and lights needs the Cortex Studio desktop app." />
           )}
           {isTauriRuntime && !hasModel && !loading ? (
-            <div className="ps-stage-empty">
-              <p className="ps-empty-title">{load.status === "error" ? "The model didn't load" : "No prop open"}</p>
-              <p className="ps-empty-desc">
-                {load.status === "error" ? load.error : "Open a .ydr, .ydd or .yft, or drop one on the viewfinder."}
-              </p>
+            <StageEmpty
+              tone={load.status === "error" ? "error" : undefined}
+              title={load.status === "error" ? "The model didn't load" : "No prop open"}
+              line={load.status === "error" ? load.error : "Open a .ydr, .ydd or .yft, or drop one on the viewfinder."}
+            >
               <button type="button" className="cx-btn is-primary" onClick={handlePickModel}>Open a prop</button>
-            </div>
+            </StageEmpty>
           ) : null}
         </div>
 
         <div className="lv-hud">
           {hasModel ? (
-            <div className="lv-stage-switch" role="radiogroup" aria-label="Stage">
-              <button type="button" role="radio" aria-checked={!showroomOn} className={!showroomOn ? "is-on" : ""} onClick={() => updateScene({ stage: "workbench" })}>
-                Workbench
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={showroomOn}
-                className={showroomOn ? "is-on" : ""}
-                onClick={() => updateScene({ stage: "showroom" })}
-                title="A dark product studio with a reflective floor and a spotlight you can aim"
-              >
-                <LampCeiling aria-hidden="true" />
-                Showroom
-              </button>
-            </div>
+            <StageToggle showroom={showroomOn} onChange={(on) => updateScene({ stage: on ? "showroom" : "workbench" })} title="A dark product studio with a reflective floor and a spotlight you can aim" />
           ) : null}
 
           <div className="lv-slip-stack">
@@ -1040,32 +1024,36 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
                   <RotateCw aria-hidden="true" />
                 </DeckButton>
               </div>
-              <div className="lv-deck-group" role="group" aria-label="View">
-                <DeckButton active={view.wireframe} onClick={() => updateView({ wireframe: !view.wireframe })} title="Wireframe (W)" className="is-icon">
-                  <Box aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={view.meshStats} onClick={() => updateView({ meshStats: !view.meshStats })} title="Mesh stats" className="is-icon">
-                  <Triangle aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={view.collisions} onClick={() => updateView({ collisions: !view.collisions })} title="Collisions" className="is-icon">
-                  <Hexagon aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={view.origin} onClick={() => updateView({ origin: !view.origin })} title="GTA origin and axes" className="is-icon">
-                  <Axis3d aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={scene.grid && !showroomOn} onClick={() => updateScene({ grid: !scene.grid })} title={showroomOn ? "Ground grid (workbench only)" : "Ground grid"} disabled={showroomOn} className="is-icon">
-                  <Grid3x3 aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={scene.shadows || showroomOn} onClick={() => updateScene({ shadows: !scene.shadows })} title={showroomOn ? "Shadows are always on in the showroom" : "Ground shadow"} disabled={showroomOn} className="is-icon">
-                  <Sun aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={scene.ambientOcclusion} onClick={() => updateScene({ ambientOcclusion: !scene.ambientOcclusion })} title="Ambient occlusion" className="is-icon">
-                  <Contrast aria-hidden="true" />
-                </DeckButton>
-                <DeckButton active={scene.dark > 0} onClick={() => updateScene({ dark: scene.dark > 0 ? 0 : 1 })} title="Dark room: studio lights off (N)" className="is-icon">
-                  <Moon aria-hidden="true" />
-                </DeckButton>
-              </div>
+              <DeckViewMenu
+                groups={[deckButtonItems(
+                  <>
+                    <DeckButton active={view.wireframe} onClick={() => updateView({ wireframe: !view.wireframe })} title="Wireframe (W)" label="Wireframe" className="is-icon">
+                      <Box aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={view.meshStats} onClick={() => updateView({ meshStats: !view.meshStats })} title="Mesh stats" className="is-icon">
+                      <Triangle aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={view.collisions} onClick={() => updateView({ collisions: !view.collisions })} title="Collisions" className="is-icon">
+                      <Hexagon aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={view.origin} onClick={() => updateView({ origin: !view.origin })} title="GTA origin and axes" className="is-icon">
+                      <Axis3d aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={scene.grid && !showroomOn} onClick={() => updateScene({ grid: !scene.grid })} title="Ground grid" note="Workbench only" disabled={showroomOn} className="is-icon">
+                      <Grid3x3 aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={scene.shadows || showroomOn} onClick={() => updateScene({ shadows: !scene.shadows })} title="Ground shadow" note="Always on in the showroom" disabled={showroomOn} className="is-icon">
+                      <Sun aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={scene.ambientOcclusion} onClick={() => updateScene({ ambientOcclusion: !scene.ambientOcclusion })} title="Ambient occlusion" className="is-icon">
+                      <Contrast aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton active={scene.dark > 0} onClick={() => updateScene({ dark: scene.dark > 0 ? 0 : 1 })} title="Dark room: studio lights off (N)" label="Dark room" note="Studio lights off" className="is-icon">
+                      <Moon aria-hidden="true" />
+                    </DeckButton>
+                  </>,
+                )]}
+              />
               <div className="lv-deck-group">
                 <DeckButton active={helpOpen} onClick={() => setHelpOpen((value) => !value)} title="Mouse and keyboard controls" className="is-icon">
                   <CircleHelp aria-hidden="true" />

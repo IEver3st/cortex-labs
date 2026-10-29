@@ -7,6 +7,15 @@
 :root {
   --cx-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --cx-on-primary: #ffffff;
+  --cx-fs-label: calc(10.5 * var(--u));
+  --cx-fs-meta: calc(11 * var(--u));
+  --cx-fs-body: calc(12 * var(--u));
+  --cx-fs-control: calc(12.5 * var(--u));
+  --cx-fs-row: calc(13 * var(--u));
+  --cx-fs-title: calc(14 * var(--u));
+  --cx-fs-display-sm: calc(22 * var(--u));
+  --cx-fs-display-md: calc(28 * var(--u));
+  --cx-fs-display-lg: calc(40 * var(--u));
   /* Selection flips to the opposite ink, in every theme and preset. */
   --cx-invert-bg: var(--mg-fg);
   --cx-invert-fg: var(--mg-bg);
@@ -81,7 +90,7 @@ textarea {
 /* ── Small tracked caps for structural labels ── */
 .cx-label {
   font-family: var(--font-main);
-  font-size: calc(10.5 * var(--u));
+  font-size: var(--cx-fs-label);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -139,7 +148,7 @@ textarea {
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
@@ -324,7 +333,7 @@ textarea {
   background: var(--mg-input-bg);
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 500;
   text-align: left;
   cursor: pointer;
@@ -411,7 +420,7 @@ textarea {
   min-height: 30px;
   padding: 5px 8px 5px 10px;
   border-radius: 5px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.3;
   color: var(--mg-fg);
   cursor: pointer;
@@ -448,7 +457,7 @@ textarea {
 .cx-select-item-desc {
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -468,7 +477,7 @@ textarea {
 
 .cx-select-label {
   padding: 8px 10px 4px;
-  font-size: 10.5px;
+  font-size: var(--cx-fs-label);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -510,7 +519,7 @@ textarea {
   box-shadow: var(--cx-shadow-pop);
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.3;
   transform-origin: var(--radix-context-menu-content-transform-origin);
 }
@@ -618,7 +627,7 @@ textarea {
 
 .ctx-menu-label {
   padding: 8px 10px 5px;
-  font-size: 10.5px;
+  font-size: var(--cx-fs-label);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -664,7 +673,7 @@ textarea {
   padding: 0 calc(16 * var(--u));
   border-radius: calc(5 * var(--u));
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -729,6 +738,12 @@ textarea {
   .cx-select-item[data-highlighted] {
     outline: 1px solid Highlight;
   }
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 280ms;
+  animation-timing-function: var(--cx-ease);
 }
 
 /* Settings > Reduce motion: Always. Same effect as the OS setting, app-wide. */

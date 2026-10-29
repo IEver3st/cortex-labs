@@ -74,7 +74,7 @@ Derived roles in `studio.css`:
 
 ### Accent discipline
 
-The accent is the only saturated hue on an ordinary screen. Appropriate: the primary action, focus rings, the active tab or filter underline, a rail item's hover bar, a done pipeline step, slider fill, progress, the brand mark. A region usually has one leading accent cue. Selection is ink, not accent.
+The accent is the only saturated hue on an ordinary screen. Appropriate: the primary action, focus rings, the open tab's cap or a filter underline, a rail item's hover bar, a done pipeline step, slider fill, progress, the brand mark. A region usually has one leading accent cue. Selection is ink, not accent.
 
 ### Status and category
 
@@ -90,22 +90,26 @@ Three families, defined in `src/index.css` and bundled in `src/fonts.css`:
 - `--font-main`: Segoe UI Variable Text. All interface text.
 - `--font-hud`: Consolas / Cascadia Mono. Paths, file folders, hex values, counts, dimensions, times, version strings.
 
-| Role | Treatment | Reference |
-| --- | --- | --- |
-| Page identity | `.cx-display`, `26-40px` | Settings rail title `26px`, Settings page title `40px`, modal title `28px`. |
-| Focus identity | `.cx-display`, `clamp(30px, 3.6vw, 50px)`, two-line clamp | Home focused project. |
-| Section title | Main, `14-15px`, `650` | "Start a session", pipeline step title, project list title. |
-| Structural label | `.cx-label`: `10.5px`, `700`, `0.14em`, uppercase, muted | Rail groups, inspector groups, fact keys, field labels. No `//` prefixes or brackets. |
-| Primary label | Main, `13-13.5px`, `600` | Rows, nav items, file names. |
-| Body / description | Main, `12-12.5px`, muted, `1.35-1.55` line height | One line under a row; hints in drop targets. |
-| Metadata | Mono, `11-12.5px`, muted, tabular | Paths, sizes, times, counts. |
-| Keycap | Display italic `11-12px` inside `.cx-keycap` | Shortcuts. |
+Every font size comes from a token in `src/studio.css`. Write `font-size: var(--cx-fs-*)`, never a literal, so the scale stays at six text steps and three display steps. Literal sizes are only for dense figure cells (the siren grid), SVG figure units, and the Home brand wordmark, which is sized to its mark like a logo.
+
+| Role | Token | Size | Treatment | Reference |
+| --- | --- | --- | --- | --- |
+| Page identity | `--cx-fs-display-lg` / `-md` | `40` / `28` | `.cx-display` | Settings page title, modal and rail identity. |
+| Panel identity | `--cx-fs-display-sm` | `22` | `.cx-display`, two-line clamp, full name in `title` | Siren rail and inspector identity, stage counters. |
+| Focus identity | | `clamp(30px, 3.6vw, 50px)` | `.cx-display`, two-line clamp | Home focused project. |
+| Section title | `--cx-fs-title` | `14` | Main, `650` | "Start a session", pipeline step title, empty-state title. |
+| Primary label | `--cx-fs-row` | `13` | Main, `600` | Rows, nav items, file names. |
+| Control | `--cx-fs-control` | `12.5` | Main, `600` | Buttons, tabs, inputs, menu items. |
+| Body / description | `--cx-fs-body` | `12` | Main, muted, `1.35-1.55` line height | One line under a row, hints, notes. |
+| Metadata | `--cx-fs-meta` | `11` | Mono, muted, tabular | Paths, sizes, times, counts, hex. |
+| Structural label | `--cx-fs-label` | `10.5` | `.cx-label`: `700`, `0.14em`, uppercase, muted | Rail groups, inspector groups, fact keys. No `//` prefixes or brackets. |
+| Keycap | | `11-12` | Display italic inside `.cx-keycap` | Shortcuts. |
 
 Sentence case for everything except `.cx-display` and `.cx-label`. Truncate metadata before the primary label; long names get a `title` with the full value.
 
 ## Units and scaling
 
-UI Scaling sets `--u`. Size type, spacing, and control geometry as `calc(N * var(--u))` so the user's scale applies, as Home, Settings, and `studio.css` do. Hairlines stay `1px`. Workspace chrome that sits on the 3D scene may use fixed pixels when it must match the viewer.
+UI Scaling sets `--u`. Size type, spacing, and control geometry as `calc(N * var(--u))` so the user's scale applies, as Home, Settings, and `studio.css` do. Hairlines stay `1px`. Workspace chrome that sits on the 3D scene may use fixed pixels when it must match the viewer. The window frame's height, its icon buttons and the panel layout glyph are fixed pixels too, so they line up with the native window controls beside them; tab labels and type in the strip still scale.
 
 ## Layout topology
 
@@ -193,7 +197,7 @@ These come from the viewer workspace family and apply to any surface built aroun
 
 ## Frame and status
 
-The Shell frame is `36px` on `--cx-frame` with tabs, the context slot, feedback, settings, and window controls. Tauri drag regions stay on spacers; every control is `-webkit-app-region: no-drag`. Page status bars follow the Home footer: `28px`, mono, hairline separators, no badges.
+The Shell frame is `36px` on `--cx-frame`: the Home mark, a flat tab strip, + new tab, the context slot, feedback, settings, and window controls. The open tab takes the page fill and a 2px accent cap so it joins the workspace below; tabs that share a file name add a muted detail (the siren setting) only while they collide. Panel toggles are one `44x26` layout glyph (`PanelLayout`): a frame with a divider at each panel edge, the side column outlined while that panel is hidden and filled while it shows, each half its own toggle button. Frame icon buttons are `30x26`, radius `5px`, muted until hover; an open Settings page puts its cog in opposite ink. The update control uses the strip's type (`--cx-fs-control`), no border or fill, with the accent only on its icon and progress bar. Middle truncation is for file-name tabs only, so `_hi` stays readable; tool tabs end-truncate, and a tab's tooltip carries the full name and detail. Tauri drag regions stay on spacers; every control is `-webkit-app-region: no-drag`. Page status bars follow the Home footer: `28px`, mono, hairline separators, no badges.
 
 ## Motion
 

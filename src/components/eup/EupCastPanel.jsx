@@ -74,7 +74,7 @@ function EupCastPanel({ cast, focus, statuses, onFocus, onAdd, onRemove }) {
       </header>
       {full ? (
         <>
-          <ol className="mw-rows">
+          <ol className="mw-rows" title="Each character keeps its own ped, look and outfit. Click one in the viewfinder to edit it.">
             {seats.map((seat) => (
               <CastRow
                 key={seat}
@@ -88,13 +88,10 @@ function EupCastPanel({ cast, focus, statuses, onFocus, onAdd, onRemove }) {
               />
             ))}
           </ol>
-          <p className="lv-slot-note mw-tip">
-            Each character keeps its own ped, look and outfit. Click one in the viewfinder to edit it.
-          </p>
         </>
       ) : (
         <>
-          <div className="lv-slot-actions" role="group" aria-label="Add a second character">
+          <div className="lv-slot-actions" role="group" aria-label="Add a second character" title="Add a second character with its own ped, look and outfit, side by side on one stage">
             <button type="button" className="cx-btn lv-btn-sm" onClick={() => onAdd("male")} title="Stand a male ped beside this one">
               <Plus aria-hidden="true" />
               Male
@@ -104,7 +101,6 @@ function EupCastPanel({ cast, focus, statuses, onFocus, onAdd, onRemove }) {
               Female
             </button>
           </div>
-          <p className="lv-slot-note">Add a second character with its own ped, look and outfit, side by side on one stage.</p>
         </>
       )}
     </section>

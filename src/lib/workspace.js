@@ -240,6 +240,10 @@ export function addRecent(workspaceId, name, page) {
  */
 export function markWorkspaceOpened(workspaceId) {
   if (typeof workspaceId !== "string" || !workspaceId) return;
+  if (loadRecent().some((entry) => entry.workspaceId === workspaceId)) {
+    touchRecent(workspaceId);
+    return;
+  }
   const ws = loadWorkspaces()[workspaceId];
   if (!ws) return;
   addRecent(workspaceId, ws.name, ws.page);

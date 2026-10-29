@@ -55,7 +55,7 @@
   min-width: 0;
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -113,13 +113,13 @@
 }
 
 .tm-color-label {
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 500;
 }
 
 .tm-color-hex {
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -161,19 +161,19 @@
 }
 
 .tm-option strong {
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 600;
 }
 
 .tm-option small {
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   line-height: 1.35;
   color: var(--mg-muted);
 }
 
 .tm-format {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -184,80 +184,39 @@
 }
 
 /* ── Export (dock foot) ── */
-.tm-export {
-  display: grid;
-  gap: 12px;
-}
-
-.tm-dest {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  min-height: 32px;
-}
-
-.tm-dest .cx-label {
-  flex-shrink: 0;
-  margin-right: 6px;
+.tm-export .lv-foot-value {
+  gap: 2px;
+  overflow: visible;
 }
 
 .tm-dest-name {
-  flex: 1;
   min-width: 0;
+  margin-right: 4px;
   overflow: hidden;
-  font-family: var(--font-hud);
-  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tm-dest-row {
+.tm-save-live {
   display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 2px;
+  flex-direction: column;
   min-width: 0;
 }
 
-.tm-dest-pick {
-  margin-left: auto;
+.tm-save-live:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
-.tm-dest-note {
-  margin: -6px 0 0;
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--mg-muted);
-}
-
-.tm-export-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.tm-export-btn {
-  flex: 1;
-  height: 36px;
-}
-
-.tm-rebuild-btn {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-}
-
-.tm-export-status {
-  min-height: 1.4em;
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--mg-muted);
-  overflow-wrap: anywhere;
-}
-
-.tm-export-status.is-saved {
+.tm-saved {
+  min-width: 0;
+  overflow: hidden;
   color: var(--cx-confirm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tm-root .is-spinning {
@@ -338,7 +297,7 @@
   max-width: min(86%, 460px);
   padding: 10px 12px 10px 14px;
   border-radius: 9px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   transform: translate(-50%, -50%);
 }
 
@@ -370,7 +329,7 @@
 
 .tm-coach {
   position: absolute;
-  top: calc(var(--lv-inset) + 50px);
+  top: calc(var(--lv-inset) + 40px);
   left: var(--lv-inset);
   z-index: 3;
   display: flex;
@@ -380,7 +339,7 @@
   margin: 0;
   padding: 8px 12px;
   border-radius: 9px;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.4;
 }
 
@@ -456,13 +415,13 @@
 
 .tm-sheet-title {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--cx-fs-title);
   font-weight: 600;
 }
 
 .tm-sheet-copy {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
   overflow-wrap: anywhere;
@@ -484,7 +443,7 @@
   padding: 6px 10px;
   border-radius: 8px;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -670,12 +629,12 @@
 
 .tm-marker-pick .cx-display {
   min-width: 14px;
-  font-size: 15px;
+  font-size: var(--cx-fs-title);
 }
 
 .tm-marker-size {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -683,7 +642,7 @@
 
 .tm-marker-warn {
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--cx-caution);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -692,7 +651,7 @@
 .tm-marker-fill .lv-seg-btn {
   min-height: 22px;
   padding: 0 7px;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
 }
 
 /* Marker drawing bar: replaces the deck while drawing. */
@@ -716,19 +675,19 @@
   gap: 4px;
   flex-shrink: 0;
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
 .tm-markerbar-count .cx-display {
-  font-size: 24px;
+  font-size: var(--cx-fs-display-sm);
   color: var(--mg-fg);
 }
 
 .tm-markerbar-hint {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.4;
   color: var(--mg-muted);
 }
@@ -737,32 +696,6 @@
   display: flex;
   gap: 6px;
   flex-shrink: 0;
-}
-
-/* ── Empty stage ── */
-.tm-empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: start;
-  gap: 8px;
-  max-width: 420px;
-  margin: 0 auto;
-  padding: 24px;
-}
-
-.tm-empty-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.tm-empty-copy {
-  margin: 0 0 10px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--mg-muted);
 }
 
 .tm-spinner {

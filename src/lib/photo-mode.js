@@ -51,6 +51,10 @@ export const OUTPUT_PRESETS = Object.freeze([
 export const DEFAULT_OUTPUT = "hd";
 export const MAX_OUTPUT_EDGE = 4096;
 
+export function normalizeOutputPreset(value, fallback = DEFAULT_OUTPUT) {
+  return OUTPUT_PRESETS.some((item) => item.id === value) ? value : fallback;
+}
+
 export function outputSize(output) {
   const preset = OUTPUT_PRESETS.find((item) => item.id === output?.preset) || OUTPUT_PRESETS[0];
   return { width: preset.width, height: preset.height };
@@ -431,7 +435,7 @@ export function normalizePhotoState(value, prefs = {}) {
     shots: normalizeShots(source.shots),
     scene: normalizePhotoScene(source.scene, prefs),
     output: {
-      preset: OUTPUT_PRESETS.some((item) => item.id === source.output?.preset) ? source.output.preset : DEFAULT_OUTPUT,
+      preset: normalizeOutputPreset(source.output?.preset, normalizeOutputPreset(prefs.output, DEFAULT_OUTPUT)),
       transparent: source.output?.transparent === true,
       guides: source.output?.guides !== false,
     },

@@ -205,7 +205,7 @@ function ElsRows({ els }) {
   );
 }
 
-export default function VehicleLightsPanel({ lights, onChange, modelLights, setting, sirenStatus, getTime, ulc = null, ulcPath = "", ulcError = "", extrasPlan, extrasState, onExtrasStateChange, showPattern = true, els = null }) {
+export default function VehicleLightsPanel({ lights, onChange, modelLights, setting, sirenStatus, getTime, ulc = null, ulcPath = "", ulcError = "", extrasPlan, extrasState, onExtrasStateChange, showPattern = true, els = null, active = true }) {
   const switches = normalizeLightSwitches(lights?.switches);
   // While ELS drives this vehicle, its stage runs the sirens, not the toggle.
   const elsLive = Boolean(els?.enabled && els.draft);
@@ -377,7 +377,7 @@ export default function VehicleLightsPanel({ lights, onChange, modelLights, sett
             })}
             {sirensOn ? (
               <span className="vl-track" aria-hidden="true">
-                <Playhead getTime={getTime} bps={bps} running={speed > 0} />
+                <Playhead getTime={getTime} bps={bps} running={active && speed > 0} />
               </span>
             ) : null}
           </div>

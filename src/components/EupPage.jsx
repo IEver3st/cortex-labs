@@ -5,7 +5,7 @@ import { exists, readDir, readFile, stat, writeFile } from "@tauri-apps/plugin-f
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Group, MathUtils } from "three";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertTriangle, Aperture, Check, CircleHelp, Crosshair, Grid3x3, Images, LampCeiling, Loader2, Monitor, Pause, Play, Sun, Triangle, X } from "lucide-react";
+import { AlertTriangle, Aperture, Check, CircleHelp, Crosshair, Grid3x3, Images, Loader2, Monitor, Pause, Play, Sun, Triangle, X } from "lucide-react";
 import {
   EXPORT_FORMATS,
   VIDEO_FPS,
@@ -140,7 +140,7 @@ import {
 import { clampClipTime, isClipAtEnd, normalizePlayback } from "../lib/eup-playback";
 import { getOutfitLibrary, outfitLibraryError, subscribeOutfitLibrary, updateOutfitLibrary } from "../lib/eup-outfit-library";
 import { OUTFIT_STYLES, gameAvailability, generateOutfit, outfitSignature, overridesWithOutfit } from "../lib/eup-outfit-generator";
-import { ColorLine, DeckButton, FloorField, InspectorTabs, MeshStatsSlip, Slider, StageSection, WorkspaceFrame } from "./workspace/parts";
+import { ColorLine, DeckButton, DeckViewMenu, deckButtonItems, FloorField, InspectorTabs, MeshStatsSlip, Slider, StageEmpty, StageToggle, StageSection, WorkspaceFrame } from "./workspace/parts";
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
 import "./EupPage.css";
 
@@ -1950,6 +1950,7 @@ export default function EupPage({
   }, []);
 
   const handleCountThumbnailConflicts = useCallback(async (folder, jobs) => {
+    if (loadPrefs()?.defaults?.replaceExports === true) return 0;
     let conflicts = 0;
     await mapLimited(jobs, STAT_CONCURRENCY, async (job) => {
       if (await exists(joinPath(folder, job.fileName)).catch(() => false)) conflicts += 1;
@@ -2109,9 +2110,11 @@ export default function EupPage({
       const picked = await open({ directory: true, multiple: false, title: "Choose a folder for the shots" });
       if (typeof picked !== "string" || !picked) return;
       let conflicts = 0;
-      await mapLimited(files, STAT_CONCURRENCY, async (file) => {
-        if (await exists(joinPath(picked, file.name)).catch(() => false)) conflicts += 1;
-      });
+      if (loadPrefs()?.defaults?.replaceExports !== true) {
+        await mapLimited(files, STAT_CONCURRENCY, async (file) => {
+          if (await exists(joinPath(picked, file.name)).catch(() => false)) conflicts += 1;
+        });
+      }
       const job = { folder: picked, files, size, transparent };
       if (conflicts > 0) {
         pendingExportRef.current = job;
@@ -2630,37 +2633,31 @@ export default function EupPage({
             onCopyCurrentLua={handleCopyCurrentLua}
           />
         </div>
-        <div className="lv-dock-foot">
-          <section className={`lv-capture ${isTauriRuntime ? "" : "is-disabled"}`} id="eup-export">
-            <header className="lv-slot-head">
-              <h3 className="lv-slot-title">Export</h3>
-            </header>
-            <div className="lv-slot-body">
-              <p className="lv-slot-note">
-                {isTauriRuntime ? "Shots, videos and colourway sheets of this outfit." : "Exporting needs the desktop app."}
-              </p>
-              <button
-                type="button"
-                className="cx-btn is-primary lv-capture-btn"
-                disabled={!isTauriRuntime}
-                onClick={openExport}
-                aria-pressed={inspectorTab === "export" && inspectorOpen}
-              >
-                <Images aria-hidden="true" />
-                {exportRunning ? "Exporting…" : "Export…"}
-              </button>
-              <button
-                type="button"
-                className="cx-btn lv-capture-btn"
-                disabled={!isTauriRuntime || exportRunning}
-                onClick={handleScreenshot}
-                title="Save the viewfinder exactly as framed now"
-              >
-                <Aperture aria-hidden="true" />
-                Save this view
-              </button>
-            </div>
-          </section>
+        <div className="lv-dock-foot" id="eup-export">
+          <button
+            type="button"
+            className="cx-btn is-primary"
+            disabled={!isTauriRuntime}
+            onClick={openExport}
+            aria-pressed={inspectorTab === "export" && inspectorOpen}
+            title="Shots, videos and colourway sheets of this outfit"
+          >
+            <Images aria-hidden="true" />
+            {exportRunning ? "Exporting…" : "Export…"}
+          </button>
+          <div className="lv-foot-row">
+            <button
+              type="button"
+              className="cx-btn"
+              disabled={!isTauriRuntime || exportRunning}
+              onClick={handleScreenshot}
+              title="Save the viewfinder exactly as framed now"
+            >
+              <Aperture aria-hidden="true" />
+              Save this view
+            </button>
+          </div>
+          {isTauriRuntime ? null : <p className="lv-foot-note">Exporting needs the desktop app.</p>}
         </div>
         <PaneResizer side="dock" label="Resize the clothing panel" setWidth={panes.setWidth} />
       </aside>
@@ -2695,11 +2692,7 @@ export default function EupPage({
               onMeshStats={setMeshStats}
             />
           ) : (
-            <div className="eup-stage-empty">
-              <Monitor aria-hidden="true" />
-              <p className="eup-empty-title">Desktop app required</p>
-              <p className="eup-empty-desc">Reading game files and EUP clothing needs the Cortex Studio desktop app.</p>
-            </div>
+            <StageEmpty icon={Monitor} title="Desktop app required" line="Reading game files and EUP clothing needs the Cortex Studio desktop app." />
           )}
           {showFrameGuide ? (
             <div className="eup-guide" aria-hidden="true" style={{ "--eup-guide-ratio": exportFormat.width / exportFormat.height }}>
@@ -2714,28 +2707,7 @@ export default function EupPage({
 
         <div className="lv-hud">
           {isTauriRuntime ? (
-            <div className="lv-stage-switch" role="radiogroup" aria-label="Stage">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={!showroomOn}
-                className={!showroomOn ? "is-on" : ""}
-                onClick={() => updateScene({ stage: "workbench" })}
-              >
-                Workbench
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={showroomOn}
-                className={showroomOn ? "is-on" : ""}
-                onClick={() => updateScene({ stage: "showroom" })}
-                title="A dark studio with a reflective floor and a spotlight you can aim"
-              >
-                <LampCeiling aria-hidden="true" />
-                Showroom
-              </button>
-            </div>
+            <StageToggle showroom={showroomOn} onChange={(on) => updateScene({ stage: on ? "showroom" : "workbench" })} title="A dark studio with a reflective floor and a spotlight you can aim" />
           ) : null}
 
           <div className="lv-slip-stack">
@@ -2838,8 +2810,8 @@ export default function EupPage({
                   <Crosshair aria-hidden="true" />
                 </DeckButton>
               </div>
-              <div className="lv-deck-group" role="group" aria-label="View">
-                {clip ? (
+              {clip ? (
+                <div className="lv-deck-group" role="group" aria-label="Animation">
                   <DeckButton
                     active={playing}
                     onClick={togglePlay}
@@ -2848,34 +2820,42 @@ export default function EupPage({
                   >
                     {playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                   </DeckButton>
-                ) : null}
-                <DeckButton
-                  active={scene.grid && !showroomOn}
-                  onClick={() => updateScene({ grid: !scene.grid })}
-                  title={showroomOn ? "Ground grid (workbench only)" : "Ground grid"}
-                  disabled={showroomOn}
-                  className="is-icon"
-                >
-                  <Grid3x3 aria-hidden="true" />
-                </DeckButton>
-                <DeckButton
-                  active={scene.shadows || showroomOn}
-                  onClick={() => updateScene({ shadows: !scene.shadows })}
-                  title={showroomOn ? "Shadows are always on in the showroom" : "Ground shadow"}
-                  disabled={showroomOn}
-                  className="is-icon"
-                >
-                  <Sun aria-hidden="true" />
-                </DeckButton>
-                <DeckButton
-                  active={scene.meshStats}
-                  onClick={() => updateScene({ meshStats: !scene.meshStats })}
-                  title="Solid wireframe and mesh stats"
-                  className="is-icon"
-                >
-                  <Triangle aria-hidden="true" />
-                </DeckButton>
-              </div>
+                </div>
+              ) : null}
+              <DeckViewMenu
+                groups={[deckButtonItems(
+                  <>
+                    <DeckButton
+                      active={scene.grid && !showroomOn}
+                      onClick={() => updateScene({ grid: !scene.grid })}
+                      title="Ground grid"
+                      note="Workbench only"
+                      disabled={showroomOn}
+                      className="is-icon"
+                    >
+                      <Grid3x3 aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton
+                      active={scene.shadows || showroomOn}
+                      onClick={() => updateScene({ shadows: !scene.shadows })}
+                      title="Ground shadow"
+                      note="Always on in the showroom"
+                      disabled={showroomOn}
+                      className="is-icon"
+                    >
+                      <Sun aria-hidden="true" />
+                    </DeckButton>
+                    <DeckButton
+                      active={scene.meshStats}
+                      onClick={() => updateScene({ meshStats: !scene.meshStats })}
+                      title="Solid wireframe and mesh stats"
+                      className="is-icon"
+                    >
+                      <Triangle aria-hidden="true" />
+                    </DeckButton>
+                  </>,
+                )]}
+              />
               <div className="lv-deck-group">
                 <DeckButton active={helpOpen} onClick={() => setHelpOpen((open) => !open)} title="Mouse and keyboard controls" className="is-icon">
                   <CircleHelp aria-hidden="true" />

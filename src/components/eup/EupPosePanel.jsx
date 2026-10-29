@@ -294,7 +294,7 @@ function EupPosePanel({
   return (
     <EupStep step={step} done={clipReady} title="Pose">
       <div className="lv-field">
-        <div className="lv-chips" role="radiogroup" aria-label="Pose">
+        <div className="lv-chips" role="radiogroup" aria-label="Pose" title={custom ? undefined : "Game animations, played in place. Space pauses on the frame you want."}>
           {[...PED_POSES, { id: CUSTOM_POSE, label: "Custom" }].map((option) => (
             <button
               key={option.id}
@@ -319,8 +319,6 @@ function EupPosePanel({
             {poseNoteIsError ? <span className="lv-dot" aria-hidden="true" /> : null}
             {poseNote}
           </p>
-        ) : !custom ? (
-          <p className="lv-slot-note">Game animations, played in place. Space pauses on the frame you want.</p>
         ) : null}
       </div>
       {playback}
@@ -381,7 +379,7 @@ function EupPosePanel({
               />
             </div>
           ) : (
-            <DropButton title="Choose a .ycd" hint="Your own animation dictionary, from Sollumz, OpenIV or a resource." onClick={onPickYcd} />
+            <DropButton title="Choose a .ycd" hint="Your own animation dictionary" onClick={onPickYcd} detail="Your own animation dictionary, from Sollumz, OpenIV or a resource." />
           )}
 
           <button
@@ -401,19 +399,20 @@ function EupPosePanel({
                 value={emoteText}
                 placeholder={'{"missfam4", "base", "Clipboard", AnimationOptions = { Prop = \'p_amb_clipboard_01\', PropBone = 36029, PropPlacement = {0.16, 0.08, 0.1, -130.0, -50.0, 0.0} }}'}
                 aria-label="Emote line"
+                title="An emote menu entry, a TaskPlayAnim call or an AttachEntityToEntity call."
                 onChange={(event) => setEmoteText(event.target.value)}
               />
               <button type="button" className="cx-btn lv-btn-sm" disabled={!emoteText.trim()} onClick={applyEmote}>Apply</button>
-              <p className={`lv-slot-note ${emoteNote && !emoteNote.ok ? "is-error" : ""}`} role="status">
-                {emoteNote ? emoteNote.message : "An emote menu entry, a TaskPlayAnim call or an AttachEntityToEntity call."}
-              </p>
+              {emoteNote ? (
+                <p className={`lv-slot-note ${emoteNote.ok ? "" : "is-error"}`} role="status">{emoteNote.message}</p>
+              ) : null}
             </div>
           ) : null}
         </div>
       ) : null}
 
       <div className="lv-field eup-held-field">
-        <span className="eup-field-head">
+        <span className="eup-field-head" title="Hung from a bone with a FiveM-style offset (metres) and rotation (degrees). They follow the animation.">
           <span className="cx-label" id="eup-held-label">Props</span>
           <span className="eup-field-value">{heldProps.length}/{MAX_HELD_PROPS}</span>
         </span>
@@ -461,11 +460,7 @@ function EupPosePanel({
             }}
           />
         ) : null}
-        <p className="lv-slot-note">
-          {!isTauriRuntime
-            ? "Props need the desktop app."
-            : "Hung from a bone with a FiveM-style offset (metres) and rotation (degrees). They follow the animation."}
-        </p>
+        {isTauriRuntime ? null : <p className="lv-slot-note">Props need the desktop app.</p>}
       </div>
     </EupStep>
   );

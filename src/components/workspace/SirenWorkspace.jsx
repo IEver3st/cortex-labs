@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Box, Boxes, CarFront, ClipboardCopy, ClipboardPaste, ExternalLink, FileInput, FolderOpen, Maximize2, Minimize2, PackageCheck, PanelRightClose, PanelRightOpen, Pause, PencilLine, Play, Plus, RefreshCw, Save, Settings2, SlidersHorizontal, SunMedium, Wrench, X } from "lucide-react";
+import { Box, Boxes, CarFront, ClipboardPaste, ExternalLink, FileInput, FolderOpen, Maximize2, Minimize2, PackageCheck, Pause, PencilLine, Play, Plus, RefreshCw, Settings2, SlidersHorizontal, SunMedium, Wrench, X } from "lucide-react";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import { normalizeLightSwitches } from "../../lib/emergency-lights.js";
 import { adoptPattern, createPatternSetting, describeSirenChanges } from "../../lib/siren-settings.js";
@@ -12,9 +12,12 @@ import { SettingPanel, SirenPanel } from "../siren-editor/SirenInspector";
 import useSirenResource from "../siren-editor/useSirenResource";
 import useSirenIssues from "../siren-editor/useSirenIssues";
 import useSirenSave from "../siren-editor/useSirenSave";
-import { useCarcolsImport, useSirenInstall } from "../siren-editor/useSirenTools";
+import { samePath, useCarcolsImport, useSirenInstall } from "../siren-editor/useSirenTools";
 import { StatusLines, UlcBuilderDialog, VehicleRenameDialog } from "../siren-editor/SirenToolDialogs";
 import SirenEquipment from "../siren-editor/SirenEquipment";
+import { useForgeCheck } from "../siren-editor/ForgeCheck";
+import { Menu, MenuItem } from "../siren-editor/SirenMenu";
+import JunoDescribe from "../siren-editor/JunoDescribe";
 import ElsConsole, { LightingSystemSwitch } from "../els/ElsConsole";
 import ElsEditor from "../els/ElsEditor";
 import { MISS_PATTERN_LABELS } from "../../lib/els-vcf.js";
@@ -30,14 +33,15 @@ import {
   CameraSection,
   CameraShots,
   DeckButton,
-  FileCard,
   LightSection,
   RotateButtons,
   FloorField,
+  StageEmpty,
   StageSection,
   TurntableSection,
   Viewfinder,
   WorkspaceFrame,
+  splitPath,
   withShortcut,
 } from "./parts";
 
@@ -92,26 +96,33 @@ function ImportChoices({ importer }) {
   );
 }
 
-function UsePattern({ editor, resource, canCreate, className = "cx-btn lv-btn-sm" }) {
+function patternAction(editor, resource, canCreate) {
   const pattern = editor.pattern;
   if (!pattern?.sirens?.length) return null;
   const count = pattern.sirens.length;
-  const apply = () => {
-    if (editor.draft) editor.edit((current) => adoptPattern(current, pattern));
-    else if (canCreate) editor.start(adoptPattern(resource.createSetting(), pattern));
-  };
-  const disabled = !editor.draft && !canCreate;
   const kept = editor.draft && editor.draft.sirens.length > count ? ` Sirens ${count + 1} to ${editor.draft.sirens.length} stay as they are.` : "";
+  return {
+    apply: () => {
+      if (editor.draft) editor.edit((current) => adoptPattern(current, pattern));
+      else if (canCreate) editor.start(adoptPattern(resource.createSetting(), pattern));
+    },
+    disabled: !editor.draft && !canCreate,
+    title: `Replace sirens 1 to ${count} with the pattern you built without a vehicle: colours, patterns, tempo and lamp patterns. The vehicle keeps its id, name, file and each siren's facing.${kept}`,
+  };
+}
+
+function UsePattern({ editor, resource, canCreate, className = "cx-btn lv-btn-sm" }) {
+  const action = patternAction(editor, resource, canCreate);
+  if (!action) return null;
   return (
-    <button type="button" className={className} onClick={apply} disabled={disabled}
-      title={`Replace sirens 1 to ${count} with the pattern you built without a vehicle: colours, patterns, tempo and lamp patterns. The vehicle keeps its id, name, file and each siren's facing.${kept}`}>
+    <button type="button" className={className} onClick={action.apply} disabled={action.disabled} title={action.title}>
       <ClipboardPaste aria-hidden="true" />
       Use my pattern
     </button>
   );
 }
 
-function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction }) {
+function SirenSheet({ s, resource, hasModel, system, onStartPattern }) {
   const editor = s.sirenEditor;
   const draft = editor?.draft;
   const native = Boolean(s.isTauriRuntime);
@@ -124,15 +135,24 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction
   const importer = useCarcolsImport(s, resource);
   const { issues } = useSirenIssues(s);
   const [openError, setOpenError] = useState("");
+  const forge = useForgeCheck(source, native);
+  const { sirenOpen, clearSirenOpen, modelPath } = s;
+  const { openRequest } = importer;
+  useEffect(() => {
+    if (!sirenOpen || !native) return;
+    if (sirenOpen.model ? !samePath(modelPath, sirenOpen.model) : modelPath) return;
+    clearSirenOpen();
+    openRequest(sirenOpen);
+  }, [sirenOpen, clearSirenOpen, modelPath, native, openRequest]);
   const openFile = () => {
     setOpenError("");
     invoke("open_model_meta_file", { modelPath: s.modelPath, path: source })
       .catch((error) => setOpenError(`Open file failed: ${String(error)}`));
   };
-  const importButton = (label, title, className = "cx-btn lv-btn-sm") => (
+  const importButton = (label, title, className = "cx-btn lv-btn-sm", icon = true) => (
     <button type="button" className={className} onClick={importer.pick} disabled={Boolean(importer.disabledReason)}
       title={importer.disabledReason || title}>
-      <FileInput aria-hidden="true" />
+      {icon ? <FileInput aria-hidden="true" /> : null}
       {label}
     </button>
   );
@@ -156,17 +176,19 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction
   ) : null;
 
   if (!draft) {
+    const line = !hasModel ? "A pattern built without a vehicle can go on one later."
+      : resource.status === "ready" && !meshSirens.length ? "This model has no emissive geometry on sirenN bones, so there is nothing to flash."
+        : resource.missingReason;
+    const extra = importer.choices || importer.status || readErrors;
     return (
-      <div className="sw-empty">
-        {hasModel ? system : null}
-        <p className="sw-empty-title">{hasModel ? "No siren setting yet" : "Open a vehicle, or build a pattern"}</p>
-        <p className={`sw-empty-hint ${resource.status === "scanning" ? "is-busy" : ""}`}>
-          {hasModel ? resource.missingReason : "Edit a vehicle's sirens, or build a flash pattern without one."}
-        </p>
-        {hasModel && resource.status === "ready" && !meshSirens.length ? (
-          <p className="sw-empty-hint">This model has no emissive geometry on sirenN bones, so there is nothing to flash.</p>
-        ) : null}
-        <div className="sw-empty-actions">
+      <div className="sw-empty-stage">
+        <StageEmpty title={hasModel ? "No siren setting yet" : "Open a vehicle, or build a pattern"} line={line}>
+          {hasModel && system ? (
+            <div className="sw-empty-system">
+              <span className="cx-label">System</span>
+              {system}
+            </div>
+          ) : null}
           {hasModel ? null : (
             <>
               <button type="button" className="cx-btn is-primary" onClick={s.selectModel}>Open a vehicle model</button>
@@ -182,11 +204,10 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction
           ) : null}
           {canCreate ? <UsePattern editor={editor} resource={resource} canCreate={canCreate} className="cx-btn" /> : null}
           {native && (!hasModel || resource.status === "ready")
-            ? importButton("Import from carcols.meta…", "Start from a siren setting in any carcols.meta", "cx-btn") : null}
+            ? importButton("Import from carcols.meta…", "Start from a siren setting in any carcols.meta", "cx-btn is-quiet") : null}
           {rescan}
-        </div>
-        {imports}
-        {readErrors}
+          {extra ? <div className="sw-empty-extra">{imports}{readErrors}</div> : null}
+        </StageEmpty>
       </div>
     );
   }
@@ -194,7 +215,7 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction
   const head = (
     <div className="se-rail-block se-rail-id">
       <div className="se-rail-head">
-        <span className="cx-display se-rail-name" title={draft.name || undefined}>{draft.name || "Untitled setting"}</span>
+        <span className="cx-display se-rail-name" title={draft.name || undefined} style={{ "--name-len": longestWordLength(draft.name || "Untitled setting") }}>{draft.name || "Untitled setting"}</span>
         {rescan}
       </div>
       <span className="se-rail-meta">id {draft.id ?? "—"}</span>
@@ -203,7 +224,7 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction
           <Fact label="File" title={source}>
             <span className="se-rail-file">{fileName(source)}</span>
             {native && !patternMode ? (
-              <button type="button" className="lv-link" onClick={openFile} aria-label={`Open ${fileName(source)}`}
+              <button type="button" className="cx-btn is-quiet lv-btn-sm sw-open-file" onClick={openFile} aria-label={`Open ${fileName(source)}`}
                 title={`Open ${fileName(source)} in its default editor`}>
                 <ExternalLink aria-hidden="true" />
               </button>
@@ -221,10 +242,11 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction
     </div>
   );
 
+  const forgeReason = editor.dirty ? `Save your siren changes to ${fileName(source) || "carcols.meta"} first so Forge sees them.` : "";
   const foot = (
-    <div className="se-rail-block se-rail-foot">
+    <div className="lv-dock-foot se-rail-foot">
       {saver.disabledReason && native ? <p className="lv-slot-note is-error">{saver.disabledReason}</p>
-        : installer.disabledReason && native && !patternMode ? <p className="lv-slot-note">{installer.disabledReason}</p> : null}
+        : installer.disabledReason && native && !patternMode ? <p className="lv-foot-note">{installer.disabledReason}</p> : null}
       <ToolStatus status={installer.status} onDismiss={installer.clearStatus} />
       {saver.status ? (
         <div className={`sw-status is-${saver.status.tone}`} role="status" aria-live="polite">
@@ -244,6 +266,7 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction
         </div>
       ) : null}
       {imports}
+      {forge.error ? <p className="lv-slot-note is-error">{forge.error}</p> : null}
       {patternMode ? null : (
         <button type="button" className="cx-btn is-primary sw-save" onClick={installer.install}
           disabled={Boolean(installer.disabledReason) || installer.busy}
@@ -252,50 +275,51 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern, stageAction
           {installer.busy ? "Installing…" : "Install to resource"}
         </button>
       )}
-      <div className="se-rail-grid">
+      {patternMode ? null : <UsePattern editor={editor} resource={resource} canCreate={canCreate} className="cx-btn is-quiet lv-btn-sm sw-use-pattern" />}
+      <div className="lv-foot-row">
         <button type="button" className="cx-btn lv-btn-sm" onClick={saver.saveToFile}
           disabled={Boolean(saver.disabledReason) || saver.saving}
           title={saver.disabledReason || "Write this setting into a carcols.meta you choose"}>
-          <Save aria-hidden="true" />
           {saver.saving ? "Saving…" : "Save to file…"}
         </button>
-        {importButton("Import…", "Replace this setting's pattern with one from any carcols.meta")}
-        <button type="button" className="cx-btn lv-btn-sm" onClick={saver.copyXml} title="Copy this setting's <Sirens> Item">
-          <ClipboardCopy aria-hidden="true" />
-          Copy XML
-        </button>
-        {editor.dirty ? (
-          <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={editor.revert}
-            title={editor.base ? "Back to the values in carcols.meta" : "Discard the new setting"}>
+        {importButton("Import…", "Replace this setting's pattern with one from any carcols.meta", "cx-btn lv-btn-sm", false)}
+        <Menu label="More" title="Copy XML, check in Forge, discard">
+          <MenuItem onSelect={saver.copyXml} title="Copy this setting's <Sirens> Item">Copy XML</MenuItem>
+          {native && forge.folder ? (
+            <MenuItem onSelect={forge.check} disabled={Boolean(forgeReason) || forge.starting} title={forgeReason || forge.hint}>Check in Forge</MenuItem>
+          ) : null}
+          <div className="se-menu-rule" role="separator" />
+          <MenuItem onSelect={editor.revert} disabled={!editor.dirty}
+            title={!editor.dirty ? "Nothing to discard: the setting matches its file" : editor.base ? "Back to the values in carcols.meta" : "Discard the new setting"}>
             {editor.base ? "Revert" : "Discard"}
-          </button>
-        ) : null}
+          </MenuItem>
+        </Menu>
       </div>
-      {patternMode ? null : <UsePattern editor={editor} resource={resource} canCreate={canCreate} />}
     </div>
   );
 
-  return <SirenEditor s={s} head={head} foot={foot} stageAction={stageAction} />;
+  const assist = native && hasModel && !patternMode ? <JunoDescribe key={s.modelPath} s={s} resource={resource} /> : null;
+
+  return <SirenEditor s={s} head={head} assist={assist} foot={foot} />;
 }
 
-function VehicleBar({ s }) {
+function VehicleSlip({ s }) {
   const hotkey = (s.hotkeys || {})[HOTKEY_ACTIONS.SELECT_MODEL];
-  if (!s.modelPath) return s.modelLoading ? <div className="sw-vehicle"><p className="lv-slot-note is-busy">Loading model…</p></div> : null;
+  const path = s.modelSourcePath || s.modelPath;
+  if (!path) return s.modelLoading ? <div className="sw-vehicle lv-slip"><p className="lv-slot-note is-busy">Loading model…</p></div> : null;
   return (
-    <div className="sw-vehicle">
-      <FileCard path={s.modelSourcePath || s.modelPath} actions={(
-        <>
-          <button type="button" className="cx-icon-btn lv-file-act" onClick={s.selectModel}
-            title={withShortcut("Replace the vehicle", hotkey)} aria-label="Replace the vehicle">
-            <FolderOpen aria-hidden="true" />
-          </button>
-          <button type="button" className="cx-icon-btn lv-file-act" onClick={s.unloadModel}
-            title="Unload the vehicle" aria-label="Unload the vehicle">
-            <X aria-hidden="true" />
-          </button>
-        </>
-      )} />
-      {s.modelLoading ? <p className="lv-slot-note is-busy">Loading model…</p> : null}
+    <div className="sw-vehicle lv-slip" role="group" aria-label="Vehicle model">
+      {s.modelLoading ? <p className="lv-slot-note is-busy">Loading model…</p> : (
+        <span className="sw-vehicle-name" title={path}>{splitPath(path).name}</span>
+      )}
+      <button type="button" className="cx-icon-btn" onClick={s.selectModel}
+        title={withShortcut("Replace the vehicle", hotkey)} aria-label="Replace the vehicle">
+        <FolderOpen aria-hidden="true" />
+      </button>
+      <button type="button" className="cx-icon-btn" onClick={s.unloadModel}
+        title="Unload the vehicle" aria-label="Unload the vehicle">
+        <X aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -314,7 +338,7 @@ function VehicleView({ s, ps, resource, els, elsMode, setTool }) {
         setting={lights.setting || null} getTime={ps.getLightTime} showPattern={false}
         ulc={lights.ulc || null} ulcPath={resource.ulcResult.path} ulcError={resource.ulcResult.error}
         extrasPlan={s.extrasPlan} extrasState={s.extrasState} onExtrasStateChange={s.updateExtrasState}
-        sirenStatus={resource.missingReason} els={els} />
+        sirenStatus={resource.missingReason} els={els} active={s.isActive} />
       {!elsMode && s.isTauriRuntime && resource.status === "ready" ? (
         <div className="sw-group">
           <div className="sw-group-head">
@@ -338,7 +362,7 @@ function VehicleView({ s, ps, resource, els, elsMode, setTool }) {
   );
 }
 
-function SirenSide({ s, ps, resource, els, elsMode, hasModel, inert, setWidth, cameraShots, onClose, closeRef }) {
+function SirenSide({ s, ps, resource, els, elsMode, hasModel, inert, setWidth, cameraShots }) {
   const editor = s.sirenEditor;
   const [view, setView] = useState(null);
   const [tool, setTool] = useState(null);
@@ -346,12 +370,15 @@ function SirenSide({ s, ps, resource, els, elsMode, hasModel, inert, setWidth, c
   useEffect(() => setView(null), [selectionKey]);
   const views = VIEWS.filter((entry) => (entry.id === "setting" ? !elsMode : entry.id === "scene" || hasModel));
   const light = elsMode ? null : editor?.draft?.sirens[editor.primary] || null;
-  const auto = elsMode ? (hasModel ? "vehicle" : "scene") : light ? null : "setting";
-  const shown = views.some((entry) => entry.id === view) ? view : auto;
+  const noSetting = !elsMode && !editor?.draft;
+  const blocked = (id) => (noSetting && id === "setting" ? "No siren setting open yet" : "");
+  const auto = elsMode ? (hasModel ? "vehicle" : "scene") : noSetting ? (hasModel ? "vehicle" : null) : light ? null : "setting";
+  const shown = views.some((entry) => entry.id === view && !blocked(entry.id)) ? view : auto;
   const count = editor?.selection?.length || 0;
-  const title = shown ? VIEWS.find((entry) => entry.id === shown).label : count > 1 ? `${count} sirens` : `Siren ${editor.primary + 1}`;
+  const title = shown ? VIEWS.find((entry) => entry.id === shown).label
+    : noSetting ? "Siren" : count > 1 ? `${count} sirens` : `Siren ${editor.primary + 1}`;
 
-  let body = <SirenPanel s={s} />;
+  let body = noSetting && !shown ? <p className="se-empty">Select a siren in the pattern to edit it here.</p> : <SirenPanel s={s} />;
   if (shown === "setting") body = <SettingPanel s={s} />;
   else if (shown === "vehicle") body = <VehicleView s={s} ps={ps} resource={resource} els={els} elsMode={elsMode} setTool={setTool} />;
   else if (shown === "mods") body = <ModkitPanel s={s} />;
@@ -378,26 +405,21 @@ function SirenSide({ s, ps, resource, els, elsMode, hasModel, inert, setWidth, c
   return (
     <aside className="lv-inspector sw-side" aria-label="Selection and vehicle" inert={inert}>
       <PaneResizer side="insp" label="Resize the preview and panel column" setWidth={setWidth} minStage={SEQUENCER_MIN} />
-      <VehicleBar s={s} />
       <header className="sw-side-head">
         <h3 className="cx-display sw-side-title" title={title}>{title}</h3>
         <div className="sw-side-views" role="group" aria-label="Panel">
           {views.map(({ id, label, Icon }) => {
             const on = shown === id;
             const toggled = view === id && light && id !== auto;
+            const reason = blocked(id);
             return (
               <button key={id} type="button" className={`cx-icon-btn sw-side-view ${on ? "is-on" : ""}`} aria-pressed={on}
-                aria-label={label} title={toggled ? `${label}. Click again for the selected siren.` : label}
-                onClick={() => setView(view === id ? null : id)}>
+                aria-label={label} title={reason ? `${label}: ${reason}` : toggled ? `${label}. Click again for the selected siren.` : label}
+                disabled={Boolean(reason)} onClick={() => setView(view === id ? null : id)}>
                 <Icon aria-hidden="true" />
               </button>
             );
           })}
-          <span className="sw-side-rule" aria-hidden="true" />
-          <button ref={closeRef} type="button" className="cx-icon-btn sw-side-view" onClick={onClose} aria-expanded="true"
-            aria-label="Hide the preview and panel" title="Hide the preview and panel">
-            <PanelRightClose aria-hidden="true" />
-          </button>
         </div>
       </header>
       <div className="lv-inspector-scroll custom-scrollbar">{body}</div>
@@ -454,24 +476,12 @@ function PreviewControls({ s, expanded, onToggle }) {
   );
 }
 
+function longestWordLength(text) {
+  return Math.max(1, ...String(text).split(/\s+/).map((word) => word.length));
+}
+
 export default function SirenWorkspace({ s, viewer, overlays }) {
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const closeButton = useRef(null);
-  const reopenButton = useRef(null);
-  const panelFocus = useRef(null);
-  useEffect(() => {
-    const target = panelFocus.current === "close" ? closeButton.current : panelFocus.current === "reopen" ? reopenButton.current : null;
-    panelFocus.current = null;
-    target?.focus();
-  }, [inspectorOpen]);
-  const showPanel = () => { panelFocus.current = "close"; setInspectorOpen(true); };
-  const hidePanel = () => { panelFocus.current = "reopen"; setInspectorOpen(false); };
-  const reopen = inspectorOpen ? null : (
-    <button ref={reopenButton} type="button" className="cx-icon-btn se-icon-btn" onClick={showPanel} aria-expanded="false"
-      aria-label="Show the preview and panel" title="Show the preview and panel">
-      <PanelRightOpen aria-hidden="true" />
-    </button>
-  );
   const panes = usePaneWidths("cortex.sirens.panes");
   const preview = usePreviewHeight("cortex.sirens.previewHeight");
   // The preview fills the workspace in focus mode, shared with the frame's
@@ -494,13 +504,26 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
   const editor = s.sirenEditor;
   const els = s.els || null;
   const elsMode = Boolean(els?.enabled);
+  const sirenRequested = Boolean(s.sirenOpen);
+  useEffect(() => {
+    if (sirenRequested && elsMode) els.showCarcolsForNow();
+  }, [sirenRequested, elsMode, els]);
   const system = els ? <LightingSystemSwitch els={els} disabled={!hasModel} /> : null;
   const lights = s.vehicleLights || {};
   const switches = normalizeLightSwitches(lights.switches);
   const patternMode = !hasModel && !elsMode;
   const speed = Number.isFinite(lights.speed) ? lights.speed : 1;
-  const clock = usePatternClock(patternMode && Boolean(editor.draft) && switches.sirens && s.isActive !== false, speed);
-  const ps = useMemo(() => (patternMode ? { ...s, getLightTime: clock.get, setLightTime: clock.set } : s), [patternMode, s, clock]);
+  const previewHidden = hasModel && !inspectorOpen && !expanded;
+  const ownClock = patternMode || previewHidden;
+  const clockRunning = s.isActive !== false && (previewHidden ? switches.sirens || elsMode : patternMode && Boolean(editor.draft) && switches.sirens);
+  const clock = usePatternClock(clockRunning, speed);
+  const { getLightTime, setLightTime } = s;
+  useLayoutEffect(() => {
+    if (!previewHidden) return undefined;
+    clock.set(getLightTime?.() ?? 0);
+    return () => setLightTime?.(clock.get());
+  }, [previewHidden, clock, getLightTime, setLightTime]);
+  const ps = useMemo(() => (ownClock ? { ...s, getLightTime: clock.get, setLightTime: clock.set } : s), [ownClock, s, clock]);
   const startPattern = () => {
     editor.start(createPatternSetting());
     clock.set(0);
@@ -523,6 +546,7 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
   }, [fileSetting, draft, start]);
   const sirensStarted = useRef("");
   const hasSetting = Boolean(lights.setting);
+  const blank = patternMode && !editor.draft;
   useEffect(() => {
     // An ELS VCF decides when the carcols sirens run.
     if (elsMode || !hasModel || !hasSetting || sirensStarted.current === s.modelPath) return;
@@ -543,7 +567,7 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
   const cameraShots = <CameraShots s={s} disabled={!s.viewerReady} />;
 
   return (
-    <WorkspaceFrame s={s} inspectorOpen={inspectorOpen} setInspectorOpen={setInspectorOpen} className={`sw-root ${patternMode ? "is-pattern" : ""}`} style={{ ...panes.style, ...preview.style }}>
+    <WorkspaceFrame s={s} inspectorOpen={inspectorOpen} setInspectorOpen={setInspectorOpen} panelControls={!blank} className={`sw-root ${patternMode ? "is-pattern" : ""} ${blank ? "is-blank" : ""}`} style={{ ...panes.style, ...preview.style }}>
       <div className="sw-main" inert={expanded}>
         {elsMode ? (
           <div className="sw-els">
@@ -551,42 +575,32 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
               <ElsConsole s={s} els={els} hasModel={hasModel} system={system} />
             </aside>
             <div className="sw-els-main">
-              {hasModel && els.draft ? <ElsEditor s={s} els={els} stageAction={reopen} /> : (
-                <div className="sw-empty">
-                  <p className="sw-empty-title">{hasModel ? "No ELS configuration yet" : "Open a vehicle to program its ELS lights"}</p>
-                  <p className="sw-empty-hint">
-                    {!hasModel ? "Its ELS vehicle configuration file opens here."
-                      : els.status === "scanning" ? `Looking for ${els.modelName}.xml…`
-                        : "Open the vehicle's VCF, add the folder your ELS script reads, or start a new VCF from the panel."}
-                  </p>
+              {hasModel && els.draft ? <ElsEditor s={ps} els={els} /> : (
+                <StageEmpty title={hasModel ? "No ELS configuration yet" : "Open a vehicle to program its ELS lights"}
+                  line={!hasModel ? "Its ELS vehicle configuration file opens here."
+                    : els.status === "scanning" ? `Looking for ${els.modelName}.xml…`
+                      : "Open the vehicle's VCF, add the folder your ELS script reads, or start a new VCF from the panel."}>
                   {!hasModel ? (
                     <button type="button" className="cx-btn is-primary" onClick={s.selectModel}>Open a vehicle model</button>
                   ) : null}
-                  {hasModel && reopen ? (
-                    <button ref={reopenButton} type="button" className="cx-btn" onClick={showPanel}>
-                      <PanelRightOpen aria-hidden="true" />
-                      Show the panel
-                    </button>
-                  ) : null}
-                </div>
+                </StageEmpty>
               )}
             </div>
           </div>
-        ) : <SirenSheet s={ps} resource={resource} hasModel={hasModel} system={system} onStartPattern={startPattern}
-          stageAction={reopen} />}
+        ) : <SirenSheet s={ps} resource={resource} hasModel={hasModel} system={system} onStartPattern={startPattern} />}
       </div>
 
       <section className={`sw-preview ${expanded ? "is-expanded" : ""}`} aria-label="Model preview">
         <Viewfinder
           s={s}
-          viewer={<>{viewer}{hasModel && draft && !elsMode ? <SirenMarkers s={s} /> : null}{patternMode ? (
+          viewer={<>{viewer}{hasModel && draft && !elsMode ? <SirenMarkers s={s} /> : null}{patternMode && draft ? (
             <button type="button" className="sw-pattern-drop" onClick={s.selectModel}
               title={withShortcut("Open a vehicle model: a .yft with siren bones", (s.hotkeys || {})[HOTKEY_ACTIONS.SELECT_MODEL])}>
               <span className="sw-pattern-drop-title">
                 <FolderOpen aria-hidden="true" />
                 Open a vehicle model
               </span>
-              <span>{draft ? "Or drop one here to put this pattern on its siren bones." : "Or drop one here."}</span>
+              <span>Or drop one here to put this pattern on its siren bones.</span>
             </button>
           ) : null}</>}
           hasModel={hasModel}
@@ -606,6 +620,7 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
           )}
         />
         {hasModel ? <PreviewControls s={s} expanded={expanded} onToggle={() => setExpanded(!expanded)} /> : null}
+        {expanded ? null : <VehicleSlip s={s} />}
         {expanded ? null : (
           <div className="sw-preview-resize" role="separator" aria-orientation="horizontal" aria-label="Resize the preview"
             title="Resize the preview. Double-click for the default height." tabIndex={0}
@@ -615,8 +630,7 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
       </section>
 
       <SirenSide s={s} ps={ps} resource={resource} els={els} elsMode={elsMode} hasModel={hasModel}
-        inert={s.panelCollapsed || !inspectorOpen} setWidth={panes.setWidth} cameraShots={cameraShots}
-        onClose={hidePanel} closeRef={closeButton} />
+        inert={s.panelCollapsed || !inspectorOpen} setWidth={panes.setWidth} cameraShots={cameraShots} />
 
       {overlays}
     </WorkspaceFrame>

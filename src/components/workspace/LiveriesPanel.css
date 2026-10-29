@@ -10,7 +10,7 @@
 
 .lv-liv-count {
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--mg-muted);
 }
@@ -23,7 +23,7 @@
 }
 
 .lv-liv-names-label {
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   color: var(--mg-muted);
 }
 
@@ -36,7 +36,7 @@
   background: var(--mg-input-bg);
   color: var(--mg-fg);
   font-family: var(--font-hud);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   transition: border-color 140ms var(--cx-ease), box-shadow 140ms var(--cx-ease);
 }
 
@@ -168,7 +168,7 @@
 
 .lv-liv-name {
   font-family: var(--font-hud);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 600;
 }
 
@@ -177,7 +177,7 @@
   align-items: baseline;
   gap: 6px;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -268,7 +268,7 @@
 
 .lv-liv-foot-note {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -282,13 +282,13 @@
 .lv-liv-plan {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
 }
 
 .lv-liv-plan th {
   padding: 0 12px 7px 0;
   border-bottom: 1px solid var(--cx-rule);
-  font-size: 10.5px;
+  font-size: var(--cx-fs-label);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-align: left;
@@ -305,7 +305,7 @@
 .lv-liv-plan-file,
 .lv-liv-plan-size {
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
 }
 
 .lv-liv-plan-file {
@@ -335,7 +335,7 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.45;
 }
 
@@ -348,7 +348,7 @@
 .lv-liv-backup {
   margin: 0;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 

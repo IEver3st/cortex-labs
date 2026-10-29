@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { AlertTriangle, Aperture, Camera, Car, Check, ChevronUp, FolderOpen, FolderTree, Box, Boxes, Hexagon, LayoutGrid, PackagePlus, RefreshCw } from "lucide-react";
+import { AlertTriangle, Aperture, Camera, Car, Check, CheckCheck, ChevronUp, FolderOpen, FolderTree, Box, Boxes, Hexagon, LayoutGrid, PackagePlus, RefreshCw, Shirt, SlidersHorizontal, X } from "lucide-react";
 import { Toggle } from "../ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
@@ -24,18 +24,22 @@ import {
   SelectField,
   Slider,
   FloorField,
+  StageEmpty,
   StageSection,
   TurntableSection,
+  FootFact,
   SurfaceSection,
   Viewfinder,
   WorkspaceFrame,
   withShortcut,
   CollisionSlip,
+  splitPath,
 } from "./parts";
 import { PaneResizer, usePaneWidths } from "./PaneResizer";
 import ReplacePrompt from "./ReplacePrompt";
 import { Fact, FactDisclosure, FactList, Facts } from "./DockFacts";
 import { describePreviewRun } from "../../lib/capture-output";
+import { CAPTURE_ZOOM_MAX, CAPTURE_ZOOM_MIN } from "../../lib/capture-settings";
 import { PAINT_TARGET } from "../../lib/workspace-state";
 
 /* Vehicle and EUP share one workspace. Vehicle puts the livery on the
@@ -47,15 +51,21 @@ const COPY = {
   vehicle: {
     asideLabel: "Vehicle assets",
     modelEmpty: "Open a vehicle model",
-    modelHint: ".yft, .dff or .clmesh. You can also drop it on the viewfinder.",
+    modelHint: ".yft, .dff or .clmesh",
+    modelDetail: "A .yft, .dff or .clmesh vehicle. You can also drop it on the viewfinder.",
+    stageTitle: "No vehicle loaded",
+    stageLine: "Open a .yft, .dff or .clmesh, or drop one here.",
+    stageAction: "Open a vehicle model",
     textureTitle: "Livery",
     textureEmpty: "Choose a livery",
-    textureHint: "PSD, PDN, PNG, DDS and more, on the paint or the meshes you pick. Saved changes reload live.",
+    textureHint: "PSD, PDN, PNG or DDS",
+    textureDetail: "PSD, PDN, PNG, DDS and more, on the paint or the meshes you pick. Saved changes reload live.",
     textureError: "Livery didn't load",
     overlayTitle: "Glass",
     overlayEmpty: "Choose a glass texture",
-    overlayHint: "Window decals and tint on the glass, or a second texture on the meshes you pick.",
-    overlayOff: "Turn on to add window decals, tint or a second texture on top of the livery.",
+    overlayHint: "Window decals and tint",
+    overlayDetail: "Window decals and tint on the glass, or a second texture on the meshes you pick.",
+    overlayOff: "Off. Turn on for window decals or tint.",
     overlayToggle: "Use a glass texture",
     overlayError: "Glass texture didn't load",
     dropHint: "models, or a livery image",
@@ -64,10 +74,15 @@ const COPY = {
   eup: {
     asideLabel: "Uniform assets",
     modelEmpty: "Open a clothing model",
-    modelHint: ".ydd, .yft, .dff or .clmesh. You can also drop it on the viewfinder.",
+    modelHint: ".ydd, .yft, .dff or .clmesh",
+    modelDetail: "A .ydd, .yft, .dff or .clmesh clothing model. You can also drop it on the viewfinder.",
+    stageTitle: "No clothing loaded",
+    stageLine: "Open a .ydd, .yft, .dff or .clmesh, or drop one here.",
+    stageAction: "Open a clothing model",
     textureTitle: "Uniform",
     textureEmpty: "Choose a uniform texture",
-    textureHint: "PSD, PDN, PNG, DDS and more, applied to the meshes you pick. Saved changes reload live.",
+    textureHint: "PSD, PDN, PNG or DDS",
+    textureDetail: "PSD, PDN, PNG, DDS and more, applied to the meshes you pick. Saved changes reload live.",
     textureError: "Uniform didn't load",
     dropHint: "models, or a uniform image",
     captureEmpty: "Load a model to export preview shots of your uniform.",
@@ -85,10 +100,10 @@ const INSPECTOR_TABS = {
   eup: [{ id: "paint", label: "Material" }, { id: "textures", label: "Textures" }, { id: "scene", label: "Scene" }],
 };
 
-function TargetSelect({ value, onChange, children, placeholder }) {
+function TargetSelect({ value, onChange, children, placeholder, title }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="lv-select">
+      <SelectTrigger className="lv-select" title={title}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent className="lv-select-content">{children}</SelectContent>
@@ -141,7 +156,7 @@ export function GameTextures({ s }) {
   const failedOnly = active && status.state === "error" && !failed && !missing;
   // One Retry, on the first problem row.
   const retry = (
-    <button type="button" className="lv-link" onClick={s.retryNativeMaterials} title="Load the model's textures again">
+    <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={s.retryNativeMaterials} title="Load the model's textures again">
       <RefreshCw aria-hidden="true" />
       Retry
     </button>
@@ -271,24 +286,11 @@ export function CaptureSection({ s, hasModel, copy }) {
   const angles = `${s.selectedPreviewPresetCount} ${s.selectedPreviewPresetCount === 1 ? "angle" : "angles"}`;
   return (
     <section id="panel-capture" className={`lv-capture ${hasModel ? "" : "is-disabled"} ${shown ? "is-open" : "is-collapsed"}`}>
-      <CaptureHead bodyId="panel-capture-body" open={open} locked={locked} onToggle={setOpen} meta={hasModel && canCaptureAngles ? angles : null}>
-        {hasModel ? (
-          <button
-            type="button"
-            className="lv-link"
-            onClick={() => (s.previewPromptOpen ? s.closeCapture() : s.openCapture())}
-            aria-expanded={s.previewPromptOpen}
-            aria-controls="lv-capture-setup"
-            disabled={capturing || !s.viewerReady}
-          >
-            {s.previewPromptOpen ? "Hide options" : "Options"}
-          </button>
-        ) : null}
-      </CaptureHead>
+      <CaptureHead bodyId="panel-capture-body" open={open} locked={locked} onToggle={setOpen} meta={hasModel && canCaptureAngles ? angles : null} />
       {shown ? (
-        <div className="lv-slot-body" id="panel-capture-body">
+        <div className="lv-slot-body lv-capture-body" id="panel-capture-body">
           {!hasModel ? (
-            <p className="lv-slot-note">{copy.captureEmpty}</p>
+            <p className="lv-foot-note">{copy.captureEmpty}</p>
           ) : (
             <>
               {s.previewPromptOpen ? (
@@ -304,8 +306,8 @@ export function CaptureSection({ s, hasModel, copy }) {
                     id="lv-capture-zoom"
                     label="Framing"
                     value={s.previewZoomDraft}
-                    min={0.6}
-                    max={1.8}
+                    min={CAPTURE_ZOOM_MIN}
+                    max={CAPTURE_ZOOM_MAX}
                     step={0.02}
                     format={(v) => `${v.toFixed(2)}×`}
                     onChange={s.setPreviewZoomDraft}
@@ -313,7 +315,8 @@ export function CaptureSection({ s, hasModel, copy }) {
                   <div className="lv-sheet-angles">
                     <div className="lv-sheet-angles-head">
                       <span className="cx-label">Angles</span>
-                      <button type="button" className="lv-link" onClick={s.toggleAllPreviewCapturePresets}>
+                      <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={s.toggleAllPreviewCapturePresets}>
+                        {s.allPreviewPresetsSelected ? <X aria-hidden="true" /> : <CheckCheck aria-hidden="true" />}
                         {s.allPreviewPresetsSelected ? "Clear" : "Select all"}
                       </button>
                     </div>
@@ -335,20 +338,14 @@ export function CaptureSection({ s, hasModel, copy }) {
                     </div>
                   </div>
                 </div>
-              ) : (
-                <p className="lv-slot-note">
-                  {s.selectedPreviewPresetCount} {s.selectedPreviewPresetCount === 1 ? "angle" : "angles"} at{" "}
-                  {(s.previewZoom || 1).toFixed(2)}× framing.
-                </p>
-              )}
+              ) : canCaptureAngles ? (
+                <FootFact label="Angles">{angles} at {(s.previewZoom || 1).toFixed(2)}×</FootFact>
+              ) : null}
               {canCaptureAngles ? (
-                <p className="lv-sheet-dest" title={s.previewFolder || undefined}>
-                  <FolderOpen aria-hidden="true" />
-                  {s.previewFolder ? <span className="is-path">{s.previewFolder}</span> : <span>You'll choose a folder when you capture.</span>}
-                </p>
-              ) : (
-                <p className="lv-slot-note">Capturing angles needs the desktop app. In the browser, Save this view downloads a PNG.</p>
-              )}
+                <FootFact label="Save to" title={s.previewFolder || "You'll choose a folder when you capture"}>
+                  {s.previewFolder ? <span className="lv-foot-path">{splitPath(s.previewFolder).name || s.previewFolder}</span> : "Chosen on capture"}
+                </FootFact>
+              ) : null}
               <button
                 type="button"
                 className="cx-btn is-primary lv-capture-btn"
@@ -363,16 +360,33 @@ export function CaptureSection({ s, hasModel, copy }) {
                     ? `Capture ${s.selectedPreviewPresetCount} ${s.selectedPreviewPresetCount === 1 ? "angle" : "angles"}`
                     : "Pick an angle"}
               </button>
-              <button
-                type="button"
-                className="cx-btn lv-capture-btn"
-                disabled={capturing || !s.viewerReady || s.savingPhoto}
-                onClick={s.saveViewPhoto}
-                title={canCaptureAngles ? "Save the viewfinder exactly as framed now" : "Download the viewfinder exactly as framed now"}
-              >
-                <Aperture aria-hidden="true" />
-                {s.savingPhoto ? "Saving…" : "Save this view"}
-              </button>
+              <div className="lv-foot-row">
+                <button
+                  type="button"
+                  className="cx-btn lv-btn-sm"
+                  onClick={() => (s.previewPromptOpen ? s.closeCapture() : s.openCapture())}
+                  aria-expanded={s.previewPromptOpen}
+                  aria-controls="lv-capture-setup"
+                  disabled={capturing || !s.viewerReady}
+                  title="Pick the angles and the framing"
+                >
+                  <SlidersHorizontal aria-hidden="true" />
+                  {s.previewPromptOpen ? "Hide options" : "Options"}
+                </button>
+                <button
+                  type="button"
+                  className="cx-btn lv-btn-sm"
+                  disabled={capturing || !s.viewerReady || s.savingPhoto}
+                  onClick={s.saveViewPhoto}
+                  title={canCaptureAngles ? "Save the whole view as framed now" : "Download the viewfinder exactly as framed now"}
+                >
+                  <Aperture aria-hidden="true" />
+                  {s.savingPhoto ? "Saving…" : "Save this view"}
+                </button>
+              </div>
+              {canCaptureAngles ? null : (
+                <p className="lv-foot-note">Capturing angles needs the desktop app. In the browser, Save this view downloads a PNG.</p>
+              )}
               {s.previewReplace ? (
                 <ReplacePrompt
                   conflicts={s.previewReplace.conflicts}
@@ -461,9 +475,10 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
   const onPaint = isVehicle && s.textureTarget === PAINT_TARGET;
   const paintOption = !hasModel ? "Detected paint" : s.liveryTargetLabel ? `Detected: ${s.liveryTargetLabel}` : "Detected: none found";
   // The select names the paint it found; the note covers what it can't say.
-  const paintNote = !onPaint ? null : !hasModel
-    ? { tone: "idle", text: "Load a model and the livery is placed on its paint material automatically." }
-    : s.liveryTargetLabel ? null : { tone: "warn", text: "No paint material found, so the livery covers every mesh." };
+  const paintNote = !onPaint || !hasModel || s.liveryTargetLabel
+    ? null
+    : { tone: "warn", text: "No paint material found, so the livery covers every mesh." };
+  const paintTitle = onPaint && !hasModel ? "Load a model and the livery is placed on its paint material automatically." : undefined;
   const glassOption = !hasModel ? "Detected glass" : s.windowLiveryTarget ? `Detected: ${s.windowStatusLabel}` : "Detected: none found";
   const watchTone = s.watchStatus === "watching" ? "live" : s.watchStatus === "error" ? "error" : "idle";
   const watchLabel = s.watchStatus === "watching" ? "Live reload on" : s.watchStatus === "error" ? "Live reload failed" : "Live reload idle";
@@ -494,6 +509,7 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             done={hasModel}
             emptyTitle={copy.modelEmpty}
             emptyHint={copy.modelHint}
+            emptyDetail={copy.modelDetail}
             hotkey={hk[HOTKEY_ACTIONS.SELECT_MODEL]}
             onPick={s.selectModel}
             onUnload={s.unloadModel}
@@ -506,13 +522,13 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
           >
             {s.modelLoading ? <p className="lv-slot-note is-busy">Loading model…</p> : null}
             {canOpenFolder && !hasFolder ? (
-              <button type="button" className="lv-link lv-folder-link" onClick={s.openVehicleFolder} title="See a pack's vehicles side by side and go through them one at a time">
+              <button type="button" className="cx-btn is-quiet lv-btn-sm lv-folder-link" onClick={s.openVehicleFolder} title="See a pack's vehicles side by side and go through them one at a time">
                 <FolderTree aria-hidden="true" />
                 Open a folder of vehicles
               </button>
             ) : null}
             {isEup && s.isTauriRuntime && s.openPackBuilder ? (
-              <button type="button" className="lv-link lv-folder-link" onClick={s.openPackBuilder} title="Open EUP Studio's Pack tab to build one addon pack from folders of clothing">
+              <button type="button" className="cx-btn is-quiet lv-btn-sm lv-folder-link" onClick={s.openPackBuilder} title="Open EUP Studio's Pack tab to build one addon pack from folders of clothing">
                 <PackagePlus aria-hidden="true" />
                 Build an addon pack
               </button>
@@ -527,12 +543,13 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             done={Boolean(s.texturePath)}
             emptyTitle={copy.textureEmpty}
             emptyHint={copy.textureHint}
+            emptyDetail={copy.textureDetail}
             hotkey={hk[HOTKEY_ACTIONS.SELECT_LIVERY]}
             onPick={s.selectTexture}
             onUnload={() => s.setTexturePath("")}
           >
             <SelectField label="Apply to">
-              <TargetSelect value={s.textureTarget} onChange={s.setTextureTarget} placeholder="Meshes">
+              <TargetSelect value={s.textureTarget} onChange={s.setTextureTarget} placeholder="Meshes" title={paintTitle}>
                 {isVehicle ? <SelectItem value={PAINT_TARGET}>{paintOption}</SelectItem> : null}
                 <SelectItem value="all">All meshes</SelectItem>
                 {targetItems}
@@ -565,6 +582,7 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
             disabledNote={copy.overlayOff}
             emptyTitle={copy.overlayEmpty}
             emptyHint={copy.overlayHint}
+            emptyDetail={copy.overlayDetail}
             hotkey={hk[HOTKEY_ACTIONS.SELECT_GLASS]}
             onPick={s.selectWindowTexture}
             onUnload={() => s.setWindowTexturePath("")}
@@ -602,6 +620,8 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
               active={s.liveryExteriorOnly}
               onClick={() => s.setLiveryExteriorOnly(!s.liveryExteriorOnly)}
               title={withShortcut("Exterior only: hide interior, glass and wheels", hk[HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY])}
+              label="Exterior only"
+              hotkey={hk[HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY]}
               className="is-icon"
             >
               <Car aria-hidden="true" />
@@ -617,6 +637,15 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
               <Hexagon aria-hidden="true" />
             </DeckButton>
           </>
+        )}
+        empty={s.modelLoading ? null : (
+          <StageEmpty icon={isEup ? Shirt : Car} title={copy.stageTitle} line={copy.stageLine}>
+            <button type="button" className="cx-btn is-primary" onClick={s.selectModel}
+              title={withShortcut(copy.modelEmpty, hk[HOTKEY_ACTIONS.SELECT_MODEL])}>
+              <FolderOpen aria-hidden="true" />
+              {copy.stageAction}
+            </button>
+          </StageEmpty>
         )}
         collisions={s.showCollisions ? (
           <CollisionSlip
@@ -708,6 +737,7 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
                 extrasState={s.extrasState}
                 onExtrasStateChange={s.updateExtrasState}
                 els={s.els}
+                active={s.isActive}
                 plate={s.licensePlate}
                 onPlateChange={s.updateLicensePlate}
                 plateStatus={s.licensePlateStatus}

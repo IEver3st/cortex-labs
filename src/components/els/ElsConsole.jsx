@@ -1,4 +1,4 @@
-import { Check, ClipboardCopy, FileInput, Import, Plus, RefreshCw, Save, X } from "lucide-react";
+import { Check, ClipboardCopy, FileInput, FolderPlus, Import, Plus, RefreshCw, Save, X } from "lucide-react";
 import { summarizePatternPack } from "../../lib/els-patterns.js";
 import { ELS_FOLDER_LABELS, baseName, vcfFileName } from "../../lib/els-library.js";
 import { StatusLines } from "../siren-editor/SirenToolDialogs";
@@ -73,7 +73,8 @@ function PatternTables({ els, native }) {
       <Fact label="Pattern tables" title="ELS V8 names patterns by number; their timings live in the lighting script. Import them from your ELS-FiveM copy and numbered patterns play exactly. Until then they play an approximate flash, marked as such.">
         none
         {native ? (
-          <button type="button" className="lv-link" onClick={els.importPatterns} disabled={busy} title={IMPORT_HINT}>
+          <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={els.importPatterns} disabled={busy} title={IMPORT_HINT}>
+            <Import aria-hidden="true" />
             {busy ? "Importing…" : "Import…"}
           </button>
         ) : null}
@@ -105,8 +106,9 @@ function PatternTables({ els, native }) {
 function Folders({ els }) {
   const help = `Cortex looks for ${els.modelName ? vcfFileName(els.modelName) : "<model>.xml"} beside the model, in its resource, then in these folders.`;
   const add = (
-    <button type="button" className="lv-link" onClick={els.addFolder}
+    <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={els.addFolder}
       title="Add a folder, for example GTA V/ELS/pack_default, resources/ELS-FiveM/vcf or resources/MISS-ELS/xmlFiles">
+      <FolderPlus aria-hidden="true" />
       Add…
     </button>
   );
@@ -225,7 +227,8 @@ export default function ElsConsole({ s, els, hasModel, system }) {
                 title={changed ? `${shortName} changed outside Cortex while you had unsaved edits here. Load it to see its lights, or Save as to keep your edits.` : undefined}
                 describe={els.dirty ? () => describeVcfChanges(els.base, draft) : null}
                 extra={changed ? (
-                  <button type="button" className="lv-link" onClick={els.loadFromDisk} title={`Load ${shortName} from disk. Your unsaved edits here are discarded.`}>
+                  <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={els.loadFromDisk} title={`Load ${shortName} from disk. Your unsaved edits here are discarded.`}>
+                    <RefreshCw aria-hidden="true" />
                     Load
                   </button>
                 ) : null} />

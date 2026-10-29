@@ -50,7 +50,7 @@
 
 .fb-sub {
   margin: calc(6 * var(--u)) 0 0;
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   line-height: 1.45;
   color: var(--mg-muted);
 }
@@ -119,7 +119,7 @@
 }
 
 .fb-group-hint {
-  font-size: calc(11.5 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.4;
   color: var(--mg-muted);
 }
@@ -194,13 +194,13 @@
 }
 
 .fb-type-label {
-  font-size: calc(13 * var(--u));
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   line-height: 1.2;
 }
 
 .fb-type-hint {
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.35;
   color: var(--mg-muted);
 }
@@ -212,7 +212,7 @@
 .fb-type-draft {
   flex-shrink: 0;
   font-family: var(--font-hud);
-  font-size: calc(11 * var(--u));
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
@@ -227,7 +227,7 @@
   background: var(--mg-input-bg);
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   outline: none;
   transition:
     border-color 140ms var(--cx-ease),
@@ -273,7 +273,7 @@
 .fb-counter {
   flex-shrink: 0;
   font-family: var(--font-hud);
-  font-size: calc(11 * var(--u));
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--mg-muted);
 }
@@ -289,7 +289,7 @@
 .fb-field-hint,
 .fb-field-error {
   margin: 0;
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.4;
 }
 
@@ -330,7 +330,7 @@
   background: transparent;
   color: var(--mg-muted);
   font-family: var(--font-main);
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -401,14 +401,14 @@
 }
 
 .fb-callout-title {
-  font-size: calc(13 * var(--u));
+  font-size: var(--cx-fs-row);
   font-weight: 650;
   color: var(--mg-fg);
 }
 
 .fb-callout-text {
   margin-top: calc(2 * var(--u));
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
   overflow-wrap: anywhere;
@@ -431,7 +431,7 @@
 
 .fb-copy-status {
   margin-top: calc(6 * var(--u));
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   font-weight: 600;
   color: var(--mg-fg);
 }
@@ -456,7 +456,7 @@
 
 .fb-sent-text {
   margin: 0;
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -477,12 +477,12 @@
 }
 
 .fb-sent-row-label {
-  font-size: calc(13 * var(--u));
+  font-size: var(--cx-fs-row);
   font-weight: 600;
 }
 
 .fb-sent-row-hint {
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.4;
   color: var(--mg-muted);
 }
@@ -500,7 +500,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   font-weight: 600;
   cursor: pointer;
   transition: background-color 140ms var(--cx-ease);
@@ -534,7 +534,7 @@
 
 .fb-disclosure-count {
   font-family: var(--font-hud);
-  font-size: calc(11.5 * var(--u));
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   color: var(--mg-muted);
 }
@@ -559,14 +559,14 @@
 }
 
 .fb-env dt {
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
 .fb-env dd {
   margin: 0;
   min-width: 0;
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-fg);
   overflow-wrap: anywhere;
@@ -574,7 +574,7 @@
 
 .fb-env dd.is-mono {
   font-family: var(--font-hud);
-  font-size: calc(11.5 * var(--u));
+  font-size: var(--cx-fs-meta);
 }
 
 /* ── Footer ── */
@@ -604,7 +604,7 @@
 
 .fb-foot-note {
   min-width: 0;
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -663,13 +663,13 @@
 
 .fb-done-title {
   margin: calc(4 * var(--u)) 0 0;
-  font-size: calc(15 * var(--u));
+  font-size: var(--cx-fs-title);
   font-weight: 650;
 }
 
 .fb-done-text {
   margin: 0;
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   line-height: 1.55;
   color: var(--mg-muted);
 }
@@ -689,7 +689,7 @@
   max-width: 100%;
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: calc(11.5 * var(--u));
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;

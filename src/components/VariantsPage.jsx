@@ -19,8 +19,6 @@ import {
   Grid3x3,
   Lock,
   Maximize2,
-  PanelLeft,
-  PanelRight,
   Pencil,
   Plus,
   Redo2,
@@ -51,9 +49,10 @@ import useEditHistory from "./useEditHistory";
 import { Toggle } from "./ui/toggle";
 import * as Ctx from "./ContextMenu";
 import Viewer from "./Viewer";
-import { AssetSlot, DeckButton, splitPath } from "./workspace/parts";
+import { AssetSlot, DeckButton, FootFact, PanelLayout, StageEmpty, splitPath } from "./workspace/parts";
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
 import ReplacePrompt from "./workspace/ReplacePrompt";
+import { usePaneMotion } from "./workspace/usePaneMotion";
 import "./VariantsPage.css";
 
 /* ═══════════════════════════════════════════════════════════
@@ -334,6 +333,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const [dockOpen, setDockOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const panes = usePaneWidths("cortex.variants.panes");
+  const rootRef = useRef(null);
   const [legacyLayersLayout, setLegacyLayersLayout] = useState(() => loadPrefs()?.defaults?.legacyLayersLayout ?? false);
   const [legacyLayersHeight, setLegacyLayersHeight] = useState(240);
   const pendingVResizeDyRef = useRef(0);
@@ -477,17 +477,26 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const visibilityKey = useMemo(() => JSON.stringify(compositorVisibility), [compositorVisibility]);
 
   /* ── Preview composite ── */
+  const compositedRef = useRef(null);
   useEffect(() => {
     if (!isActive || !psdPath || !psdData) return;
+    const composited = compositedRef.current;
+    if (previewCanvasRef.current && composited?.psdPath === psdPath && composited.psdData === psdData
+      && composited.visibilityKey === visibilityKey && composited.exportSize === exportSize) return;
     let cancelled = false;
     const gen = async () => {
+      compositedRef.current = null;
       try {
         const maxDim = Math.max(psdData.width || 0, psdData.height || 0) || exportSize;
         const s = Math.min(1, Math.min(exportSize, maxDim) / maxDim);
         const pw = Math.max(1, Math.round((psdData.width || maxDim) * s));
         const ph = Math.max(1, Math.round((psdData.height || maxDim) * s));
         const canvas = await compositePsdVariant(psdPath, compositorVisibility, pw, ph, { reuseCanvas: true, scratchCanvases: scratchCanvasesRef.current });
-        if (!cancelled) { previewCanvasRef.current = canvas; setPreviewToken((t) => t + 1); }
+        if (!cancelled) {
+          previewCanvasRef.current = canvas;
+          compositedRef.current = { psdPath, psdData, visibilityKey, exportSize };
+          setPreviewToken((t) => t + 1);
+        }
       } catch (err) {
         if (!cancelled) setPsdError(toErrorMessage(err, "The preview could not be composited."));
       }
@@ -612,7 +621,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     const toExp = mode === "current" ? [selectedVariant].filter(Boolean) : variants;
     if (toExp.length === 0) return;
     setExportReplace(null);
-    if (!replace) {
+    if (!replace && loadPrefs()?.defaults?.replaceExports !== true) {
       const names = toExp.flatMap((vr) => (exportRenders && modelPath
         ? [exportFileName(vr.name), renderFileName(vr.name)]
         : [exportFileName(vr.name)]));
@@ -888,29 +897,10 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const contextBar = isActive && contextBarTarget
     ? createPortal(
         <div className="ctx-bar-inner lv-ctx">
-          <button
-            type="button"
-            className={`lv-ctx-btn ${dockOpen ? "is-on" : ""}`}
-            onClick={() => setDockOpen((v) => !v)}
-            title={dockOpen ? "Hide the pipeline (Ctrl+B)" : "Show the pipeline (Ctrl+B)"}
-            aria-label={dockOpen ? "Hide the pipeline" : "Show the pipeline"}
-            aria-pressed={dockOpen}
-          >
-            <PanelLeft aria-hidden="true" />
-          </button>
-          <div className="ctx-bar-drag-pad" aria-hidden="true" />
-          {hasLayers ? (
-            <button
-              type="button"
-              className={`lv-ctx-btn ${inspectorOpen ? "is-on" : ""}`}
-              onClick={() => setInspectorOpen((v) => !v)}
-              title={`${inspectorOpen ? "Hide" : "Show"} layers (${layersShortcut})`}
-              aria-label={inspectorOpen ? "Hide layers" : "Show layers"}
-              aria-pressed={inspectorOpen}
-            >
-              <PanelRight aria-hidden="true" />
-            </button>
-          ) : null}
+          <PanelLayout
+            start={{ shown: dockOpen, onToggle: () => setDockOpen((v) => !v), label: dockOpen ? "Hide the pipeline" : "Show the pipeline", hint: " (Ctrl+B)" }}
+            end={hasLayers ? { shown: inspectorOpen, onToggle: () => setInspectorOpen((v) => !v), label: inspectorOpen ? "Hide layers" : "Show layers", hint: ` (${layersShortcut})` } : null}
+          />
         </div>,
         contextBarTarget,
       )
@@ -1042,9 +1032,10 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     dockOpen ? "" : "is-dock-closed",
     inspectorVisible && !layersDocked ? "" : "is-inspector-closed",
   ].filter(Boolean).join(" ");
+  usePaneMotion(rootRef, rootClass);
 
   return (
-    <div className={rootClass} style={panes.style}>
+    <div ref={rootRef} className={rootClass} style={panes.style}>
       {contextBar}
 
       {/* ──── Pipeline ──── */}
@@ -1057,15 +1048,13 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             path={psdPath}
             done={Boolean(psdData) && !psdError}
             emptyTitle="Open a layered file"
-            emptyHint="PSD, PDN or AI. Each variant is a set of visible layers."
+            emptyHint="PSD, PDN or AI"
+            emptyDetail="Each variant is a set of visible layers in this file."
             onPick={handleSelectPsd}
             onUnload={() => setPsdPath("")}
           >
             {!psdPath && !isTauriRuntime ? (
-              <p className="lv-slot-note is-warn">
-                <span className="lv-dot" aria-hidden="true" />
-                Opening files needs the desktop app.
-              </p>
+              <p className="lv-slot-note">Opening files needs the desktop app.</p>
             ) : null}
             {psdPath ? (
               psdLoading ? (
@@ -1091,7 +1080,8 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             path={modelPath}
             done={Boolean(modelPath) && viewerReady && !modelError}
             emptyTitle="Preview on a vehicle"
-            emptyHint="Optional. A .yft or .ydd shows the current variant on the car."
+            emptyHint=".yft or .ydd"
+            emptyDetail="Optional. A .yft or .ydd shows the current variant on the car."
             onPick={handleSelectModel}
             onUnload={() => setModelPath("")}
             trailing={<span className="vb-optional">Optional</span>}
@@ -1269,13 +1259,12 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
               </div>
             </div>
           ) : null}
-          {exportDims ? <p className="vb-dims">{`Saves ${exportDims.width} × ${exportDims.height} PNGs`}</p> : null}
+          {exportDims ? <FootFact label="Output">{exportDims.width} × {exportDims.height} PNG</FootFact> : null}
 
-          <div className="vb-dest">
-            <span className="cx-label">Save to</span>
+          <FootFact label="Save to" title={outputFolder || undefined}>
             {outputFolder ? (
-              <div className="vb-dest-row">
-                <span className="vb-dest-name" title={outputFolder}>{outputName || outputFolder}</span>
+              <>
+                <span className="vb-dest-name">{outputName || outputFolder}</span>
                 <button type="button" className="cx-icon-btn" onClick={handleSelectOutput} disabled={!isTauriRuntime} aria-label="Change output folder" title="Change output folder">
                   <FolderInput aria-hidden="true" />
                 </button>
@@ -1284,24 +1273,19 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                     <FolderOpen aria-hidden="true" />
                   </button>
                 ) : null}
-              </div>
+              </>
             ) : (
               <button type="button" className="cx-btn lv-btn-sm vb-dest-pick" onClick={handleSelectOutput} disabled={!isTauriRuntime}>
                 <FolderInput aria-hidden="true" />
                 Choose a folder
               </button>
             )}
-          </div>
+          </FootFact>
 
           {modelPath ? (
-            <div className="vb-renders">
-              <div className="lv-toggle-row">
-                <span>Save vehicle renders</span>
-                <Toggle checked={exportRenders} onChange={setExportRenders} ariaLabel="Save a vehicle render of each variant" />
-              </div>
-              {exportRenders ? (
-                <p className="lv-slot-note">One per variant, from the vehicle view as framed now.</p>
-              ) : null}
+            <div className="lv-toggle-row" title="One per variant, from the vehicle view as framed now">
+              <span>Save vehicle renders</span>
+              <Toggle checked={exportRenders} onChange={setExportRenders} ariaLabel="Save a vehicle render of each variant" />
             </div>
           ) : null}
 
@@ -1316,37 +1300,40 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
             </ul>
           ) : null}
 
+          {!psdPath ? (
+            <p className="lv-foot-note">{isTauriRuntime ? "Open a layered file to export." : "Exporting needs the desktop app."}</p>
+          ) : null}
+
           {exporting ? (
             <div className="vb-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(exportProgress)} aria-label="Export progress">
               <span style={{ width: `${exportProgress}%` }} />
             </div>
           ) : null}
 
-          <div className="vb-export-actions">
-            <button
-              type="button"
-              className="cx-btn is-primary vb-export-btn"
-              onClick={() => handleExport("all")}
-              disabled={!psdData || exportBlocked || exporting}
-              title="Export every variant (Ctrl+Shift+E)"
-            >
-              <Download aria-hidden="true" />
-              {exporting
-                ? `Exporting ${Math.round(exportProgress)}%`
-                : variants.length === 1 ? "Export variant" : `Export ${variants.length} variants`}
-            </button>
-          </div>
+          <button
+            type="button"
+            className="cx-btn is-primary"
+            onClick={() => handleExport("all")}
+            disabled={!psdData || exportBlocked || exporting}
+            title={variants.length === 1 ? "Export variant (Ctrl+Shift+E)" : "Export every variant (Ctrl+Shift+E)"}
+          >
+            <Download aria-hidden="true" />
+            {exporting
+              ? `Exporting ${Math.round(exportProgress)}%`
+              : variants.length === 1 ? "Export variant" : `Export ${variants.length} variants`}
+          </button>
           {variants.length > 1 ? (
-            <button
-              type="button"
-              className="vb-export-current"
-              onClick={() => handleExport("current")}
-              disabled={!psdData || exportBlocked || exporting}
-              title="Export only the selected variant (Ctrl+E)"
-            >
-              <span>Export only</span>
-              <span className="vb-export-current-name">{selectedVariant?.name}</span>
-            </button>
+            <div className="lv-foot-row">
+              <button
+                type="button"
+                className="cx-btn"
+                onClick={() => handleExport("current")}
+                disabled={!psdData || exportBlocked || exporting}
+                title={`Export only ${selectedVariant?.name || "the selected variant"} (Ctrl+E)`}
+              >
+                Export selected
+              </button>
+            </div>
           ) : null}
 
           {exportReplace ? (
@@ -1378,21 +1365,15 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       <div className="vb-stage-col">
         <section className={`vb-stage ${bothLoaded ? `is-${stageMode}` : ""}`} ref={stageRef} aria-label="Preview">
           {!modelPath && !psdPath ? (
-            <div className="vb-empty">
-              <p className="vb-empty-title">Nothing to preview yet</p>
-              <p className="vb-empty-copy">
-                Open a layered file. Every variant you make here is one set of visible layers, exported as its own PNG.
-              </p>
-              <div className="vb-empty-actions">
-                <button type="button" className="cx-btn is-primary" onClick={handleSelectPsd} disabled={!isTauriRuntime}>
-                  <FileImage aria-hidden="true" />
-                  Open layered file
-                </button>
-                <button type="button" className="cx-btn" onClick={handleSelectModel} disabled={!isTauriRuntime}>
-                  Add a vehicle
-                </button>
-              </div>
-            </div>
+            <StageEmpty title="Nothing to preview yet" line="Each set of visible layers saves as its own PNG.">
+              <button type="button" className="cx-btn is-primary" onClick={handleSelectPsd} disabled={!isTauriRuntime}>
+                <FileImage aria-hidden="true" />
+                Open layered file
+              </button>
+              <button type="button" className="cx-btn is-quiet" onClick={handleSelectModel} disabled={!isTauriRuntime}>
+                Add a vehicle
+              </button>
+            </StageEmpty>
           ) : (
             <div className="vb-panes">
               {showModelPane ? (

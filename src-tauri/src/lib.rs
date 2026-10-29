@@ -18,6 +18,8 @@ mod child_job;
 mod clothing_write;
 mod els_scope;
 mod fivem_kvs;
+mod forge;
+mod juno;
 mod lens_write;
 mod livery_write;
 mod model_resource_scope;
@@ -155,6 +157,69 @@ fn extract_open_file_arg(args: &[String]) -> Option<String> {
         })
 }
 
+#[derive(serde::Serialize, Clone)]
+struct SirenOpenRequest {
+    sirens: String,
+    model: Option<String>,
+    setting: Option<String>,
+}
+
+fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.iter()
+        .skip(1)
+        .zip(args.iter().skip(2))
+        .find(|(name, _)| name.as_str() == flag)
+        .map(|(_, value)| value.as_str())
+}
+
+fn extract_siren_open_arg(args: &[String]) -> Option<SirenOpenRequest> {
+    let sirens = flag_value(args, "--sirens").and_then(normalize_open_file_arg)?;
+    let model = flag_value(args, "--model")
+        .and_then(normalize_open_file_arg)
+        .filter(|path| is_supported_open_model(path) && Path::new(path).is_file());
+    let setting = flag_value(args, "--setting")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Some(SirenOpenRequest {
+        sirens,
+        model,
+        setting,
+    })
+}
+
+fn allow_siren_file(app: &tauri::AppHandle, request: &SirenOpenRequest) {
+    use tauri_plugin_fs::FsExt;
+    let path = Path::new(&request.sirens);
+    let is_meta = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("meta"));
+    if is_meta && path.is_file() {
+        let _ = app.fs_scope().allow_file(path);
+    }
+}
+
+fn store_siren_open(app: &tauri::AppHandle, request: SirenOpenRequest) {
+    allow_siren_file(app, &request);
+    let state = app.state::<PendingSirenOpenState>();
+    let mut pending = state
+        .request
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *pending = Some(request);
+}
+
+fn queue_siren_open(app: &tauri::AppHandle, request: SirenOpenRequest) {
+    store_siren_open(app, request.clone());
+    let _ = app.emit("siren-open", request);
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 fn queue_open_file(app: &tauri::AppHandle, file_path: String) {
     if !is_supported_open_model(&file_path) {
         return;
@@ -203,6 +268,11 @@ const EUP_WATCH_MAX_PATHS: usize = 256;
 #[derive(Default)]
 struct PendingOpenFileState {
     path: Mutex<Option<String>>,
+}
+
+#[derive(Default)]
+struct PendingSirenOpenState {
+    request: Mutex<Option<SirenOpenRequest>>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -3878,6 +3948,15 @@ fn consume_pending_open_file(state: State<PendingOpenFileState>) -> Option<Strin
         .take()
 }
 
+#[tauri::command]
+fn consume_pending_siren_open(state: State<PendingSirenOpenState>) -> Option<SirenOpenRequest> {
+    state
+        .request
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+}
+
 fn normalize_path_for_compare(path: &Path) -> String {
     let text = path.to_string_lossy().replace('/', "\\");
     let trimmed = text.trim_end_matches('\\');
@@ -4054,11 +4133,15 @@ pub fn run() {
         .manage(WatchState::default())
         .manage(EupWatchState::default())
         .manage(PendingOpenFileState::default())
+        .manage(PendingSirenOpenState::default())
         .manage(BridgeState::default())
+        .manage(juno::JunoState::default())
         .manage(livery_write::LiveryWriteState::default())
         .manage(clothing_write::ClothingWriteState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if let Some(file_path) = extract_open_file_arg(&args) {
+            if let Some(request) = extract_siren_open_arg(&args) {
+                queue_siren_open(app, request);
+            } else if let Some(file_path) = extract_open_file_arg(&args) {
                 queue_open_file(app, file_path);
             } else if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -4129,6 +4212,20 @@ pub fn run() {
             export_ytd,
             export_plate_textures,
             consume_pending_open_file,
+            consume_pending_siren_open,
+            forge::forge_find,
+            forge::forge_resource_folder,
+            forge::forge_check_resource,
+            juno::juno_local,
+            juno::juno_status,
+            juno::juno_open,
+            juno::juno_sign_in_start,
+            juno::juno_sign_in_reopen,
+            juno::juno_sign_in_cancel,
+            juno::juno_sign_in_poll,
+            juno::juno_sign_out,
+            juno::juno_account,
+            juno::juno_siren_pattern,
             ensure_dir,
             open_folder_fallback,
             list_fivem_characters,
@@ -4141,13 +4238,22 @@ pub fn run() {
             // On Windows, "Open With" passes the file path as a CLI argument.
             // Queue it so the frontend can consume it once listeners are mounted.
             let args: Vec<String> = std::env::args().collect();
-            if let Some(file_path) = extract_open_file_arg(&args) {
+            if let Some(request) = extract_siren_open_arg(&args) {
+                store_siren_open(app.handle(), request);
+            } else if let Some(file_path) = extract_open_file_arg(&args) {
                 let state = app.state::<PendingOpenFileState>();
                 let mut pending = state
                     .path
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 *pending = Some(file_path);
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(5));
+                    let _ = window.show();
+                });
             }
 
             run_cache_maintenance(app.handle());

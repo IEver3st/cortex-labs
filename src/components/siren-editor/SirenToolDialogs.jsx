@@ -12,6 +12,7 @@ import { checkModelName, modelNameWarning, planVehicleRename } from "../../lib/v
 import { readResourceForRename } from "../../lib/resource-meta-files.js";
 import { errorText, fileName, samePath, writeText } from "./useSirenTools.js";
 import { openFolderPath } from "../../lib/open-folder.js";
+import ForgeCheckButton from "./ForgeCheck";
 
 // Resource tools in the Sirens dock: the ULC config builder and the vehicle
 // renamer. Both preview what they will write, keep a timestamped .bak of every
@@ -439,6 +440,9 @@ export function VehicleRenameDialog({ s, resource, onClose }) {
         <StatusLines lines={lines} />
         {disabledReason && trimmed && !nameProblem && scan.status !== "scanning" ? <p className="se-note is-error">{disabledReason}</p> : null}
         <footer className="se-dialog-actions">
+          {done && !lines.some((line) => line.tone === "error") ? (
+            <ForgeCheckButton path={resource.root} enabled={s.isTauriRuntime} className="settings-secondary" />
+          ) : null}
           <button type="button" className="settings-secondary" onClick={onClose} disabled={busy}>{done ? "Close" : "Cancel"}</button>
           {done ? null : (
             <button type="button" className="settings-primary" onClick={apply} disabled={Boolean(disabledReason) || busy} title={disabledReason || undefined}>

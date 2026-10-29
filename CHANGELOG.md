@@ -8,6 +8,38 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [5.6.0] - 2026-10-28
+
+Settings now opens over your work, the top bar and workspaces are tidier, the showroom runs much faster with sirens playing, and Juno can write siren patterns from a description.
+
+### Added
+
+- **Cortex Forge handoff** - Cortex Forge can open a vehicle's carcols.meta in Sirens with its siren setting selected and its model loaded, in a new tab when Cortex Studio is already running. If the file can't be read, or has no setting with that id, Sirens says so. When Cortex Forge 0.1.0 or later is installed, **Check in Forge** in Sirens, and after **Install to resource** or **Rename vehicle…**, opens the resource in Forge to check it against your server. Desktop app only.
+
+- **Juno in Sirens (optional)** - A new **Settings > Cortex account** section signs in to Juno, the AI in Cortex Forge, with a free Cortex account through Discord. It is off until you sign in, and Settings shows what each request sends before you do. While signed in, the Sirens editor gets **Describe the lights**: describe a light show by where the lights sit on the car, and Juno writes the flash patterns, colours and tempo for every flashing light. Studio checks the answer before it plays on the car; the setting itself changes only when you choose **Keep**, as one undo step. Rotating lights are left as they are. **Sign out** signs this PC out. Every other feature works without an account or a network connection. Desktop app only.
+
+- **More settings** - **Settings > System** gains **Reopen tabs on launch**, **Replace existing files** (skip the replace prompt for angle captures, variant exports and EUP Studio shots and thumbnails) and a **Captures** panel: **Capture size** saves Vehicle angle captures and **Save this view** at 1920 × 1080, 2560 × 1440 or 3840 × 2160 whatever the window size (Multi lineups stay at window size), **Capture angles** and **Capture framing** set what a new Vehicle or EUP workspace starts with, and **Photo Mode size** sets the size of new Photo Mode scenes. **Settings > Viewer** gains **Preview detail** (Performance, Balanced or Sharp, for every 3D viewer on scaled and high-DPI screens) and **Zoom toward cursor**.
+
+### Changed
+
+- **Faster launch** - Cortex Studio is ready about a second sooner. The intro is shorter, a restored tab or a file opened with the app starts loading behind the intro instead of after it, and the window appears once the first frame is drawn instead of flashing white. With reduced motion on, the intro no longer holds the app back.
+
+- **Clearer setting names** - "Variant export folder" is now **Variant and template folder**, since the Template Generator uses it too, and "Layers panel at the bottom" is now **Variant Builder layers at the bottom**. Reduce motion's "Always" is now **Always reduce**. The Back capture angle is called **Rear**, as it is on the camera deck.
+
+- **Settings opens over your work** - Settings is now a window over the workspace instead of a page that replaced it, with the section list on the left and **Search settings** (or **/**) at its top. Search narrows the list to matching sections, opens the first one, and highlights the matching settings. Changes apply and save as you make them, so **Save changes** is gone; UI scale applies when you let go of the slider. If a change can't be saved, Settings says so and stays open, and closing it again discards the change. **Reset all settings** moved to System and asks before it resets every setting and shortcut. Shortcuts show their keys as keycaps, theme and palette tiles are smaller with the palette previews following light or dark mode, and setting and shortcut names are in sentence case.
+
+- **Faster showroom and siren playback** - With a vehicle's sirens playing, the showroom went from 25 to 69 frames per second and the workbench from 32 to 119 on a busy test PC, with the picture unchanged. The reflection, lens and glow passes no longer rebuild their shaders every frame, and playing a pattern in Sirens no longer re-lays out the whole sequencer on every step.
+
+- **A quieter top bar** - Tabs sit in one flat strip, and the open tab takes the page colour with a thin accent line on top. Long file names are shortened in the middle, so `GSDSS20charger_hi` stays apart from `GSDSS20charger`. When two tabs show the same file, each adds its siren setting, "ELS" or "No setting" in grey, and its tooltip gives the full name. The dock and inspector toggles are now one small layout icon: click its left or right half to show or hide that panel. Feedback, Settings and the update button are smaller and match the rest of the bar, and an open Settings window marks its cog.
+
+- **Tidier workspaces** - Every workspace shares one layout: one row of view buttons with the rest under **View**, the same empty card on every stage, quiet **Clear** and **Select all** buttons, and file types written the same way everywhere ("A .yft, .dff or .clmesh"). Workbench and Showroom are now one **Showroom** switch on the stage. Unused paint rows say "Not on this model", and **Save to** shows the folder name with the full path on hover. Type sizes follow one scale across Home, the workspaces and their dialogs.
+
+### Fixed
+
+- **Sirens keeps playing with the inspector hidden** - Hiding the inspector in Sirens paused the pattern. It now keeps playing in the grid and the ELS editor, and carries on from the same step when you open the inspector again.
+
+---
+
 ## [5.5.0] - 2026-10-25
 
 Sirens now lays out like Siren Tool, with dual-colour heads and patterns you can build without a vehicle, and a new overlay shows a model's collision bounds.

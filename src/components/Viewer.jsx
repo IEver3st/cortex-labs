@@ -88,9 +88,10 @@ import { createLiveryOverride, findLiveryModTexturePath, findLiverySignPrefix, l
 import { applyFrontWheelSteering, getSteerableWheelMeshes } from "../lib/vehicle-steering.js";
 import { createVehicleRig, normalizeManifestSkeleton } from "../lib/vehicle-rig.js";
 import { isHiddenByBones } from "../lib/vehicle-modkits.js";
-import { shotFov } from "../lib/eup-export.js";
+import { containFov, shotFov } from "../lib/eup-export.js";
 import { countDrawnGeometry, summarizeMeshStats } from "../lib/mesh-stats.js";
 import { buildCollisionOverlay, readModelCollisions } from "../lib/collision-overlay.js";
+import { onViewerControlsChange, previewPixelRatio, readViewerControls } from "../lib/preview-detail.js";
 import {
   FINISHED_PAINT_KEYS,
   VEHICLE_PAINT_KEYS,
@@ -889,7 +890,8 @@ function ViewerComponent({
     const scene = new THREE.Scene();
     // The stencil lets the solid wireframe tint each pixel once (renderSolidWire).
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: false, stencil: true });
-    const getPixelRatio = () => Math.min(window.devicePixelRatio || 1, 1.5);
+    let viewerControls = readViewerControls();
+    const getPixelRatio = () => previewPixelRatio(viewerControls.detail);
     renderer.setPixelRatio(getPixelRatio());
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -904,6 +906,7 @@ function ViewerComponent({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
+    controls.zoomToCursor = viewerControls.zoomToCursor;
     controls.mouseButtons = {
       LEFT: THREE.MOUSE.ROTATE,
       MIDDLE: THREE.MOUSE.DOLLY,
@@ -1448,11 +1451,8 @@ function ViewerComponent({
       const { clientWidth, clientHeight } = containerRef.current;
       if (clientWidth === 0 || clientHeight === 0) return;
       const pixelRatio = getPixelRatio();
-      if (
-        clientWidth === lastViewport.width &&
-        clientHeight === lastViewport.height &&
-        pixelRatio === lastViewport.pixelRatio
-      ) {
+      const sizeChanged = clientWidth !== lastViewport.width || clientHeight !== lastViewport.height;
+      if (!sizeChanged && pixelRatio === lastViewport.pixelRatio) {
         return;
       }
       lastViewport.width = clientWidth;
@@ -1467,7 +1467,7 @@ function ViewerComponent({
       stageRef.current?.resize();
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
-      if (fitRef.current?.bounds) {
+      if (sizeChanged && fitRef.current?.bounds) {
         applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
       }
       resizeBloomPipeline(bloomRef.current, clientWidth, clientHeight, pixelRatio);
@@ -1488,6 +1488,11 @@ function ViewerComponent({
     const resizeObserver = new ResizeObserver(applyResize);
     resizeObserver.observe(containerRef.current);
     applyResize();
+    const stopViewerControls = onViewerControlsChange(viewerControls, (next) => {
+      viewerControls = next;
+      controls.zoomToCursor = next.zoomToCursor;
+      applyResize();
+    });
 
     controls.addEventListener("start", requestRenderFrame);
     controls.addEventListener("change", requestRenderFrame);
@@ -1576,6 +1581,7 @@ function ViewerComponent({
           };
         });
       },
+      getSirenLocalPoints: (definitions) => lightRigRef.current?.getSirenLocalPoints(definitions) ?? null,
       getViewState: () => cloneViewerCameraState({
         camera,
         controls,
@@ -1705,7 +1711,8 @@ function ViewerComponent({
       /**
        * Renders the scene at exactly width x height into new 2D canvases, one
        * per `{ pose, crop }`. A pose is `{ type: "view", camera }` with a
-       * getCameraSnapshot result (cropped to the output like EUP shots),
+       * getCameraSnapshot result (cropped to the output like EUP shots, or
+       * widened to keep the whole view with `fit: "contain"`),
        * `{ type: "focus", box, direction, fov?, minDistance?, maxDistance? }`
        * to frame a box from a direction, or `{ type: "preset", presetKey,
        * zoomFactor? }` for a named camera shot of the model. `crop` (`{ x, y, width, height }` as
@@ -1723,7 +1730,7 @@ function ViewerComponent({
             const snapshot = pose.camera;
             shot.position.fromArray(snapshot.position);
             shot.up.fromArray(snapshot.up);
-            shot.fov = shotFov(snapshot.fov, snapshot.aspect, outAspect);
+            shot.fov = (pose.fit === "contain" ? containFov : shotFov)(snapshot.fov, snapshot.aspect, outAspect);
             shot.lookAt(new THREE.Vector3().fromArray(snapshot.target));
           } else if (pose?.type === "focus" && pose.box && pose.direction) {
             const direction = new THREE.Vector3().fromArray(pose.direction).normalize();
@@ -1781,7 +1788,15 @@ function ViewerComponent({
           return shots.map((entry) => {
             const shot = shotCamera(entry);
             if (!shot) return null;
-            renderView(shot);
+            if (entry.pose?.type === "preset" && turntableGroup.rotation.y !== 0) {
+              withTurntableAtRest(turntableGroup, () => {
+                syncWorldOverlays(shot);
+                renderView(shot);
+              });
+              syncWorldOverlays(camera);
+            } else {
+              renderView(shot);
+            }
             const canvas = document.createElement("canvas");
             canvas.width = width;
             canvas.height = height;
@@ -1805,6 +1820,7 @@ function ViewerComponent({
     return () => {
       if (frameId) cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
+      stopViewerControls();
       renderer.domElement.removeEventListener("pointerdown", handleTemplatePickPointerDown, true);
       renderer.domElement.removeEventListener("pointermove", handleTemplatePickPointerMove, true);
       renderer.domElement.removeEventListener("pointerup", handleTemplatePickPointerUp, true);

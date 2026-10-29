@@ -27,7 +27,7 @@
 
 /* ── Pipeline ── */
 .vb-optional {
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -68,7 +68,7 @@
 
 .vb-count {
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -144,7 +144,7 @@
   background: transparent;
   color: inherit;
   font-family: var(--font-main);
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-align: left;
   cursor: pointer;
@@ -164,7 +164,7 @@
 
 .vb-variant-tag {
   flex-shrink: 0;
-  font-size: 10.5px;
+  font-size: var(--cx-fs-label);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -234,7 +234,7 @@
   background: var(--mg-input-bg);
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--mg-primary) 22%, transparent);
@@ -247,8 +247,6 @@
 
 /* ── Export (dock foot) ── */
 .vb-export {
-  display: grid;
-  gap: 10px;
   container-type: inline-size;
 }
 
@@ -272,52 +270,17 @@
   height: 24px;
 }
 
-.vb-dims {
-  margin: -4px 0 0;
-  font-family: var(--font-hud);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  color: var(--mg-muted);
-}
-
-.vb-renders {
-  display: grid;
-  gap: 6px;
-}
-
-.vb-dest {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  min-height: 32px;
-}
-
-.vb-dest .cx-label {
-  flex-shrink: 0;
-  margin-right: 6px;
+.vb-export .lv-foot-value {
+  gap: 2px;
+  overflow: visible;
 }
 
 .vb-dest-name {
-  flex: 1;
   min-width: 0;
+  margin-right: 4px;
   overflow: hidden;
-  font-family: var(--font-hud);
-  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.vb-dest-row {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-}
-
-.vb-dest-pick {
-  margin-left: auto;
 }
 
 .vb-issues {
@@ -342,67 +305,12 @@
   transition: width 240ms var(--cx-ease);
 }
 
-.vb-export-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.vb-export-btn {
-  flex: 1;
-  height: 36px;
-}
-
-.vb-export-current {
-  display: flex;
-  gap: 5px;
-  min-width: 0;
-  margin-top: -4px;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: var(--mg-muted);
-  font-family: var(--font-main);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.vb-export-current span {
-  flex-shrink: 0;
-}
-
-.vb-export-current .vb-export-current-name {
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-weight: 600;
-  color: var(--mg-fg);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vb-export-current:hover:not(:disabled) span {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.vb-export-current:focus-visible {
-  outline: none;
-  border-radius: 3px;
-  box-shadow: var(--cx-focus);
-}
-
-.vb-export-current:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
 .vb-result {
   display: flex;
   align-items: flex-start;
   gap: 7px;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   line-height: 1.45;
 }
 
@@ -421,7 +329,7 @@
 
 .vb-result-path {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
 }
 
 .vb-result.is-ok svg {
@@ -536,7 +444,7 @@
   max-width: min(80%, 380px);
   padding: 10px 14px;
   border-radius: 9px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   transform: translate(-50%, -50%);
 }
 
@@ -596,7 +504,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   text-align: left;
   cursor: pointer;
 }
@@ -695,7 +603,7 @@
   padding: 6px 10px;
   border-radius: 8px;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-fg);
   font-variant-numeric: tabular-nums;
 }
@@ -721,13 +629,13 @@
 
 .vb-texture-title {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--cx-fs-title);
   font-weight: 600;
 }
 
 .vb-texture-copy {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
   overflow-wrap: anywhere;
@@ -735,38 +643,6 @@
 
 .vb-texture-state .cx-btn {
   margin-top: 8px;
-}
-
-/* ── Empty stage ── */
-.vb-empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: start;
-  gap: 8px;
-  max-width: 440px;
-  margin: 0 auto;
-  padding: 24px;
-}
-
-.vb-empty-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.vb-empty-copy {
-  margin: 0 0 10px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--mg-muted);
-}
-
-.vb-empty-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 /* ── Layers inspector ── */
@@ -806,14 +682,14 @@
 .vb-layers-title h2 {
   flex-shrink: 0;
   margin: 0;
-  font-size: 14px;
+  font-size: var(--cx-fs-title);
   font-weight: 650;
 }
 
 .vb-layers-editing {
   min-width: 0;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -851,7 +727,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   outline: none;
 }
 
@@ -893,12 +769,12 @@
   align-items: center;
   gap: 6px;
   height: 34px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
 }
 
 .vb-filter-num {
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
@@ -943,7 +819,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 650;
   text-align: left;
   cursor: pointer;
@@ -975,7 +851,7 @@
 .vb-group-count {
   margin-left: auto;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
@@ -1036,7 +912,7 @@
   background: transparent;
   color: var(--mg-muted);
   font-family: var(--font-main);
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   text-align: left;
   cursor: pointer;
   transition: background-color 120ms var(--cx-ease), color 120ms var(--cx-ease);
@@ -1093,7 +969,7 @@
 
 .vb-layers-empty {
   margin: 12px 8px;
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   line-height: 1.5;
   color: var(--mg-muted);
 }

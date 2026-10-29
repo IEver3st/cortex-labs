@@ -11,7 +11,7 @@
   margin: 0;
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -28,7 +28,7 @@
 
 .eup-pack-total {
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -42,14 +42,14 @@
   display: flex;
   align-items: baseline;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--cx-fs-row);
   font-weight: 650;
 }
 
 .eup-pack-slot-count {
   margin-left: auto;
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   font-weight: 400;
   color: var(--mg-muted);
   font-variant-numeric: tabular-nums;
@@ -97,7 +97,7 @@
 .eup-pack-num {
   min-width: 26px;
   font-family: var(--font-hud);
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
   font-variant-numeric: tabular-nums;
 }
 
@@ -114,13 +114,13 @@
 }
 
 .eup-pack-name {
-  font-size: 12.5px;
+  font-size: var(--cx-fs-control);
   font-weight: 600;
 }
 
 .eup-pack-meta {
   font-family: var(--font-hud);
-  font-size: 11px;
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
@@ -186,7 +186,7 @@
   margin: 0;
   overflow: hidden;
   font-family: var(--font-hud);
-  font-size: 11.5px;
+  font-size: var(--cx-fs-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -199,7 +199,7 @@
 .lv-chip-btn.eup-pack-chip {
   height: 28px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--cx-fs-body);
 }
 
 .eup-pack-checks {
@@ -234,7 +234,7 @@
 
 .eup-pack-rule {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--cx-fs-body);
   line-height: 1.4;
   color: var(--mg-muted);
 }

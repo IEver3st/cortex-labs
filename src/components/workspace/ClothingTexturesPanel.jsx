@@ -306,7 +306,8 @@ export default function ClothingTexturesPanel({ s }) {
         {item && ready && last < MAX_ITEM_TEXTURES ? (
           <DropButton
             title="Add textures"
-            hint={`Drop images to add them as ${next}, ${letterOf(last + 1) || "…"} and on. Drop one on a texture to replace it.`}
+            hint={`Adds ${next}, ${letterOf(last + 1) || "…"} and on`}
+            detail={`Drop images to add them as ${next}, ${letterOf(last + 1) || "…"} and on. Drop one on a texture to replace it.`}
             onClick={pickImages}
           />
         ) : null}

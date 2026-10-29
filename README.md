@@ -94,6 +94,23 @@ The Sirens workspace edits a YFT vehicle's carcols.meta siren setting while the 
 
 Vehicles built for ELS (LSPDFR's ELS V8, ELS-FiveM, ELS-Plus or MISS-ELS) switch Sirens to their VCF: Cortex Studio finds it beside the model or in ELS folders you add, flashes the model's extras by light stage, edits every VCF section, and saves only what changed after a .bak. ELS V8 pattern timings are imported from your own ELS-FiveM copy; none are bundled.
 
+### Working with Cortex Forge
+
+Design and preview lights on the car in Cortex Studio. Check, link and install across your server in Cortex Forge.
+
+- **Open in Cortex Studio** on a vehicle in Cortex Forge opens the Sirens workspace on that vehicle's carcols.meta, with its siren setting selected and its model loaded. If Cortex Studio is already running, it opens in a new tab.
+- **Check in Forge** opens the resource that holds the open carcols.meta in Cortex Forge, to check it against your server. It is in the Sirens workspace, and after **Install to resource** and **Rename vehicle…**. It shows only when Cortex Forge 0.1.0 or later is installed. Forge reads the files on disk, so save your siren changes first.
+
+### Juno in Sirens (optional)
+
+Juno is off until you sign in with a free Cortex account in **Settings > Cortex account**. Once you're signed in, the Sirens editor gets a **Describe the lights** field: write a light show by where the lights sit on the car ("front takedowns steady white, roof reds left quad flash, blues right, rear deck amber arrow to the right") and Juno writes the flash patterns, colours and tempo. The result plays on the car without touching your setting; **Keep** applies it as one undo step and **Discard** drops it. Nothing is written to disk until you save. Everything else in Cortex Studio works without an account or a network connection.
+
+What Juno sends, shown before you sign in:
+
+> Juno writes siren patterns from a description. It needs a free Cortex account, signed in with Discord (verified email). Each request sends the vehicle's name and details, its resource folder and setting name, the number of lights and where they sit, the timing and colours, and your sentence, to the AI model Juno runs on. Never your models, textures or files. Requests and answers are kept for 30 days, then deleted. It's the same account and monthly allowance as Cortex Forge. Each new description uses a little of the allowance; Juno's one automatic retry after a failed check is free, and so is asking the exact same thing again unless that answer failed its checks. [Terms](https://api.cortexsoftware.net/terms) · [Privacy](https://api.cortexsoftware.net/privacy)
+
+The sign-in is kept in Windows Credential Manager, never in Cortex Studio's settings. **Sign out** in the same section signs this PC out of your Cortex account.
+
 ### Preview capture
 
 Export clean presentation images from front, back, side, three-quarter, and top camera angles. Captures support zoom control and watermarks made from text, an imported logo, or both, with design presets, plain, shadow, outline, or plate finishes, and anchored or tiled placement.
@@ -253,7 +270,8 @@ Cortex Studio is designed around local, user-directed work:
 - local workspaces and preferences remain on the machine;
 - malformed or unsupported inputs are rejected instead of being reinterpreted as plausible output;
 - feedback submission is user-initiated and lets you choose whether recent diagnostic logs are included;
-- private credentials do not belong in the renderer or any `VITE_*` configuration value.
+- private credentials do not belong in the renderer or any `VITE_*` configuration value;
+- Juno is off unless you sign in, sends only what its disclosure lists, and keeps its sign-in in Windows Credential Manager.
 
 ## Contributing
 

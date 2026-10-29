@@ -76,7 +76,7 @@
 
 .onb-brand-version {
   font-family: var(--font-hud);
-  font-size: calc(11 * var(--u));
+  font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
 }
 
@@ -94,7 +94,7 @@
   max-width: calc(620 * var(--u));
   margin: 0;
   text-wrap: balance;
-  font-size: calc(13 * var(--u));
+  font-size: var(--cx-fs-row);
   line-height: 1.5;
   color: var(--mg-muted);
 }
@@ -232,7 +232,7 @@
 
 .onb-option-label {
   overflow: hidden;
-  font-size: calc(13.5 * var(--u));
+  font-size: var(--cx-fs-row);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -240,7 +240,7 @@
 
 .onb-option-desc {
   overflow: hidden;
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   line-height: 1.35;
   color: var(--mg-muted);
   text-overflow: ellipsis;
@@ -285,7 +285,7 @@
 }
 
 .onb-field-label {
-  font-size: calc(13 * var(--u));
+  font-size: var(--cx-fs-row);
   font-weight: 600;
 }
 
@@ -305,7 +305,7 @@
   background: transparent;
   color: var(--mg-muted);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   font-weight: 600;
   cursor: pointer;
   transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
@@ -344,7 +344,7 @@
   background: transparent;
   color: var(--mg-fg);
   font-family: var(--font-main);
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   font-weight: 600;
   text-align: left;
   cursor: pointer;
@@ -410,7 +410,7 @@
 
 .onb-scale-head output {
   font-family: var(--font-hud);
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   color: var(--mg-muted);
@@ -462,7 +462,7 @@
 }
 
 .onb-toggle-hint {
-  font-size: calc(12 * var(--u));
+  font-size: var(--cx-fs-body);
   color: var(--mg-muted);
 }
 
@@ -479,7 +479,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: calc(12.5 * var(--u));
+  font-size: var(--cx-fs-control);
   color: var(--mg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;

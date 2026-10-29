@@ -119,6 +119,7 @@ function EupPiecesPanel({
       step={step}
       done={wornCount > 0}
       title="Addon pieces"
+      hint="One piece per slot is worn at a time, as in game. Wearing one takes its slot from the pack and base clothing."
       trailing={pieces.length > 0 ? <span className="eup-step-count">{wornCount}/{pieces.length} worn</span> : null}
     >
       {!isTauriRuntime ? (
@@ -126,11 +127,7 @@ function EupPiecesPanel({
       ) : blockedNote ? (
         <p className="lv-slot-note">{blockedNote}</p>
       ) : pieces.length === 0 ? (
-        <DropButton
-          title="Add addon pieces"
-          hint="Any .ydd, named any way. A matching .ytd, PSD or PNG next to it is used as its texture."
-          onClick={onAdd}
-        />
+        <DropButton title="Add addon pieces" hint=".ydd, any name" onClick={onAdd} detail="Any .ydd, named any way. A matching .ytd, PSD or PNG next to it is used as its texture." />
       ) : (
         <>
           <ul className="eup-pieces">
@@ -158,7 +155,6 @@ function EupPiecesPanel({
               Add pieces
             </button>
           </div>
-          <p className="lv-slot-note">One piece per slot is worn at a time, as in game. Wearing one takes its slot from the pack and base clothing.</p>
         </>
       )}
       {otherGenderCount > 0 ? (
