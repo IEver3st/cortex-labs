@@ -1,0 +1,49 @@
+.usage-notice {
+  position: fixed;
+  right: calc(16 * var(--u));
+  bottom: calc(40 * var(--u));
+  z-index: 90;
+  display: grid;
+  gap: calc(8 * var(--u));
+  width: min(calc(360 * var(--u)), calc(100vw - 32px));
+  padding: calc(14 * var(--u)) calc(16 * var(--u));
+  border: 1px solid var(--mg-border);
+  border-radius: 8px;
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+  color: var(--mg-fg);
+  -webkit-app-region: no-drag;
+}
+
+.usage-notice-title {
+  margin: 0;
+  font-size: var(--cx-fs-title);
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.usage-notice-body,
+.usage-notice-hint {
+  margin: 0;
+  font-size: var(--cx-fs-body);
+  line-height: 1.45;
+  color: var(--mg-muted);
+  text-wrap: pretty;
+}
+
+.usage-notice-hint.is-error {
+  color: var(--mg-destructive);
+}
+
+.usage-notice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(6 * var(--u));
+  margin-top: calc(4 * var(--u));
+}
+
+@media (forced-colors: active) {
+  .usage-notice {
+    border-color: CanvasText;
+  }
+}

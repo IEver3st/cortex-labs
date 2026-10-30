@@ -535,6 +535,17 @@
   flex-shrink: 0;
 }
 
+.settings-usage-id {
+  max-width: calc(132 * var(--u));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-hud);
+  font-size: var(--cx-fs-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+}
+
 /* ── Controls ── */
 .settings-mini {
   display: inline-flex;

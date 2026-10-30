@@ -31,6 +31,7 @@ import { HOTKEY_ACTIONS } from "../lib/hotkeys";
 import { useWorkspaceHotkeys } from "../lib/use-workspace-hotkeys";
 import { openFolderPath } from "../lib/open-folder";
 import { applyWatermarkToPngBytes } from "../lib/watermark.js";
+import { trackUsage } from "../lib/usage";
 import { normalizeShowroomSubject } from "../lib/studio-defaults.js";
 import { buildPlateImage } from "../lib/license-plate-assets.js";
 import { resolveModSelection } from "../lib/vehicle-modkits.js";
@@ -645,6 +646,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
       setCapturing(true);
       const bytes = await viewport.capture({ width, height, transparent });
       await writeFile(target, await applyWatermarkToPngBytes(bytes, loadPrefs()?.defaults?.watermark));
+      trackUsage("photo");
       dismissAlert("capture");
       setNotice({ id: Date.now(), path: target });
     } catch (error) {

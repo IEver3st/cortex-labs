@@ -21,6 +21,7 @@ import { HOTKEY_ACTIONS } from "../lib/hotkeys";
 import { useWorkspaceHotkeys } from "../lib/use-workspace-hotkeys";
 import { openFolderPath } from "../lib/open-folder";
 import { applyWatermarkToDataUrl, stampCanvas } from "../lib/watermark";
+import { trackUsage } from "../lib/usage";
 import {
   COMPONENT_IDS,
   DEFAULT_BASE_OUTFIT,
@@ -1925,6 +1926,7 @@ export default function EupPage({
       if (!target) return;
       const stamped = await applyWatermarkToDataUrl(dataUrl, loadPrefs()?.defaults?.watermark);
       await writeFile(target, dataUrlToBytes(stamped));
+      trackUsage("photo");
       dismissAlert("screenshot");
       notify(`Saved ${target}`);
     } catch (error) {
@@ -2098,6 +2100,7 @@ export default function EupPage({
         folder: written ? folder : "",
       });
     }
+    trackUsage("photo", written);
   }, []);
 
   const handleExportShots = useCallback(async () => {

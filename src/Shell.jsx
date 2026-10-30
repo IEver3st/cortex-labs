@@ -31,6 +31,7 @@ import { subscribeUnsavedChanges, unsavedChangeKeys } from "./lib/unsaved-change
 import { clearSession } from "./lib/prefs";
 import UnsavedChangesDialog from "./components/UnsavedChangesDialog";
 import { loadOnboarded, setOnboarded, loadPrefs, PREFS_UPDATED_EVENT } from "./lib/prefs";
+import { markUsageNoticeSeen, trackUsage, usageNoticeSeen, usageStatsAvailable } from "./lib/usage";
 import {
   WORKSPACE_MODES,
   WORKSPACE_MODE_GROUPS,
@@ -67,6 +68,7 @@ const EMPTY_STATE = Object.freeze({});
 const WhatsNew = lazy(() => import("./components/WhatsNew"));
 const BugReportModal = lazy(() => import("./components/BugReportModal"));
 const Onboarding = lazy(() => import("./components/Onboarding"));
+const UsageNotice = lazy(() => import("./components/UsageNotice"));
 const SettingsMenu = lazy(() => import("./components/SettingsMenu"));
 
 // Long enough for the intro to land its lockup; boot also waits for the front tab's page chunk.
@@ -174,6 +176,7 @@ function clampUiScale(value) {
 export default function Shell() {
   const [booted, setBooted] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
+  const [usageNoticeOpen, setUsageNoticeOpen] = useState(() => usageStatsAvailable() && !usageNoticeSeen());
   const [isBugReportOpen, setIsBugReportOpen] = useState(false);
   // The modal chunk loads on first open and then stays mounted so its close
   // animation keeps working exactly as before.
@@ -798,6 +801,16 @@ export default function Shell() {
     }
   }, [tabs]);
 
+  useEffect(() => {
+    if (booted) trackUsage("open");
+  }, [booted]);
+
+  const finishUsageNotice = useCallback(() => {
+    markUsageNoticeSeen();
+    setUsageNoticeOpen(false);
+    trackUsage("open");
+  }, []);
+
   // Onboarding
 
   const handleOnboardingComplete = useCallback((action) => {
@@ -1110,6 +1123,13 @@ export default function Shell() {
           </Suspense>
         ) : null}
       </AnimatePresence>
+      <Suspense fallback={null}>
+        <AnimatePresence>
+          {booted && usageNoticeOpen && !showOnboarding && !settingsOpen ? (
+            <UsageNotice key="usage-notice" onDone={finishUsageNotice} />
+          ) : null}
+        </AnimatePresence>
+      </Suspense>
 
       {booted && (
         <>

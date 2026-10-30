@@ -41,6 +41,7 @@ export const BUILT_IN_DEFAULTS = Object.freeze({
   showWhatsNewOnUpdate: true,
   autoCheckUpdates: true,
   feedbackIncludeLogs: false,
+  usageStats: true,
   captureAngles: [...CAPTURE_ANGLE_KEYS],
   captureZoom: DEFAULT_CAPTURE_ZOOM,
   captureSize: DEFAULT_CAPTURE_SIZE,

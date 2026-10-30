@@ -1,3 +1,12 @@
+version: 5.7.0
+date: 2026-10-29
+> Cortex Studio now sends anonymous usage counts, with a notice before the first one and an off switch in Settings > Privacy.
+
+## New
+- Anonymous usage stats | Studio sends a count when it opens and when you save liveries, templates, EUP packs, photos or siren setups. Each count carries a random ID made on this PC and the app version, never your files or your Cortex account. Nothing is sent until you answer the notice, and Settings > Privacy turns it off.
+
+---
+
 version: 5.6.0
 date: 2026-10-28
 > Settings now opens over your work, the top bar and workspaces are tidier, the showroom runs much faster with sirens playing, and Juno can write siren patterns from a description.

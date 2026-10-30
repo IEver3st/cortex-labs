@@ -271,7 +271,8 @@ Cortex Studio is designed around local, user-directed work:
 - malformed or unsupported inputs are rejected instead of being reinterpreted as plausible output;
 - feedback submission is user-initiated and lets you choose whether recent diagnostic logs are included;
 - private credentials do not belong in the renderer or any `VITE_*` configuration value;
-- Juno is off unless you sign in, sends only what its disclosure lists, and keeps its sign-in in Windows Credential Manager.
+- Juno is off unless you sign in, sends only what its disclosure lists, and keeps its sign-in in Windows Credential Manager;
+- anonymous usage stats (a random ID, the app version, and counts of launches and saves) start only after a notice, never include files or account details, and turn off in Settings > Privacy.
 
 ## Contributing
 

@@ -4,6 +4,7 @@ import { ToolDialog, StatusLines } from "../siren-editor/SirenToolDialogs";
 import { buildLiveryTextures } from "../../lib/livery-image.js";
 import { canWriteLiveries, fileNameOf, liveryWriteLabel, numberRuns } from "../../lib/livery-set.js";
 import { writeLiveries } from "../../lib/livery-write.js";
+import { trackUsage } from "../../lib/usage.js";
 import "../siren-editor/SirenEditor.css";
 import "./LiveriesPanel.css";
 
@@ -87,6 +88,7 @@ export default function LiveryWriteDialog({ s, plan: livePlan, items: liveItems,
       return;
     }
     // The files are written from here on, so a failed reload must not read as a failed write.
+    if (liveItems.length) trackUsage("livery", liveItems.length);
     const files = (result?.files || []).map((file) => String(file.path));
     const removed = livePlan.removals || [];
     const summary = [
