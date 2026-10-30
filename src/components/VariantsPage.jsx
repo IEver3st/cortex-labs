@@ -40,6 +40,7 @@ import { useStoredHotkeys } from "../lib/use-workspace-hotkeys";
 import { hotkeyLabel } from "./ui/keycaps";
 import { normalizeVariantList } from "../lib/workspace-state";
 import { openFolderPath } from "../lib/open-folder";
+import { trackUsage } from "../lib/usage";
 import { countExistingFiles } from "../lib/capture-output";
 import { editHistoryKey } from "../lib/edit-history";
 import { captureViewerFrameBytes } from "../lib/preview-capture";
@@ -689,6 +690,8 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
     } finally {
       if (rendersWanted) viewerApiRef.current?.setCompositeTexture?.(liveryTargetReady ? previewCanvasRef.current : null);
       setExporting(false);
+      trackUsage("livery", written.length);
+      trackUsage("photo", renders);
     }
   }, [psdPath, psdData, outputFolder, exporting, exportBlocked, selectedVariant, variants, selectedVariantId, compositorVisibility, exportSize, exportShape, exportRenders, modelPath, liveryTargetReady]);
 

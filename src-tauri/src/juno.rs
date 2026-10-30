@@ -24,6 +24,9 @@ const MAX_PENDING: usize = 8;
 const SHORT: Duration = Duration::from_secs(20);
 const REVOKE: Duration = Duration::from_secs(6);
 const ACTION: Duration = Duration::from_secs(120);
+const PING: Duration = Duration::from_secs(8);
+const USAGE_EVENTS: [&str; 6] = ["open", "livery", "template", "eup", "photo", "siren"];
+const MAX_USAGE_COUNT: u32 = 500;
 
 const SIGNED_OUT: &str =
     "You've been signed out of your Cortex account. Sign in again in Settings > Cortex account.";
@@ -503,6 +506,25 @@ pub async fn juno_sign_out() -> Res<Value> {
         Ok(json!({ "offline": !ended }))
     })
     .await
+}
+
+#[tauri::command]
+pub async fn usage_ping(install_id: String, event: String, count: u32) -> Res<()> {
+    let id_ok = install_id.len() == 32
+        && install_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !id_ok || count == 0 || !USAGE_EVENTS.contains(&event.as_str()) {
+        return Err(JunoError::new("bad_request", "Unknown usage count."));
+    }
+    let body = json!({
+        "client": CLIENT,
+        "install_id": install_id,
+        "version": env!("CARGO_PKG_VERSION"),
+        "event": event,
+        "count": count.min(MAX_USAGE_COUNT),
+    });
+    blocking(move || send(Method::POST, "/v1/usage", None, Some(body), PING).map(|_| ())).await
 }
 
 #[tauri::command]

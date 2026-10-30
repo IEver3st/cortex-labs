@@ -44,6 +44,7 @@ import { editHistoryKey } from "../lib/edit-history";
 import useEditHistory from "./useEditHistory";
 import { loadPrefs } from "../lib/prefs";
 import { openFolderPath } from "../lib/open-folder";
+import { trackUsageOnce } from "../lib/usage";
 import { isFsScopeError } from "../lib/capture-output";
 import { AssetSlot, DeckButton, FootFact, PanelLayout, StageEmpty, splitPath } from "./workspace/parts";
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
@@ -1220,6 +1221,7 @@ export default function TemplateGenerationPage({
           if (cancelled) return;
           setAutoSavedPath(savedPaths.join(" | "));
           const count = savedPaths.length;
+          if (count > 0) trackUsageOnce("template", modelPath);
           const savedText = count > 0 ? `Saved ${count} template file${count === 1 ? "" : "s"}. ` : "";
           if (failure) {
             showSaveNotice(
@@ -1323,6 +1325,7 @@ export default function TemplateGenerationPage({
       setAutoSavedPath(savedPaths.join(" | "));
       const count = savedPaths.length;
       showSaveNotice("success", `Saved ${count} template file${count === 1 ? "" : "s"}`);
+      trackUsageOnce("template", modelPath || psdFileName);
     };
 
     const writeOutputsToFolder = async (folder) => {
@@ -1411,6 +1414,7 @@ export default function TemplateGenerationPage({
     generatedTemplates,
     isSaving,
     isTauriRuntime,
+    modelPath,
     outputFolder,
     previewUrl,
     psdBytes,

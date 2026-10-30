@@ -4226,6 +4226,7 @@ pub fn run() {
             juno::juno_sign_out,
             juno::juno_account,
             juno::juno_siren_pattern,
+            juno::usage_ping,
             ensure_dir,
             open_folder_fallback,
             list_fivem_characters,

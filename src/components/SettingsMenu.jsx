@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Search, X, Settings, Car, AlertTriangle, Monitor, Keyboard, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Bug, Lightbulb, Sparkles, Aperture, UserRound } from "lucide-react";
+import { Search, X, Settings, Car, AlertTriangle, Monitor, Keyboard, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Bug, Lightbulb, Sparkles, Aperture, UserRound, ShieldCheck } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { exists as fsExists } from "@tauri-apps/plugin-fs";
 import HotkeyInput from "./HotkeyInput";
 import WatermarkSettings from "./WatermarkSettings";
 import StudioDefaultsSettings from "./StudioDefaultsSettings";
 import CortexAccountSettings from "./CortexAccountSettings";
+import UsageStatsSettings from "./UsageStatsSettings";
 import { ColorField } from "./SettingsColorField";
 import { Toggle } from "./ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -213,6 +214,13 @@ const SETTINGS_SECTION_GROUPS = [
     id: "support",
     label: "Support",
     items: [
+      {
+        id: "privacy",
+        label: "Privacy",
+        description: "Anonymous usage stats and what they send.",
+        icon: ShieldCheck,
+        keywords: ["Usage stats>Share usage stats", "Share usage stats", "Analytics>Share usage stats", "Telemetry>Share usage stats", "Tracking>Share usage stats", "Usage ID", "New ID>Usage ID", "Privacy policy"],
+      },
       {
         id: "about",
         label: "About",
@@ -1584,6 +1592,15 @@ export default function SettingsMenu({
                             {/* ─── Watermark ─── */}
                             {activeSection === "watermark" ? (
                               <WatermarkSettings value={draft.watermark} onChange={updateWatermark} />
+                            ) : null}
+
+                            {activeSection === "privacy" ? (
+                              <div className="settings-stack">
+                                <UsageStatsSettings
+                                  enabled={draft.usageStats !== false}
+                                  onChange={(v) => setDraft((p) => ({ ...p, usageStats: v }))}
+                                />
+                              </div>
                             ) : null}
 
                             {/* ─── About ─── */}

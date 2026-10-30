@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { exists, readTextFile, writeFile } from "@tauri-apps/plugin-fs";
 import { createCarcolsFile, serializeSirenSetting, spliceSirenSetting } from "../../lib/siren-settings.js";
+import { trackUsageOnce } from "../../lib/usage.js";
 import useSirenIssues from "./useSirenIssues.js";
 import useScopedStatus from "./useScopedStatus.js";
 
@@ -59,6 +60,7 @@ export default function useSirenSave(s) {
         text = createCarcolsFile(draft);
       }
       await writeFile(target, new TextEncoder().encode(text));
+      trackUsageOnce("siren", `${target}\n${draft.id}`);
       editor.markSaved(target);
       s.requestMetaRescan?.();
       setStatus({

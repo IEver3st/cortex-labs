@@ -5,6 +5,7 @@ import { fileNameOf, groupClothingFiles, planClothingPackBuild } from "../../lib
 import { itemProperties } from "../../lib/clothing-properties.js";
 import { parsePedVariationXml } from "../../lib/ped-variation-xml.js";
 import { clothingBuildRequest } from "../../lib/clothing-write.js";
+import { trackUsage } from "../../lib/usage.js";
 
 const LOOSE_SOURCE = "loose-files";
 
@@ -177,6 +178,7 @@ export function usePackProject({ enabled, compare, sourceFolders, sourceFiles, r
         if (mounted.current) setRun((current) => (current.phase === "building" ? { ...current, progress: event.payload } : current));
       });
       const result = await invoke("clothing_pack_build", { request: clothingBuildRequest(plan, project.parent, project.name) });
+      trackUsage("eup");
       if (mounted.current) setRun({ phase: "done", progress: null, result: { path: String(result?.path || ""), items: plan.summary.items, textures: plan.summary.textures, creatures: plan.creatures.length }, error: "" });
     } catch (error) {
       if (mounted.current) setRun({ phase: "error", progress: null, result: null, error: errorText(error) });

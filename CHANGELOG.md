@@ -8,6 +8,16 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [5.7.0] - 2026-10-29
+
+Cortex Studio now sends anonymous usage counts, with a notice before the first one and an off switch in Settings > Privacy.
+
+### Added
+
+- **Anonymous usage stats** - Cortex Studio now sends anonymous counts so Cortex can see how many people use it and how much they make: a random ID made on this PC, the app version, and one event (Studio opened, or how many liveries, templates, EUP packs, photos or siren setups you saved). Counts never include your files, their names or folders, or your Cortex account. Studio shows a notice with **Turn off** and **OK** before it sends the first count, and the new **Settings > Privacy** section turns it off, shows the Usage ID and replaces it with **New ID**. Desktop app only.
+
+---
+
 ## [5.6.0] - 2026-10-28
 
 Settings now opens over your work, the top bar and workspaces are tidier, the showroom runs much faster with sirens playing, and Juno can write siren patterns from a description.

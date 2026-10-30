@@ -23,6 +23,7 @@ import useVehicleModkits from "./components/workspace/useVehicleModkits";
 import useKitShoot from "./components/workspace/useKitShoot";
 import { emitRenderEffectChanged, loadPrefs, RENDER_EFFECT_EVENT, sanitizeStoredDefaults, savePrefs } from "./lib/prefs";
 import { openFolderPath } from "./lib/open-folder";
+import { trackUsage } from "./lib/usage";
 import { captureTemporaryViewerFrame, captureViewerFrameBytes } from "./lib/preview-capture";
 import { countExistingFiles, downloadBytes } from "./lib/capture-output";
 import { hasDrawableWatermark } from "./lib/watermark";
@@ -2084,6 +2085,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       // Restore grid state
       if (gridWasOn) setShowGrid(true);
     }
+    trackUsage("photo", written);
 
     setPreviewResult({
       total: presetKeys.length,
@@ -2193,6 +2195,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         return;
       }
       await writeFile(`${folder}/${fileName}`, bytes);
+      trackUsage("photo");
       setPreviewOutputPath(folder);
       showToast(`Saved ${fileName}`);
     } catch (err) {
