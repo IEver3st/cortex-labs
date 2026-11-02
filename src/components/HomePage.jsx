@@ -17,6 +17,7 @@ import {
   Flashlight,
   Siren,
   Aperture,
+  AudioWaveform,
   Check,
   X,
   EyeOff,
@@ -58,6 +59,7 @@ const FILTER_TABS = [
   { id: "eupstudio", label: "EUP Studio" },
   { id: "propstudio", label: "Prop Studio" },
   { id: "photo", label: "Photo Mode" },
+  { id: "sounds", label: "Sound Studio" },
 ];
 
 const SORT_OPTIONS = [
@@ -94,6 +96,7 @@ function getModeTag(entry, ws) {
   if (entry.page === "eupstudio") return "EUP Studio";
   if (entry.page === "propstudio") return "Prop Studio";
   if (entry.page === "photo") return "Photo Mode";
+  if (entry.page === "sounds") return "Sound Studio";
   const mode = normalizeTextureMode(ws?.state?.textureMode) || "vehicle";
   if (mode === "eup") return "EUP";
   if (mode === "multi") return "Multi";
@@ -107,6 +110,7 @@ const TAG_CATEGORY = {
   "EUP Studio": "eup",
   "Prop Studio": "prop",
   "Photo Mode": "photo",
+  "Sound Studio": "sound",
   Multi: "multi",
   Sirens: "siren",
   Variant: "variant",
@@ -115,10 +119,10 @@ const TAG_CATEGORY = {
 
 function matchesFilter(filterId, entry, ws) {
   if (filterId === "all") return true;
-  if (filterId === "variants" || filterId === "templategen" || filterId === "eupstudio" || filterId === "propstudio" || filterId === "photo") {
+  if (filterId === "variants" || filterId === "templategen" || filterId === "eupstudio" || filterId === "propstudio" || filterId === "photo" || filterId === "sounds") {
     return entry.page === filterId;
   }
-  if (entry.page === "variants" || entry.page === "templategen" || entry.page === "eupstudio" || entry.page === "propstudio" || entry.page === "photo") {
+  if (entry.page === "variants" || entry.page === "templategen" || entry.page === "eupstudio" || entry.page === "propstudio" || entry.page === "photo" || entry.page === "sounds") {
     return false;
   }
   return (normalizeTextureMode(ws?.state?.textureMode) || "vehicle") === filterId;
@@ -248,6 +252,7 @@ function modeIconFor(entry, ws) {
   if (entry.page === "eupstudio") return Shirt;
   if (entry.page === "propstudio") return Flashlight;
   if (entry.page === "photo") return Aperture;
+  if (entry.page === "sounds") return AudioWaveform;
   if (mode === "eup") return Shirt;
   if (mode === "multi") return Link2;
   if (mode === "sirens") return Siren;
@@ -452,7 +457,7 @@ export default function HomePage({
 
   const handleCreateProject = useCallback(() => {
     const name = projectName.trim() || "Untitled Project";
-    if (selectedMode === "variants" || selectedMode === "templategen" || selectedMode === "eupstudio" || selectedMode === "propstudio" || selectedMode === "photo") {
+    if (selectedMode === "variants" || selectedMode === "templategen" || selectedMode === "eupstudio" || selectedMode === "propstudio" || selectedMode === "photo" || selectedMode === "sounds") {
       const id = createWorkspace(name, selectedMode);
       onNavigate(selectedMode, id);
     } else {

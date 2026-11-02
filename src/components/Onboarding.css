@@ -184,6 +184,7 @@
 .onb-option[data-cat="template"] { --cat: var(--cx-cat-template); }
 .onb-option[data-cat="prop"] { --cat: var(--cx-cat-prop); }
 .onb-option[data-cat="siren"] { --cat: var(--cx-cat-siren); }
+.onb-option[data-cat="sound"] { --cat: var(--cx-cat-sound); }
 .onb-option[data-cat="photo"] { --cat: var(--cx-cat-photo); }
 
 .onb-option::before {

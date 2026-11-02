@@ -44,6 +44,7 @@
   --cx-cat-prop: #6d7a27;
   --cx-cat-siren: #b4532a;
   --cx-cat-photo: #2b7891;
+  --cx-cat-sound: #a8452f;
 }
 
 html.dark {
@@ -64,6 +65,7 @@ html.dark {
   --cx-cat-prop: #c3cf86;
   --cx-cat-siren: #eda07c;
   --cx-cat-photo: #8cc8db;
+  --cx-cat-sound: #e8a090;
 }
 
 ::selection {
@@ -303,6 +305,53 @@ textarea {
 .settings-toggle:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.lv-ctx-seg {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: 6px;
+  padding: 2px;
+  border: 1px solid var(--mg-border);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+}
+
+.lv-ctx-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mg-muted);
+  font-family: var(--font-main);
+  font-size: var(--cx-fs-body);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
+}
+
+.lv-ctx-seg-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lv-ctx-seg-btn:hover {
+  background: var(--cx-wash-strong);
+  color: var(--mg-fg);
+}
+
+.lv-ctx-seg-btn.is-on {
+  background: var(--cx-invert-bg);
+  color: var(--cx-invert-fg);
+}
+
+.lv-ctx-seg-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
 }
 
 /* ── Portalled popper content under UI scaling ──
@@ -716,6 +765,7 @@ textarea {
   .cx-icon-btn,
   .settings-toggle,
   .settings-toggle-dot,
+  .lv-ctx-seg-btn,
   .cx-select-trigger,
   .cx-select-chevron {
     transition: none;
@@ -728,6 +778,10 @@ textarea {
 @media (forced-colors: active) {
   .settings-toggle.is-on {
     background: Highlight;
+  }
+  .lv-ctx-seg-btn.is-on {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
   .cx-btn:focus-visible,
   .cx-icon-btn:focus-visible,

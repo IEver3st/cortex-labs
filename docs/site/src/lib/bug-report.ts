@@ -8,6 +8,7 @@ export type BugArea =
   | "eup"
   | "eup-studio"
   | "prop-studio"
+  | "sound-studio"
   | "multi"
   | "sirens"
   | "variant-builder"
@@ -92,6 +93,7 @@ const AREA_LABELS = new Map<BugArea, string>([
   ["eup-studio", "EUP Studio"],
   ["prop-studio", "Prop Studio"],
   ["sirens", "Sirens"],
+  ["sound-studio", "Sound Studio"],
   ["multi", "Multi"],
   ["variant-builder", "Variant Builder"],
   ["template-generator", "Template Generator"],

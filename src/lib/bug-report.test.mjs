@@ -169,7 +169,7 @@ function payloadFor(draft) {
 test("area and frequency are allowlisted and dropped when unknown", () => {
   assert.deepEqual(
     BUG_REPORT_AREAS.map((entry) => entry.value),
-    ["livery", "eup", "eup-studio", "prop-studio", "multi", "sirens", "variant-builder", "template-generator", "home-settings", "other"],
+    ["livery", "eup", "eup-studio", "prop-studio", "sound-studio", "multi", "sirens", "variant-builder", "template-generator", "home-settings", "other"],
   );
   assert.deepEqual(BUG_REPORT_FREQUENCIES.map((entry) => entry.value), ["always", "sometimes", "once"]);
 

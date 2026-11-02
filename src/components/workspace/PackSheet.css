@@ -527,54 +527,6 @@
   cursor: not-allowed;
 }
 
-/* ── Pack / Vehicle switch (frame context slot) ── */
-.lv-ctx-seg {
-  display: inline-flex;
-  gap: 2px;
-  margin-right: 6px;
-  padding: 2px;
-  border: 1px solid var(--mg-border);
-  border-radius: 6px;
-  background: var(--mg-input-bg);
-}
-
-.lv-ctx-seg-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 22px;
-  padding: 0 9px 0 7px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--mg-muted);
-  font-family: var(--font-main);
-  font-size: var(--cx-fs-body);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 140ms var(--cx-ease), color 140ms var(--cx-ease);
-}
-
-.lv-ctx-seg-btn svg {
-  width: 13px;
-  height: 13px;
-}
-
-.lv-ctx-seg-btn:hover {
-  background: var(--cx-wash-strong);
-  color: var(--mg-fg);
-}
-
-.lv-ctx-seg-btn.is-on {
-  background: var(--cx-invert-bg);
-  color: var(--cx-invert-fg);
-}
-
-.lv-ctx-seg-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--cx-focus);
-}
-
 /* The Model step's way in, under its card or drop target. */
 .lv-folder-link {
   display: inline-flex;
@@ -591,8 +543,7 @@
 @media (prefers-reduced-motion: reduce) {
   .lv-pack-shot,
   .lv-pack-search,
-  .lv-packbar-pack,
-  .lv-ctx-seg-btn {
+  .lv-packbar-pack {
     transition: none;
   }
 
@@ -603,8 +554,7 @@
 }
 
 @media (forced-colors: active) {
-  .lv-pack-tile.is-open .lv-pack-shot,
-  .lv-ctx-seg-btn.is-on {
+  .lv-pack-tile.is-open .lv-pack-shot {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }

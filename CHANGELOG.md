@@ -8,6 +8,19 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [5.8.0] - 2026-11-02
+
+Sound Studio is a new workspace for engine sounds and sirens: rev engine mods on a dyno, run siren tones through an LVC-style controller, and install either to your FiveM server.
+
+### Added
+
+- **Sound Studio** - A new workspace (**Alt + 2**) for the sounds players hear, with an **Engines** and a **Sirens** mode that share one library. Import downloads from gta5-mods as they are (`.zip`, `.rar`, `.7z`, `.oiv`, `dlc.rpf` or a folder, several at once or by dropping them); Studio unpacks them into its own cache and never changes your files. Desktop app only.
+  - **Engines** revs add-on engine sounds on a dyno built from the pack's own recordings: throttle, brake, gears with an automatic mode that shifts up and down for you, the rev limiter, a two-step launch, pops and crackle, start-up and shut-down, an A/B comparison at matched loudness, and recording to WAV. **Install to the server** writes one FiveM resource per pack, checks the server for clashes and shows the `ensure` lines; **Build for single player** writes each pack's `dlc.rpf` with an `.oiv`. With Cortex Forge installed, **Assign to a vehicle in Forge** opens the vehicle with the sound's name ready.
+  - **Sirens** reads RESIDENT.rpf siren packs (only the tones the author changed, compared with your own game), Siren Mastery WAV packs, FiveM siren resources and your own audio files. A siren controller runs the tones like LVC, with a live pitch trace, horn and manual wind-up, a rumbler, a drive-by with real Doppler, an intersection run, three listening spots and recording.
+  - **LVC server-side siren builder** - Put up to 24 tones in a pack, name them, trim, loop and level them, and **Install to the server** builds a FiveM siren resource with its own sound bank, an optional `/<name>` test command, and the `SIRENS.lua` lines for Luxart Vehicle Control, numbered from where your table leaves off, with `SIREN_ASSIGNMENTS` for the vehicles you name (plus the references LVC Fleet and other menus need). The resource loads its own sound bank on every client, so `SIRENS.lua` needs no extra lines. Tones from another author's download need your confirmation that the author allows FiveM use; packs never carry game files. **Build for single player** packs RESIDENT.rpf and Siren Mastery downloads as their authors made them, with an `.oiv` for OpenIV.
+
+---
+
 ## [5.7.0] - 2026-10-29
 
 Cortex Studio now sends anonymous usage counts, with a notice before the first one and an off switch in Settings > Privacy.

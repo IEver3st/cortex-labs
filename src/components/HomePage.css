@@ -112,6 +112,7 @@
 .hp-mode[data-cat="template"] { --cat: var(--cx-cat-template); }
 .hp-mode[data-cat="prop"] { --cat: var(--cx-cat-prop); }
 .hp-mode[data-cat="siren"] { --cat: var(--cx-cat-siren); }
+.hp-mode[data-cat="sound"] { --cat: var(--cx-cat-sound); }
 .hp-mode[data-cat="photo"] { --cat: var(--cx-cat-photo); }
 
 .hp-mode::before {
@@ -253,6 +254,7 @@
 
 .hp-saved-row[data-cat="livery"] { --cat: var(--cx-cat-livery); }
 .hp-saved-row[data-cat="siren"] { --cat: var(--cx-cat-siren); }
+.hp-saved-row[data-cat="sound"] { --cat: var(--cx-cat-sound); }
 
 .hp-saved-row::before {
   content: "";
@@ -673,6 +675,7 @@
 .hp-tag[data-cat="template"] { --cat: var(--cx-cat-template); }
 .hp-tag[data-cat="prop"] { --cat: var(--cx-cat-prop); }
 .hp-tag[data-cat="siren"] { --cat: var(--cx-cat-siren); }
+.hp-tag[data-cat="sound"] { --cat: var(--cx-cat-sound); }
 .hp-tag[data-cat="photo"] { --cat: var(--cx-cat-photo); }
 
 /* ── Projects ── */
@@ -1025,6 +1028,7 @@
 .hp-row[data-cat="template"] { --cat: var(--cx-cat-template); }
 .hp-row[data-cat="prop"] { --cat: var(--cx-cat-prop); }
 .hp-row[data-cat="siren"] { --cat: var(--cx-cat-siren); }
+.hp-row[data-cat="sound"] { --cat: var(--cx-cat-sound); }
 
 .hp-row:hover {
   background: var(--cx-wash);

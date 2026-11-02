@@ -1,4 +1,4 @@
-import { Aperture, Car, Flashlight, Link2, Palette, Shirt, Siren, Zap } from "lucide-react";
+import { Aperture, AudioWaveform, Car, Flashlight, Link2, Palette, Shirt, Siren, Zap } from "lucide-react";
 import { HOTKEY_ACTIONS } from "./hotkeys.js";
 import { normalizeTextureMode } from "./workspace-state.js";
 
@@ -47,6 +47,16 @@ export const WORKSPACE_MODES = Object.freeze([
     cat: "siren",
     group: "vehicles",
     action: HOTKEY_ACTIONS.NEW_TAB_SIRENS,
+  },
+  {
+    id: "sounds",
+    page: "sounds",
+    label: "Sound Studio",
+    desc: "Rev engines, build server-side sirens and install sound packs",
+    icon: AudioWaveform,
+    cat: "sound",
+    group: "vehicles",
+    action: HOTKEY_ACTIONS.NEW_TAB_SOUND_STUDIO,
   },
   {
     id: "variants",
