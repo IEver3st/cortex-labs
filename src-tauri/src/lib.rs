@@ -17,6 +17,7 @@ use tauri_plugin_opener::OpenerExt;
 mod child_job;
 mod clothing_write;
 mod els_scope;
+mod engine_sounds;
 mod fivem_kvs;
 mod forge;
 mod juno;
@@ -4149,6 +4150,11 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .on_webview_event(|_, event| {
+            if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                engine_sounds::remember_drop(paths);
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -4214,6 +4220,20 @@ pub fn run() {
             consume_pending_open_file,
             consume_pending_siren_open,
             forge::forge_find,
+            engine_sounds::engine_sounds_library,
+            engine_sounds::engine_sounds_import,
+            engine_sounds::engine_sounds_remove,
+            engine_sounds::engine_sounds_preview,
+            engine_sounds::engine_sounds_read_wav,
+            engine_sounds::engine_sounds_check_fivem,
+            engine_sounds::engine_sounds_install_fivem,
+            engine_sounds::engine_sounds_build_sp,
+            engine_sounds::engine_sounds_siren_rescan,
+            engine_sounds::engine_sounds_siren_preview,
+            engine_sounds::engine_sounds_read_audio,
+            engine_sounds::engine_sounds_stage_tone,
+            engine_sounds::engine_sounds_install_sirens,
+            engine_sounds::engine_sounds_build_sirens_sp,
             forge::forge_resource_folder,
             forge::forge_check_resource,
             juno::juno_local,

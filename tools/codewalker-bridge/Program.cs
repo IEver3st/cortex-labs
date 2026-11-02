@@ -173,6 +173,34 @@ public static partial class Program
                     RequireString(request, "dict"),
                     RequireString(request, "clip"),
                     RequireString(request, "ycdPath", allowEmpty: true));
+            case "inspectEngineAudio":
+                return InspectEngineAudio(RequireString(request, "root"));
+            case "decodeEngineAudio":
+                return DecodeEngineAudio(
+                    RequireString(request, "root"),
+                    RequireString(request, "source"),
+                    RequireString(request, "audioName"),
+                    RequireString(request, "outputDir"));
+            case "stageEngineSource":
+                return StageEngineSource(
+                    RequireString(request, "root"),
+                    RequireString(request, "source"),
+                    RequireString(request, "outputDir"));
+            case "buildEngineDlc":
+                return BuildEngineDlc(
+                    RequireString(request, "stagedDir"),
+                    RequireString(request, "packName"),
+                    RequireString(request, "outputPath"));
+            case "inspectSirenAudio":
+                return InspectSirenAudio(RequireString(request, "root"), OptionalString(request, "gtaFolder"));
+            case "decodeSirenAudio":
+                return DecodeSirenAudio(
+                    RequireString(request, "root"),
+                    RequireString(request, "source"),
+                    RequireString(request, "outputDir"),
+                    OptionalString(request, "gtaFolder"));
+            case "buildSirenPack":
+                return BuildSirenPack(request);
             default:
                 throw new BridgeException($"Unknown op '{op}'.");
         }

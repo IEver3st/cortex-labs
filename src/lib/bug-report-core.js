@@ -15,6 +15,7 @@ export const BUG_REPORT_AREAS = Object.freeze([
   { value: "eup", label: "EUP" },
   { value: "eup-studio", label: "EUP Studio" },
   { value: "prop-studio", label: "Prop Studio" },
+  { value: "sound-studio", label: "Sound Studio" },
   { value: "multi", label: "Multi" },
   { value: "sirens", label: "Sirens" },
   { value: "variant-builder", label: "Variant Builder" },

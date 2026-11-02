@@ -3,7 +3,7 @@ import { AnimatePresence, MotionConfig, motion, useMotionValue, useTransform, us
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Minus, Square, X, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Sparkles, MessageSquarePlus, Flashlight, CopyX, Siren, Aperture } from "lucide-react";
+import { Minus, Square, X, Settings, Pencil, Trash2, Copy, Plus, Car, Shirt, Link2, Palette, ChevronDown, Sparkles, MessageSquarePlus, Flashlight, CopyX, Siren, Aperture, AudioWaveform } from "lucide-react";
 import AppLoader from "./components/AppLoader";
 import HomePage from "./components/HomePage";
 import UpdateToolbarControl from "./components/UpdateToolbarControl";
@@ -54,6 +54,7 @@ const PAGE_LOADERS = {
   eupstudio: () => import("./components/EupPage"),
   propstudio: () => import("./components/PropStudioPage"),
   photo: () => import("./components/PhotoModePage"),
+  sounds: () => import("./components/SoundStudioPage"),
   variants: () => import("./components/VariantsPage"),
   templategen: () => import("./components/TemplateGenerationPage"),
 };
@@ -62,6 +63,7 @@ const App = lazyPage(PAGE_LOADERS.viewer);
 const EupPage = lazyPage(PAGE_LOADERS.eupstudio);
 const PropStudioPage = lazyPage(PAGE_LOADERS.propstudio);
 const PhotoModePage = lazyPage(PAGE_LOADERS.photo);
+const SoundStudioPage = lazyPage(PAGE_LOADERS.sounds);
 const TemplateGenerationPage = lazyPage(PAGE_LOADERS.templategen);
 const MemoHomePage = memo(HomePage);
 const EMPTY_STATE = Object.freeze({});
@@ -118,6 +120,7 @@ const TAB_ICONS = {
   eupstudio: Shirt,
   propstudio: Flashlight,
   photo: Aperture,
+  sounds: AudioWaveform,
 };
 
 function tabIconFor(tab) {
@@ -157,6 +160,7 @@ function feedbackAreaForTab(tab, settingsOpen) {
   if (settingsOpen || !tab || tab.type === "home") return "home-settings";
   if (tab.type === "eupstudio") return "eup-studio";
   if (tab.type === "propstudio") return "prop-studio";
+  if (tab.type === "sounds") return "sound-studio";
   if (tab.type === "variants") return "variant-builder";
   if (tab.type === "templategen") return "template-generator";
   const mode = normalizeTextureMode(loadWorkspaces()[tab.workspaceId]?.state?.textureMode || tab.defaultMode);
@@ -360,6 +364,8 @@ export default function Shell() {
             ? "Prop Studio"
           : type === "photo"
             ? "Photo Mode"
+          : type === "sounds"
+            ? "Sound Studio"
           : type === "templategen"
             ? "Template Gen"
             : "Variants";
@@ -672,6 +678,8 @@ export default function Shell() {
         ? "propstudio"
       : latestWs.page === "photo"
         ? "photo"
+      : latestWs.page === "sounds"
+        ? "sounds"
       : latestWs.page === "variants"
         ? "variants"
         : latestWs.page === "templategen"
@@ -1482,6 +1490,17 @@ export default function Shell() {
                       <PhotoModePage
                         workspaceState={tab.initialState || EMPTY_STATE}
                         onStateChange={getPageStateCallback(tab.id, "photo")}
+                        isActive={isActive}
+                        contextBarTarget={contextBarRef.current}
+                      />
+                    </Suspense>
+                  )}
+                  {tab.type === "sounds" && (
+                    <Suspense fallback={<AppLoader variant="pane" />}>
+                      <SoundStudioPage
+                        workspaceState={tab.initialState || EMPTY_STATE}
+                        onStateChange={getPageStateCallback(tab.id, "sounds")}
+                        onRenameTab={tabRenameSetter(tab.id)}
                         isActive={isActive}
                         contextBarTarget={contextBarRef.current}
                       />

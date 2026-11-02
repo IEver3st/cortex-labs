@@ -1,3 +1,16 @@
+version: 5.8.0
+date: 2026-11-02
+> Sound Studio is a new workspace for engine sounds and sirens: rev engine mods on a dyno, run siren tones through an LVC-style controller, and install either to your FiveM server.
+
+## New
+- Sound Studio | A new workspace (Alt + 2) with Engines and Sirens modes that share one library. Import gta5-mods downloads as they are (.zip, .rar, .7z, .oiv, dlc.rpf or a folder), several at once or by dropping them. Studio unpacks them into its own cache and never changes your files. Desktop app only.
+- Engine dyno | Rev an add-on engine sound built from the pack's own recordings: throttle, brake, gears with an automatic mode, the rev limiter, a two-step launch, pops and crackle, start-up and shut-down, an A/B comparison at matched loudness, and recording to WAV.
+- Siren controller | Run RESIDENT.rpf siren packs, Siren Mastery WAV packs, FiveM siren resources or your own audio like LVC, with a live pitch trace, horn, manual wind-up, a rumbler, a drive-by with real Doppler, an intersection run and three listening spots.
+- LVC siren builder | Put up to 24 tones in a pack, name, trim, loop and level them, and Install to the server builds a FiveM siren resource with its own sound bank, an optional test command, and the SIRENS.lua lines for Luxart Vehicle Control.
+- Install anywhere | Install to the server writes one FiveM resource per pack, checks for clashes and shows the ensure lines. Build for single player writes a dlc.rpf or RESIDENT.rpf pack with an .oiv for OpenIV. With Cortex Forge installed, Assign to a vehicle in Forge opens the vehicle with the sound's name ready.
+
+---
+
 version: 5.7.0
 date: 2026-10-29
 > Cortex Studio now sends anonymous usage counts, with a notice before the first one and an off switch in Settings > Privacy.

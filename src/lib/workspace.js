@@ -76,7 +76,7 @@ export function saveWorkspaces(workspaces) {
 /**
  * Create a new workspace.
  * @param {string} name
- * @param {"viewer"|"variants"|"templategen"|"eupstudio"|"propstudio"|"photo"} page
+ * @param {"viewer"|"variants"|"templategen"|"eupstudio"|"propstudio"|"photo"|"sounds"} page
 
  * @param {Object} state — serializable state snapshot
  * @returns {string} The new workspace ID
@@ -213,7 +213,7 @@ function removeRecentByWorkspaceIds(workspaceIds) {
 }
 
 function normalizePage(page) {
-  return page === "eupstudio" || page === "propstudio" || page === "photo" || page === "variants" || page === "templategen" ? page : "viewer";
+  return page === "eupstudio" || page === "propstudio" || page === "photo" || page === "sounds" || page === "variants" || page === "templategen" ? page : "viewer";
 }
 
 export function addRecent(workspaceId, name, page) {

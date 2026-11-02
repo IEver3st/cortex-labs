@@ -1,0 +1,143 @@
+---
+title: Sound Studio
+description: Rev engine sound mods on a dyno, run sirens through a controller, build server-side LVC siren packs, and install sounds to a FiveM server or single player.
+---
+
+Open **Sound Studio** from Home, the new-tab menu, or **Alt + 2**. It needs the desktop app: it reads sound packs through the CodeWalker bridge.
+
+The switch in the top bar picks the mode:
+
+- **Engines** revs engine sound mods on a dyno and installs them.
+- **Sirens** runs siren tones through a controller, builds a server-side siren pack for Luxart Vehicle Control (LVC), and packs siren downloads for single player.
+
+Both modes share one library: a download can hold engine sounds, sirens or both, and each mode lists its own.
+
+## Engines
+
+The page uses the same layout as the other workspaces: your sound packs and the install step on the left, the dyno in the middle, and an inspector on the right with **Sound**, **Files** and **Credits** tabs.
+
+### Importing a download
+
+**Import a download** takes the files you downloaded from gta5-mods as they are: `.zip`, `.rar`, `.7z`, `.oiv` or `dlc.rpf`. Pick several at once or drop them on the page, or import a folder you already unpacked. Studio unpacks it into its own cache (archives inside the download too), finds every add-on engine sound in it, and lists them by the name a vehicle uses (`audioNameHash`). Your download is never changed, and removing a pack from Studio only clears Studio's copy.
+
+A download often carries the same sound twice, once as a FiveM resource and once as a single-player `dlc.rpf`. Both are listed, with the kind of each.
+
+Studio refuses:
+
+- escrowed (`.fxap`) resources, which only their seller's install steps cover;
+- mods that replace sounds already in the game instead of adding a new engine sound;
+- downloads with no engine sound and no siren in them.
+
+When a download leaves out the traffic version of a sound (the `_npc` bank), Studio says so; your own car still sounds right.
+
+### The dyno
+
+Pick a sound in the list to load it, then press **I** or the power button to start the engine. The tachometer, the gear, the throttle and an eight-second RPM trace follow what you do.
+
+| Key | Does |
+| --- | --- |
+| **W**, **Space** or the pedal | Throttle. The pedal on the right gives part throttle: higher is more. |
+| **S** | Brake. Hold it with full throttle in neutral or first for the two-step launch limiter. |
+| **E** / **Q** | Shift up / down. With **Auto** on, the gearbox works like an automatic: hold **W** and it pulls away in first and shifts up, lift off and it shifts down as the car slows, and flooring it kicks down a gear. |
+| **P** | Pops: off, pops on lift-off and at the limiter, or a long crackle on lift-off. |
+| **X** | Switch between A and B. |
+| **R** | Record what you hear and save it as a WAV. |
+
+Studio plays the pack's own recordings the way the game does: it steps through the recorded engine cycles at the pitch the revs call for, and holds a steady RPM by cycling the pack's own loops. Start-up, shut-down, limiter pops, exhaust pops and the dump valve use the pack's sounds when it has them, levelled against the engine so a loud recording can't drown it out. A pack without pop sounds plays Studio's stand-in pops, and the inspector says so; in game such a car uses the game's pops. The car's handling and the pack's synth settings shape the sound further in game, so treat the dyno as a close preview.
+
+**A** and **B** hold two sounds at once. Pick **B**, choose a second sound, and switch with **X**: both play at matched loudness, so you compare the sound, not the volume. The **Mix** sliders set the engine and exhaust balance and the volume.
+
+### Installing
+
+Tick **Install** next to each pack you want, then choose where it goes.
+
+#### FiveM server
+
+Choose your server's `resources` folder, or a `[category]` folder inside it. **Install to the server** writes one resource per pack, named after the author's folder, with an `fxmanifest.lua`, the pack's audio files exactly as the author made them, and `CREDITS.txt` with the author's readme. Studio checks the server first and warns when another resource already loads the same sound files, because the game keeps only one of them.
+
+When the folder isn't started by a `[category]` line already, Studio shows the `ensure` lines to add to `server.cfg`, with a copy button. Studio never edits `server.cfg`.
+
+A pack made only for single player is converted to a FiveM resource that streams to every player. Studio asks you to confirm that its author allows FiveM use before it installs one; check the **Credits** tab.
+
+Installing again updates a resource Studio installed, as long as nobody changed its files since. Studio never overwrites a resource it didn't write, or one you edited.
+
+#### Single player
+
+Choose an output folder. **Build for single player** writes, for each pack, a folder with its `dlc.rpf`, `INSTALL.txt` and `CREDITS.txt`, plus a `.oiv` package. The `.oiv` installs with OpenIV's Package Installer into the `mods` folder of GTA V Legacy; `INSTALL.txt` gives the manual steps. When the author shipped an unencrypted `dlc.rpf`, Studio reuses it byte for byte. Studio never writes into your game folder.
+
+### Using the sound on a vehicle
+
+The **Sound** tab shows the vehicles.meta line for the selected sound, with a copy button:
+
+```xml
+<audioNameHash>sr15atom</audioNameHash>
+```
+
+With Cortex Forge installed, **Assign to a vehicle in Forge** asks for the vehicle's resource, copies the sound's name, and opens the vehicle in Forge, where the engine sound field takes it.
+
+## Sirens
+
+Sirens mode has the same layout: tones, the siren pack and the install step on the left, the siren controller in the middle, and an inspector on the right with **Tone**, **LVC** and **Credits** tabs.
+
+### Getting tones
+
+**Import a siren download** takes the same files as Engines (`.zip`, `.rar`, `.7z`, `.oiv`, `dlc.rpf` or an unpacked folder) and finds three kinds of siren mod:
+
+| Kind | What it is | What Studio lists |
+| --- | --- | --- |
+| **RESIDENT.rpf** | A full copy of the game's `RESIDENT.rpf` with some sirens replaced. Most siren packs on gta5-mods are this kind. | Only the tones the author changed, named after the game siren each one replaces. |
+| **Siren Mastery** | Loose WAVs with a `VehicleSirenSetup.xml`. | Every tone, with its role from the XML. |
+| **FiveM resource** | A server-side siren resource (`AUDIO_WAVEPACK` and `AUDIO_SOUNDDATA`). | Every tone in its sound sets. |
+
+A RESIDENT.rpf pack is mostly the game's own sound file, so Studio compares it with the copy in your GTA V install and keeps only what the author changed. Studio finds GTA V Legacy or Enhanced on its own; when it can't, choose your **GTA V folder** in the Tones step. Studio only reads the game folder.
+
+**Add your own audio** takes `.wav`, `.mp3`, `.ogg`, `.flac`, `.m4a` or `.aac` files you recorded or have the rights to. You can also drop them on the page. Studio reads them where they are and never changes them.
+
+Click a tone to hear it as it came. Press **+** to add it to the siren pack.
+
+### The siren controller
+
+The controller plays the pack the way LVC runs it in game. The pitch trace shows each tone's sweep, and the readout shows its pitch in Hz.
+
+| Key | Does |
+| --- | --- |
+| **1** to **9** | Run that tone from the pack. |
+| **Space** | Siren on or off. |
+| **H** (hold) | Horn. Uses the pack's horn tone, or a stock air horn when the pack has none. |
+| **M** (hold) | Manual wind-up, the mechanical siren that rises while you hold it. |
+| **D** | Drive-by: the car passes you at the speed set in the **Tone** tab, with the pitch drop of a real pass. |
+| **C** | Clear an intersection: wail, yelp, priority, three horn blasts, then back to wail. |
+| **B** | Rumbler, the low-frequency siren you feel more than hear. |
+| **V** | Where you stand: on the street, in the cabin, or blocks away. |
+| **R** | Record what you hear and save it as a WAV. |
+
+### Building the siren pack
+
+The **Siren pack** step lists up to 24 tones in LVC order. Select a tone to edit it in the **Tone** tab:
+
+- **Menu name** is what LVC shows. **Sound name** is the name the game plays (`a-z`, `0-9` and `_`).
+- **Kind** (wail, yelp, priority, hi-lo, horn, powercall) decides what **Intersection** and the horn use.
+- **Start** and **End** trim the recording. **Loop smoothly** blends the end into the start so the siren doesn't click when it repeats.
+- Studio levels every tone to the same loudness. **Level** is a nudge on top.
+
+Pack tones play in the controller exactly as they will ship.
+
+### Installing
+
+#### FiveM server
+
+Name the resource, choose your server's `resources` folder, and choose **Install to the server**. Studio writes one resource with the sound bank (`dlc_<name>/<name>.awc`), its sound data, an `fxmanifest.lua`, `CREDITS.txt` and a small client script that loads the bank on every player's game when the resource starts, so LVC and other siren menus can play the tones as they are. It then shows the `ensure` line to add to `server.cfg`. Studio never edits `server.cfg`.
+
+With **Add a test command** on, the resource also gets a command: `/<name> <sound name>` plays a tone from your vehicle and reports in the console whether it played. Turn it off for a release; the bank still loads without it. If a tone stays silent, make sure the resource starts before players join, then rejoin.
+
+The **LVC** tab has the lines to paste into LVC's `SIRENS.lua`, numbered from **First tone number** (15 by default, right after LVC's 14 stock tones; set it past your last tone if you added your own), and `SIREN_ASSIGNMENTS` for the vehicles you list. List vehicles by the `gameName` in their `vehicles.meta`, written exactly as there: LVC matches it with capitals and reads only the first 11 characters. The installed resource loads its own bank on every client, so `SIRENS.lua` needs no `RequestScriptAudioBank` lines. It also lists each tone's sound name, sound set and bank for LVC Fleet and other siren menus.
+
+Tones from another author's download stream to every player on the server. Studio asks you to confirm that the author allows FiveM use before it installs them; check the **Credits** tab. A server pack holds only the tones you added: never the rest of a RESIDENT.rpf, and never the game's own sounds.
+
+#### Single player
+
+Tick the RESIDENT.rpf and Siren Mastery downloads you want and choose an output folder. **Build for single player** writes each download as the author made it, with `INSTALL.txt`, `CREDITS.txt` and, for RESIDENT.rpf packs, a `.oiv` that OpenIV installs into the `mods` folder. These packs are for GTA V Legacy; OpenIV doesn't install into GTA V Enhanced. Your own tones and edits go into FiveM server packs only. Studio never writes into your game folder.
+
+## Licences
+
+Engine sound and siren mods belong to their authors. Studio installs them to your own server or game, keeps the author's readme with every install, and never puts them into anything Cortex releases. Use each sound the way its author allows.

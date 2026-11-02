@@ -51,6 +51,7 @@ Livery work is iterative, but repeated in-game testing turns small visual decisi
 | **Multi-Model** | Line up to six vehicles in one scene, each with its own model, livery, glass design and paint. |
 | **Sirens** | Build and edit a vehicle's carcols.meta siren setting, or its ELS VCF, while it runs on the full textured model, in the workbench or the showroom. |
 | **Prop Studio** | Preview `.ydr`, `.ydd` and `.yft` props with their textures, emissives and authored lights, in a workbench or a showroom scaled to the prop, read live mesh stats and collision bounds, and export transparent PNGs. |
+| **Sound Studio** | Rev engine sound mods on a dyno, run siren tones through an LVC-style controller with drive-bys and horn, build server-side LVC siren resources from downloaded or your own tones, and install sounds to a FiveM server or as single-player `.oiv` packs. |
 | **Photo Mode** | Stage game vehicles, freemode peds and game props (or your own models) on one set, open doors, set paint and poses from the game's animations, and save framed PNGs up to 4K. |
 | **Template Generator** | Turn supported `.yft` and `.ydd` geometry into layered PSD or PNG templates. |
 | **PSD Variant Builder** | Toggle PSD layers, manage visual variants, and batch-export finished PNGs. |
