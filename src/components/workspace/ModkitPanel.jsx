@@ -194,7 +194,7 @@ export function GameLiverySwitcher({ s }) {
   const read = modkits.eligible && !["idle", "scanning", "error"].includes(modkits.status);
   const kit = read ? modkits.activeKit : null;
   const { parts, missing } = kit ? modkits.resolution : { parts: [], missing: [] };
-  const locked = Boolean(kit && (modkits.shooting || s.kitShoot?.running));
+  const locked = Boolean(s.listingShoot?.running || (kit && (modkits.shooting || s.kitShoot?.running)));
   return <LiverySection s={s} kit={kit} parts={parts} missing={missing} status={s.vehicleModsStatus} locked={locked} />;
 }
 

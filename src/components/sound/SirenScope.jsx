@@ -118,7 +118,9 @@ const SirenScope = forwardRef(function SirenScope({ label, sub, state, roleText,
     <div className="sn-scope">
       <div className="sn-scope-head">
         <div className="es-identity">
-          <span className="es-name cx-display" title={label}>{label}</span>
+          {label
+            ? <span className="es-name cx-display" title={label}>{label}</span>
+            : <span className="es-name-empty">No tone selected</span>}
           <span className="es-sub" title={sub}>{sub}</span>
         </div>
         <div className="sn-hz">

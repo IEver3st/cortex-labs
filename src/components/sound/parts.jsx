@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy, FolderOpen } from "lucide-react";
 import { DropButton, FileCard, splitPath } from "../workspace/parts";
+import { plainError } from "../../lib/plain-error";
 
 export function isTauri() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
@@ -40,10 +41,11 @@ export function Seg({ label, value, options, onChange }) {
 }
 
 export function Note({ tone = "idle", children }) {
+  const plain = tone === "error" && typeof children === "string" ? plainError(children) : null;
   return (
     <p className={`lv-slot-note is-${tone}`}>
       <span className="lv-dot" aria-hidden="true" />
-      <span>{children}</span>
+      <span title={plain?.detail || undefined}>{plain ? plain.text : children}</span>
     </p>
   );
 }

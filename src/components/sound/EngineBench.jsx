@@ -5,6 +5,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { AnimatePresence, motion } from "motion/react";
 import {
   AlertTriangle,
+  AudioWaveform,
   Car,
   Check,
   ChevronDown,
@@ -45,7 +46,7 @@ import EngineDyno from "./EngineDyno";
 import { CopyButton, FolderField, Key, Note, Seg, errorText, isTauri, isTyping, pickedThisSession, useDeckClearance } from "./parts";
 import { useSoundLibrary } from "./use-sound-library";
 import { Toggle } from "../ui/toggle";
-import { DeckButton, DropButton, InspectorTabs, Slider, StageEmpty, WorkspaceFrame, splitPath } from "../workspace/parts";
+import { DeckButton, DropButton, ErrorText, InspectorTabs, Slider, StageEmpty, WorkspaceFrame, splitPath } from "../workspace/parts";
 import { PaneResizer } from "../workspace/PaneResizer";
 
 const PERSIST_DEBOUNCE_MS = 400;
@@ -648,7 +649,10 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
                         hint="Drop a download from gta5-mods, or click to choose it."
                         onClick={pickDownload}
                       />
-                      <button type="button" className="lv-link es-folder-link" onClick={pickFolder}>Or import an unpacked folder</button>
+                      <button type="button" className="cx-btn is-quiet lv-btn-sm lv-folder-link" onClick={pickFolder}>
+                        <FolderOpen aria-hidden="true" />
+                        Import an unpacked folder
+                      </button>
                     </>
                   ) : null}
                 </>
@@ -662,7 +666,7 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
               {importErrors.map((message) => <Note key={message} tone="error">{message}</Note>)}
 
               {engineEntries.length ? (
-                <ul className="es-library" aria-label="Imported engine sounds">
+                <ul className="es-library custom-scrollbar" aria-label="Imported engine sounds">
                   {engineEntries.map((entry) => {
                     const engineSources = (entry.sources || []).filter((source) => (source.engines || []).length);
                     const single = engineSources.length === 1;
@@ -847,7 +851,7 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
           )}
           {folderMissing ? <p className="lv-foot-note">{target === "fivem" ? "Your server's resources, or a [category] inside it." : "Studio writes a dlc.rpf folder and an .oiv per pack."}</p> : null}
           {installBlocked && !folderMissing ? <p className="lv-foot-note">{installBlocked}</p> : null}
-          {install.status === "error" ? <p className="lv-foot-note is-error">{install.error}</p> : null}
+          {install.status === "error" ? <p className="lv-foot-note is-error"><ErrorText error={install.error} /></p> : null}
           {install.status === "done" && target === "fivem" ? (
             <div className="es-result" role="status">
               {(install.result?.resources || []).map((resource) => (
@@ -893,12 +897,12 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
           {!desktop ? (
             <StageEmpty icon={Monitor} title="Desktop app required" line="Reading engine sound packs needs the Cortex Studio desktop app." />
           ) : !activeRef && otherRef ? (
-            <StageEmpty title={`Pick a sound for ${slot.toUpperCase()}`} line={`Choose one in the list to compare it with ${otherRef.audioName}. X switches between them.`}>
+            <StageEmpty icon={AudioWaveform} title={`Pick a sound for ${slot.toUpperCase()}`} line={`Choose one in the list to compare it with ${otherRef.audioName}. X switches between them.`}>
               <button type="button" className="cx-btn" onClick={() => selectSlot(otherSlot)}>Back to {otherSlot.toUpperCase()}</button>
             </StageEmpty>
           ) : !activeRef ? (
-            <StageEmpty title={engineEntries.length ? "Pick an engine sound" : "No engine sound yet"} line={engineEntries.length ? "Choose one in the list to rev it." : "Import a download from gta5-mods, or drop one here."}>
-              {!engineEntries.length ? <button type="button" className="cx-btn is-primary" onClick={pickDownload}>Import a download</button> : null}
+            <StageEmpty icon={AudioWaveform} title={engineEntries.length ? "Pick an engine sound" : "No engine sound yet"} line={engineEntries.length ? "Choose one in the list to rev it." : "Import a download from gta5-mods, or drop one here."}>
+              {!engineEntries.length ? <button type="button" className="cx-btn is-primary" onClick={pickDownload}><Plus aria-hidden="true" />Import a download</button> : null}
             </StageEmpty>
           ) : slotError ? (
             <StageEmpty tone="error" title={`${activeRef.audioName} didn't load`} line={slotError}>
@@ -939,7 +943,7 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
                   <AlertTriangle className="lv-alert-icon" aria-hidden="true" />
                   <div className="lv-alert-copy">
                     <strong>{alert.label}</strong>
-                    <span>{alert.text}</span>
+                    <ErrorText error={alert.text} />
                   </div>
                   <button type="button" className="cx-icon-btn" onClick={() => dismissAlert(alert.id)} aria-label="Dismiss">
                     <X aria-hidden="true" />

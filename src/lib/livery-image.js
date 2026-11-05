@@ -58,3 +58,16 @@ export async function buildLiveryTextures(path, targets) {
     throw failure(error);
   }
 }
+
+export async function buildLiveryTexturesFromRgba(image, targets) {
+  try {
+    const rgba = new Uint8Array(image.rgba);
+    const result = await liveryWorker().request(
+      { op: "build", targets: targets.map(({ width, height, levels }) => ({ width, height, levels })), rgba, width: image.width, height: image.height },
+      [rgba.buffer],
+    );
+    return result.outputs;
+  } catch (error) {
+    throw failure(error);
+  }
+}

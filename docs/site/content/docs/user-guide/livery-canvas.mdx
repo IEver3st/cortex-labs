@@ -1,0 +1,72 @@
+---
+title: Livery Canvas
+description: Place your own images, text, stripes and patterns on a vehicle, then export them or write them over a livery it already has.
+---
+
+Livery Canvas lets you lay out decals on a vehicle without leaving Cortex Studio. Click where an item goes on the model or on the flat livery sheet, and Cortex works out where that spot sits on the sheet, which way is up on that panel, and how big a metre is there. You see the result on the model and on the sheet as you edit.
+
+Everything you place is your own work: Canvas never generates artwork, and it never changes the model, its UVs or its list of liveries.
+
+## Open the canvas
+
+1. Open a `.yft` vehicle in **Vehicle** mode.
+2. Open the **Liveries** tab in the inspector and choose **Start a canvas** in the **Canvas** section, or **Open canvas…** to carry on with a saved one.
+3. Preview the livery you want to work over, by clicking it in the list above or by choosing it in the **Livery** step. That image is the canvas's base.
+
+With a canvas open, the context bar switches the stage between **Model**, **Split** and **Sheet**. Split puts the vehicle beside the sheet, or above it when the stage is taller than it is wide; the sheet scrolls to zoom, Alt-drag or middle-drag pans, and **F** fits it to the pane. **Parts** shades the pieces of the sheet the livery covers.
+
+Canvas needs the vehicle's livery materials (a `_sign_` texture or a second diffuse sampler) and the UV set they use. A model without them shows **Not checked** with the reason; you can still place items on the sheet, but they aren't clipped to a part.
+
+## Add items
+
+- **Image…** places a PNG, JPG, WebP or SVG of your own.
+- **Text** places a line of text in one of the bundled fonts or in **Your font file…** (`.ttf`, `.otf`, `.woff`, `.woff2`).
+- **Shapes** places stripes, a band, chevrons or an outline. **Battenburg** and **Check** fill the whole part you click, lined up with the vehicle.
+- **Decal set…** places a set you saved from another vehicle, one item per click, at the same size in metres.
+
+After choosing one, click the vehicle or the sheet. Esc cancels.
+
+### Where items can go
+
+Each part of the sheet is checked when you point at it:
+
+- **Shared parts.** When both sides of the vehicle use the same part of the sheet, anything there shows on both sides and one side reads mirrored. Text is refused there; images and shapes get a warning.
+- **Mirrored parts.** When a part's UVs are flipped, it shows mirrored on the vehicle. Text is refused; images and shapes get a warning, and **Flip** turns them back.
+- **Seams.** Items are clipped to the part they were placed on, with a few pixels of bleed. Canvas doesn't carry an item across a UV seam; when part of an item is cut off, the inspector says how much, and you can place a second copy on the neighbouring part.
+
+## Edit items
+
+Select an item in the list or on the sheet. On the sheet, drag it to move it, drag the square handle to resize and the round handle to rotate (Shift snaps to 15°). The inspector sets width (in metres when Cortex knows the scale), rotation, opacity, **Normal** or **Multiply** blending, **Clip to part**, **Flip**, colours, and the shape or text settings.
+
+- **Fit to part** stretches the item over its whole part, lined up with the vehicle.
+- **Other side** copies the item to the matching spot on the other side so it reads the right way. **Mirror image** copies it as a mirror image, so an arrow points the same way along the vehicle on both sides. The copy follows the original's look; **Re-mirror** moves it again after you move the original, and **Unlink** makes it independent. The centre line has no other side.
+- The arrow keys nudge the selection by a pixel (Shift for 10), Delete removes it, and Ctrl + Z, Ctrl + Shift + Z or Ctrl + Y undo and redo.
+
+## Save and reuse
+
+- **Save canvas…** writes a `.json` file you can open again on this vehicle. The open canvas is also kept with your workspace session. A file that moved since shows under **Missing files** with **Locate…**.
+- **Save decal set…** keeps the items (or the selected one) as a decal set with their real-world sizes, so you can place them on other vehicles.
+
+## Export
+
+- **PNG** is the canvas alone on transparency, to put over a base in your own editor.
+- **Layered PSD** has one raster layer per item, named after it. **Text is exported as pixels**, not editable text.
+- **Flattened PNG** is the canvas over your base. It is only offered when the base is yours (see below).
+
+Exports go to a new file you pick. Cortex refuses to save over the base or any image or font the canvas uses, so your source files, including your PSDs, are never overwritten. Exports and writes wait until every image, font and the base have loaded, and refuse while a file is missing, so nothing is quietly left out.
+
+## Replace a livery
+
+**Replace livery N…** flattens the canvas over the base and writes it as livery N through the same check-and-confirm write as the liveries list, with a `.bak` beside each file. Canvas only replaces a livery the vehicle already has in its own texture dictionaries: it never adds or removes one, and it never touches the model.
+
+After a write, the canvas keeps drawing over the livery as it was before the write, so writing the same livery again doesn't stack the canvas on itself. The canvas also remembers which liveries it wrote. If it no longer has the earlier version (after a restart, or after you switch vehicles and come back), Flattened PNG and **Replace livery N…** refuse that livery as the base instead of drawing over a copy that already holds the canvas: choose the livery's own source file (PSD, PDN or PNG) as the base in the Livery step. Closing the canvas forgets both.
+
+### Bases Canvas won't write
+
+Canvas only flattens or writes over a base that is yours: the image you chose in the Livery step, or a texture from the vehicle's own dictionary beside the `.yft`. When the base comes from the game's files or another resource's shared dictionary, or is embedded in the model, Canvas says so and offers the transparent PNG instead, so you can put your work over your own base.
+
+## Licences
+
+- A font file you add stays under its own licence. Check that it allows use in what you ship, such as a FiveM resource, before you export text set in it.
+- Editing a third-party vehicle or livery you own follows that asset's licence, the same as editing it by hand.
+- Canvas reads your game files only to preview them. It doesn't put game files or other creators' textures into the files you export.

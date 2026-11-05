@@ -1,0 +1,82 @@
+---
+title: Listing Shoot
+description: Make the stills, store formats and videos for a Tebex or Cfx Marketplace listing in one run.
+---
+
+**Listing Shoot** is the **Listing** tab in the Vehicle workspace's inspector (desktop app only). One run turns the vehicle on stage into a consistent media kit for a store listing: hero stills, every store shape, a livery lineup, a paint sheet, a turntable video and an optional night lights clip, with a manifest and a report that lists what each check found. It works for any vehicle, with or without a mod kit.
+
+Everything is a render of the model you have open, with your livery, paint and parts. Studio adds nothing of its own to the images (no logos, no game marks) except the watermark you set in Settings, and it never writes game files into the run folder.
+
+## What a run makes
+
+Pick what you want, then **Shoot the listing**. Your choices are kept for the next vehicle.
+
+| Item | What it is |
+| --- | --- |
+| **Hero stills** | The whole vehicle from each angle you pick: front 3/4 and rear 3/4 by default, and side, front, rear and top. They render at the capture size from Settings. When that is **Window**, they render at 1920×1080. |
+| **Store formats** | The same angles in 16:9 (1920×1080), 1:1 (1080×1080) and 4:5 (1080×1350). Each shape is framed on its own so the whole vehicle fits it, never cropped from another shot. |
+| **Livery lineup** | One frame of each texture livery (`_sign_N`) and each livery mod (`VMT_LIVERY_MOD`) from the first hero angle, plus a labelled sheet. Before each frame Studio waits until that livery is on the vehicle. A livery that hasn't shown after 30 seconds, or fails to load, is reported and skipped. Frames that look identical to an earlier one are flagged. |
+| **Before and after** | The vehicle as modelled beside the vehicle with the livery from the Livery step (or a wipe through one frame). Needs a loaded livery and **Model's own textures**. |
+| **Paint sheet** | The first hero angle in up to eight GTA primary colours, typed as colour indices such as `0, 111, 27`, as stills and a sheet. |
+| **Mod kit parts** and **Builds** | Only for a vehicle with a mod kit. **Mod kit parts** runs [Kit shoot](/docs/user-guide/viewer-modes#kit-shoot)'s **Every part** with the best angle; **Builds** shoots the current build and your saved builds at the hero angles against stock. Each writes its own `kit-shoot.json` and report under `kit/`, which **Open an earlier shoot** on the Mods tab can open. |
+| **Turntable video** | One full turn of the vehicle at 30 fps, 8 or 12 seconds long, in 16:9, 1:1 or 4:5. The stage turns with the vehicle and the camera stays put. |
+| **Night lights clip** | 6, 8 or 10 seconds at night from the front 3/4, with the sirens (or ELS at full stage) and headlights on. It needs a vehicle with siren lights and a carcols siren setting, or ELS driving it. |
+
+Anything you asked for that the vehicle can't have, such as a lineup on a vehicle without liveries, is listed as not made, with the reason, rather than left out quietly.
+
+## While it runs
+
+The tab shows each frame as it is written. **Cancel** stops after the current step; what was written stays, and the report marks the run as partial. When the run ends, cancelled or not, your livery, paint, parts, light switches and grid come back as they were.
+
+Videos record in real time, so a turntable takes its full length. Minimising Cortex Studio doesn't interrupt it. If the system stops the window from drawing, the recording pauses, the tab says so, and it carries on from the same frame when drawing resumes, so the clip stays complete. If the computer can't keep up, the clip comes out longer than asked, never cut short, and the report says so. Videos save as MP4 where the runtime can record it, otherwise WebM. The watermark is applied to stills and sheets, not to videos.
+
+## The run folder
+
+Each run writes a new folder inside your preview export folder, so nothing is ever replaced:
+
+```text
+<model>/listing-<date>-<time>/
+  hero/            front34.png, rear34.png, …
+  store/           16x9-front34.png, 1x1-front34.png, 4x5-front34.png, …
+  livery/          sign-01-<name>.png, mod-00-<name>.png, …
+  paints/          paint-00-metallic-black.png, …
+  before-after/    livery.png
+  sheets/          liveries.png, paints.png
+  video/           turntable-16x9.mp4, lights-night.mp4
+  kit/             parts/ and builds/, each a Kit shoot run
+  thumbs/          small JPEG previews
+  listing.json
+  report.html
+```
+
+`listing.json` (`cortex.listingShoot`, version 1) lists every item with its file, or `null` when it wasn't saved, the settings, what wasn't made and why, and every check. `report.html` shows the images, links the videos and lists the checks.
+
+| Check | Meaning |
+| --- | --- |
+| `CAPTURE_FAILED` | A still or sheet couldn't be rendered or written. |
+| `LIVERY_TIMEOUT` | A livery didn't show within 30 seconds, so it wasn't shot. |
+| `LIVERY_FAILED`, `LIVERY_MOD_FAILED` | A texture livery or livery mod failed to load. |
+| `DUPLICATE_LIVERY` | A livery frame looks identical to an earlier one. |
+| `STORE_IMAGE_TOO_LARGE` | A store image is over Tebex's 5 MB upload limit. |
+| `LIVERY_COVERED` | Your loaded texture covers every mesh, so game liveries may not show in the lineup. |
+| `VIDEO_FAILED` | A video couldn't be recorded or written. |
+| `VIDEO_PAUSED` | A note: the recording paused while the window was hidden. |
+| `VIDEO_SLOW` | A note: the video took longer to record than its length, so it plays slower. |
+| `UNTEXTURED` | A note: **Model's own textures** was off. |
+| `NOT_MADE` | A note: something you picked wasn't made, with the reason. |
+
+## Pack Doctor in the report
+
+Every run also runs [Pack Doctor](/docs/user-guide/pack-doctor)'s vehicle check on the vehicle you are shooting: the same check as **Health** in the Meta tab, over its meta, its own texture dictionaries and its streamed memory. It only reads the vehicle's files and never changes them, and it never stops the shoot. Its findings are information for you as the seller.
+
+- The Listing tab shows the counts under the output line, such as "Pack Doctor: 1 error, 7 warnings", before the run and again while it runs. **Show in Health** opens the Meta tab, where every finding is listed with its fix.
+- `report.html` gets a **Pack Doctor** section grouped by check, with the reason and fix once above the files each check names, then anything that wasn't checked.
+- `listing.json` carries the full report as `packDoctor.report`, in the same `cortex.packDoctor` version 1 shape as **Save report** in Health, with paths relative to the resource. `packDoctor.status` is `checked`, or `not-run` with the reason in `packDoctor.reason`.
+
+If Doctor can't check part of the vehicle, such as an escrowed resource, a model that isn't a `.yft`, or a dictionary it can't read, the report lists that under **Not checked** with the reason. If it can't run at all, the report says why instead of showing a pass. No game files or textures are copied into the run folder; the section holds names, sizes and messages only.
+
+## Store images
+
+Tebex and the Cfx Marketplace don't publish fixed pixel sizes for package images. Tebex takes JPG, PNG and GIF images up to 5 MB each, and the 16:9, 1:1 and 4:5 formats cover the shapes store templates use. Check how your store's template shows them before you upload.
+
+Shooting your own vehicle for your own listing is what this is for. If the vehicle or its liveries include another creator's work, their licence decides whether you can show or sell it.

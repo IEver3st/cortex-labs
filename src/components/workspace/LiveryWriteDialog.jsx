@@ -50,7 +50,7 @@ function sizeText(file) {
 
 const TONES = { confirm: "is-confirm", caution: "is-caution", destructive: "is-destructive" };
 
-export default function LiveryWriteDialog({ s, plan: livePlan, items: liveItems, onClose, onWritten }) {
+export default function LiveryWriteDialog({ s, plan: livePlan, items: liveItems, onClose, onWritten, build: buildItem }) {
   // The write runs on the plan as it was when it started; the panel's plan
   // empties once the staged images are written.
   const [run, setRun] = useState({ phase: "ready", plan: null, items: null, progress: null, lines: [] });
@@ -75,7 +75,7 @@ export default function LiveryWriteDialog({ s, plan: livePlan, items: liveItems,
         plan: livePlan,
         items: liveItems,
         modelPath: s.modelPath,
-        build: (item, targets) => buildLiveryTextures(item.path, targets),
+        build: buildItem || ((item, targets) => buildLiveryTextures(item.path, targets)),
         isCancelled: () => cancelled.current,
         onProgress: (progress) => setRun((current) => ({
           ...current,
@@ -106,7 +106,7 @@ export default function LiveryWriteDialog({ s, plan: livePlan, items: liveItems,
     } catch (error) {
       console.warn("[liveries] Reloading after the write failed:", error);
     }
-  }, [busy, liveItems, livePlan, onWritten, s.modelPath]);
+  }, [buildItem, busy, liveItems, livePlan, onWritten, s.modelPath]);
 
   const progress = run.progress;
   const keepsSizes = plan.files.some((file) => file.replaced || file.textures.some((texture) => texture.like));

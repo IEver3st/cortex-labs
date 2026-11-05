@@ -402,7 +402,7 @@ function MultiModelViewer({
     lightsRef.current = { ambient, key, rim };
     scene.add(ambient, key, rim, key.target);
 
-    const stageApi = createViewerStage({ renderer, scene, keyLight: key });
+    const stageApi = createViewerStage({ renderer, scene, keyLight: key, followTone: true });
     stageApi.setBackgroundColor(backgroundColor);
     stageApi.setShadows(shadowsEnabled);
     stageApi.setMode(stage);
@@ -875,6 +875,7 @@ function MultiModelViewer({
       if (!texture) throw new Error(`${baseName(path)} couldn't be read`);
       const previous = channel.texture;
       channel.texture = texture;
+      channel.texturePath = path;
       applyAppearance(runtime, true);
       if (previous && previous !== texture) disposeTexture(previous);
       callbacksRef.current.onSlotStatus?.(runtime.id, { [field]: "" });
@@ -890,6 +891,7 @@ function MultiModelViewer({
         });
         return;
       }
+      if (error?.type === "incomplete-file" && channel.texture && channel.texturePath === path) return;
       callbacksRef.current.onSlotStatus?.(runtime.id, { [field]: errorText(error) });
     }
   }, [applyAppearance, textureLoader]);

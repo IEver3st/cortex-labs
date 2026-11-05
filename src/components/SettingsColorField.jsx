@@ -1,3 +1,5 @@
+import { ColorInput } from "./ui/color-input";
+
 export function ColorField({ label, value, onChange, onReset }) {
   return (
     <div className="settings-color-field">
@@ -5,13 +7,7 @@ export function ColorField({ label, value, onChange, onReset }) {
       <div className="settings-color-controls">
         <div className="settings-color-swatch">
           <div className="settings-color-chip" style={{ background: value }} />
-          <input
-            type="color"
-            value={value}
-            onChange={(event) => onChange(event.currentTarget.value)}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            aria-label={`${label} picker`}
-          />
+          <ColorInput value={value} onChange={onChange} label={`${label} picker`} />
         </div>
         <input
           className="settings-input flex-1"

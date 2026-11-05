@@ -5,15 +5,15 @@
    workspace/workspace.css; vb- rules only cover what is specific here. */
 
 .vb-root.lv-root {
-  grid-template-columns: var(--lv-dock) minmax(0, 1fr) var(--lv-insp);
+  grid-template-columns: minmax(min(220px, var(--lv-dock)), var(--lv-dock)) minmax(clamp(0px, 100% - 480px, 360px), 1fr) minmax(min(260px, var(--lv-insp)), var(--lv-insp));
 }
 
 .vb-root.lv-root.is-inspector-closed {
-  grid-template-columns: var(--lv-dock) minmax(0, 1fr) 0;
+  grid-template-columns: minmax(min(220px, var(--lv-dock)), var(--lv-dock)) minmax(clamp(0px, 100% - 220px, 360px), 1fr) 0;
 }
 
 .vb-root.lv-root.is-dock-closed {
-  grid-template-columns: 0 minmax(0, 1fr) var(--lv-insp);
+  grid-template-columns: 0 minmax(clamp(0px, 100% - 260px, 360px), 1fr) minmax(min(260px, var(--lv-insp)), var(--lv-insp));
 }
 
 .vb-root.lv-root.is-dock-closed.is-inspector-closed {
@@ -639,6 +639,19 @@
   line-height: 1.5;
   color: var(--mg-muted);
   overflow-wrap: anywhere;
+}
+
+.vb-texture-path {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: var(--cx-fs-meta);
+  color: var(--mg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: center;
 }
 
 .vb-texture-state .cx-btn {

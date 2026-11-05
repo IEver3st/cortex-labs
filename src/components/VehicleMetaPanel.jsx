@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { readDir, readTextFile } from "@tauri-apps/plugin-fs";
-import { createEmptyResourceMeta, simulateVehicle } from "../lib/vehicle-meta.js";
+import { createEmptyResourceMeta } from "../lib/vehicle-meta.js";
 import { readModelResourceMeta } from "../lib/resource-meta-files.js";
+import { readModelTextures, simulateModel } from "./workspace/useVehicleDoctor";
 import { findUlcConfig } from "../lib/ulc-config.js";
 import MetaPanel from "./MetaPanel";
+import PackDoctorHealth from "./PackDoctorHealth";
 import VehicleLightsPanel from "./VehicleLightsPanel";
 import VehiclePlatePanel from "./VehiclePlatePanel";
 import VehiclePartsPanel from "./VehiclePartsPanel";
 
-export default function VehicleMetaPanel({ modelPath, modelInfo, isTauriRuntime, onApplyLivery, onApplyColors, onToggleExtra, steeringAngle = 0, onSteeringChange, vehicleParts = null, vehiclePartControls = null, roofClip = null, lights, onLightsChange, getLightTime, plate, onPlateChange, plateStatus, extrasPlan, extrasState, onExtrasStateChange, els = null, active = true }) {
+export default function VehicleMetaPanel({ modelPath, modelInfo, isTauriRuntime, onApplyLivery, onApplyColors, onToggleExtra, steeringAngle = 0, onSteeringChange, vehicleParts = null, vehiclePartControls = null, roofClip = null, lights, onLightsChange, getLightTime, plate, onPlateChange, plateStatus, extrasPlan, extrasState, onExtrasStateChange, els = null, active = true, meshStats = null, onCountGeometry }) {
   const [scan, setScan] = useState(() => ({ path: "", status: "idle", root: "", meta: createEmptyResourceMeta() }));
   const [revision, setRevision] = useState(0);
   const [textures, setTextures] = useState(null);
@@ -36,14 +38,8 @@ export default function VehicleMetaPanel({ modelPath, modelInfo, isTauriRuntime,
       const result = await readModelResourceMeta(modelPath, { readDir, readTextFile, signal: controller.signal });
       if (controller.signal.aborted) return;
       setScan({ path: modelPath, status: "ready", ...result });
-      const txdName = simulateVehicle(result.meta, modelName).txd.txdName || modelName;
-      const dir = modelPath.replace(/[\\/][^\\/]+$/, "");
-      const entries = await readDir(dir);
-      const dictionaries = entries.filter((entry) => !entry.isDirectory &&
-        [txdName.toLowerCase(), `${txdName.toLowerCase()}+hi`, modelName.toLowerCase()].includes(entry.name.replace(/\.ytd$/i, "").toLowerCase()) && /\.ytd$/i.test(entry.name));
-      if (!dictionaries.length) return;
-      const exported = await Promise.all(dictionaries.map((entry) => invoke("export_ytd", { path: `${dir}/${entry.name}` })));
-      if (!controller.signal.aborted) setTextures(exported.flatMap((listing) => listing.textures || []));
+      const listed = await readModelTextures(modelPath, result.meta, modelName);
+      if (listed && !controller.signal.aborted) setTextures(listed);
     })().catch((error) => {
       if (controller.signal.aborted) return;
       const message = String(error?.message || error);
@@ -51,11 +47,7 @@ export default function VehicleMetaPanel({ modelPath, modelInfo, isTauriRuntime,
     });
     return () => controller.abort();
   }, [modelPath, modelName, isTauriRuntime, revision]);
-  const sim = useMemo(() => modelName && scan.path === modelPath ? simulateVehicle(scan.meta, modelName, {
-    availableTextureNames: textures?.map((texture) => texture.name),
-    liveryTexturePrefix: modelInfo?.liveryTexturePrefix,
-    lightBones: modelInfo?.lights?.lightBones,
-  }) : null, [scan, modelName, modelPath, textures, modelInfo]);
+  const sim = useMemo(() => modelName && scan.path === modelPath ? simulateModel(scan, modelName, textures, modelInfo) : null, [scan, modelName, modelPath, textures, modelInfo]);
   // The resource's ULC config for this model, if its lighting script has one.
   const ulcResult = useMemo(() => {
     for (const file of scan.path === modelPath ? scan.ulcFiles || [] : []) {
@@ -114,6 +106,8 @@ export default function VehicleMetaPanel({ modelPath, modelInfo, isTauriRuntime,
       extras={extrasView} onToggleExtra={(index, visible) => {
         if (onToggleExtra(index, visible)) setExtras((current) => current.map((entry) => entry.index === index ? { ...entry, visible } : entry));
       }} steerableWheels={Boolean(modelInfo?.steerableWheels)} steeringAngle={steeringAngle} onSteeringChange={onSteeringChange}
+      health={<PackDoctorHealth modelPath={modelPath} isTauriRuntime={isTauriRuntime} revision={revision} scan={scan} sim={sim}
+        modelInfo={modelInfo} meshStats={meshStats} onCountGeometry={onCountGeometry} onRecheck={() => setRevision((value) => value + 1)} />}
       onRescan={() => setRevision((value) => value + 1)} onOpenFile={(path) => {
         invoke("open_model_meta_file", { modelPath, path })
           .then(() => setNotice(""))

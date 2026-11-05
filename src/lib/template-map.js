@@ -399,6 +399,7 @@ function buildTriangleRecords(uvAttribute, indexArray) {
     if (!Number.isFinite(area) || area <= UV_AREA_EPSILON) continue;
 
     triangles.push({
+      face: i / 3,
       i0,
       i1,
       i2,
@@ -554,6 +555,17 @@ function buildTriangleComponents(triangles, options = {}) {
   }
 
   return buildTriangleComponentsByIndex(triangles, Boolean(options?.hasIndexArray));
+}
+
+export function buildUvIslands(uvAttribute, indexArray = null) {
+  if (!uvAttribute || typeof uvAttribute.getX !== "function" || typeof uvAttribute.getY !== "function") {
+    return { triangles: [], islands: [] };
+  }
+  const triangles = buildTriangleRecords(uvAttribute, indexArray);
+  return {
+    triangles,
+    islands: buildTriangleComponents(triangles, { mode: "uv", hasIndexArray: Boolean(indexArray) }),
+  };
 }
 
 /* ── Shell record construction ───────────────────────────────────── */

@@ -1046,7 +1046,6 @@ button.se-col-head:hover {
 .se-empty {
   align-self: start;
   padding: 14px 6px;
-  white-space: nowrap;
 }
 
 /* ── Inspector panels (Siren and Setting tabs) ── */
@@ -1207,13 +1206,9 @@ button.se-col-head:hover {
   cursor: pointer;
 }
 
-.se-color::-webkit-color-swatch-wrapper {
-  padding: 0;
-}
-
-.se-color::-webkit-color-swatch {
-  border: 0;
-  border-radius: 3px;
+.se-color:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
 }
 
 .se-range {
@@ -1601,16 +1596,6 @@ html.dark .se-callout-num.is-selected {
   border: 0;
 }
 
-.lv-root.sw-root.is-blank:not(.is-focus) {
-  grid-template-columns: minmax(0, 1fr) 0;
-}
-
-.sw-root.is-blank > .sw-preview,
-.sw-root.is-blank > .lv-inspector {
-  visibility: hidden;
-  border: 0;
-}
-
 @container se-rail (max-height: 1180px) and (min-width: 340px) {
   .se-keys {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1825,9 +1810,11 @@ html.dark .se-callout-num.is-selected {
   gap: 4px;
   margin: 0;
   padding: 0 16px;
+  z-index: 2;
   border: 1px dashed var(--mg-border);
   border-radius: 8px;
   background: var(--mg-bg);
+  box-shadow: 0 0 0 48px var(--mg-bg);
   font: inherit;
   font-size: var(--cx-fs-body);
   color: var(--mg-muted);
@@ -1841,7 +1828,7 @@ html.dark .se-callout-num.is-selected {
 
 .sw-pattern-drop:focus-visible {
   outline: none;
-  box-shadow: var(--cx-focus);
+  box-shadow: var(--cx-focus), 0 0 0 48px var(--mg-bg);
 }
 
 .sw-pattern-drop-title {
@@ -1856,6 +1843,79 @@ html.dark .se-callout-num.is-selected {
 .sw-pattern-drop-title svg {
   width: 14px;
   height: 14px;
+}
+
+.sw-pattern-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(14 * var(--u));
+  padding: 0 calc(14 * var(--u)) 0 calc(18 * var(--u));
+  background: var(--mg-bg);
+  container-type: inline-size;
+}
+
+.sw-lightbar {
+  display: grid;
+  justify-items: center;
+  gap: calc(6 * var(--u));
+  min-width: 0;
+}
+
+.sw-lightbar-housing {
+  display: grid;
+  grid-template-columns: repeat(var(--lamps), minmax(0, 1fr));
+  gap: calc(3 * var(--u));
+  width: min(100%, calc(var(--lamps) * 46 * var(--u)));
+  height: calc(28 * var(--u));
+  padding: calc(4 * var(--u));
+  border-radius: calc(8 * var(--u));
+  background: #121316;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.sw-lamp {
+  border-radius: calc(3 * var(--u));
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--off) 22%, #121316) 50%,
+    color-mix(in srgb, var(--off-b) 22%, #121316) 50%);
+  transition: box-shadow 60ms linear;
+}
+
+.sw-lamp.is-on {
+  background: linear-gradient(90deg, var(--lit) 50%, var(--lit-b) 50%);
+  box-shadow: 0 0 calc(10 * var(--u)) color-mix(in srgb, var(--lit) 70%, transparent),
+    0 0 calc(22 * var(--u)) color-mix(in srgb, var(--lit-b) 35%, transparent);
+}
+
+.sw-lightbar-note {
+  font-size: var(--cx-fs-meta);
+  color: var(--mg-muted);
+}
+
+.sw-pattern-open {
+  align-self: center;
+}
+
+@container (max-width: 300px) {
+  .sw-pattern-open-label {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sw-lamp {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .sw-lamp {
+    forced-color-adjust: none;
+  }
 }
 
 .sw-preview > .lv-finder {

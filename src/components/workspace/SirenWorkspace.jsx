@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Box, Boxes, CarFront, ClipboardPaste, ExternalLink, FileInput, FolderOpen, Maximize2, Minimize2, PackageCheck, Pause, PencilLine, Play, Plus, RefreshCw, Settings2, SlidersHorizontal, SunMedium, Wrench, X } from "lucide-react";
+import { Box, Boxes, CarFront, ClipboardPaste, ExternalLink, FileInput, FolderOpen, Maximize2, Minimize2, PackageCheck, Pause, PencilLine, Play, Plus, RefreshCw, Settings2, Siren, SlidersHorizontal, SunMedium, Wrench, X } from "lucide-react";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import { normalizeLightSwitches } from "../../lib/emergency-lights.js";
 import { adoptPattern, createPatternSetting, describeSirenChanges } from "../../lib/siren-settings.js";
@@ -9,6 +9,7 @@ import SirenEditor from "../siren-editor/SirenEditor";
 import SirenMarkers from "../siren-editor/SirenMarkers";
 import usePatternClock from "../siren-editor/usePatternClock";
 import { SettingPanel, SirenPanel } from "../siren-editor/SirenInspector";
+import PatternLightbar from "../siren-editor/PatternLightbar";
 import useSirenResource from "../siren-editor/useSirenResource";
 import useSirenIssues from "../siren-editor/useSirenIssues";
 import useSirenSave from "../siren-editor/useSirenSave";
@@ -33,6 +34,7 @@ import {
   CameraSection,
   CameraShots,
   DeckButton,
+  ErrorText,
   LightSection,
   RotateButtons,
   FloorField,
@@ -176,13 +178,13 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern }) {
   ) : null;
 
   if (!draft) {
-    const line = !hasModel ? "A pattern built without a vehicle can go on one later."
+    const line = !hasModel ? "Build one here and put it on a vehicle later, or open a vehicle to read its sirens."
       : resource.status === "ready" && !meshSirens.length ? "This model has no emissive geometry on sirenN bones, so there is nothing to flash."
         : resource.missingReason;
     const extra = importer.choices || importer.status || readErrors;
     return (
       <div className="sw-empty-stage">
-        <StageEmpty title={hasModel ? "No siren setting yet" : "Open a vehicle, or build a pattern"} line={line}>
+        <StageEmpty icon={Siren} title={hasModel ? "No siren setting yet" : "No pattern yet"} line={line}>
           {hasModel && system ? (
             <div className="sw-empty-system">
               <span className="cx-label">System</span>
@@ -191,8 +193,10 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern }) {
           ) : null}
           {hasModel ? null : (
             <>
-              <button type="button" className="cx-btn is-primary" onClick={s.selectModel}>Open a vehicle model</button>
-              <button type="button" className="cx-btn" onClick={onStartPattern}>New pattern</button>
+              <button type="button" className="cx-btn is-primary" onClick={onStartPattern}>
+                <Plus aria-hidden="true" />
+                New pattern
+              </button>
             </>
           )}
           {canCreate ? (
@@ -236,7 +240,7 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern }) {
           describe={editor.dirty ? () => describeSirenChanges(editor.base, draft, { canInstall: !patternMode }) : null} />
         <ChecksFact checks={issues.map((entry) => ({ key: entry.code, text: entry.message, tone: entry.severity }))} />
       </Facts>
-      {openError ? <p className="lv-slot-note is-error">{openError}</p> : null}
+      {openError ? <p className="lv-slot-note is-error"><ErrorText error={openError} /></p> : null}
       {readErrors}
       {hasModel ? system : null}
     </div>
@@ -378,7 +382,7 @@ function SirenSide({ s, ps, resource, els, elsMode, hasModel, inert, setWidth, c
   const title = shown ? VIEWS.find((entry) => entry.id === shown).label
     : noSetting ? "Siren" : count > 1 ? `${count} sirens` : `Siren ${editor.primary + 1}`;
 
-  let body = noSetting && !shown ? <p className="se-empty">Select a siren in the pattern to edit it here.</p> : <SirenPanel s={s} />;
+  let body = noSetting && !shown ? <p className="se-empty">Start a pattern and its sirens show here. The Scene tab sets up the stage.</p> : <SirenPanel s={s} />;
   if (shown === "setting") body = <SettingPanel s={s} />;
   else if (shown === "vehicle") body = <VehicleView s={s} ps={ps} resource={resource} els={els} elsMode={elsMode} setTool={setTool} />;
   else if (shown === "mods") body = <ModkitPanel s={s} />;
@@ -546,7 +550,6 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
   }, [fileSetting, draft, start]);
   const sirensStarted = useRef("");
   const hasSetting = Boolean(lights.setting);
-  const blank = patternMode && !editor.draft;
   useEffect(() => {
     // An ELS VCF decides when the carcols sirens run.
     if (elsMode || !hasModel || !hasSetting || sirensStarted.current === s.modelPath) return;
@@ -567,7 +570,7 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
   const cameraShots = <CameraShots s={s} disabled={!s.viewerReady} />;
 
   return (
-    <WorkspaceFrame s={s} inspectorOpen={inspectorOpen} setInspectorOpen={setInspectorOpen} panelControls={!blank} className={`sw-root ${patternMode ? "is-pattern" : ""} ${blank ? "is-blank" : ""}`} style={{ ...panes.style, ...preview.style }}>
+    <WorkspaceFrame s={s} inspectorOpen={inspectorOpen} setInspectorOpen={setInspectorOpen} className={`sw-root ${patternMode ? "is-pattern" : ""}`} style={{ ...panes.style, ...preview.style }}>
       <div className="sw-main" inert={expanded}>
         {elsMode ? (
           <div className="sw-els">
@@ -576,7 +579,7 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
             </aside>
             <div className="sw-els-main">
               {hasModel && els.draft ? <ElsEditor s={ps} els={els} /> : (
-                <StageEmpty title={hasModel ? "No ELS configuration yet" : "Open a vehicle to program its ELS lights"}
+                <StageEmpty icon={Siren} title={hasModel ? "No ELS configuration yet" : "Open a vehicle to program its ELS lights"}
                   line={!hasModel ? "Its ELS vehicle configuration file opens here."
                     : els.status === "scanning" ? `Looking for ${els.modelName}.xml…`
                       : "Open the vehicle's VCF, add the folder your ELS script reads, or start a new VCF from the panel."}>
@@ -594,13 +597,22 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
         <Viewfinder
           s={s}
           viewer={<>{viewer}{hasModel && draft && !elsMode ? <SirenMarkers s={s} /> : null}{patternMode && draft ? (
+            <div className="sw-pattern-stage">
+              <PatternLightbar s={ps} />
+              <button type="button" className="cx-btn is-quiet lv-btn-sm sw-pattern-open" onClick={s.selectModel} aria-label="Put on a vehicle"
+                title={withShortcut("Open a vehicle model to put this pattern on its siren bones. You can also drop one here.", (s.hotkeys || {})[HOTKEY_ACTIONS.SELECT_MODEL])}>
+                <FolderOpen aria-hidden="true" />
+                <span className="sw-pattern-open-label">Put on a vehicle</span>
+              </button>
+            </div>
+          ) : patternMode ? (
             <button type="button" className="sw-pattern-drop" onClick={s.selectModel}
               title={withShortcut("Open a vehicle model: a .yft with siren bones", (s.hotkeys || {})[HOTKEY_ACTIONS.SELECT_MODEL])}>
               <span className="sw-pattern-drop-title">
                 <FolderOpen aria-hidden="true" />
                 Open a vehicle model
               </span>
-              <span>Or drop one here to put this pattern on its siren bones.</span>
+              <span>Or drop one here to read its siren setting.</span>
             </button>
           ) : null}</>}
           hasModel={hasModel}

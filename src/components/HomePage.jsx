@@ -270,6 +270,7 @@ function CategoryTag({ tag }) {
 export default function HomePage({
   isActive = true,
   onNavigate,
+  onPreloadPage,
   onOpenWorkspace,
   onOpenSavedVehicle,
   settingsVersion,
@@ -594,7 +595,8 @@ export default function HomePage({
     const modelName = getModelName(ws);
     const model = sameFileLabel(modelName, ws.name) ? null : modelName;
     const folder = getProjectFolder(ws);
-    const startedAt = tag === "Sirens" && !getModelPath(ws) && Number.isFinite(ws.createdAt) ? ws.createdAt : null;
+    const startedAt = !model && !folder && Number.isFinite(ws.createdAt) ? ws.createdAt : null;
+    const noVehicle = tag === "Sirens" && !getModelPath(ws);
     const openedAt = entry.openedAt;
     const isChecked = selecting && checkedIds.has(entry.workspaceId);
     const isSelected = selecting ? isChecked : focusEntry?.workspaceId === entry.workspaceId;
@@ -646,7 +648,7 @@ export default function HomePage({
                   </span>
                 ) : startedAt ? (
                   <span className="hp-row-meta">
-                    <span className="hp-row-model">No vehicle</span>
+                    {noVehicle ? <span className="hp-row-model hp-row-plain">No vehicle</span> : null}
                     <span className="hp-row-folder" title={`Started ${new Date(startedAt).toLocaleString()}`}>
                       Started{" "}
                       {new Date(startedAt).toLocaleString(undefined, {
@@ -947,6 +949,8 @@ export default function HomePage({
                       key={mode.id}
                       className="hp-mode"
                       data-cat={mode.cat}
+                      onPointerEnter={() => onPreloadPage?.(mode.page)}
+                      onFocus={() => onPreloadPage?.(mode.page)}
                       onClick={() => handleLaunch(mode.id)}
                       aria-keyshortcuts={hotkeyLabel(hotkeys[mode.action])}
                       title={mode.desc}

@@ -26,6 +26,7 @@ mod livery_write;
 mod model_resource_scope;
 mod pdn;
 mod photo_assets;
+mod streamed_assets;
 mod vehicle_snapshots;
 
 const BRIDGE_EXE_NAME: &str = if cfg!(target_os = "windows") {
@@ -384,6 +385,129 @@ struct WatchFailure {
     error: String,
 }
 
+const WATCH_QUIET: Duration = Duration::from_millis(40);
+const WATCH_RECHECK: Duration = Duration::from_millis(40);
+const WATCH_HELD_STABLE: Duration = Duration::from_millis(400);
+const WATCH_GIVE_UP: Duration = Duration::from_secs(2);
+
+struct PendingChange {
+    kind: String,
+    last_event: Instant,
+    check_at: Instant,
+    stamp: Option<(u64, Option<SystemTime>)>,
+    stamp_since: Instant,
+}
+
+enum Settle {
+    Ready,
+    Wait,
+    Gone,
+}
+
+#[cfg(windows)]
+fn writer_released(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    const FILE_SHARE_WRITE: u32 = 0x2;
+    const FILE_SHARE_DELETE: u32 = 0x4;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .open(path)
+        .is_ok()
+}
+
+#[cfg(not(windows))]
+fn writer_released(_path: &Path) -> bool {
+    false
+}
+
+fn settle_change(path: &Path, change: &mut PendingChange, now: Instant) -> Settle {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(_) => return Settle::Gone,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Settle::Gone,
+        Err(_) if now.duration_since(change.last_event) >= WATCH_GIVE_UP => return Settle::Ready,
+        Err(_) => return Settle::Wait,
+    };
+    let stamp = (metadata.len(), metadata.modified().ok());
+    if change.stamp != Some(stamp) {
+        change.stamp = Some(stamp);
+        change.stamp_since = now;
+    }
+    let stable = now.duration_since(change.stamp_since);
+    if stable >= WATCH_HELD_STABLE || (stable >= WATCH_RECHECK && writer_released(path)) {
+        Settle::Ready
+    } else {
+        Settle::Wait
+    }
+}
+
+fn spawn_watch_emitter(app: tauri::AppHandle) -> mpsc::Sender<(PathBuf, String)> {
+    let (sender, receiver) = mpsc::channel::<(PathBuf, String)>();
+    std::thread::spawn(move || {
+        let mut pending: HashMap<PathBuf, PendingChange> = HashMap::new();
+        let mut connected = true;
+        while connected || !pending.is_empty() {
+            let next_check = pending.values().map(|change| change.check_at).min();
+            let received = match (connected, next_check) {
+                (true, None) => receiver
+                    .recv()
+                    .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+                (true, Some(at)) => {
+                    receiver.recv_timeout(at.saturating_duration_since(Instant::now()))
+                }
+                (false, Some(at)) => {
+                    std::thread::sleep(at.saturating_duration_since(Instant::now()));
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                }
+                (false, None) => break,
+            };
+            match received {
+                Ok((path, kind)) => {
+                    let now = Instant::now();
+                    let change = pending.entry(path).or_insert_with(|| PendingChange {
+                        kind: String::new(),
+                        last_event: now,
+                        check_at: now,
+                        stamp: None,
+                        stamp_since: now,
+                    });
+                    change.kind = kind;
+                    change.last_event = now;
+                    change.check_at = now + WATCH_QUIET;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => connected = false,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+            let now = Instant::now();
+            pending.retain(|path, change| {
+                if change.check_at > now {
+                    return true;
+                }
+                match settle_change(path, change, now) {
+                    Settle::Ready => {
+                        let _ = app.emit(
+                            "texture:update",
+                            WatchPayload {
+                                path: path.to_string_lossy().into_owned(),
+                                kind: change.kind.clone(),
+                            },
+                        );
+                        false
+                    }
+                    Settle::Gone => false,
+                    Settle::Wait => {
+                        change.check_at = now + WATCH_RECHECK;
+                        true
+                    }
+                }
+            });
+        }
+    });
+    sender
+}
+
 /// Replaces the slot's watcher. Watches every path it can and returns the ones
 /// it could not; fails only when nothing at all could be watched.
 fn replace_watch(
@@ -408,18 +532,27 @@ fn replace_watch(
     }
 
     let app_handle = app.clone();
+    let changes = spawn_watch_emitter(app.clone());
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                let payload = WatchPayload {
-                    path: event
-                        .paths
-                        .first()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    kind: format!("{:?}", event.kind),
-                };
-                let _ = app_handle.emit("texture:update", payload);
+            let Ok(event) = res else { return };
+            if matches!(event.kind, notify::EventKind::Access(_)) {
+                return;
+            }
+            let kind = format!("{:?}", event.kind);
+            match event.paths.first() {
+                Some(path) => {
+                    let _ = changes.send((path.clone(), kind));
+                }
+                None => {
+                    let _ = app_handle.emit(
+                        "texture:update",
+                        WatchPayload {
+                            path: String::new(),
+                            kind,
+                        },
+                    );
+                }
             }
         })
         .map_err(|e| e.to_string())?;
@@ -2716,6 +2849,56 @@ fn clothing_write_cancel(token: String, state: State<'_, clothing_write::Clothin
     state.0.cancel(&token);
 }
 
+#[tauri::command]
+async fn describe_streamed_assets(
+    root: Option<String>,
+    models: Option<Vec<String>>,
+    app: tauri::AppHandle,
+) -> Result<streamed_assets::StreamedAssets, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = root
+            .map(|value| PathBuf::from(value.trim()))
+            .filter(|path| !path.as_os_str().is_empty());
+        if let Some(root) = &root {
+            if !root.is_dir() || !model_opened(&app, root) {
+                return Err(format!("Open {} in Cortex first.", root.display()));
+            }
+            if let Some(owner) = clothing_write::protected_source(root) {
+                return Err(format!(
+                    "{} is part of {owner}; Pack Doctor checks resources you have as files.",
+                    root.display()
+                ));
+            }
+        }
+        let models: Vec<PathBuf> = models
+            .unwrap_or_default()
+            .iter()
+            .map(|value| PathBuf::from(value.trim()))
+            .collect();
+        if models.len() > streamed_assets::MAX_MODELS {
+            return Err(format!(
+                "Pack Doctor measures at most {} models at once.",
+                streamed_assets::MAX_MODELS
+            ));
+        }
+        for model in &models {
+            if !has_extension(&model.to_string_lossy(), "yft")
+                || !model.is_file()
+                || !model_opened(&app, model)
+            {
+                return Err(format!("Open {} in Cortex first.", model.display()));
+            }
+        }
+        Ok(streamed_assets::describe(
+            root.as_deref(),
+            &models,
+            &|path| model_opened(&app, path),
+        ))
+    })
+    .await
+    .map_err(|error| format!("Measuring the streamed files stopped: {error}"))?
+}
+
 /// The clothing files in a folder the user picked, for building a pack.
 #[tauri::command]
 async fn clothing_folder(
@@ -4191,6 +4374,7 @@ pub fn run() {
             clothing_write_commit,
             clothing_write_cancel,
             clothing_folder,
+            describe_streamed_assets,
             read_pack_ymt,
             clothing_identical_files,
             clothing_pack_build,

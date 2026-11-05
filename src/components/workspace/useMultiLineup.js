@@ -13,7 +13,7 @@ import {
 } from "../../lib/multi-lineup.js";
 import { paintDisplayColor } from "../../lib/vehicle-paint.js";
 
-const RELOAD_DEBOUNCE_MS = 350;
+const RELOAD_DEBOUNCE_MS = 30;
 
 // New vehicles start in the colour of the one they are added next to.
 function baseColorOf(slot) {

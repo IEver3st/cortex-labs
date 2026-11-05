@@ -271,7 +271,7 @@ const EupViewport = forwardRef(function EupViewport(
     if (pedRoot) scene.add(pedRoot);
     if (setRoot) scene.add(setRoot);
 
-    const stageApi = createViewerStage({ renderer, scene, keyLight: key, subject: "ped" });
+    const stageApi = createViewerStage({ renderer, scene, keyLight: key, subject: "ped", followTone: true });
     stageApi.setBackgroundColor(backgroundColor);
 
     const gizmoControls = new TransformControls(camera, renderer.domElement);

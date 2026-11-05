@@ -52,7 +52,7 @@ import { exportRoofClip, readVehicleModFiles, readVehicleSetup } from "./photo/p
 import PhotoViewport from "./photo/PhotoViewport";
 import PhotoInspector from "./photo/PhotoInspector";
 import AddToSetDialog from "./photo/AddToSetDialog";
-import { DeckButton, DeckViewMenu, deckButtonItems, FootFact, StageEmpty, StageToggle, WorkspaceFrame, splitPath } from "./workspace/parts";
+import { DeckButton, DeckViewMenu, deckButtonItems, ErrorText, FootFact, StageEmpty, StageToggle, WorkspaceFrame, splitPath } from "./workspace/parts";
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
 import "./PhotoModePage.css";
 
@@ -848,7 +848,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
 
         <div className="lv-dock-foot pm-dock-foot">
           <FootFact label="Size">{output.width} × {output.height}</FootFact>
-          <FootFact label="Background">{settings.output.transparent && !showroomOn ? "transparent" : showroomOn ? "showroom" : "backdrop"}</FootFact>
+          <FootFact label="Background" plain>{settings.output.transparent && !showroomOn ? "Transparent" : showroomOn ? "Showroom" : "Backdrop"}</FootFact>
           <button
             type="button"
             className="cx-btn is-primary lv-capture-btn"
@@ -906,7 +906,10 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
           )}
           {isTauriRuntime && objects.length === 0 ? (
             <StageEmpty icon={Aperture} title="The set is empty" line="Add a vehicle, a person or props from the game, then frame your shot.">
-              <button type="button" className="cx-btn is-primary" onClick={() => setAdding("vehicle")}>Add to set</button>
+              <button type="button" className="cx-btn is-primary" onClick={() => setAdding("vehicle")}>
+                <Plus aria-hidden="true" />
+                Add to set
+              </button>
             </StageEmpty>
           ) : null}
         </div>
@@ -936,7 +939,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
                   <AlertTriangle className="lv-alert-icon" aria-hidden="true" />
                   <div className="lv-alert-copy">
                     <strong>{alert.label}</strong>
-                    <span>{alert.text}</span>
+                    <ErrorText error={alert.text} />
                   </div>
                   <button type="button" className="cx-icon-btn" onClick={() => dismissAlert(alert.id)} aria-label="Dismiss">
                     <X aria-hidden="true" />

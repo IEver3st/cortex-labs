@@ -617,7 +617,7 @@ export default function BugReportModal({ open, onClose, initialType = "bug", ini
                     <div className="fb-group">
                       <span className="cx-label" id={ids.typeLabel}>Type</span>
                       <div
-                        className="fb-types"
+                        className="fb-seg fb-types"
                         role="radiogroup"
                         aria-labelledby={ids.typeLabel}
                         onKeyDown={handleTypeKeyDown}
@@ -633,16 +633,13 @@ export default function BugReportModal({ open, onClose, initialType = "bug", ini
                               aria-checked={selected}
                               tabIndex={selected ? 0 : -1}
                               data-fb-type={key}
-                              className={`fb-type is-${key} ${selected ? "is-selected" : ""}`}
+                              className={`fb-seg-btn ${selected ? "is-on" : ""}`}
+                              title={option.hint}
                               onClick={() => selectType(key)}
                             >
-                              <span className="fb-type-marker" aria-hidden="true" />
-                              <span className="fb-type-copy">
-                                <span className="fb-type-label">{option.label}</span>
-                                <span className="fb-type-hint">{option.hint}</span>
-                              </span>
+                              {option.label}
                               {hasFeedbackDraftContent(key, drafts[key]) && !selected ? (
-                                <span className="fb-type-draft">Draft</span>
+                                <span className="fb-seg-draft" title="Has an unsent draft" aria-label="has a draft" />
                               ) : null}
                             </button>
                           );
@@ -931,7 +928,7 @@ function TextField({ id, label, value, onChange, min, max, placeholder, error, m
       <p className="fb-field-hint" id={hintId}>
         {length > 0 && length < min
           ? `${min - length} more ${min - length === 1 ? "character" : "characters"} needed`
-          : `Required, at least ${min} characters`}
+          : <span className="fb-visually-hidden">Required, at least {min} characters</span>}
         <span className="fb-visually-hidden">. {value.length} of {max} characters used.</span>
       </p>
     </div>

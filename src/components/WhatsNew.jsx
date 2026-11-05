@@ -416,23 +416,6 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                         <p id="wn-summary" className="wn-summary"><RichText text={selected.summary} /></p>
                       )}
 
-                      {selected.items.length > 0 && (
-                        <div
-                          className="wn-bar"
-                          role="img"
-                          aria-label={`${selected.items.length} changes: ${countPhrase(selected.counts)}`}
-                        >
-                          {KINDS.map((k) => selected.counts[k] > 0 && (
-                            <span
-                              key={k}
-                              data-kind={k}
-                              data-dim={(kind !== "all" && kind !== k) || undefined}
-                              style={{ flexGrow: selected.counts[k] }}
-                            />
-                          ))}
-                        </div>
-                      )}
-
                       <div className="wn-filters" role="group" aria-label="Filter changes">
                         {FILTERS.map((filter) => {
                           const count = filter.id === "all" ? queryItems.length : tabCounts[filter.id];
@@ -464,7 +447,7 @@ export default function WhatsNew({ forceOpen = false, onClose, isManual = false 
                           aria-labelledby={`wn-group-${group.kind}`}
                         >
                           <h3 className="wn-group-head" id={`wn-group-${group.kind}`}>
-                            <span className="wn-chip"><i className="wn-marker" />{group.label}</span>
+                            <span className="cx-label wn-group-label"><i className="wn-marker" />{group.label}</span>
                             <span className="wn-mono">{group.items.length}</span>
                           </h3>
                           <ul className="wn-items">

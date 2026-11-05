@@ -64,7 +64,7 @@ import { CopyButton, FolderField, Key, Note, Seg, errorText, isTauri, isTyping, 
 import { useSoundLibrary } from "./use-sound-library";
 import { Toggle } from "../ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { DeckButton, DropButton, InspectorTabs, Slider, StageEmpty, WorkspaceFrame, splitPath } from "../workspace/parts";
+import { DeckButton, DropButton, ErrorText, InspectorTabs, Slider, StageEmpty, WorkspaceFrame, splitPath } from "../workspace/parts";
 import { PaneResizer } from "../workspace/PaneResizer";
 
 const PERSIST_DEBOUNCE_MS = 400;
@@ -986,7 +986,7 @@ export default function SirenBench({ workspaceState, onStateChange, onRenameTab,
   const pickedFile = !pack.tones.length && settings.selected?.kind === "file" ? settings.selected.path : "";
   const scopeLabel = playingTone?.label
     || (playing?.kind === "raw" ? (playing.ref.kind === "file" ? fileName(playing.ref.path) : playingLib?.tone.name) : "")
-    || (pack.tones.length ? pack.name : pickedLib?.tone.name || (pickedFile ? fileName(pickedFile) : "Pick a tone"));
+    || (pack.tones.length ? pack.name : pickedLib?.tone.name || (pickedFile ? fileName(pickedFile) : ""));
   const scopeSub = playingTone
     ? `${playingTone.name} · ${dlc}_soundset`
     : playing?.kind === "raw"
@@ -1147,7 +1147,7 @@ export default function SirenBench({ workspaceState, onStateChange, onRenameTab,
               ) : null}
 
               {sirenEntries.length ? (
-                <ul className="es-library" aria-label="Imported siren packs">
+                <ul className="es-library custom-scrollbar" aria-label="Imported siren packs">
                   {sirenEntries.map((entry) => (
                     <li key={entry.id} className="es-entry">
                       <div className="es-entry-head">
@@ -1170,6 +1170,7 @@ export default function SirenBench({ workspaceState, onStateChange, onRenameTab,
                               <span className="es-source-kind is-text" title={`${KIND_LABELS[source.kind] || source.kind}\n${source.path || ""}`}>{source.label || fileName(source.path || "") || "Sirens"}</span>
                             </div>
                           ) : null}
+                          {source.needsGame ? null : (source.warnings || []).map((warning) => <Note key={warning} tone={/silent or shorter|roles come from file names/.test(warning) ? "idle" : "warn"}>{warning}</Note>)}
                           {source.needsGame ? (
                             <p className="lv-slot-note">{!settings.gtaFolder ? "Needs your GTA V folder." : rescanning ? "Reading…" : "Not found in your GTA V folder."}</p>
                           ) : (
@@ -1182,7 +1183,6 @@ export default function SirenBench({ workspaceState, onStateChange, onRenameTab,
                               ))}
                             </ul>
                           )}
-                          {source.needsGame ? null : (source.warnings || []).map((warning) => <Note key={warning} tone={/silent or shorter|roles come from file names/.test(warning) ? "idle" : "warn"}>{warning}</Note>)}
                         </div>
                       ))}
                     </li>
@@ -1370,7 +1370,7 @@ export default function SirenBench({ workspaceState, onStateChange, onRenameTab,
             {install.status === "working" && install.step ? <p className="lv-foot-note">{install.step}…</p> : null}
             {folderMissing ? <p className="lv-foot-note">{target === "fivem" ? "Your server's resources, or a [category] inside it." : "Studio writes a folder and an .oiv per download."}</p> : null}
             {installBlocked && !folderMissing && install.status !== "working" ? <p className="lv-foot-note">{installBlocked}</p> : null}
-            {install.status === "error" ? <p className="lv-foot-note is-error">{install.error}</p> : null}
+            {install.status === "error" ? <p className="lv-foot-note is-error"><ErrorText error={install.error} /></p> : null}
             {install.status === "done" && target === "fivem" && install.result ? (
               <div className="es-result" role="status">
                 <div className="es-result-row">
@@ -1432,8 +1432,8 @@ export default function SirenBench({ workspaceState, onStateChange, onRenameTab,
           {!desktop ? (
             <StageEmpty icon={Monitor} title="Desktop app required" line="Reading siren packs needs the Cortex Studio desktop app." />
           ) : !hasTones ? (
-            <StageEmpty title="No siren tones yet" line="Import a siren download, add your own audio, or drop either here.">
-              <button type="button" className="cx-btn is-primary" onClick={pickDownload}>Import a download</button>
+            <StageEmpty icon={Siren} title="No siren tones yet" line="Import a siren download, add your own audio, or drop either here.">
+              <button type="button" className="cx-btn is-primary" onClick={pickDownload}><Plus aria-hidden="true" />Import a download</button>
             </StageEmpty>
           ) : (
             <div className="sn-bench">
@@ -1475,7 +1475,7 @@ export default function SirenBench({ workspaceState, onStateChange, onRenameTab,
                   <AlertTriangle className="lv-alert-icon" aria-hidden="true" />
                   <div className="lv-alert-copy">
                     <strong>{alert.label}</strong>
-                    <span>{alert.text}</span>
+                    <ErrorText error={alert.text} />
                   </div>
                   <button type="button" className="cx-icon-btn" onClick={() => dismissAlert(alert.id)} aria-label="Dismiss">
                     <X aria-hidden="true" />

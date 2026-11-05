@@ -431,19 +431,12 @@
   color: var(--mg-fg);
 }
 
-.settings-row-desc,
-.settings-status-desc {
+.settings-row-desc {
   margin-top: calc(3 * var(--u));
   font-size: var(--cx-fs-body);
   line-height: 1.45;
   color: var(--mg-muted);
   overflow-wrap: anywhere;
-}
-
-.settings-status-desc.is-truncated {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .settings-row-error {
@@ -574,7 +567,7 @@
   height: calc(13 * var(--u));
 }
 
-.settings-mini:hover:not(:disabled) {
+.settings-mini:hover:not(:disabled, [aria-disabled="true"]) {
   border-color: color-mix(in srgb, var(--mg-fg) 22%, var(--mg-border));
   background: var(--cx-wash);
 }
@@ -600,7 +593,8 @@
   color: var(--mg-fg);
 }
 
-.settings-mini:disabled {
+.settings-mini:disabled,
+.settings-mini[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.45;
 }
@@ -632,7 +626,6 @@ html.dark .settings-mini.is-danger.is-solid {
 .settings-mini:focus-visible,
 .settings-seg-btn:focus-visible,
 .settings-chip:focus-visible,
-.settings-update-install-btn:focus-visible,
 .settings-danger-btn:focus-visible {
   outline: none;
   box-shadow: var(--cx-focus);
@@ -1107,6 +1100,7 @@ html.dark .settings-mini.is-danger.is-solid {
 .settings-color-swatch {
   position: relative;
   flex-shrink: 0;
+  border-radius: calc(5 * var(--u));
 }
 
 .settings-color-chip {
@@ -1114,10 +1108,6 @@ html.dark .settings-mini.is-danger.is-solid {
   height: calc(32 * var(--u));
   border-radius: calc(5 * var(--u));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 20%, transparent);
-}
-
-.settings-color-swatch:focus-within .settings-color-chip {
-  box-shadow: var(--cx-focus);
 }
 
 .settings-color-controls .settings-input {
@@ -1523,14 +1513,6 @@ html.dark .settings-mini.is-danger.is-solid {
   font-variant-numeric: tabular-nums;
 }
 
-.settings-update-status,
-.settings-update-available-header {
-  display: flex;
-  align-items: center;
-  gap: calc(12 * var(--u));
-  padding: calc(14 * var(--u)) calc(16 * var(--u));
-}
-
 .settings-update-available {
   padding-bottom: calc(2 * var(--u));
 }
@@ -1550,40 +1532,45 @@ html.dark .settings-mini.is-danger.is-solid {
   color: var(--mg-muted);
 }
 
-.settings-update-status--ok .settings-status-icon,
-.settings-update-available .settings-status-icon {
+.settings-update-available-header .settings-status-icon {
   color: var(--mg-primary);
 }
 
-.settings-update-status--error .settings-status-icon,
-.settings-confirm-content .settings-status-icon {
+.settings-update-status.is-ok .settings-status-icon,
+.settings-update-available-header.is-ready .settings-status-icon {
+  color: var(--cx-confirm);
+}
+
+.settings-update-status.is-warn .settings-status-icon {
+  color: var(--cx-caution);
+}
+
+.settings-update-status.is-error .settings-status-icon,
+.settings-update-available-header.is-error .settings-status-icon {
   color: var(--mg-destructive);
 }
 
 .settings-status-title {
-  font-size: var(--cx-fs-row);
-  font-weight: 600;
-  color: var(--mg-fg);
+  display: flex;
+  align-items: center;
+  gap: calc(7 * var(--u));
+  min-width: 0;
 }
 
-.settings-status-title.is-error {
-  color: var(--mg-destructive);
+.settings-status-title .settings-status-icon {
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
 }
 
-.settings-status-title.is-muted {
-  font-weight: 500;
-  color: var(--mg-muted);
-}
-
-.settings-status-title.is-accent {
-  color: var(--mg-primary);
-}
-
-.settings-update-check-btn {
+.settings-status-spin {
+  display: inline-flex;
   flex-shrink: 0;
 }
 
-.settings-update-install-btn,
+.settings-about-action {
+  min-width: calc(140 * var(--u));
+}
+
 .settings-danger-btn {
   flex-shrink: 0;
   height: calc(30 * var(--u));
@@ -1597,10 +1584,6 @@ html.dark .settings-mini.is-danger.is-solid {
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
-}
-
-.settings-update-install-btn:hover {
-  background: color-mix(in srgb, var(--mg-primary) 86%, var(--mg-fg));
 }
 
 .settings-update-progress {
@@ -1795,35 +1778,10 @@ html.dark .settings-danger-btn {
   min-width: 0;
 }
 
-.settings-juno-name {
-  overflow: hidden;
-  font-size: var(--cx-fs-display-sm);
-  line-height: 1.1;
-  color: var(--mg-fg);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-juno-via {
-  display: flex;
-  align-items: center;
-  gap: calc(6 * var(--u));
-}
-
-.settings-juno-via svg {
-  flex-shrink: 0;
-  width: calc(12 * var(--u));
-  height: calc(12 * var(--u));
-}
-
 .settings-mini.settings-juno-discord svg {
   width: calc(16 * var(--u));
   height: calc(16 * var(--u));
 }
-
-.settings-juno-status.is-ok .settings-juno-dot { background: var(--cx-confirm); }
-.settings-juno-status.is-warn .settings-juno-dot { background: var(--cx-caution); }
-.settings-juno-status.is-error .settings-juno-dot { background: var(--mg-destructive); }
 
 .settings-juno-state {
   display: flex;
@@ -1845,17 +1803,9 @@ html.dark .settings-danger-btn {
   .settings-juno-dot.is-live { animation: none; }
 }
 
-.settings-juno-code {
-  font-size: var(--cx-fs-control);
-  color: var(--mg-fg);
-  font-family: var(--font-hud);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-}
-
 .settings-juno-note {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: calc(8 * var(--u));
   margin: 0;
   padding: calc(11 * var(--u)) calc(16 * var(--u));
@@ -1870,7 +1820,6 @@ html.dark .settings-danger-btn {
   height: 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--mg-muted) 60%, transparent);
-  transform: translateY(-1px);
 }
 
 .settings-juno-note.is-ok .settings-juno-dot { background: var(--cx-confirm); }
@@ -1879,46 +1828,176 @@ html.dark .settings-danger-btn {
 .settings-juno-note.is-error { color: var(--mg-destructive); }
 .settings-juno-note.is-error .settings-juno-dot { background: currentColor; }
 
-.settings-juno-value {
-  flex-shrink: 1;
-  min-width: 0;
+.settings-account-id {
+  min-height: calc(72 * var(--u));
+  padding-block: calc(14 * var(--u));
+}
+
+.settings-account-name {
   overflow: hidden;
-  font-size: var(--cx-fs-control);
-  font-weight: 500;
+  padding-right: 0.12em;
+  font-size: var(--cx-fs-display-sm);
+  line-height: 1;
   color: var(--mg-fg);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.settings-juno-value.is-mono {
-  font-family: var(--font-hud);
-  font-size: var(--cx-fs-body);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
-
-.settings-juno-usage {
+.settings-account-via {
   display: flex;
   align-items: center;
-  gap: calc(10 * var(--u));
+  gap: calc(6 * var(--u));
 }
 
-.settings-juno-bar {
+.settings-row-desc.settings-account-via {
+  margin-top: calc(6 * var(--u));
+}
+
+.settings-account-via svg {
+  flex-shrink: 0;
+  width: calc(13 * var(--u));
+  height: calc(13 * var(--u));
+}
+
+.settings-account-code {
+  padding: calc(5 * var(--u)) calc(10 * var(--u));
+  border: 1px solid var(--mg-border);
+  border-radius: calc(5 * var(--u));
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: var(--cx-fs-title);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+  user-select: all;
+}
+
+.settings-row.settings-allowance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  gap: calc(10 * var(--u));
+  padding-block: calc(14 * var(--u)) calc(15 * var(--u));
+}
+
+.settings-allowance-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: calc(24 * var(--u));
+}
+
+.settings-allowance-figure {
+  display: flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  gap: calc(6 * var(--u));
+  font-size: var(--cx-fs-body);
+  color: var(--mg-muted);
+}
+
+.settings-allowance-figure .cx-display {
+  padding-right: 0.08em;
+  font-size: var(--cx-fs-display-sm);
+  line-height: 0.9;
+  color: var(--mg-fg);
+}
+
+.settings-allowance-bar {
   position: relative;
-  width: calc(96 * var(--u));
+  display: block;
   height: 4px;
   overflow: hidden;
   border-radius: 999px;
   background: var(--mg-border);
 }
 
-.settings-juno-bar > span {
+.settings-allowance-bar > span {
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: inherit;
   background: var(--mg-primary);
+  transition: width 180ms var(--cx-ease);
 }
 
-.settings-juno-bar.is-full > span {
+.settings-allowance.is-full .settings-allowance-bar > span {
   background: var(--cx-caution);
+}
+
+.settings-allowance.is-full .settings-allowance-figure .cx-display {
+  color: var(--cx-caution);
+}
+
+.settings-allowance > .settings-row-desc {
+  margin-top: 0;
+}
+
+.settings-juno-status {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  min-height: calc(18 * var(--u));
+  font-size: var(--cx-fs-body);
+  font-weight: 600;
+  color: var(--mg-fg);
+}
+
+.settings-juno-status .settings-mini {
+  height: calc(26 * var(--u));
+  margin-block: calc(-4 * var(--u));
+  margin-left: calc(4 * var(--u));
+}
+
+.settings-juno-status.is-idle { color: var(--mg-muted); }
+.settings-juno-status.is-ok .settings-juno-dot { background: var(--cx-confirm); }
+.settings-juno-status.is-warn .settings-juno-dot { background: var(--cx-caution); }
+.settings-juno-status.is-error { color: var(--mg-destructive); }
+.settings-juno-status.is-error .settings-juno-dot { background: currentColor; }
+
+.settings-juno-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  margin: 0;
+}
+
+.settings-juno-split > div {
+  display: grid;
+  align-content: start;
+  gap: calc(6 * var(--u));
+  padding: calc(14 * var(--u)) calc(16 * var(--u));
+}
+
+.settings-juno-split > div + div {
+  border-left: 1px solid var(--cx-rule);
+}
+
+.settings-juno-split dd {
+  margin: 0;
+  font-size: var(--cx-fs-body);
+  line-height: 1.5;
+  text-wrap: pretty;
+  color: var(--mg-muted);
+}
+
+.settings-juno-split .is-never dd {
+  font-weight: 600;
+  color: var(--mg-fg);
+}
+
+.settings-juno-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(8 * var(--u)) calc(16 * var(--u));
+  padding: calc(10 * var(--u)) calc(16 * var(--u));
+  border-top: 1px solid var(--cx-rule);
+  font-size: var(--cx-fs-body);
+  color: var(--mg-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-allowance-bar > span { transition: none; }
 }

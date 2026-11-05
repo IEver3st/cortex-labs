@@ -14,6 +14,7 @@ import {
   updateSirens,
 } from "../../lib/siren-settings.js";
 import "./SirenEditor.css";
+import { ColorInput } from "../ui/color-input";
 
 // Inspector panels for the Sirens workspace: the selected sirens' fields and
 // the setting's fields and checks. Edits go through the siren editor draft, so
@@ -132,8 +133,8 @@ function ColorField({ light, onChange }) {
   useEffect(() => setText(argb), [argb]);
   return (
     <Field label="Colour" hint="carcols stores siren colours as 0xAARRGGBB">
-      <input className="se-color" type="color" value={light.color || "#ffffff"} aria-label="Siren colour"
-        onChange={(event) => onChange({ color: event.target.value })} />
+      <ColorInput className="se-color" swatch value={light.color || "#ffffff"} label="Siren colour"
+        onChange={(color) => onChange({ color })} />
       <input className={cx("se-text se-hex", !colorFromArgb(text) && "is-invalid")} value={text} spellCheck={false} maxLength={10}
         aria-label="Siren colour ARGB"
         onChange={(event) => {
@@ -189,8 +190,8 @@ function LensFields({ s, light, sirens, primary }) {
       </Field>
       {mode === "custom" ? (
         <Field label="Glow colour">
-          <input className="se-color" type="color" value={current} aria-label="Lens glow colour picker"
-            onChange={(event) => apply(event.target.value.toLowerCase())} />
+          <ColorInput className="se-color" swatch value={current} label="Lens glow colour"
+            onChange={(color) => apply(color.toLowerCase())} />
           <input className={cx("se-text se-hex", !HEX_RE.test(text) && "is-invalid")} value={text} spellCheck={false} maxLength={7}
             aria-label="Lens glow colour hex"
             onChange={(event) => {

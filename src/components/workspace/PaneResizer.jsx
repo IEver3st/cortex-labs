@@ -111,24 +111,37 @@ export function usePreviewHeight(storageKey) {
  * default width. `minStage` raises the floor kept for the centre column.
  */
 export function PaneResizer({ side, label, setWidth, minStage = MIN_STAGE }) {
+  const layoutWidth = (element) => (element ? element.offsetWidth || element.getBoundingClientRect().width : 0);
   const clampFor = (element, value) => {
     const [min, max] = LIMITS[side];
     const root = element.closest(".lv-root");
     const other = root?.querySelector(side === "dock" ? ".lv-inspector" : ".lv-dock");
-    const room = root ? root.getBoundingClientRect().width - (other?.getBoundingClientRect().width || 0) - minStage : max;
+    const room = root ? layoutWidth(root) - layoutWidth(other) - minStage : max;
     return Math.round(Math.max(min, Math.min(max, room, value)));
   };
-  const paneWidth = (element) => element.parentElement.getBoundingClientRect().width;
+  const paneWidth = (element) => layoutWidth(element.parentElement);
+  const settleOther = (element) => {
+    const root = element.closest(".lv-root");
+    const otherSide = side === "dock" ? "insp" : "dock";
+    const other = root?.querySelector(side === "dock" ? ".lv-inspector" : ".lv-dock");
+    if (!root || !other) return;
+    const stored = parseFloat(root.style.getPropertyValue(`--lv-${otherSide}`));
+    const rendered = layoutWidth(other);
+    if (Number.isFinite(stored) && rendered > 0 && stored > rendered + 1) setWidth(otherSide, Math.round(rendered));
+  };
   const onPointerDown = (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
     const handle = event.currentTarget;
+    settleOther(handle);
     const startX = event.clientX;
     const start = paneWidth(handle);
+    const pane = handle.parentElement;
+    const zoom = pane.offsetWidth ? pane.getBoundingClientRect().width / pane.offsetWidth || 1 : 1;
     const direction = side === "dock" ? 1 : -1;
     handle.setPointerCapture(event.pointerId);
     handle.classList.add("is-dragging");
-    const move = (moveEvent) => setWidth(side, clampFor(handle, start + direction * (moveEvent.clientX - startX)));
+    const move = (moveEvent) => setWidth(side, clampFor(handle, start + (direction * (moveEvent.clientX - startX)) / zoom));
     const stop = () => {
       handle.classList.remove("is-dragging");
       handle.removeEventListener("pointermove", move);
@@ -142,6 +155,7 @@ export function PaneResizer({ side, label, setWidth, minStage = MIN_STAGE }) {
   const onKeyDown = (event) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
+    settleOther(event.currentTarget);
     const grow = (event.key === "ArrowRight") === (side === "dock");
     const step = event.shiftKey ? 48 : 16;
     setWidth(side, clampFor(event.currentTarget, paneWidth(event.currentTarget) + (grow ? step : -step)));

@@ -69,9 +69,22 @@ export function useLiveryImages(paths) {
   return (path) => imageCache.get(path) || { status: "loading" };
 }
 
-function useLiveryDictionaries(modelPath, enabled) {
+const dictionaryListeners = new Set();
+
+export function notifyLiveryDictionariesChanged(modelPath) {
+  for (const listener of dictionaryListeners) listener(modelPath);
+}
+
+export function useLiveryDictionaries(modelPath, enabled) {
   const [state, setState] = useState({ status: "idle", list: [], error: "" });
   const [token, setToken] = useState(0);
+  useEffect(() => {
+    const listener = (changed) => {
+      if (samePath(changed, modelPath)) setToken((value) => value + 1);
+    };
+    dictionaryListeners.add(listener);
+    return () => dictionaryListeners.delete(listener);
+  }, [modelPath]);
   useEffect(() => {
     if (!enabled) {
       setState({ status: "idle", list: [], error: "" });
@@ -126,7 +139,7 @@ function slotDetail(slot, image) {
 }
 
 /** `head` renders above the list, inside the panel so its footer stays at the bottom. */
-export default function LiveriesPanel({ s, head = null }) {
+export default function LiveriesPanel({ s, head = null, canvas = null }) {
   const modelPath = s.modelPath;
   const isYft = /\.yft$/i.test(modelPath || "");
   const enabled = Boolean(s.isTauriRuntime && modelPath && isYft);
@@ -372,6 +385,8 @@ export default function LiveriesPanel({ s, head = null }) {
         ))}
       </section>
 
+      {canvas}
+
       <div className="lv-liv-foot">
         <button type="button" className="cx-btn is-primary lv-liv-write" disabled={!changes || dictionaries.status !== "ready"}
           onClick={() => setDialogOpen(true)}
@@ -396,7 +411,7 @@ export default function LiveriesPanel({ s, head = null }) {
           onWritten={() => {
             s.setLiverySet((current) => ({ ...current, items: [], removed: [] }));
             setNotes([]);
-            dictionaries.reload();
+            notifyLiveryDictionariesChanged(modelPath);
             return s.reloadModel?.();
           }}
         />

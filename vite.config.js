@@ -1,8 +1,10 @@
+import { realpathSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 const host = process.env.TAURI_DEV_HOST;
+process.chdir(realpathSync.native(process.cwd()));
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({

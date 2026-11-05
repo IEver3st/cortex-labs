@@ -61,14 +61,6 @@ export function setUsageStatsEnabled(enabled) {
   return true;
 }
 
-export function usageNoticeSeen() {
-  return readState().noticeSeen === true;
-}
-
-export function markUsageNoticeSeen() {
-  if (!usageNoticeSeen()) writeState({ noticeSeen: true });
-}
-
 export function usageInstallId() {
   const { installId } = readState();
   if (ID_PATTERN.test(installId || "")) return installId;
@@ -82,7 +74,7 @@ export function resetUsageInstallId() {
 export function trackUsage(event, count = 1) {
   const amount = Math.floor(Number(count));
   if (!inTauri() || !USAGE_EVENTS.includes(event) || !(amount >= 1)) return false;
-  if (!usageStatsEnabled() || !usageNoticeSeen()) return false;
+  if (!usageStatsEnabled()) return false;
   const installId = usageInstallId();
   if (!installId) return false;
   invoke("usage_ping", { installId, event, count: amount }).catch(() => {});

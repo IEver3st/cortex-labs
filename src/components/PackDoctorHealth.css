@@ -1,0 +1,45 @@
+.pd-health {
+  min-width: 0;
+}
+
+.pd-list .lv-doctor-row {
+  padding: 8px 0;
+}
+
+.pd-list .lv-doctor-message {
+  font-size: var(--cx-fs-control);
+}
+
+.pd-facts .pd-memory-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.pd-facts .pd-file {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.pd-legend {
+  margin-top: -4px;
+}
+
+.pd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pd-actions .cx-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.pd-actions .lv-slot-note {
+  flex-basis: 100%;
+  margin: 0;
+}

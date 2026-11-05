@@ -16,7 +16,7 @@ import {
 } from "../../lib/photo-mode.js";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Toggle } from "../ui/toggle";
-import { ColorLine, FloorField, InspectorTabs, Slider, StageSection } from "../workspace/parts";
+import { ColorLine, ErrorText, FloorField, InspectorTabs, Slider, StageSection } from "../workspace/parts";
 import PaintSlots from "../workspace/PaintSlots";
 import { PaneResizer } from "../workspace/PaneResizer";
 import VehiclePlatePanel from "../VehiclePlatePanel";
@@ -35,7 +35,7 @@ function Note({ tone = "idle", children }) {
   return (
     <p className={`lv-slot-note is-${tone}`}>
       <span className="lv-dot" aria-hidden="true" />
-      <span>{children}</span>
+      <span>{tone === "error" && typeof children === "string" ? <ErrorText error={children} /> : children}</span>
     </p>
   );
 }
@@ -358,7 +358,7 @@ function ObjectTab({ object, runtime, desktop, lit, showroom, onChange, onToggle
             {textures.failed ? `, ${textures.failed} couldn't load` : ""}
           </Note>
         ) : null}
-        {textures?.state === "error" ? <Note tone="error">Textures didn&apos;t load: {textures.error}</Note> : null}
+        {textures?.state === "error" ? <Note tone="error">{`Textures didn't load: ${textures.error}`}</Note> : null}
         {(runtime?.warnings || []).slice(0, 3).map((warning) => <Note key={warning} tone="warn">{warning}</Note>)}
       </section>
       <PlacementGroup object={object} onChange={onChange} />
@@ -446,7 +446,7 @@ function ModKitGroup({ object, runtime, onChange }) {
     return (
       <section className="lv-group">
         <h3 className="lv-group-title">Mod kit</h3>
-        <Note tone="error">The mod kit didn&apos;t load: {setup.error}</Note>
+        <Note tone="error">{`The mod kit didn't load: ${setup.error}`}</Note>
       </section>
     );
   }
@@ -484,7 +484,7 @@ function ModKitGroup({ object, runtime, onChange }) {
       <p className="lv-slot-note">{kit.slots.length} slots, {modCount} parts. Parts load the first time you pick one.</p>
       {status?.status === "preparing" ? <Note>Preparing the mod parts. The first time can take a few seconds.</Note> : null}
       {status?.status === "loading" ? <Note>Loading the chosen parts…</Note> : null}
-      {status?.status === "error" ? <Note tone="error">The mod parts didn&apos;t load: {status.error}</Note> : null}
+      {status?.status === "error" ? <Note tone="error">{`The mod parts didn't load: ${status.error}`}</Note> : null}
       {status?.missing?.length ? <Note tone="warn">{status.missing.length} part models aren&apos;t in the files: {status.missing.slice(0, 3).map((item) => item.modelName || item).join(", ")}</Note> : null}
       {status?.failed?.length ? <Note tone="warn">{status.failed.length} parts didn&apos;t load: {status.failed[0].message}</Note> : null}
       {kit.slots.map((slot) => {

@@ -11,6 +11,7 @@ import {
   stepGameDrawable,
 } from "../../lib/eup";
 import { OUTFIT_STYLES } from "../../lib/eup-outfit-generator";
+import { ColorInput } from "../ui/color-input";
 
 const STYLE_GROUPS = [
   { kind: "everyday", label: "Everyday" },
@@ -244,9 +245,9 @@ function ColourRow({ id, label, value, onChange }) {
             onClick={() => onChange(item.color)}
           />
         ))}
-        <label className={`eup-tone eup-hair-swatch eup-hair-custom ${preset ? "" : "is-on"}`} style={{ "--chip": value }} title="Custom colour">
-          <input type="color" value={value} onChange={(event) => onChange(event.target.value)} aria-label={`Custom ${label.toLowerCase()}`} />
-        </label>
+        <span className={`eup-tone eup-hair-swatch eup-hair-custom ${preset ? "" : "is-on"}`} style={{ "--chip": value }}>
+          <ColorInput value={value} onChange={onChange} label={`Custom ${label.toLowerCase()}`} />
+        </span>
       </div>
     </div>
   );

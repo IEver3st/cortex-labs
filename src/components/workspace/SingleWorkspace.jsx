@@ -1,15 +1,22 @@
 import { useCallback, useMemo, useState } from "react";
-import { AlertTriangle, Aperture, Camera, Car, Check, CheckCheck, ChevronUp, FolderOpen, FolderTree, Box, Boxes, Hexagon, LayoutGrid, PackagePlus, RefreshCw, Shirt, SlidersHorizontal, X } from "lucide-react";
+import { AlertTriangle, Aperture, Camera, Car, Check, CheckCheck, ChevronUp, Columns2, FolderOpen, FolderTree, Box, Boxes, Hexagon, Image as ImageIcon, LayoutGrid, PackagePlus, RefreshCw, Shirt, SlidersHorizontal, X } from "lucide-react";
 import { Toggle } from "../ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import VehicleMetaPanel from "../VehicleMetaPanel";
 import ModkitPanel, { GameLiverySwitcher } from "./ModkitPanel";
 import LiveriesPanel from "./LiveriesPanel";
+import useLiveryCanvas from "./canvas/useLiveryCanvas";
+import LiveryCanvasStage from "./canvas/LiveryCanvasStage";
+import LiveryCanvasPanel from "./canvas/LiveryCanvasPanel";
 import ClothingTexturesPanel from "./ClothingTexturesPanel";
 import SaveVehicle from "./SaveVehicle";
 import PackSheet, { PackBar } from "./PackSheet";
+import DoctorSheet from "./DoctorSheet";
+import useFolderDoctor from "./useFolderDoctor";
+import { Stethoscope } from "lucide-react";
 import KitShootReview from "./KitShootReview";
+import ListingPanel from "./ListingPanel";
 import PaintSlots from "./PaintSlots";
 import {
   AssetSlot,
@@ -96,6 +103,7 @@ const INSPECTOR_TABS = {
     { id: "mods", label: "Mods" },
     { id: "scene", label: "Scene" },
     { id: "meta", label: "Meta" },
+    { id: "listing", label: "Listing" },
   ],
   eup: [{ id: "paint", label: "Material" }, { id: "textures", label: "Textures" }, { id: "scene", label: "Scene" }],
 };
@@ -447,21 +455,46 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
   // A folder of vehicles is a desktop read, so the Pack view is Vehicle mode in the app only.
   const canOpenFolder = isVehicle && Boolean(s.isTauriRuntime);
   const hasFolder = canOpenFolder && Boolean(s.vehicleFolder);
-  const packShown = hasFolder && s.folderView === "pack";
-  const viewSwitch = hasFolder ? (
+  const folderPanelShown = hasFolder && s.folderPanelShown;
+  const packShown = folderPanelShown && s.folderView === "pack";
+  const doctorShown = folderPanelShown && s.folderView === "doctor";
+  const doctor = useFolderDoctor({ folder: hasFolder ? s.vehicleFolder : "", scan: s.folderScan, modelPath: s.modelSourcePath || s.modelPath, enabled: doctorShown });
+  const canvas = useLiveryCanvas(s, { enabled: isVehicle, keysEnabled: !folderPanelShown && activeTab === "liveries" });
+  const folderSwitch = hasFolder ? (
     <div className="lv-ctx-seg" role="group" aria-label="Folder view">
       <button type="button" className={`lv-ctx-seg-btn ${packShown ? "is-on" : ""}`} aria-pressed={packShown}
         onClick={() => s.setFolderView("pack")} title="Every vehicle in the folder">
         <LayoutGrid aria-hidden="true" />
         Pack
       </button>
-      <button type="button" className={`lv-ctx-seg-btn ${packShown ? "" : "is-on"}`} aria-pressed={!packShown}
+      <button type="button" className={`lv-ctx-seg-btn ${doctorShown ? "is-on" : ""}`} aria-pressed={doctorShown}
+        onClick={() => s.setFolderView("doctor")} title="Check the folder before you upload or sell it. Changes no files.">
+        <Stethoscope aria-hidden="true" />
+        Doctor
+      </button>
+      <button type="button" className={`lv-ctx-seg-btn ${folderPanelShown ? "" : "is-on"}`} aria-pressed={!folderPanelShown}
         onClick={() => s.setFolderView("vehicle")} title="The open vehicle">
         <Car aria-hidden="true" />
         Vehicle
       </button>
     </div>
   ) : null;
+  const canvasSwitch = canvas.engaged && !folderPanelShown ? (
+    <div className="lv-ctx-seg" role="radiogroup" aria-label="Canvas view">
+      {[
+        { id: "model", label: "Model", icon: Car, title: "The vehicle only" },
+        { id: "split", label: "Split", icon: Columns2, title: "The vehicle beside the livery sheet" },
+        { id: "sheet", label: "Sheet", icon: ImageIcon, title: "The livery sheet only" },
+      ].map(({ id, label, icon: Icon, title }) => (
+        <button key={id} type="button" role="radio" aria-checked={canvas.stage === id} className={`lv-ctx-seg-btn ${canvas.stage === id ? "is-on" : ""}`}
+          onClick={() => canvas.setStage(id)} title={title}>
+          <Icon aria-hidden="true" />
+          {label}
+        </button>
+      ))}
+    </div>
+  ) : null;
+  const viewSwitch = folderSwitch || canvasSwitch ? <>{folderSwitch}{canvasSwitch}</> : null;
 
   const alerts = useMemo(() => {
     const list = [];
@@ -494,8 +527,9 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
 
   return (
     <WorkspaceFrame s={s} inspectorOpen={inspectorOpen} setInspectorOpen={setInspectorOpen} style={panes.style}
-      className={packShown ? "is-pack" : ""} viewSwitch={viewSwitch} panelControls={!packShown}>
+      className={folderPanelShown ? "is-pack" : ""} viewSwitch={viewSwitch} panelControls={!folderPanelShown}>
       {packShown ? <PackSheet s={s} /> : null}
+      {doctorShown ? <DoctorSheet s={s} doctor={doctor} /> : null}
 
       {/* ──── Asset pipeline ──── */}
       <aside className="lv-dock" aria-label={copy.asideLabel} inert={s.panelCollapsed}>
@@ -607,7 +641,7 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
 
       <Viewfinder
         s={s}
-        viewer={viewer}
+        viewer={<LiveryCanvasStage canvas={canvas}>{viewer}</LiveryCanvasStage>}
         hasModel={hasModel}
         alerts={alerts}
         dropHint={`${s.modelDropLabel} ${copy.dropHint}`}
@@ -712,9 +746,11 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
           {/* The in-game livery switcher sits with the liveries it switches between. */}
           {activeTab === "mods" && isVehicle ? <ModkitPanel s={s} livery={false} /> : null}
 
-          {activeTab === "liveries" && isVehicle ? <LiveriesPanel s={s} head={<GameLiverySwitcher s={s} />} /> : null}
+          {activeTab === "liveries" && isVehicle ? <LiveriesPanel s={s} head={<GameLiverySwitcher s={s} />} canvas={<LiveryCanvasPanel canvas={canvas} s={s} />} /> : null}
 
           {activeTab === "textures" && isEup ? <ClothingTexturesPanel s={s} /> : null}
+
+          {activeTab === "listing" && isVehicle ? <ListingPanel s={s} onShowHealth={() => setInspectorTab("meta")} /> : null}
 
           {activeTab === "meta" && !isEup ? (
             <div className="lv-meta">
@@ -741,6 +777,8 @@ export default function SingleWorkspace({ s, viewer, overlays }) {
                 plate={s.licensePlate}
                 onPlateChange={s.updateLicensePlate}
                 plateStatus={s.licensePlateStatus}
+                meshStats={s.meshStats}
+                onCountGeometry={s.setShowSolidWireframe ? () => s.setShowSolidWireframe(true) : undefined}
               />
             </div>
           ) : null}

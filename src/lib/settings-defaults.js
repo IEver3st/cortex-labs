@@ -13,6 +13,7 @@ export const BUILT_IN_DEFAULTS = Object.freeze({
   autoTemplateColor: "#c9d8ee",
   autoTemplateBackgroundColor: "#000000",
   backgroundColor: "#141414",
+  stageTone: "theme",
   showGrid: false,
   showShadows: false,
   ambientOcclusion: false,

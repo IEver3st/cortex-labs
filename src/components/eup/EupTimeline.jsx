@@ -35,8 +35,8 @@ const EupTimeline = forwardRef(function EupTimeline(
       input.value = String(Math.min(Math.max(time, 0), end));
       input.style.setProperty("--fill", `${end > 0 ? (Math.min(time, end) / end) * 100 : 0}%`);
     }
-    if (frameRef.current) frameRef.current.textContent = `Frame ${frame} of ${frames}`;
-    if (timeRef.current) timeRef.current.textContent = `${formatClipSeconds(time)} of ${formatClipSeconds(duration)}`;
+    if (frameRef.current) frameRef.current.textContent = `Frame ${frame}/${frames}`;
+    if (timeRef.current) timeRef.current.textContent = `${formatClipSeconds(time)} / ${formatClipSeconds(duration)}`;
   }, [clip, duration, end]);
 
   useImperativeHandle(ref, () => ({ update: (time) => show(time) }), [show]);

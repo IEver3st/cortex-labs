@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { exists, writeFile } from "@tauri-apps/plugin-fs";
 import {
   AlertTriangle,
+  Box,
   Check,
   ChevronDown,
   ChevronRight,
@@ -19,6 +20,7 @@ import {
   Grid3x3,
   Lock,
   Maximize2,
+  Palette,
   Pencil,
   Plus,
   Redo2,
@@ -27,7 +29,6 @@ import {
   SquareDashed,
   Sun,
   Trash2,
-  Box,
   Undo2,
   X,
   ZoomIn,
@@ -54,6 +55,7 @@ import { AssetSlot, DeckButton, FootFact, PanelLayout, StageEmpty, splitPath } f
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
 import ReplacePrompt from "./workspace/ReplacePrompt";
 import { usePaneMotion } from "./workspace/usePaneMotion";
+import { plainError } from "../lib/plain-error";
 import "./VariantsPage.css";
 
 /* ═══════════════════════════════════════════════════════════
@@ -394,6 +396,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   const exportIssues = useMemo(() => {
     const issues = [];
     if (!psdPath) issues.push({ type: "error", msg: "Open a layered file first." });
+    else if (psdError) issues.push({ type: "error", msg: "Fix the layered file first." });
     if (!outputFolder) issues.push({ type: "error", msg: isTauriRuntime ? "Choose an output folder." : "Exporting needs the desktop app." });
     const rendersWanted = exportRenders && Boolean(modelPath);
     const seen = new Map();
@@ -415,7 +418,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       else if (!viewerReady || modelLoading || !liveryTargetReady) issues.push({ type: "error", msg: "Renders wait for the vehicle to finish loading." });
     }
     return issues;
-  }, [psdPath, outputFolder, variants, psdData, isTauriRuntime, exportShape, exportSize, exportRenders, modelPath, modelError, stageMode, viewerReady, modelLoading, liveryTargetReady]);
+  }, [psdPath, psdError, outputFolder, variants, psdData, isTauriRuntime, exportShape, exportSize, exportRenders, modelPath, modelError, stageMode, viewerReady, modelLoading, liveryTargetReady]);
   const exportBlocked = exportIssues.some((issue) => issue.type === "error");
 
   /* ── Persist ── */
@@ -1063,7 +1066,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
               psdLoading ? (
                 <p className="lv-slot-note is-idle"><span className="lv-dot" aria-hidden="true" />Reading layers…</p>
               ) : psdError ? (
-                <p className="lv-slot-note is-error"><span className="lv-dot" aria-hidden="true" />{psdError}</p>
+                <p className="lv-slot-note is-error" title={psdError}><span className="lv-dot" aria-hidden="true" />{plainError(psdError).text}</p>
               ) : psdData ? (
                 <p className="lv-slot-note is-ok">
                   <span className="lv-dot" aria-hidden="true" />
@@ -1368,7 +1371,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
       <div className="vb-stage-col">
         <section className={`vb-stage ${bothLoaded ? `is-${stageMode}` : ""}`} ref={stageRef} aria-label="Preview">
           {!modelPath && !psdPath ? (
-            <StageEmpty title="Nothing to preview yet" line="Each set of visible layers saves as its own PNG.">
+            <StageEmpty icon={Palette} title="Nothing to preview yet" line="Each set of visible layers saves as its own PNG.">
               <button type="button" className="cx-btn is-primary" onClick={handleSelectPsd} disabled={!isTauriRuntime}>
                 <FileImage aria-hidden="true" />
                 Open layered file
@@ -1498,7 +1501,8 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                       <div className="vb-texture-state is-error" role="alert">
                         <AlertTriangle aria-hidden="true" />
                         <p className="vb-texture-title">The layered file could not be read</p>
-                        <p className="vb-texture-copy">{psdError}</p>
+                        <p className="vb-texture-copy" title={psdError}>{plainError(psdError).text}</p>
+                        {psdPath ? <p className="vb-texture-path" title={psdPath}>{psdPath}</p> : null}
                         <button type="button" className="cx-btn lv-btn-sm" onClick={() => setPsdReloadToken((t) => t + 1)}>
                           <RefreshCw aria-hidden="true" />
                           Try again

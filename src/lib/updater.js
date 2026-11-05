@@ -395,7 +395,7 @@ async function runCheck({ manual = false } = {}) {
       ...prev,
       checking: false,
       error: manual ? mapUpdateCheckError(error) : prev.error,
-      lastChecked: Date.now(),
+      lastChecked: manual ? Date.now() : prev.lastChecked,
     }));
   } finally {
     store.checkInFlight = false;

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { watchStageTone } from "./stage-tone.js";
 import { Reflector } from "three/examples/jsm/objects/Reflector.js";
 import { SHOWROOM_FLOORS } from "./showroom-floors.js";
 
@@ -58,6 +59,7 @@ const TILE_SIZE = 0.6; // metres
 // the horizon, so no edge of the stage is ever visible. The fade is by distance
 // from the vehicle, not scene fog, so the vehicle itself never greys out.
 const SHOWROOM_VOID = new THREE.Color("#0d0e11");
+const STUDIO_VOID = new THREE.Color("#dcdcd8");
 // Neutral, a touch cool: a warm key turns the dark floor brown.
 const SPOT_COLOR = new THREE.Color("#f4f6fa");
 // Floor irradiance under a spotlight at 100%, independent of model size.
@@ -465,13 +467,13 @@ const SHOWROOM_FLOOR_SHADER = {
 /* Studio lighting for reflections: a dim ceiling, long horizontal strips down
    both sides for the body lines, a dark ground for the sills, and one large
    softbox wherever the stage light is aimed from. */
-function buildStudioEnvironment(renderer, toLight) {
+function buildStudioEnvironment(renderer, toLight, light = false) {
   const envScene = new THREE.Scene();
-  envScene.background = new THREE.Color("#030304");
+  envScene.background = new THREE.Color(light ? "#7a7a76" : "#030304");
   const glow = (intensity) =>
     new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 1, 1).multiplyScalar(intensity), side: THREE.DoubleSide });
 
-  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(16, 10), glow(0.4));
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(16, 10), glow(light ? 1.4 : 0.4));
   ceiling.position.set(0, 7, 0);
   ceiling.rotation.x = Math.PI / 2;
   envScene.add(ceiling);
@@ -485,7 +487,7 @@ function buildStudioEnvironment(renderer, toLight) {
     }
   }
 
-  const ground = new THREE.Mesh(new THREE.CircleGeometry(14, 48), glow(0.025));
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(14, 48), glow(light ? 0.6 : 0.025));
   ground.position.y = -1.2;
   ground.rotation.x = -Math.PI / 2;
   envScene.add(ground);
@@ -670,7 +672,7 @@ export function createBeamMaterial() {
   });
 }
 
-export function createViewerStage({ renderer, scene, keyLight, subject = "vehicle" }) {
+export function createViewerStage({ renderer, scene, keyLight, subject = "vehicle", followTone = false }) {
   // Peds face +Z; turning the vehicle light table half a turn keeps "front"
   // meaning the subject's front.
   const facing = subject === "ped" ? -1 : 1;
@@ -710,6 +712,7 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     height: 1,
     // Studio light multiplier while the vehicle light preview runs at night.
     night: 1,
+    tone: "dark",
     accents: [],
     // Lineup bays from fit(..., { bays: true }): { center, half, radius } per
     // visible vehicle. With two or more, and bayLights on, the showroom lights
@@ -809,7 +812,7 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
   // and the backdrop go through the same output conversion.
   const voidDome = new THREE.Mesh(
     new THREE.SphereGeometry(1, 32, 16),
-    new THREE.MeshBasicMaterial({ color: SHOWROOM_VOID, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false, dithering: true }),
+    new THREE.MeshBasicMaterial({ color: SHOWROOM_VOID.clone(), side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false, dithering: true }),
   );
   voidDome.name = "stage-void";
   voidDome.renderOrder = -10;
@@ -875,15 +878,28 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
   let environment = null;
   let environmentLight = "";
   let savedBackground;
+  const voidColor = SHOWROOM_VOID.clone();
 
   const applyEnvironment = () => {
     if (state.mode !== "showroom") return;
-    if (!environment || environmentLight !== state.light) {
+    const key = `${state.light}:${state.tone}`;
+    if (!environment || environmentLight !== key) {
       environment?.dispose?.();
-      environment = buildStudioEnvironment(renderer, lightDirection(state.light));
-      environmentLight = state.light;
+      environment = buildStudioEnvironment(renderer, lightDirection(state.light), state.tone === "light");
+      environmentLight = key;
     }
     scene.environment = environment.texture;
+  };
+
+  const applyTone = () => {
+    voidColor.copy(SHOWROOM_VOID);
+    if (state.tone === "light") voidColor.copy(STUDIO_VOID).lerp(SHOWROOM_VOID, 1 - state.night);
+    voidDome.material.color.copy(voidColor);
+    floor?.material.uniforms.uVoid.value.copy(voidColor);
+    if (state.mode === "showroom") {
+      scene.background = voidColor;
+      applyEnvironment();
+    }
   };
 
   const applyVisibility = () => {
@@ -1066,13 +1082,14 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     if (showroomOn) {
       if (!floor) {
         floor = buildFloor();
+        floor.material.uniforms.uVoid.value.copy(voidColor);
         showroom.add(floor);
         applyAccents();
       }
       applyEnvironment();
       scene.environmentIntensity = state.night;
       if (savedBackground === undefined) savedBackground = scene.background;
-      scene.background = SHOWROOM_VOID;
+      scene.background = voidColor;
       // Khronos PBR Neutral: product-render tone mapping that keeps livery
       // hues true instead of ACES' warm, desaturated shoulder.
       renderer.toneMapping = THREE.NeutralToneMapping;
@@ -1093,7 +1110,8 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     layout();
   };
 
-  return {
+  let stopTone = null;
+  const api = {
     root,
     get mode() {
       return state.mode;
@@ -1121,6 +1139,7 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
       if (next === state.night) return;
       state.night = next;
       if (state.mode === "showroom") scene.environmentIntensity = next;
+      if (state.tone === "light") applyTone();
       applyVisibility();
       layout();
     },
@@ -1230,6 +1249,12 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
       const next = state.mode === "showroom" ? Math.min(framingMax, state.radius * SHOWROOM_REACH) : framingMax;
       controls.maxDistance = next;
       controls.userData.stageMaxDistance = next;
+      const camera = controls.object;
+      const reachNear = Math.max(0.01, next - state.radius * 4);
+      if (camera?.isPerspectiveCamera && camera.near > reachNear) {
+        camera.near = reachNear;
+        camera.updateProjectionMatrix();
+      }
     },
     /**
      * Prop lights the showroom floor receives, in world space: { position, direction
@@ -1255,7 +1280,14 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
       floor.getRenderTarget().setSize(width, height);
       floor.material.uniforms.uTexSize.value.set(width, height);
     },
+    setTone(tone) {
+      const next = tone === "light" ? "light" : "dark";
+      if (next === state.tone) return;
+      state.tone = next;
+      applyTone();
+    },
     dispose() {
+      stopTone?.();
       if (state.mode === "showroom") {
         scene.environment = null;
         if (savedBackground !== undefined) scene.background = savedBackground;
@@ -1281,4 +1313,6 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
       }
     },
   };
+  if (followTone) stopTone = watchStageTone((tone) => api.setTone(tone));
+  return api;
 }

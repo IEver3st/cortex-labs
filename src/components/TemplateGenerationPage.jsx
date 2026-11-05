@@ -16,6 +16,7 @@ import {
   SquareDashedMousePointer,
   Undo2,
   X,
+  Zap,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -50,6 +51,7 @@ import { AssetSlot, DeckButton, FootFact, PanelLayout, StageEmpty, splitPath } f
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
 import { usePaneMotion } from "./workspace/usePaneMotion";
 import "./TemplateGenerationPage.css";
+import { ColorInput } from "./ui/color-input";
 // Corner handle size on a selected marker box, in CSS px.
 const MARKER_HANDLE_PX = 9;
 const MARKER_HANDLES = ["nw", "ne", "sw", "se"];
@@ -1601,7 +1603,7 @@ export default function TemplateGenerationPage({
             title="Paint area"
             done={modelPath ? targetDone : false}
             disabled={!modelPath}
-            note="Open a model to choose what the template covers."
+            note="The body, a garment or the glass."
             hint="What the template covers: the body or garment, or the glass you pick"
           >
             <div className="lv-seg" role="radiogroup" aria-label="Paint area">
@@ -1719,7 +1721,7 @@ export default function TemplateGenerationPage({
               note={
                 modelPath
                   ? "Draw markers once the template is built."
-                  : "Open a model to add markers."
+                  : "Boxes that keep small pieces visible on the texture."
               }
               hint="Box small pieces so they show up on the texture. The paint inside a box takes the marker colour, exactly where you drew it."
               trailing={
@@ -1803,22 +1805,19 @@ export default function TemplateGenerationPage({
                   })}
                 </ol>
               ) : null}
-              <label className="tm-color-row">
+              <div className="tm-color-row">
                 <span className="tm-color-chip" style={{ "--chip": templateMarkerColorDraft }}>
-                  <input
-                    type="color"
+                  <ColorInput
                     value={templateMarkerColorDraft}
-                    onChange={(event) =>
-                      setTemplateMarkerColorDraft(
-                        normalizeOpaqueHexColor(event.target.value, DEFAULT_TEMPLATE_MARKER_COLOR),
-                      )
+                    onChange={(color) =>
+                      setTemplateMarkerColorDraft(normalizeOpaqueHexColor(color, DEFAULT_TEMPLATE_MARKER_COLOR))
                     }
-                    aria-label="Marker colour"
+                    label="Marker colour"
                   />
                 </span>
                 <span className="tm-color-label">Marker colour</span>
                 <span className="tm-color-hex">{templateMarkerColorDraft.toUpperCase()}</span>
-              </label>
+              </div>
             </Step>
           ) : null}
 
@@ -1828,7 +1827,7 @@ export default function TemplateGenerationPage({
             title="Output"
             done={Boolean(autoSavedPath)}
             disabled={!modelPath}
-            note="Open a model to set the output."
+            note="Resolution and layers for the file."
             hint="Resolution and layers for the generated file"
           >
             <div className="lv-field">
@@ -1886,20 +1885,17 @@ export default function TemplateGenerationPage({
                     />
                   </div>
                   {includeVehicleOverlay ? (
-                    <label className="tm-color-row">
+                    <div className="tm-color-row">
                       <span className="tm-color-chip" style={{ "--chip": vehicleOverlayColorDraft }}>
-                        <input
-                          type="color"
+                        <ColorInput
                           value={vehicleOverlayColorDraft}
-                          onChange={(event) =>
-                            setVehicleOverlayColorDraft(normalizeVehicleOverlayColor(event.target.value))
-                          }
-                          aria-label="Overlay colour"
+                          onChange={(color) => setVehicleOverlayColorDraft(normalizeVehicleOverlayColor(color))}
+                          label="Overlay colour"
                         />
                       </span>
                       <span className="tm-color-label">Overlay colour</span>
                       <span className="tm-color-hex">{vehicleOverlayColorDraft.toUpperCase()}</span>
-                    </label>
+                    </div>
                   ) : null}
                 </div>
               ) : null}
@@ -2022,7 +2018,7 @@ export default function TemplateGenerationPage({
       {/* ──── Stage ──── */}
       <section className={`tm-stage is-${viewMode}`} aria-label="Template work area">
         {!modelPath ? (
-          <StageEmpty title="No model open" line="Its UVs become a layered template you can paint on.">
+          <StageEmpty icon={Zap} title="No model open" line="Its UVs become a layered template you can paint on.">
             <button
               type="button"
               className="cx-btn is-primary"

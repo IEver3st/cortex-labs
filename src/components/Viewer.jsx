@@ -69,6 +69,7 @@ import {
 } from "../lib/viewer-render-effects.js";
 import { createEmergencyLightRig } from "../lib/emergency-light-rig.js";
 import { TURNTABLE_DEFAULT_SPEED, stepTurntable, withTurntableAtRest } from "../lib/turntable.js";
+import { normalizeRecordingSize, planRecordingFrames } from "../lib/viewer-recording.js";
 import { normalizeModelRotation, orientModel } from "../lib/model-orientation.js";
 import { isYtdTexturePath, resolveYtdTexturePath } from "../lib/ytd-texture.js";
 import { createPlateOverlay, findPlateMeshes } from "../lib/license-plate-overlay.js";
@@ -536,6 +537,8 @@ function ViewerComponent({
   const compositeTextureRef = useRef(null);
   const loadedTextureTokensRef = useRef(new Map());
   const loadedWindowTextureTokensRef = useRef(new Map());
+  const lastTextureRequestRef = useRef("");
+  const lastWindowTextureRequestRef = useRef("");
   const onModelInfoRef = useRef(onModelInfo);
   const onModelErrorRef = useRef(onModelError);
   const onModelLoadingRef = useRef(onModelLoading);
@@ -559,6 +562,8 @@ function ViewerComponent({
   const shadowsEnabledRef = useRef(shadowsEnabled);
   const ambientOcclusionRef = useRef(ambientOcclusion);
   const materialStateRef = useRef({});
+  const liveryCanvasPickerRef = useRef(null);
+  const [compositeRevision, setCompositeRevision] = useState(0);
   const templatePickStateRef = useRef({
     pointerId: null,
     startX: 0,
@@ -736,6 +741,7 @@ function ViewerComponent({
       previous.dispose();
     }
     compositeTextureRef.current = texture;
+    if (previous && !texture) setCompositeRevision((value) => value + 1);
     if (textureRef.current !== texture) {
       releaseTexture(textureRef.current);
       textureRef.current = texture;
@@ -928,7 +934,7 @@ function ViewerComponent({
     lightsRef.current = { ambient, key, rim };
     scene.add(ambient, key, rim, key.target);
 
-    const stageApi = createViewerStage({ renderer, scene, keyLight: key });
+    const stageApi = createViewerStage({ renderer, scene, keyLight: key, followTone: true });
     stageApi.setBackgroundColor(backgroundColor);
     stageApi.setShadows(shadowsEnabled);
     stageApi.setMode(stage);
@@ -1113,8 +1119,9 @@ function ViewerComponent({
       return thumb.toDataURL("image/jpeg", 0.88);
     };
 
+    let recording = null;
     const canRenderFrame = () => {
-      if (!isActiveRef.current) return false;
+      if (!isActiveRef.current || recording) return false;
       const container = containerRef.current;
       return Boolean(container && container.clientWidth > 0 && container.clientHeight > 0);
     };
@@ -1188,7 +1195,7 @@ function ViewerComponent({
       );
 
     // Other click handlers stand down while a template pick owns the pointer.
-    const isTemplatePickingEnabled = isPartPickingEnabled;
+    const isTemplatePickingEnabled = () => isPartPickingEnabled() || Boolean(liveryCanvasPickerRef.current);
 
     const clearTemplatePickHover = () => {
       renderer.domElement.style.cursor = "";
@@ -1273,6 +1280,67 @@ function ViewerComponent({
     renderer.domElement.addEventListener("pointerup", handleTemplatePickPointerUp, true);
     renderer.domElement.addEventListener("pointerleave", handleTemplatePickPointerCancel, true);
     renderer.domElement.addEventListener("pointercancel", handleTemplatePickPointerCancel, true);
+
+    const liveryCanvasPick = { pointerId: null, x: 0, y: 0, moved: false, frame: 0, at: null };
+    const pickLiveryCanvasSurface = (clientX, clientY) => {
+      const model = modelRef.current;
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (!model || !rect.width || !rect.height || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+      raycaster.setFromCamera(pointer, camera);
+      const candidates = [];
+      model.traverseVisible((child) => {
+        if (child.isMesh && !child.userData?.templateSelectionOverlay) candidates.push(child);
+      });
+      const hit = raycaster.intersectObjects(candidates, false)[0];
+      if (!hit || !Number.isInteger(hit.faceIndex)) return null;
+      const inverse = hit.object.matrixWorld.clone().invert();
+      const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).transformDirection(inverse);
+      const worldUp = new THREE.Vector3(0, 1, 0).transformDirection(inverse);
+      return {
+        mesh: hit.object,
+        face: hit.faceIndex,
+        barycoord: hit.barycoord ? hit.barycoord.toArray() : null,
+        localPoint: hit.object.worldToLocal(hit.point.clone()).toArray(),
+        cameraUp: cameraUp.toArray(),
+        worldUp: worldUp.toArray(),
+      };
+    };
+    const handleLiveryCanvasPointerDown = (event) => {
+      if (!liveryCanvasPickerRef.current || event.button !== 0) return;
+      Object.assign(liveryCanvasPick, { pointerId: event.pointerId ?? null, x: event.clientX, y: event.clientY, moved: false });
+    };
+    const handleLiveryCanvasPointerMove = (event) => {
+      if (!liveryCanvasPickerRef.current) return;
+      renderer.domElement.style.cursor = "crosshair";
+      if (liveryCanvasPick.pointerId !== null && Math.hypot(event.clientX - liveryCanvasPick.x, event.clientY - liveryCanvasPick.y) > 6) {
+        liveryCanvasPick.moved = true;
+      }
+      liveryCanvasPick.at = { x: event.clientX, y: event.clientY };
+      if (liveryCanvasPick.frame) return;
+      liveryCanvasPick.frame = requestAnimationFrame(() => {
+        liveryCanvasPick.frame = 0;
+        const { at } = liveryCanvasPick;
+        const picker = liveryCanvasPickerRef.current;
+        if (at && picker && liveryCanvasPick.pointerId === null) picker.onHover?.(pickLiveryCanvasSurface(at.x, at.y));
+      });
+    };
+    const handleLiveryCanvasPointerUp = (event) => {
+      const picker = liveryCanvasPickerRef.current;
+      if (!picker || liveryCanvasPick.pointerId === null || (event.pointerId ?? null) !== liveryCanvasPick.pointerId) return;
+      const { moved } = liveryCanvasPick;
+      liveryCanvasPick.pointerId = null;
+      if (!moved) picker.onPick?.(pickLiveryCanvasSurface(event.clientX, event.clientY));
+    };
+    const handleLiveryCanvasPointerLeave = () => {
+      liveryCanvasPick.pointerId = null;
+      liveryCanvasPickerRef.current?.onHover?.(null);
+    };
+    renderer.domElement.addEventListener("pointerdown", handleLiveryCanvasPointerDown, true);
+    renderer.domElement.addEventListener("pointermove", handleLiveryCanvasPointerMove, true);
+    renderer.domElement.addEventListener("pointerup", handleLiveryCanvasPointerUp, true);
+    renderer.domElement.addEventListener("pointerleave", handleLiveryCanvasPointerLeave, true);
 
     // Vehicle parts: a click opens or closes a door, bonnet, boot or roof;
     // Alt-drag swings a part to any angle. Plain drags still orbit.
@@ -1448,6 +1516,10 @@ function ViewerComponent({
 
     const applyResize = () => {
       if (!containerRef.current) return;
+      if (recording) {
+        recording.resizeMissed = true;
+        return;
+      }
       const { clientWidth, clientHeight } = containerRef.current;
       if (clientWidth === 0 || clientHeight === 0) return;
       const pixelRatio = getPixelRatio();
@@ -1499,6 +1571,200 @@ function ViewerComponent({
     controls.addEventListener("end", requestRenderFrame);
 
     requestRenderFrame();
+
+    const applyUserLivery = (texture) => {
+      const state = materialStateRef.current;
+      applyMaterials(
+        modelRef.current,
+        state.bodyColor,
+        texture,
+        state.textureTarget,
+        windowTextureRef.current,
+        state.windowTextureTarget,
+        state.liveryExteriorOnly,
+        state.textureMode,
+        state.glossiness,
+        state.showWireframe,
+      );
+    };
+
+    const recordTurntableVideo = async ({
+      width,
+      height,
+      fps,
+      seconds,
+      mimeType,
+      direction = [1, 0.2, 0],
+      startYaw = -Math.PI / 4,
+      turns = 1,
+      spin = true,
+      onProgress,
+      onPause,
+      isCancelled,
+    }) => {
+      if (recording) throw new Error("A video is already recording");
+      const size = normalizeRecordingSize(width, height);
+      if (!size) throw new Error("the recording size isn't valid");
+      const bounds = fitRef.current?.bounds;
+      if (!bounds || !modelRef.current) throw new Error("no vehicle is loaded");
+      if (typeof renderer.domElement.captureStream !== "function" || typeof MediaRecorder === "undefined") {
+        throw new Error("this runtime can't record video");
+      }
+      const frames = planRecordingFrames({ fps, seconds, startYaw: spin ? startYaw : 0, turns, spin });
+      const aim = new THREE.Vector3().fromArray(direction).normalize();
+      const aspect = size.width / size.height;
+      const framing = buildCameraFraming({
+        bounds,
+        aspect,
+        fov: camera.fov,
+        direction: aim,
+      });
+      const shot = camera.clone();
+      shot.aspect = aspect;
+      shot.fov = camera.fov;
+      shot.position.copy(framing.target).addScaledVector(aim, framing.distance);
+      shot.up.copy(framing.up);
+      shot.near = framing.near;
+      shot.far = framing.far;
+      shot.lookAt(framing.target);
+      shot.updateProjectionMatrix();
+      shot.updateMatrixWorld(true);
+
+      const previousRatio = renderer.getPixelRatio();
+      const previousSize = renderer.getSize(new THREE.Vector2());
+      const previousYaw = turntableGroup.rotation.y;
+      const session = { resizeMissed: false, disposed: false };
+      recording = session;
+      if (frameId) cancelAnimationFrame(frameId);
+      frameId = 0;
+      isRendering = false;
+      renderRequested = false;
+      turntableAt = null;
+      const startedAt = performance.now();
+      let stream = null;
+      let recorder = null;
+      let onVisibility = null;
+      let pauses = 0;
+      let pausedMs = 0;
+      try {
+        renderer.setPixelRatio(1);
+        renderer.setSize(size.width, size.height, false);
+        stageRef.current?.resize();
+        resizeBloomPipeline(bloomRef.current, size.width, size.height, 1);
+        resizeAoPipeline(aoRef.current, size.width, size.height, 1);
+        const renderPose = (index) => {
+          const yaw = frames.yawAt(index);
+          turntableGroup.rotation.y = yaw;
+          turntableGroup.updateMatrixWorld(true);
+          stageRef.current?.setSpin(yaw);
+          plateOverlayRef.current?.update();
+          lightRigRef.current?.update(shot, startedAt + frames.timeAt(index) * 1000);
+          renderView(shot);
+        };
+        renderPose(0);
+        stream = renderer.domElement.captureStream(0);
+        const [track] = stream.getVideoTracks();
+        if (!track) throw new Error("the viewer canvas gave no video track");
+        recorder = new MediaRecorder(stream, {
+          mimeType,
+          videoBitsPerSecond: Math.round(size.width * size.height * frames.fps * 0.25),
+        });
+        const chunks = [];
+        let recorderError = null;
+        recorder.ondataavailable = (event) => {
+          if (event.data?.size) chunks.push(event.data);
+        };
+        recorder.onerror = (event) => {
+          recorderError = event.error || new Error("the recorder failed");
+        };
+        const stopped = new Promise((resolve) => {
+          recorder.onstop = resolve;
+        });
+        recorder.start(250);
+        let cancelled = false;
+        await new Promise((resolve) => {
+          let index = 0;
+          let timer = 0;
+          let paused = false;
+          let pausedAt = 0;
+          let dueAt = performance.now();
+          const finish = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const tick = () => {
+            timer = 0;
+            if (session.disposed || isCancelled?.()) {
+              cancelled = true;
+              finish();
+              return;
+            }
+            if (recorderError || index >= frames.count) {
+              finish();
+              return;
+            }
+            if (paused) {
+              timer = setTimeout(tick, 250);
+              return;
+            }
+            renderPose(index);
+            track.requestFrame?.();
+            index += 1;
+            onProgress?.(index / frames.count);
+            const now = performance.now();
+            dueAt = Math.max(dueAt + frames.intervalMs, now - frames.intervalMs);
+            timer = setTimeout(tick, Math.max(0, dueAt - now));
+          };
+          onVisibility = () => {
+            if (document.hidden && !paused) {
+              paused = true;
+              pauses += 1;
+              pausedAt = performance.now();
+              if (recorder.state === "recording") recorder.pause();
+              onPause?.(true);
+            } else if (!document.hidden && paused) {
+              paused = false;
+              pausedMs += performance.now() - pausedAt;
+              if (recorder.state === "paused") recorder.resume();
+              onPause?.(false);
+              clearTimeout(timer);
+              dueAt = performance.now();
+              timer = setTimeout(tick, 0);
+            }
+          };
+          document.addEventListener("visibilitychange", onVisibility);
+          if (document.hidden) onVisibility();
+          tick();
+        });
+        if (recorder.state !== "inactive") recorder.stop();
+        await stopped;
+        if (cancelled) return null;
+        if (recorderError) throw recorderError;
+        const blob = new Blob(chunks, { type: mimeType });
+        if (blob.size === 0) throw new Error("the recorder produced no video data");
+        return { blob, frames: frames.count, fps: frames.fps, pauses, renderSeconds: (performance.now() - startedAt - pausedMs) / 1000 };
+      } finally {
+        if (onVisibility) document.removeEventListener("visibilitychange", onVisibility);
+        if (recorder && recorder.state !== "inactive") recorder.stop();
+        stream?.getTracks().forEach((track) => track.stop());
+        recording = null;
+        if (!session.disposed) {
+          turntableGroup.rotation.y = previousYaw;
+          turntableGroup.updateMatrixWorld(true);
+          stageRef.current?.setSpin(previousYaw);
+          renderer.setPixelRatio(previousRatio);
+          renderer.setSize(previousSize.x, previousSize.y, false);
+          stageRef.current?.resize();
+          const ratio = lastViewport.pixelRatio || previousRatio;
+          resizeBloomPipeline(bloomRef.current, previousSize.x, previousSize.y, ratio);
+          resizeAoPipeline(aoRef.current, previousSize.x, previousSize.y, ratio);
+          syncWorldOverlays(camera);
+          turntableAt = null;
+          if (session.resizeMissed) applyResize();
+          requestRenderFrame();
+        }
+      }
+    };
 
     onReadyRef.current?.({
       setExtraVisible: (index, visible) => {
@@ -1720,8 +1986,9 @@ function ViewerComponent({
        * full resolution. The drawing buffer is resized once for the batch and
        * restored before the browser paints, so the live view never shows it.
        */
-      captureShots: ({ width, height, shots = [] }) => {
+      captureShots: ({ width, height, shots = [], livery = true }) => {
         if (!fitRef.current?.bounds || !(width > 0) || !(height > 0)) return shots.map(() => null);
+        const hideLivery = !livery && Boolean(textureRef.current);
         const outAspect = width / height;
         const shotCamera = ({ pose, crop }) => {
           const shot = camera.clone();
@@ -1785,10 +2052,11 @@ function ViewerComponent({
           resizeBloomPipeline(bloomRef.current, width, height, 1);
           resizeAoPipeline(aoRef.current, width, height, 1);
           plateOverlayRef.current?.update();
+          if (hideLivery) applyUserLivery(null);
           return shots.map((entry) => {
             const shot = shotCamera(entry);
             if (!shot) return null;
-            if (entry.pose?.type === "preset" && turntableGroup.rotation.y !== 0) {
+            if ((entry.pose?.type === "preset" || entry.pose?.rest) && turntableGroup.rotation.y !== 0) {
               withTurntableAtRest(turntableGroup, () => {
                 syncWorldOverlays(shot);
                 renderView(shot);
@@ -1804,6 +2072,7 @@ function ViewerComponent({
             return canvas;
           });
         } finally {
+          if (hideLivery) applyUserLivery(textureRef.current);
           renderer.setPixelRatio(previousRatio);
           renderer.setSize(previousSize.x, previousSize.y, false);
           stageRef.current?.resize();
@@ -1813,11 +2082,52 @@ function ViewerComponent({
           renderView(camera);
         }
       },
+      recordVideo: (options) => recordTurntableVideo(options),
+      isRecording: () => Boolean(recording),
       setCompositeTexture: (source) => applyCompositeTexture(source || null),
       getPresetKeys: () => CAMERA_PRESET_KEYS,
+      getLiveryCanvasModel: () => {
+        const model = modelRef.current;
+        const root = getVehicleRoot(model);
+        if (!model || !root) return null;
+        const meshes = [];
+        root.traverse((child) => {
+          if (child.isMesh && !isVehicleModMesh(child) && !child.userData?.templateSelectionOverlay) meshes.push(child);
+        });
+        return { id: model.uuid, root, meshes, parentTextures: root.userData?.parentTextures || null };
+      },
+      setLiveryCanvasPicker: (picker) => {
+        liveryCanvasPickerRef.current = picker || null;
+        renderer.domElement.style.cursor = picker ? "crosshair" : "";
+      },
+      setLiveryCanvasUvSets: (entries) => {
+        const model = modelRef.current;
+        if (!model) return;
+        model.traverse((child) => {
+          if (!child.isMesh) return;
+          const uvSet = entries?.get?.(child);
+          if (Number.isInteger(uvSet)) child.userData.liveryCanvasUvSet = uvSet;
+          else delete child.userData.liveryCanvasUvSet;
+        });
+        const materialState = materialStateRef.current;
+        applyMaterials(
+          model,
+          materialState.bodyColor,
+          textureRef.current,
+          materialState.textureTarget,
+          windowTextureRef.current,
+          materialState.windowTextureTarget,
+          materialState.liveryExteriorOnly,
+          materialState.textureMode,
+          materialState.glossiness,
+          materialState.showWireframe,
+        );
+        requestRenderRef.current?.();
+      },
     });
 
     return () => {
+      if (recording) recording.disposed = true;
       if (frameId) cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
       stopViewerControls();
@@ -1826,6 +2136,12 @@ function ViewerComponent({
       renderer.domElement.removeEventListener("pointerup", handleTemplatePickPointerUp, true);
       renderer.domElement.removeEventListener("pointerleave", handleTemplatePickPointerCancel, true);
       renderer.domElement.removeEventListener("pointercancel", handleTemplatePickPointerCancel, true);
+      renderer.domElement.removeEventListener("pointerdown", handleLiveryCanvasPointerDown, true);
+      renderer.domElement.removeEventListener("pointermove", handleLiveryCanvasPointerMove, true);
+      renderer.domElement.removeEventListener("pointerup", handleLiveryCanvasPointerUp, true);
+      renderer.domElement.removeEventListener("pointerleave", handleLiveryCanvasPointerLeave, true);
+      if (liveryCanvasPick.frame) cancelAnimationFrame(liveryCanvasPick.frame);
+      liveryCanvasPickerRef.current = null;
       renderer.domElement.removeEventListener("pointerdown", handlePartPointerDown, true);
       renderer.domElement.removeEventListener("pointermove", handlePartPointerMove, true);
       renderer.domElement.removeEventListener("pointerup", handlePartPointerUp, true);
@@ -3489,6 +3805,10 @@ function ViewerComponent({
     }
 
     const loadTexture = async () => {
+      if (compositeTextureRef.current) {
+        onTextureReload?.();
+        return;
+      }
       // Handle data: URLs (e.g. from VariantsPage composited preview)
       if (texturePath.startsWith("data:")) {
         try {
@@ -3535,6 +3855,8 @@ function ViewerComponent({
       }
 
       const cacheKey = getTextureCacheKey(texturePath, flipTextureY);
+      const reloadingSameFile = lastTextureRequestRef.current === cacheKey;
+      lastTextureRequestRef.current = cacheKey;
       const cached = shouldReuseCachedTexture(loadedTextureTokensRef.current, cacheKey, textureReloadToken)
         ? getCachedTexture(cacheKey)
         : null;
@@ -3745,6 +4067,15 @@ function ViewerComponent({
             if (!cancelled) onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth, path: texturePath, kind: "primary" });
             return;
           }
+          if (error?.type === "incomplete-file") {
+            if (cancelled) return;
+            if (reloadingSameFile) {
+              console.warn("[Texture] File still being written, keeping the current texture");
+              return;
+            }
+            onTextureErrorRef.current?.(`${texturePath.split(/[\\/]/).pop()}: ${error.message}`);
+            return;
+          }
           if (!lastError || (error instanceof Error && error.message)) {
             lastError = error;
           }
@@ -3806,6 +4137,7 @@ function ViewerComponent({
     textureLoader,
     onTextureReload,
     flipTextureY,
+    compositeRevision,
   ]);
 
   useEffect(() => {
@@ -3842,6 +4174,8 @@ function ViewerComponent({
 
     const loadTexture = async () => {
       const cacheKey = getTextureCacheKey(windowTexturePath, flipTextureY);
+      const reloadingSameFile = lastWindowTextureRequestRef.current === cacheKey;
+      lastWindowTextureRequestRef.current = cacheKey;
       const cached = shouldReuseCachedTexture(loadedWindowTextureTokensRef.current, cacheKey, windowTextureReloadToken)
         ? getCachedTexture(cacheKey)
         : null;
@@ -4033,6 +4367,15 @@ function ViewerComponent({
         } catch (error) {
           if (error?.type === "unsupported-bit-depth") {
             if (!cancelled) onFormatWarningRef.current?.({ type: "16bit-psd", bitDepth: error.bitDepth, path: windowTexturePath, kind: "window" });
+            return;
+          }
+          if (error?.type === "incomplete-file") {
+            if (cancelled) return;
+            if (reloadingSameFile) {
+              console.warn("[Window Texture] File still being written, keeping the current texture");
+              return;
+            }
+            onWindowTextureErrorRef.current?.(error.message);
             return;
           }
           lastError = error;
@@ -4620,9 +4963,10 @@ function applyMaterials(
         : null;
     const activeTexture = activeTextureSet?.map || null;
     const hasManualTextureOverride = Boolean(activeTexture);
+    const canvasUvSet = child.userData?.liveryCanvasUvSet;
     const preferredUvSelection = matchesWindow
       ? false
-      : (matchesVehicle && Boolean(vehicleTexture) ? preferUv2 : false);
+      : (matchesVehicle && Boolean(vehicleTexture) ? (Number.isInteger(canvasUvSet) ? canvasUvSet : preferUv2) : false);
 
     if (activeTextureSet && child.geometry) {
       if (!applyTextureUVSet(child.geometry, preferredUvSelection)) {

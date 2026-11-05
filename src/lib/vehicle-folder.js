@@ -19,6 +19,12 @@ const ANCESTOR_LEVELS = 4;
 
 const lower = (value) => String(value || "").toLowerCase();
 
+export const FOLDER_VIEWS = Object.freeze(["vehicle", "pack", "doctor"]);
+
+export function normalizeFolderView(view) {
+  return FOLDER_VIEWS.includes(view) ? view : "vehicle";
+}
+
 function normalizePath(path) {
   const text = String(path || "").replace(/\\/g, "/").replace(/\/+$/, "");
   // A drive root keeps its slash: "C:" alone names the drive's current folder.
@@ -130,6 +136,8 @@ export async function scanVehicleFolder(folder, { readDir, readTextFile, signal,
   let metaCount = 0;
   let truncated = false;
   let rootIsResource = false;
+  const manifests = new Map();
+  const escrowedDirs = [];
   const group = (path) => {
     if (!groups.has(path)) groups.set(path, { path, models: [], metaPaths: [] });
     return groups.get(path);
@@ -139,16 +147,24 @@ export async function scanVehicleFolder(folder, { readDir, readTextFile, signal,
     let entries;
     try { entries = await readDir(directory); }
     catch (error) { errors.push({ path: directory, message: String(error?.message || error) }); return; }
-    const hasManifest = entries.some((entry) => !entry.isDirectory && MANIFEST.test(entry.name));
+    const manifest = entries.find((entry) => !entry.isDirectory && MANIFEST.test(entry.name));
+    const hasManifest = Boolean(manifest);
     const resource = hasManifest ? directory : owner;
     if (directory === root) rootIsResource = hasManifest;
+    if (hasManifest) {
+      manifests.set(directory, joinPath(directory, manifest.name));
+      group(directory);
+    }
+    if (entries.some((entry) => !entry.isDirectory && entry.name.toLowerCase() === ".fxap")) escrowedDirs.push(directory);
     for (const entry of entries) {
       check();
       if (++visited > MAX_ENTRIES) { truncated = true; return; }
       const path = joinPath(directory, entry.name);
       const name = entry.name.toLowerCase();
       if (entry.isDirectory) {
-        if (depth < MAX_DEPTH && !IGNORED_DIRS.has(name)) await walk(path, depth + 1, resource, inStream || name === "stream");
+        if (IGNORED_DIRS.has(name)) continue;
+        if (depth < MAX_DEPTH) await walk(path, depth + 1, resource, inStream || name === "stream");
+        else truncated = true;
       } else if (name.endsWith(".yft")) {
         group(resource).models.push(path);
       } else if (name.endsWith(".meta") && !inStream) {
@@ -190,7 +206,13 @@ export async function scanVehicleFolder(folder, { readDir, readTextFile, signal,
       path = parent;
       check();
       try {
-        if ((await readDir(path)).some((entry) => !entry.isDirectory && MANIFEST.test(entry.name))) return path;
+        const entries = await readDir(path);
+        const manifest = entries.find((entry) => !entry.isDirectory && MANIFEST.test(entry.name));
+        if (entries.some((entry) => !entry.isDirectory && entry.name.toLowerCase() === ".fxap")) escrowedDirs.push(path);
+        if (manifest) {
+          manifests.set(path, joinPath(path, manifest.name));
+          return path;
+        }
       } catch {
         return "";
       }
@@ -215,7 +237,7 @@ export async function scanVehicleFolder(folder, { readDir, readTextFile, signal,
 
   const resources = [];
   for (const entry of groups.values()) {
-    if (!entry.models.length) continue;
+    if (!entry.models.length && !entry.metaPaths.length && !manifests.has(entry.path)) continue;
     const files = [];
     for (const path of entry.metaPaths) {
       check();
@@ -227,10 +249,11 @@ export async function scanVehicleFolder(folder, { readDir, readTextFile, signal,
     }
     const meta = loadResourceMeta(files);
     errors.push(...meta.errors);
-    resources.push({ path: entry.resourcePath || entry.path, models: entry.models, meta, partial: Boolean(entry.partial) });
+    const path = entry.resourcePath || entry.path;
+    resources.push({ path, models: entry.models, metaPaths: entry.metaPaths, meta, partial: Boolean(entry.partial), manifest: manifests.get(path) || "" });
   }
   check();
-  return { folder: root, ...listFolderVehicles(resources), errors, truncated };
+  return { folder: root, ...listFolderVehicles(resources.filter((entry) => entry.models.length)), resources, escrowedDirs, errors, truncated };
 }
 
 /** The vehicle `modelPath` opens: its own entry, or the one whose `_hi` or base twin it is. */
