@@ -26,11 +26,41 @@
   gap: calc(6 * var(--u));
 }
 
-.es-library {
+/* The library is the dock's one scroller while the window is tall enough to
+   keep every step in view; below that the dock scrolls instead. */
+.es-root .lv-dock-scroll {
   display: flex;
   flex-direction: column;
+}
+
+.es-root .lv-dock-scroll > .lv-slot {
+  flex: 0 0 auto;
+}
+
+.es-root .lv-dock-scroll > .lv-slot:last-child {
+  padding-bottom: 0;
+}
+
+.es-root .lv-dock-scroll > .lv-slot:has(.es-library) {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: calc(260 * var(--u));
+}
+
+.es-root .lv-slot:has(.es-library) > .lv-slot-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.es-library {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: calc(140 * var(--u));
   margin: calc(12 * var(--u)) 0 0;
-  padding: 0;
+  padding: 0 calc(4 * var(--u)) 0 0;
+  overflow-y: auto;
   list-style: none;
 }
 
@@ -485,6 +515,13 @@
   line-height: 1;
   color: var(--mg-fg);
   overflow-wrap: anywhere;
+}
+
+.es-name-empty {
+  font-size: var(--cx-fs-title);
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--mg-muted);
 }
 
 .es-sub {

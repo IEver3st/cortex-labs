@@ -1,0 +1,69 @@
+---
+title: Pack Doctor
+description: Check a vehicle or a folder of vehicles before you upload or sell it, without changing a file.
+---
+
+Pack Doctor is a check you run on your own PC before a pack goes to a server, a forum or Tebex. It reads your files and tells you what will hurt in game and how to fix it. It never changes, moves or writes a file, except the report you choose to save. Desktop app only.
+
+There are two ways to run it:
+
+- **Health**, in the **Meta** tab of a vehicle you have open, checks that one vehicle in depth.
+- **Doctor**, beside **Pack** and **Vehicle** when you [open a folder of vehicles](/docs/user-guide/viewer-modes#a-folder-of-vehicles), checks every resource in the folder.
+
+**Check in Forge** is a different check: it compares a resource with what your server already runs. Pack Doctor only looks at what is on disk. When Cortex Forge is installed, both Health and each resource in Doctor show **Check in Forge**.
+
+## Health (one vehicle)
+
+Health sits under **Checks** in the Meta tab. The meta checks above it are part of the same report.
+
+- **Textures** in the vehicle's own dictionaries (`<model>.ytd` and `<model>+hi.ytd`, and the base names for a `_hi` model): textures of 512 or more without mipmaps (a note in a `+hi` dictionary, and render targets and emissive textures are skipped), uncompressed textures of 1024×1024 or 4 MiB and more (a note when the name reads as a normal map or a light, since DXT bands those), textures above 4096, the same texture name in two of its dictionaries (the base and `+hi` set is expected), gaps in the `_sign_N` livery textures, and a mod kit's `<liveryNames>` count that does not match the `_sign_` textures (a warning when it names more liveries than there are textures, a note when it names fewer). Sizes that are not a power of two are a note: the game draws them, but their smaller mipmaps can look slightly soft. A texture that overrides one in a parent dictionary next to the model is listed as a note. When one check catches several textures in the same dictionary, they are listed together in a single finding.
+- **Streamed memory** of the model, its `_hi` or base twin and its dictionaries, as FiveM counts it (see below). When the resource has a `stream` folder, only files in it are counted, plus the model you opened and its dictionaries. A `_hi` model with no base `.yft` beside it is a warning when the resource's vehicles.meta defines the vehicle, and a note when it doesn't, since the base then comes from the game or another resource.
+- **Facts**: triangles and textures the viewer draws right now, whether the vehicle has a `_hi` model and a `+hi` dictionary, and how many textures its dictionaries hold. Counts come from the viewer while **Solid wireframe** is on; **Count triangles and textures** turns it on. These are facts, never a suggestion to change the model.
+
+A game vehicle has no dictionaries of its own, so its texture checks read **Not checked (no dictionaries of its own)**.
+
+A [Listing Shoot](/docs/user-guide/listing-shoot#pack-doctor-in-the-report) runs this same check on the vehicle it shoots and puts the findings in its `report.html` and `listing.json`.
+
+## Doctor (a folder)
+
+Open a folder of vehicles, then choose **Doctor** in the frame. The check starts by itself and shows its progress; **Cancel** stops it, and what was read before you cancelled stays on screen with the rest marked **Not checked**. The 3D view pauses while Doctor is open.
+
+For every resource in the folder, Doctor reports:
+
+- the meta checks the Meta tab runs for each vehicle, vehicles.meta entries with no model (a note, since a resource that changes a game vehicle has none), and vehicles that ship only a `_hi` model with no base `.yft` anywhere in the folder (a warning when the resource's vehicles.meta defines the vehicle, since without the base it won't spawn, and a note otherwise, since the base then comes from the game or another resource);
+- **spawn names** used by more than one resource, and **streamed file names** that appear twice;
+- **mod kit, light and siren ids** defined twice in one resource or used by more than one resource;
+- **manifest meta entries**: each `data_file` that points at a missing meta (a glob that matches nothing is a note, since that line just loads nothing), a meta that is loaded but not in `files` (so players never download it), a meta loaded as the wrong type, letter-case differences that break on Linux servers, and vehicle metas no `data_file` line loads. `files` and `data_file` globs (`*` within a folder, `**` across folders) are expanded. Files in `stream/` are never flagged as unreferenced;
+- **streamed memory** for every file a resource streams from its `stream` folder, largest first, with a total. Copies kept elsewhere in a resource, such as a `backup` folder, or beside the resources, are not streamed and are not counted. A folder of loose files with no `fxmanifest.lua` is measured in full.
+
+Findings are grouped by check. Each row names the check, how many files or vehicles it caught and which ones; open it to see the reason and the fix once, then every affected vehicle or file, with **Open** to switch to that vehicle. An item whose fix differs from the rest shows its own. With three checks or fewer every row starts open; otherwise errors do. **All**, **Errors**, **Warnings** and **Notes** filter the list, a folder with several resources adds a resource menu, and streamed memory, escrowed resources and what was not checked sit in the column on the right.
+
+A manifest that builds its entries in code (loops, variables) can't be read without running it, so its meta entries read **Not checked** with the reason. Texture detail across the whole folder is not part of Doctor yet; open a vehicle and use Health for that.
+
+## Streamed memory
+
+FiveM sizes every streamed asset from the page flags in its RSC7 header, separately for **physical** (graphics) and **virtual** (system) memory, and prints a line in the server console when either is above 16 MiB. Above 32 and 64 MiB only the colour of that line changes; above 48 MiB it adds that oversized assets can and will cause streaming issues. Pack Doctor reads only the first 16 bytes of each `.ytd`, `.yft`, `.ydr`, `.ydd`, `.ybn`, `.ycd`, `.ypt`, `.yld` and `.ynv`, works out both sizes the same way, and marks:
+
+| Size | Pack Doctor |
+| --- | --- |
+| Above 16 MiB | Note |
+| Above 48 MiB | Warning, with FiveM's oversized message |
+| Above 64 MiB | Error |
+
+For a texture dictionary, lowering its largest textures from 4096 to 2048 cuts their memory to a quarter. For a model, the size is its own geometry and embedded textures; Cortex never changes models, so reduce it in your modelling tool or ask its author.
+
+A file that is not RSC7 (GTA V Enhanced files, encrypted or damaged files) reads as **Not checked**, never as small.
+
+## What is never checked
+
+- **Escrowed resources.** A resource with `.fxap` in its folder or a folder above it is skipped and listed under **Escrowed, not checked**. Pack Doctor does not read its files.
+- **Very large folders.** The memory walk stops after 20,000 files and folders, eight levels deep, and never follows links. When it stops, Doctor lists what it measured, shows no total, and marks the rest **Not checked (folder too large or too deep)**. The vehicle you have open and its dictionaries are always measured.
+
+Anything Pack Doctor could not check says so, with the reason. A missing check never counts as a pass.
+
+## Sharing the report
+
+- **Copy report** copies the report as Markdown: findings by severity with their fix, the memory table, escrowed resources and what was not checked.
+- **Save report…** saves an HTML page you can open in any browser, or JSON (`cortex.packDoctor`, version 1) when you give the file a `.json` name.
+
+Reports name files relative to the resource or folder you checked and give only that folder's name, so your own folder layout does not end up in a post.

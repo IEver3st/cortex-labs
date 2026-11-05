@@ -13,6 +13,7 @@ import {
   paintLabel,
 } from "../../lib/vehicle-paint.js";
 import { SelectField } from "./parts";
+import { ColorInput } from "../ui/color-input";
 
 /* The vehicle's six game colours. Each slot holds a carcols palette colour or
    a custom RGB with a finish; the model's shaders decide which meshes take
@@ -69,14 +70,9 @@ function PaintLine({ slot, paint, unused, selected, onSelect, onChange, onReset 
         }
       }}
     >
-      <label className="lv-chip" style={{ "--chip": display }} onClick={(event) => event.stopPropagation()}>
-        <input
-          type="color"
-          value={display}
-          onChange={(event) => setCustom(event.target.value)}
-          aria-label={`${slot.label} custom colour`}
-        />
-      </label>
+      <span className="lv-chip" style={{ "--chip": display }}>
+        <ColorInput value={display} onChange={setCustom} label={`${slot.label} custom colour`} />
+      </span>
       <span className="lv-paint-text">
         <span className="lv-color-label">{slot.label}</span>
         <span className="lv-paint-detail" title={title}>{unused ? "Not on this model" : detail}</span>
@@ -140,8 +136,9 @@ const Palette = memo(function Palette({ slotLabel, selectedIndex, family, onFami
   const inGroup = group.colors.some((entry) => entry.index === selectedIndex);
   const focusIndex = inGroup ? selectedIndex : group.colors[0].index;
   return (
-    <div className="lv-palette">
-      <div className="lv-seg lv-palette-families" role="radiogroup" aria-label="Palette">
+    <div className="lv-palette lv-field">
+      <span className="cx-label">Game colours</span>
+      <div className="lv-seg lv-palette-families" role="radiogroup" aria-label="Game colours">
         {PAINT_PALETTE_GROUPS.map((entry) => (
           <button
             key={entry.label}

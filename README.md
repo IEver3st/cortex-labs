@@ -46,7 +46,7 @@ Livery work is iterative, but repeated in-game testing turns small visual decisi
 
 | Workspace | Purpose |
 | --- | --- |
-| **Vehicle** | Liveries on the detected paint, or any texture on all or chosen meshes, with the vehicle's own textures, paint, mod kits and livery writing in one place. |
+| **Vehicle** | Liveries on the detected paint, or any texture on all or chosen meshes, with the vehicle's own textures, paint, mod kits and livery writing in one place. Listing Shoot makes a store media kit (hero stills, 16:9, 1:1 and 4:5 formats, a livery lineup, a turntable video and a night lights clip) in one run. |
 | **EUP** | Preview clothing and Emergency Uniform Pack assets from `.ydd` models. |
 | **Multi-Model** | Line up to six vehicles in one scene, each with its own model, livery, glass design and paint. |
 | **Sirens** | Build and edit a vehicle's carcols.meta siren setting, or its ELS VCF, while it runs on the full textured model, in the workbench or the showroom. |
@@ -273,7 +273,7 @@ Cortex Studio is designed around local, user-directed work:
 - feedback submission is user-initiated and lets you choose whether recent diagnostic logs are included;
 - private credentials do not belong in the renderer or any `VITE_*` configuration value;
 - Juno is off unless you sign in, sends only what its disclosure lists, and keeps its sign-in in Windows Credential Manager;
-- anonymous usage stats (a random ID, the app version, and counts of launches and saves) start only after a notice, never include files or account details, and turn off in Settings > Privacy.
+- anonymous usage stats (a random ID, the app version, and counts of launches and saves) start on first launch, never include files or account details, and turn off in Settings > Privacy.
 
 ## Contributing
 

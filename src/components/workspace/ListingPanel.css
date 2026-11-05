@@ -1,0 +1,29 @@
+.lv-listing .lv-shot-live img {
+  object-fit: contain;
+}
+
+.lv-listing .lv-shot-strip {
+  cursor: default;
+}
+
+.lv-listing-doctor {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+
+.lv-listing-doctor .lv-slot-note {
+  color: var(--mg-muted);
+}
+
+.lv-listing-doctor .is-error .lv-dot { background: var(--mg-destructive); }
+.lv-listing-doctor .is-warn .lv-dot { background: var(--cx-caution); }
+
+.lv-listing-doctor .cx-btn {
+  margin-left: 15px;
+}
+
+.lv-listing-doctor .cx-btn svg {
+  width: 14px;
+  height: 14px;
+}

@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { FileText, Folder, RefreshCw, Search, Shirt } from "lucide-react";
+import { FileText, Files, Folder, RefreshCw, Search, Shirt } from "lucide-react";
 import { baseName } from "../../lib/eup";
 import { DropButton, splitPath } from "../workspace/parts";
 
@@ -10,6 +10,7 @@ const PED_FILE = /\.(ymt|yft|ydd|ytd)$/i;
 const FREEMODE_PEDS = [
   { id: "male", label: "Male", title: "The freemode male ped EUP clothing is made for" },
   { id: "female", label: "Female", title: "The freemode female ped EUP clothing is made for" },
+  { id: "other", label: "Custom", title: "A game ped or your own ped's files" },
 ];
 
 const CUSTOM_MODELS = [
@@ -207,7 +208,7 @@ function EupCharacterPicker({
   const current = modeOf(model, gender);
   const [mode, setMode] = useState(current);
   useEffect(() => setMode(current), [current]);
-  const customHelp = !isTauriRuntime ? "Other peds need the desktop app and GTA V." : "";
+  const customHelp = !isTauriRuntime ? "Custom peds need the desktop app and GTA V." : "";
   const toFreemode = () => onChange({ kind: "freemode", gender });
 
   const choose = (id) => {
@@ -216,8 +217,14 @@ function EupCharacterPicker({
       onChange({ kind: "freemode", gender: id });
       return;
     }
+    if (id === "other") {
+      if (mode !== "game" && mode !== "file") setMode("game");
+      return;
+    }
     setMode(id);
   };
+  const custom = mode === "game" || mode === "file";
+  const pedChoice = custom ? "other" : mode;
 
   return (
     <>
@@ -229,9 +236,10 @@ function EupCharacterPicker({
               key={option.id}
               type="button"
               role="radio"
-              aria-checked={mode === option.id}
-              className={`lv-seg-btn ${mode === option.id ? "is-on" : ""}`}
-              title={option.title}
+              aria-checked={pedChoice === option.id}
+              className={`lv-seg-btn ${pedChoice === option.id ? "is-on" : ""}`}
+              title={option.id === "other" && !isTauriRuntime ? customHelp : option.title}
+              disabled={option.id === "other" && !isTauriRuntime}
               onClick={() => choose(option.id)}
             >
               {option.label}
@@ -239,8 +247,9 @@ function EupCharacterPicker({
           ))}
         </div>
       </div>
+      {custom ? (
       <div className="lv-field">
-        <span className="cx-label" id="eup-custom-model-label">Model</span>
+        <span className="cx-label" id="eup-custom-model-label">Source</span>
         <div className="lv-seg" role="radiogroup" aria-labelledby="eup-custom-model-label">
           {CUSTOM_MODELS.map((option) => (
             <button
@@ -258,7 +267,7 @@ function EupCharacterPicker({
           ))}
         </div>
       </div>
-      {!isTauriRuntime ? <p className="lv-slot-note">{customHelp}</p> : null}
+      ) : null}
 
       {mode === "game" && isTauriRuntime ? (
         <>
@@ -303,8 +312,9 @@ function EupCharacterPicker({
         ) : (
           <>
             <DropButton title="Open a ped folder" hint=".ymt, .yft, .ydd and .ytd files" onClick={onPickFolder} detail="The ped's .ymt, .yft, .ydd and .ytd files, in game layout or FiveM ped^file names. Subfolders are read too." />
-            <button type="button" className="lv-link eup-alt-link" onClick={onPickFiles}>
-              Or pick the ped&apos;s files
+            <button type="button" className="cx-btn is-quiet lv-btn-sm lv-folder-link" onClick={onPickFiles}>
+              <Files aria-hidden="true" />
+              Pick the ped&apos;s files
             </button>
           </>
         )

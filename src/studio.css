@@ -192,6 +192,13 @@ textarea {
   color: var(--cx-on-primary);
 }
 
+.cx-btn.is-primary:disabled {
+  border-color: transparent;
+  background: var(--cx-wash);
+  color: var(--mg-muted);
+  opacity: 1;
+}
+
 .cx-btn.is-primary:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--mg-primary) 86%, var(--mg-fg));
   background: color-mix(in srgb, var(--mg-primary) 86%, var(--mg-fg));
@@ -813,4 +820,182 @@ textarea {
 /* Settings > Show shortcut keys: off. Shortcuts still work; only the keycaps hide. */
 :root[data-keycaps="off"] .cx-keys {
   display: none !important;
+}
+
+/* Colour input: the themed replacement for <input type="color">. The layer
+   cancels body zoom like the Radix popper wrapper above, so the fixed
+   position is exact and the panel itself still follows UI Scaling. */
+.cx-color-hit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cx-color-hit:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.cx-color-swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: calc(3 * var(--u));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 12%, transparent);
+}
+
+.cx-color-layer {
+  position: fixed;
+  z-index: 10000;
+  zoom: calc(1 / var(--es-ui-scale, 1));
+}
+
+.cx-color-panel {
+  zoom: var(--es-ui-scale, 1);
+  display: grid;
+  gap: calc(10 * var(--u));
+  width: calc(232 * var(--u));
+  padding: calc(10 * var(--u));
+  border: 1px solid var(--mg-border);
+  border-radius: calc(8 * var(--u));
+  background: var(--cx-raised);
+  box-shadow: var(--cx-shadow-pop);
+  color: var(--mg-fg);
+  font-family: var(--font-main);
+  animation: cx-color-in 120ms var(--cx-ease);
+}
+
+@keyframes cx-color-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.cx-color-plane {
+  position: relative;
+  height: calc(148 * var(--u));
+  border-radius: calc(5 * var(--u));
+  background:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, var(--hue));
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.cx-color-hue {
+  position: relative;
+  height: calc(12 * var(--u));
+  border-radius: calc(6 * var(--u));
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.cx-color-plane-thumb,
+.cx-color-hue-thumb {
+  position: absolute;
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  border: calc(2 * var(--u)) solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.cx-color-hue-thumb {
+  top: 50%;
+}
+
+.cx-color-plane:focus-visible,
+.cx-color-hue:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.cx-color-row {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+}
+
+.cx-color-preview {
+  flex: 0 0 calc(28 * var(--u));
+  height: calc(28 * var(--u));
+  border-radius: calc(5 * var(--u));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 14%, transparent);
+}
+
+.cx-color-hex {
+  flex: 1;
+  min-width: 0;
+  height: calc(28 * var(--u));
+  padding: 0 calc(8 * var(--u));
+  border: 1px solid var(--mg-border);
+  border-radius: calc(5 * var(--u));
+  background: var(--mg-input-bg);
+  color: var(--mg-fg);
+  font-family: var(--font-hud);
+  font-size: var(--cx-fs-meta);
+  text-transform: uppercase;
+  outline: none;
+}
+
+.cx-color-recent {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: calc(4 * var(--u));
+  padding-top: calc(8 * var(--u));
+  border-top: 1px solid var(--mg-border);
+}
+
+.cx-color-recent-label {
+  grid-column: 1 / -1;
+}
+
+.cx-color-recent-chip {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: calc(4 * var(--u));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 14%, transparent);
+  cursor: pointer;
+}
+
+.cx-color-recent-chip.is-on {
+  box-shadow: 0 0 0 calc(2 * var(--u)) var(--cx-raised), 0 0 0 calc(3 * var(--u)) var(--mg-fg);
+}
+
+.cx-color-recent-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+}
+
+.cx-color-hex:focus {
+  border-color: var(--mg-primary);
+  box-shadow: 0 0 0 calc(3 * var(--u)) color-mix(in srgb, var(--mg-primary) 22%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cx-color-panel {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .cx-color-plane-thumb,
+  .cx-color-hue-thumb {
+    forced-color-adjust: none;
+  }
+  .cx-color-hit:focus-visible,
+  .cx-color-plane:focus-visible,
+  .cx-color-hue:focus-visible {
+    outline: 2px solid Highlight;
+  }
 }

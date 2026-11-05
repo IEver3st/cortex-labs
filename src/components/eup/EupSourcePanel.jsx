@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Folder, RefreshCw, UserRound, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Files, Folder, RefreshCw, UserRound, X } from "lucide-react";
 import { SKIN_TONES, baseName } from "../../lib/eup";
 import { Toggle } from "../ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -113,8 +113,9 @@ function EupSourcePanel({
         ) : !hasSources ? (
           <>
             <DropButton title="Open an EUP folder" hint=".ydd and .ytd folder" onClick={onOpenFolder} detail="A resource folder with .ydd and .ytd files. Subfolders are read too." />
-            <button type="button" className="lv-link eup-alt-link" onClick={onAddFiles}>
-              Or pick .ydd and .ytd files
+            <button type="button" className="cx-btn is-quiet lv-btn-sm lv-folder-link" onClick={onAddFiles}>
+              <Files aria-hidden="true" />
+              Pick .ydd and .ytd files
             </button>
           </>
         ) : (

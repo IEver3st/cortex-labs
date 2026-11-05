@@ -21,6 +21,7 @@ import { useMultiLineup } from "./components/workspace/useMultiLineup";
 import { MAX_LINEUP_SLOTS, VEHICLE_MODEL_EXTENSIONS, isVehicleModelPath, lineupWatchPaths, pathKey as lineupPathKey } from "./lib/multi-lineup";
 import useVehicleModkits from "./components/workspace/useVehicleModkits";
 import useKitShoot from "./components/workspace/useKitShoot";
+import useListingShoot from "./components/workspace/useListingShoot";
 import { emitRenderEffectChanged, loadPrefs, RENDER_EFFECT_EVENT, sanitizeStoredDefaults, savePrefs } from "./lib/prefs";
 import { openFolderPath } from "./lib/open-folder";
 import { trackUsage } from "./lib/usage";
@@ -37,13 +38,14 @@ import { TURNTABLE_DEFAULT_SPEED, normalizeTurntableSpeed } from "./lib/turntabl
 import { DEFAULT_HAZE, DEFAULT_LIGHT_SWITCHES } from "./lib/emergency-lights";
 import { DEFAULT_EXTRAS_STATE, normalizeExtrasState, planExtras } from "./lib/vehicle-extras";
 import { normalizeLiverySet } from "./lib/livery-set";
+import { normalizeCanvasDoc } from "./lib/livery-canvas";
 import { normalizeClothingSet } from "./lib/clothing-pack";
 import { captureSavedVehicle, generateSavedVehicleId, loadSavedVehicles, MAX_SAVED_VEHICLES, moveSavedVehicleModel, upsertSavedVehicle, writeSavedVehicles } from "./lib/saved-vehicles";
 import { normalizeSavedLightPreview, normalizeSavedMaterials, normalizeSavedSteering, normalizeTextureMode, PAINT_TARGET, savedVehicleTargets } from "./lib/workspace-state";
 import { setUnsavedChanges } from "./lib/unsaved-changes";
 import { normalizeLightDefaults, normalizePlateDefault, normalizeShowroomSubject, normalizeSteeringDefault, resolveDefaultSteering } from "./lib/studio-defaults";
 import { readModelResourceMeta } from "./lib/resource-meta-files";
-import { filterVehicles, stepVehicle, vehicleIndexOf } from "./lib/vehicle-folder";
+import { filterVehicles, normalizeFolderView, stepVehicle, vehicleIndexOf } from "./lib/vehicle-folder";
 import { SNAPSHOT_HEIGHT, SNAPSHOT_PRESET, SNAPSHOT_QUALITY, SNAPSHOT_WIDTH, SNAPSHOT_ZOOM } from "./lib/vehicle-snapshots";
 import useVehicleFolder from "./components/workspace/useVehicleFolder";
 import usePackSnapshots from "./components/workspace/usePackSnapshots";
@@ -67,7 +69,6 @@ import {
 import { Button } from "./components/ui/button";
 import { Label } from "./components/ui/label";
 import { Input } from "./components/ui/input";
-import { CyberButton } from "./components/CyberUI";
 
 // Workspaces whose vehicle lights an ELS VCF can drive.
 const ELS_MODES = new Set(["sirens", "vehicle"]);
@@ -80,6 +81,7 @@ const MIN_LOADER_MS = 650;
 // snapshots pass gives up on a vehicle that has not settled after the second.
 const SNAPSHOT_SETTLE_MS = 350;
 const SNAPSHOT_SKIP_MS = 120000;
+const TEXTURE_RELOAD_COALESCE_MS = 30;
 
 const SUPPORTED_TEXTURE_EXTS = [
   "png",
@@ -150,14 +152,6 @@ function getInitialHotkeys() {
 function getFileLabel(path, emptyLabel) {
   if (!path) return emptyLabel;
 return path.split(/[\\/]/).pop();
-}
-
-function UnloadButton({ onClick, title, className }) {
-  return (
-    <CyberButton variant="danger" className={className} onClick={onClick} title={title}>
-      <span className="font-bold tracking-[0.2em] text-[9px]">UNLOAD</span>
-    </CyberButton>
-  );
 }
 
 function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpenPackBuilder = null, settingsVersion, defaultTextureMode = "vehicle", initialState = null, contextBarTarget = null }) {
@@ -494,7 +488,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   // "vehicle" the workspace for the open one.
   const [folderView, setFolderView] = useState("vehicle");
   const hasFolder = isTauriRuntime && textureMode === "vehicle" && Boolean(vehicleFolder);
-  const packShown = hasFolder && folderView === "pack";
+  const folderPanelShown = hasFolder && folderView !== "vehicle";
   const packSnapshots = usePackSnapshots(folderScan.status === "scanning" ? null : folderScan.vehicles, hasFolder);
   // A Take snapshots pass: { queue, total, done, failed, current, returnTo }.
   const [snapshotRun, setSnapshotRun] = useState(null);
@@ -515,6 +509,17 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       const rest = { ...entries };
       delete rest[modelPath];
       return next ? { ...rest, [modelPath]: { pattern: next.pattern || "", items: next.items || [], removed: next.removed || [], path: modelPath } } : rest;
+    });
+  }, [modelPath]);
+  const [liveryCanvasEntries, setLiveryCanvasEntries] = useState({});
+  const liveryCanvas = (modelPath && liveryCanvasEntries[modelPath]) || null;
+  const setLiveryCanvas = useCallback((update) => {
+    if (!modelPath) return;
+    setLiveryCanvasEntries((entries) => {
+      const next = typeof update === "function" ? update(entries[modelPath] || null) : update;
+      const rest = { ...entries };
+      delete rest[modelPath];
+      return next ? { ...rest, [modelPath]: next } : rest;
     });
   }, [modelPath]);
   // Images staged in EUP mode's Textures tab as the open clothing item's
@@ -888,13 +893,14 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         liverySet: liverySet && (liverySet.items.length || liverySet.removed?.length || liverySet.pattern)
           ? { path: modelPath, pattern: liverySet.pattern, items: liverySet.items.map(({ id, path, number }) => ({ id, path, number })), removed: liverySet.removed || [] }
           : null,
+        liveryCanvas: liveryCanvas?.items ? { path: modelPath, doc: liveryCanvas } : null,
         clothingSet: clothingSet?.items.length
           ? { path: modelPath, items: clothingSet.items.map(({ id, path, letter }) => ({ id, path, letter })) }
           : null,
         // Front wheel angle, for the model it was set on.
         steering: modelPath && steering.path === modelPath ? { path: modelPath, angle: steering.angle } : null,
         vehicleFolder: textureMode === "vehicle" && vehicleFolder ? vehicleFolder : null,
-        vehicleFolderView: textureMode === "vehicle" && vehicleFolder ? folderView : null,
+        vehicleFolderView: textureMode === "vehicle" && vehicleFolder ? normalizeFolderView(folderView) : null,
         // Lights panel choices; the siren setting itself is reread from the model's files.
         vehicleLights: {
           switches: lightPreview.switches,
@@ -938,7 +944,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     lightIntensity, lightAzimuth, lightElevation, glossiness, liveryExteriorOnly, nativeMaterialsEnabled,
     stage, stageSpot, stageReflect, stageBeam, stageLight, stageFloor, turntable, turntableSpeed,
     multi.lineup, multi.gizmoVisible, multi.showroom, multi.slots,
-    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, liverySet, clothingSet, steering, vehicleFolder, folderView,
+    modkits.savedSelection, extrasState, plateOverride, savedVehicle, gameLivery, liverySet, liveryCanvas, clothingSet, steering, vehicleFolder, folderView,
     lightPreview.switches, lightPreview.muted, lightPreview.speed, lightPreview.spill, lightPreview.spillStrength, lightPreview.glow, lightPreview.haze, lightPreview.lens,
     materialType, matLightIntensity, matGlossiness, matRoughness, matClearcoat, materialTextures,
     shellTab,
@@ -1019,7 +1025,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     timers[key] = setTimeout(() => {
       if (key === "window") setWindowTextureReloadToken((prev) => prev + 1);
       else setTextureReloadToken((prev) => prev + 1);
-    }, 350);
+    }, TEXTURE_RELOAD_COALESCE_MS);
   };
 
   const togglePanel = useCallback((key) => {
@@ -1304,7 +1310,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     autoTexturePathRef.current = state.textureAuto === true && typeof state.texturePath === "string" ? state.texturePath : "";
     if (typeof state.vehicleFolder === "string" && state.vehicleFolder) {
       setVehicleFolder(state.vehicleFolder);
-      setFolderView(state.vehicleFolderView === "pack" ? "pack" : "vehicle");
+      setFolderView(normalizeFolderView(state.vehicleFolderView));
     }
     const initialModelPath = [state.modelSourcePath, state.modelPath, state.openFile].find((path) => typeof path === "string" && path) || "";
     if (initialModelPath) {
@@ -1332,6 +1338,14 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       }
       const restoredLiveries = state.liverySet?.path === initialModelPath ? normalizeLiverySet(state.liverySet) : null;
       if (restoredLiveries) setLiverySetEntries({ [initialModelPath]: { path: initialModelPath, ...restoredLiveries } });
+      if (state.liveryCanvas?.path === initialModelPath) {
+        try {
+          const restoredCanvas = normalizeCanvasDoc(state.liveryCanvas.doc).doc;
+          setLiveryCanvasEntries({ [initialModelPath]: restoredCanvas });
+        } catch (error) {
+          console.warn("[canvas] The saved canvas could not be restored:", error);
+        }
+      }
       const restoredClothing = state.clothingSet?.path === initialModelPath ? normalizeClothingSet(state.clothingSet) : null;
       if (restoredClothing) setClothingSetEntries({ [initialModelPath]: { path: initialModelPath, ...restoredClothing } });
       if (state.savedVehicle?.id && state.savedVehicle.path === initialModelPath) {
@@ -2004,11 +2018,41 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     showGrid,
     setShowGrid,
   });
+  const listingShoot = useListingShoot({
+    enabled: isTauriRuntime && textureMode === "vehicle",
+    blocked: kitShoot.running,
+    modkits,
+    viewerApiRef,
+    modelPath,
+    viewerReady,
+    isTauriRuntime,
+    ensureFolder: ensurePreviewFolderReady,
+    watermark: defaults.watermark || null,
+    nativeMaterialsEnabled,
+    bodyColor,
+    vehiclePaint,
+    setBodyColor,
+    setVehiclePaint,
+    showGrid,
+    setShowGrid,
+    gameLivery,
+    setGameLivery,
+    gameLiveries,
+    texturePath,
+    textureTarget,
+    captureSize: defaults.captureSize,
+    vehicleLights,
+    updateVehicleLights,
+    els: elsMode ? els : null,
+    modelLights: metaModelInfo?.lights,
+  });
   const { handleModsStatus: handleKitShootModsStatus } = kitShoot;
+  const { handleModsStatus: handleListingModsStatus } = listingShoot;
   const handleVehicleModsStatus = useCallback((status) => {
     setVehicleModsStatus(status);
     handleKitShootModsStatus(status);
-  }, [handleKitShootModsStatus]);
+    handleListingModsStatus(status);
+  }, [handleKitShootModsStatus, handleListingModsStatus]);
 
   const previewSnapTokenRef = useRef(0);
   const updatePreviewSnapshot = useCallback(async (zoomLevel) => {
@@ -2568,7 +2612,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     extrasPlan={extrasPlan}
     onLicensePlateStatus={setLicensePlateStatus}
     onVehicleModsStatus={handleVehicleModsStatus}
-    isActive={isActive && (!packShown || snapshotRun != null)}
+    isActive={isActive && (!folderPanelShown || snapshotRun != null)}
   />
   );
 
@@ -2761,7 +2805,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         setVehicleFilter("");
         setFolderView("vehicle");
       },
-      hasFolder, folderView, setFolderView, packShown, packSnapshots, liverySetEntries,
+      hasFolder, folderView, setFolderView, folderPanelShown, packSnapshots, liverySetEntries,
       snapshotRun, snapshotResult, takeSnapshots, stopSnapshots,
       unloadModel: () => {
         setModelPath("");
@@ -2827,7 +2871,9 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       licensePlate, updateLicensePlate, licensePlateStatus,
       // Kit Shoot is a Vehicle tool; Sirens only picks parts.
       modkits, vehicleModsStatus, gameLivery, setGameLivery, gameLiveries, kitShoot: textureMode === "vehicle" ? kitShoot : null,
+      listingShoot: textureMode === "vehicle" ? listingShoot : null,
       liverySet, setLiverySet, clothingSet, setClothingSet,
+      liveryCanvas, setLiveryCanvas, viewerApiRef, textureReloadToken,
       savedVehicle, saveVehicle: textureMode === "eup" ? null : saveVehicle,
       generatingPreview, previewProgress, previewComplete, setPreviewComplete,
       previewOutputPath, previewFolderOpening, previewFolderOpenError, handleOpenPreviewFolder,

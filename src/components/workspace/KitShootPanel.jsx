@@ -18,7 +18,7 @@ import { createShootFileCache, useShootFile } from "./shootFiles.js";
    build, and writes the shots with a manifest and report. State and the run
    itself live in useVehicleModkits and useKitShoot. */
 
-function Seg({ label, value, options, onChange, disabled }) {
+export function Seg({ label, value, options, onChange, disabled }) {
   return (
     <div className="lv-field">
       <span className="cx-label">{label}</span>
@@ -41,7 +41,7 @@ function Seg({ label, value, options, onChange, disabled }) {
   );
 }
 
-function Chips({ label, items, isOn, onToggle, onAll, allOn, disabled }) {
+export function Chips({ label, items, isOn, onToggle, onAll, allOn, disabled }) {
   return (
     <div className="lv-sheet-angles">
       <div className="lv-sheet-angles-head">
@@ -74,7 +74,7 @@ function Chips({ label, items, isOn, onToggle, onAll, allOn, disabled }) {
   );
 }
 
-function ToggleRow({ label, checked, onChange, disabled, note }) {
+export function ToggleRow({ label, checked, onChange, disabled, note }) {
   return (
     <>
       <div className="lv-toggle-row">
@@ -86,7 +86,7 @@ function ToggleRow({ label, checked, onChange, disabled, note }) {
   );
 }
 
-function plural(count, one, many = `${one}s`) {
+export function plural(count, one, many = `${one}s`) {
   return `${count} ${count === 1 ? one : many}`;
 }
 
@@ -158,7 +158,7 @@ export function BuildsSection({ modkits, disabled }) {
   );
 }
 
-function CardThumb({ cache, path, label }) {
+export function CardThumb({ cache, path, label }) {
   const file = useShootFile(cache, path);
   return (
     <span className="lv-shot-thumb" title={label}>
@@ -255,7 +255,7 @@ function ResultCard({ shoot }) {
 
 /* While a run goes: the frame just written, so the user sees the shoot
    happen, with where it is and a way out. */
-function LiveRun({ shoot, format }) {
+export function LiveRun({ shoot, format }) {
   const percent = shoot.progress.total ? Math.round((shoot.progress.current / shoot.progress.total) * 100) : 0;
   return (
     <div className="lv-shoot-run" role="status">
@@ -518,8 +518,8 @@ export function KitShootSection({ s, modkits }) {
         <button
           type="button"
           className="cx-btn is-primary lv-capture-btn"
-          disabled={nothingToShoot || !s.viewerReady}
-          title={!s.viewerReady ? "The viewer is still loading" : undefined}
+          disabled={nothingToShoot || !s.viewerReady || Boolean(s.listingShoot?.running)}
+          title={!s.viewerReady ? "The viewer is still loading" : s.listingShoot?.running ? "A listing shoot is running" : undefined}
           onClick={shoot.start}
         >
           <Camera aria-hidden="true" />

@@ -13,7 +13,7 @@ Everything for a vehicle in one place: liveries, paint, mod kits and texture che
 - **Glass** (step 3) adds window decals or tint on the glass Cortex detects. **Apply to** points it at **All meshes**, one material or mesh, or **None** instead.
 - **Model's own textures** (under step 2, desktop app) loads the vehicle's GTA textures, so the rest of the vehicle looks as it does in game around your livery. It is a best-effort preview, not GTA shader parity. Turn it off for plain paint.
 - Optional **Exterior Only** behavior to avoid pushing livery textures onto interior/glass candidates.
-- The inspector has five tabs: **Paint**, **Liveries**, **Mods**, **Scene** and **Meta**.
+- The inspector has six tabs: **Paint**, **Liveries**, **Mods**, **Scene**, **Meta** and **Listing**. **Listing** makes the stills and videos for a store listing; see [Listing Shoot](/docs/user-guide/listing-shoot).
 - The **Paint** tab holds the vehicle's six game colours, as carcols sets them: **Primary**, **Secondary**, **Pearlescent**, **Wheels**, **Interior trim** and **Dashboard**. Each mesh takes the colour its shader's paint layer names (`matDiffuseColor` `2, layer, 0`), so lights, glass, tires and unpainted parts keep their own look. Pick a colour from the game palette, grouped by finish (Metallic, Matte, Util, Worn and Metals), or type any hex for a custom colour. Primary and Secondary also take a finish; a palette colour brings its own, and changing it makes a custom colour. Pearlescent shows as a sheen on glossy primary paint. Slots the loaded model never uses say **Not on this model**. The Meta tab's colour presets fill all six slots.
 - The **Showroom** stage (Scene tab) parks the vehicle in a dark studio under an aimable spotlight, on a floor you choose: **Concrete**, **Polished**, **Tiles**, **Marble**, **Checker**, **Epoxy**, **Asphalt**, **Wood** or **Tread plate**. Sirens shares the same floor picker.
 - **Turntable** (Scene tab) spins the vehicle in place under the lights at a speed you set, in Vehicle, Sirens and Multi. Turned off, the vehicle settles back facing forward. Captures from a named shot (Front, Side, 3/4 and so on) always show the vehicle at rest.
@@ -26,9 +26,9 @@ Everything for a vehicle in one place: liveries, paint, mod kits and texture che
 - Pick one resource or a folder of resources, such as a `[cars]` category. With more than one resource, the vehicles are grouped under each resource's name. Picking a folder inside a resource, such as its `stream` folder, lists the vehicles that resource's `vehicles.meta` names in that folder.
 - In a resource with a `vehicles.meta`, the models it names are the vehicles, so mod kit parts kept in the same folder as the car stay out of the list. Without one, or when it names no vehicles, every `.yft` is listed except the parts its `carcols.meta` kits use. A vehicle opens its `_hi` model when it has one.
 
-#### Pack and Vehicle
+#### Pack, Doctor and Vehicle
 
-With a folder open, **Pack** and **Vehicle** in the title bar switch between the whole folder and the vehicle you're working on.
+With a folder open, **Pack**, **Doctor** and **Vehicle** in the title bar switch between the whole folder, its [Pack Doctor](/docs/user-guide/pack-doctor) check, and the vehicle you're working on.
 
 - **Pack** names the pack and shows each vehicle as a snapshot, with its model name and display name or file. The open vehicle is shown in opposite ink. A vehicle with liveries staged on the **Liveries** tab and not yet written says how many, and a warning sign marks a vehicle whose meta has errors the **Meta** tab explains, such as a livery list without `FLAG_HAS_LIVERY`. Click a vehicle to open it in **Vehicle**.
 - **Vehicle** is the usual workspace with the folder at the top of the dock: the open vehicle's place in it (`08 / 18`), and arrows that open the previous or next vehicle. **Alt + PageUp** and **Alt + PageDown** do the same from either view. Clicking the pack's name goes back to **Pack**.

@@ -84,7 +84,7 @@ function FolderNotes({ scan }) {
           </FactDisclosure>
         ) : null}
         {truncated ? (
-          <Fact label="Listing" tone="warn" text note="The folder is too large to list in full. Open one resource or category folder to see all of it.">
+          <Fact label="Listing" tone="warn" text note="The folder is too large or too deeply nested to list in full. Open one resource or category folder to see all of it.">
             Partial
           </Fact>
         ) : null}

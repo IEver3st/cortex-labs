@@ -189,6 +189,7 @@ export function MetaPanel({
   onSteeringChange,
   onRescan,
   onOpenFile,
+  health = null,
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const hasSources = Array.isArray(sources) && sources.length > 0;
@@ -220,6 +221,7 @@ export function MetaPanel({
           <strong>Reading meta files…</strong>
           <span className="mp-mono" title={resourceRoot}>{resourceRoot || "Resource folder"}</span>
         </div>
+        {health}
       </div>
     );
   }
@@ -239,6 +241,7 @@ export function MetaPanel({
             Rescan
           </button>
         </div>
+        {health}
       </div>
     );
   }
@@ -278,9 +281,13 @@ export function MetaPanel({
 
       {hasErrors ? <ErrorList errors={errors} /> : null}
 
+      {sim ? null : health}
+
       {sim ? (
         <>
           <Checks warnings={warnings} />
+
+          {health}
 
           {hasLiveries ? (
             <Section title="Liveries" aside={<span className="mp-count">{textureCount + sim.modkitLiveries.count}</span>}>

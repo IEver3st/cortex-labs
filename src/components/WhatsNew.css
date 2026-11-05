@@ -1,6 +1,6 @@
 /* What's New: release timeline (left) and the selected release (right).
-   Kind colours mark New, Improved, and Fixed as small markers, chips, timeline
-   ticks, and the proportion bar only; they never fill a region. */
+   New is the one accent kind; Improved is muted ink and Fixed a hollow muted
+   marker, so status colours keep their meaning elsewhere. */
 
 .wn-root {
   position: fixed;
@@ -15,11 +15,17 @@
 }
 
 .wn-root [data-kind="improved"] {
-  --wn-kind: var(--cx-confirm);
+  --wn-kind: color-mix(in srgb, var(--mg-fg) 62%, transparent);
 }
 
 .wn-root [data-kind="fixed"] {
-  --wn-kind: var(--cx-caution);
+  --wn-kind: color-mix(in srgb, var(--mg-muted) 70%, transparent);
+}
+
+.wn-root [data-kind="fixed"] .wn-marker {
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 calc(1.5 * var(--u)) var(--mg-muted);
 }
 
 .wn-scrim {
@@ -438,31 +444,12 @@
   -webkit-line-clamp: 3;
 }
 
-.wn-bar {
-  display: flex;
-  gap: 2px;
-  height: calc(6 * var(--u));
-  margin-top: calc(18 * var(--u));
-  overflow: hidden;
-  border-radius: calc(3 * var(--u));
-}
-
-.wn-bar > span {
-  flex-basis: 0;
-  min-width: calc(6 * var(--u));
-  background: var(--wn-kind);
-  transition: opacity 160ms var(--cx-ease);
-}
-
-.wn-bar > span[data-dim] {
-  opacity: 0.25;
-}
 
 .wn-filters {
   display: flex;
   flex-wrap: wrap;
   gap: calc(2 * var(--u));
-  margin: calc(12 * var(--u)) 0 0 calc(-9 * var(--u));
+  margin: calc(18 * var(--u)) 0 0 calc(-9 * var(--u));
 }
 
 .wn-filter {
@@ -548,21 +535,10 @@
   background: var(--cx-rule);
 }
 
-.wn-chip {
+.wn-group-label {
   display: inline-flex;
   align-items: center;
-  gap: calc(6 * var(--u));
-  height: calc(22 * var(--u));
-  padding: 0 calc(8 * var(--u));
-  border: 1px solid color-mix(in srgb, var(--wn-kind) 45%, transparent);
-  border-radius: calc(4 * var(--u));
-  background: color-mix(in srgb, var(--wn-kind) 10%, transparent);
-  color: color-mix(in srgb, var(--wn-kind) 55%, var(--mg-fg));
-  font-size: var(--cx-fs-label);
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  line-height: 1;
-  text-transform: uppercase;
+  gap: calc(7 * var(--u));
 }
 
 .wn-items {
@@ -725,16 +701,12 @@
   .wn-summary {
     -webkit-line-clamp: 2;
   }
-  .wn-bar {
-    margin-top: calc(14 * var(--u));
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .wn-search,
   .wn-node,
   .wn-release,
-  .wn-bar > span,
   .wn-filter,
   .wn-filter::after {
     transition: none;
@@ -752,14 +724,10 @@
     background: Highlight;
   }
   .wn-marker,
-  .wn-bar > span,
   .wn-spine > span,
   .wn-dot {
     forced-color-adjust: none;
     background: CanvasText;
-  }
-  .wn-chip {
-    border-color: CanvasText;
   }
   .wn-release:focus-visible,
   .wn-body:focus-visible,

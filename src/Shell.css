@@ -422,17 +422,12 @@
 .shell-new-tab-btn svg {
   width: calc(15 * var(--u));
   height: calc(15 * var(--u));
-  transition: transform 180ms var(--cx-ease);
 }
 
 .shell-new-tab-btn:hover,
 .shell-new-tab-btn.is-open {
   background: var(--cx-wash-strong);
   color: var(--mg-fg);
-}
-
-.shell-new-tab-btn.is-open svg {
-  transform: rotate(45deg);
 }
 
 .shell-new-tab-btn:focus-visible {

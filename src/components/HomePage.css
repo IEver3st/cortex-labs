@@ -232,7 +232,7 @@
 
 .hp-saved-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(calc(250 * var(--u)), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(calc(250 * var(--u)), 1fr));
   gap: calc(2 * var(--u)) calc(8 * var(--u));
   /* Two rows, one of them carrying a "Model not found" note, fit whole. */
   max-height: calc(132 * var(--u));
@@ -1110,6 +1110,11 @@
   font-family: var(--font-hud);
   font-size: var(--cx-fs-meta);
   color: var(--mg-muted);
+}
+
+.hp-row-plain {
+  font-family: var(--font-main);
+  font-size: var(--cx-fs-body);
 }
 
 .hp-row-model,

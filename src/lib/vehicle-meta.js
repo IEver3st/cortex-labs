@@ -890,7 +890,7 @@ export function simulateVehicle(resourceMeta, modelName, options = {}) {
           makeWarning(
             kind === "siren" ? "SIREN_ID_UNDEFINED" : "LIGHT_ID_UNDEFINED",
             "info",
-            `${conflictLabels[kind]} id ${id} is referenced by carvariations but not defined in this resource's carcols. It must come from the base game or another resource.`,
+            `${conflictLabels[kind]} id ${id} is referenced by carvariations but not defined in this resource's carcols. The setting must come from the base game or another resource.`,
           ),
         );
       }

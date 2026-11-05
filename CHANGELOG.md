@@ -4,7 +4,48 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
-## Unreleased
+## [6.0.0] - 2026-11-05
+
+Cortex Studio 6 makes a whole store listing for a vehicle in one run, checks a vehicle or a pack the way FiveM sees it before you sell it, and puts your own images, text and stripes straight onto a model.
+
+### Added
+
+- **Listing Shoot** - A new **Listing** tab in the Vehicle workspace makes the media for a Tebex or Cfx Marketplace listing in one run, for any vehicle, with or without a mod kit. Desktop app only.
+  - Hero stills from front 3/4 and rear 3/4 (side, front, rear and top too) at your capture size, and the same angles framed natively in 16:9, 1:1 and 4:5, never cropped from another shot.
+  - A livery lineup of every texture livery and livery mod, each shot only once that livery is on the vehicle, with a labelled sheet and identical frames flagged. A paint sheet in up to eight GTA colours, and the vehicle as modelled beside your loaded livery.
+  - A turntable video: one full turn at 30 fps, recorded frame by frame at the size you pick, with the stage turning under the vehicle. It pauses while the window is hidden and carries on from the same frame.
+  - A night lights clip with the sirens or ELS running.
+  - Mod kit parts and builds from Kit Shoot, for vehicles that have a kit.
+  - Each run writes a new `listing-<date>-<time>` folder with `listing.json` and `report.html`, which list every check and anything that wasn't made, with the reason. Your livery, paint, parts and light switches come back when the run ends, is cancelled or fails.
+  - Each run also runs Pack Doctor's vehicle check (the same one as Health in the Meta tab) on the vehicle's own files, read-only. `report.html` gets a Pack Doctor section grouped by check, with the reason and fix once above the files they affect, and `listing.json` carries the report as `packDoctor` (`cortex.packDoctor` v1, paths relative to the resource). The Listing tab shows the counts before and during the run, with **Show in Health** to open the full findings. Findings never stop the shoot, and if Doctor can't check the vehicle the report says why.
+
+- **Pack Doctor** - A check you run before uploading or selling a vehicle or a pack, which reads your files and never changes them. **Health** in a vehicle's Meta tab checks its own texture dictionaries (power-of-two sizes, mipmaps, uncompressed and very large textures, the same name in two dictionaries, `_sign_N` gaps and `<liveryNames>` counts) and its streamed memory. **Doctor**, beside Pack and Vehicle for a folder of vehicles, checks every resource: the Meta tab's checks per vehicle, vehicles that ship only a `_hi` model, spawn names, streamed file names and mod kit, light and siren ids used twice, and manifest `data_file` entries against the metas present and listed in `files` (globs expanded). Streamed memory, for the files each resource streams from `stream/`, is worked out from each file's RSC7 header the way FiveM does, physical and virtual: a note above 16 MiB, a warning above 48 MiB where FiveM says oversized assets will cause streaming issues, and an error above 64 MiB. Texture checks skip what is fine on purpose, such as emissive and render-target textures, normal maps kept uncompressed, and textures in a `+hi` dictionary only seen up close. Escrowed (`.fxap`) resources are skipped and listed, and anything Doctor could not check says why instead of passing. Findings are grouped by check, with the reason and fix stated once above the files they affect, filters for severity and resource, and streamed memory beside them. **Copy report** copies the report as Markdown, **Save report** writes HTML or JSON (`cortex.packDoctor` v1), and **Check in Forge** shows when Cortex Forge is installed. Desktop app only.
+
+- **Livery Canvas** - Place your own images (PNG, JPG, WebP, SVG), text and stripes, bands, chevrons and outlines on a vehicle by clicking the model or the flat livery sheet, in a new **Canvas** section of the **Liveries** tab. Cortex finds the part of the sheet under the click, lines the item up with the vehicle's up direction and sizes it in metres; each item is clipped to its part. Shared and mirrored parts are flagged as you point at them: text is refused there, images and shapes get a warning. The stage switches between **Model**, **Split** and **Sheet** (Split stacks the vehicle above the sheet when the stage is taller than wide), the preview follows live reloads of the base, and previewing one of the vehicle's own liveries makes it the base.
+  - **Other side** and **Mirror image** copy an item to the matching spot on the other side of the vehicle, reading the right way or as a mirror image. **Battenburg** and **Check** patterns fill the part you click, and **decal sets** save items with their real sizes for reuse on other vehicles.
+  - Export a transparent PNG, a layered PSD (one raster layer per item; text as pixels) or, over a base of your own, a flattened PNG. **Replace livery N…** writes the canvas over a livery the vehicle already has, through the usual backed-up write; Canvas never adds or removes liveries or changes the model, and writing the same livery again draws over the livery as it was before the canvas's first write, or is refused when that version is no longer at hand. Bases from the game's files or a shared dictionary are refused for flattening and writing, with the PNG export offered instead.
+  - **Save canvas…** and **Open canvas…** keep a canvas as a file, the workspace session keeps the open one, moved files can be located again, and Undo and Redo cover every edit. Desktop app only for files and writes.
+
+### Changed
+
+- **Colour picker** - Every custom colour (vehicle paint, Multi slots, EUP hair, siren lights and lens glow, Template markers and overlays, Settings colours) opens a themed picker with a colour plane, hue, hex field and, where available, an eyedropper, instead of the Windows colour dialog. In a side panel it opens beside the panel so the row you're editing stays visible. The last ten colours you picked sit under the hex field.
+- **Sirens** - With no pattern open, the tab keeps its preview and inspector, offers **New pattern** and **Import**, and takes a vehicle model in the preview strip. A new pattern plays on a lightbar in the preview strip until you put it on a vehicle.
+- **Sound Studio** - The tone list scrolls on its own, so the pack and install steps stay on screen, and pack warnings sit above the tones. An empty scope reads "No tone selected".
+- **Variant Builder** - A missing or locked layered file shows a plain message (the full error is in its tooltip) and the reason Export is unavailable.
+- **EUP Studio** - The ped is Male, Female or Custom; the game ped or ped files choice appears only for Custom. **Reset outfit** shows only once the outfit changed.
+- **Send feedback** - The report type is a two-way switch, the minimum-length hints appear once a field is partly filled, and the text boxes grow with what you type.
+- **Showroom tone** - Settings > Appearance > 3D stage sets the showroom floor and backdrop in Vehicle, Multi, EUP and Prop Studio to follow the colour scheme, or stay dark or light. Photo Mode keeps its own scene.
+- **Error messages** - Missing, locked, read-only and full-disk errors read as plain sentences across the viewers, Photo Mode, Prop Studio, EUP and Sound Studio, with the full error in the tooltip.
+- **Small windows** - Panel widths you dragged at full screen give way when the window is narrow, so the viewer keeps up to 360 px and panels never shrink below their minimum, and the New tab menu stays inside the window.
+- **Faster start and texture loading** - The project that was open last time starts loading behind the start-up screen, and game textures stream in without redrawing the whole vehicle for each one. On a 500-mesh vehicle with 266 textures, the model is on screen about a second sooner and all textures arrive in about half the time. A workspace you point at on Home or in the New tab menu opens straight away, with no loading flash.
+- **Live reload** - A saved livery shows on the model about a quarter of a second sooner. Cortex now waits until the file has stopped changing instead of a fixed delay. Its check shares the file with your editor instead of locking it, and a half-saved PSD never shows as a broken texture.
+- **Usage stats** - Studio no longer shows a notice before the first anonymous count. Counts start on first launch and **Settings > Privacy** still turns them off.
+- **Polish** - Disabled primary buttons are quiet instead of a dim accent, every empty stage has an icon, scrollbars are visible in dark mode, What's New marks New, Improved and Fixed without status colours, Home shows when each untitled project was started, and the Cortex account page puts your name, a full-width allowance meter and what Juno sends and never sends up front.
+
+### Fixed
+
+- **Fly-look cursor** - Holding the right mouse button to look around in the Vehicle and Multi viewers shows a crosshair again when the pointer isn't locked.
+- **Freeze on busy panels** - Switching to a panel with many controls, such as the Meta tab with Health open, could leave Studio unresponsive with its memory climbing. Buttons and switches are no longer reported to Windows as window-drag regions, which is what flooded it.
 
 ---
 

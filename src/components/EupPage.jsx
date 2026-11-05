@@ -141,7 +141,7 @@ import {
 import { clampClipTime, isClipAtEnd, normalizePlayback } from "../lib/eup-playback";
 import { getOutfitLibrary, outfitLibraryError, subscribeOutfitLibrary, updateOutfitLibrary } from "../lib/eup-outfit-library";
 import { OUTFIT_STYLES, gameAvailability, generateOutfit, outfitSignature, overridesWithOutfit } from "../lib/eup-outfit-generator";
-import { ColorLine, DeckButton, DeckViewMenu, deckButtonItems, FloorField, InspectorTabs, MeshStatsSlip, Slider, StageEmpty, StageToggle, StageSection, WorkspaceFrame } from "./workspace/parts";
+import { ColorLine, DeckButton, DeckViewMenu, deckButtonItems, ErrorText, FloorField, InspectorTabs, MeshStatsSlip, Slider, StageEmpty, StageToggle, StageSection, WorkspaceFrame } from "./workspace/parts";
 import { PaneResizer, usePaneWidths } from "./workspace/PaneResizer";
 import "./EupPage.css";
 
@@ -1470,6 +1470,10 @@ export default function EupPage({
     [gender],
   );
 
+  const outfitChanged = Object.keys(genderSelections || {}).length > 0
+    || Object.keys(genderOverrides || {}).length > 0
+    || Object.keys(hiddenSlots).length > 0
+    || pieces.some((piece) => piece.gender === gender && piece.worn);
   const handleResetOutfit = useCallback(() => {
     setSelections((prev) => ({ ...prev, [gender]: {} }));
     setBaseOverrides((prev) => ({ ...prev, [gender]: {} }));
@@ -2765,7 +2769,7 @@ export default function EupPage({
                   <AlertTriangle className="lv-alert-icon" aria-hidden="true" />
                   <div className="lv-alert-copy">
                     <strong>{alert.label}</strong>
-                    <span>{alert.text}</span>
+                    <ErrorText error={alert.text} />
                   </div>
                   <button type="button" className="cx-icon-btn" onClick={() => dismissAlert(alert.id)} aria-label="Dismiss">
                     <X aria-hidden="true" />
@@ -2904,9 +2908,11 @@ export default function EupPage({
                     ? `${assetComponents.length} ${assetComponents.length === 1 ? "slot" : "slots"} in your clothing`
                     : "Your clothing"}
                 </h3>
-                <button type="button" className="lv-link" onClick={handleResetOutfit} title="Go back to the base ped">
-                  Reset outfit
-                </button>
+                {outfitChanged ? (
+                  <button type="button" className="lv-link" onClick={handleResetOutfit} title="Go back to the base ped">
+                    Reset outfit
+                  </button>
+                ) : null}
               </div>
               {figure.custom ? <p className="lv-slot-note">{customNote}</p> : (
               <EupComponentList

@@ -125,7 +125,7 @@ const PropViewport = forwardRef(function PropViewport(
     rim.position.set(-3, 2, -2.5);
     scene.add(ambient, key, rim, key.target);
 
-    const stageApi = createViewerStage({ renderer, scene, keyLight: key, subject: "prop" });
+    const stageApi = createViewerStage({ renderer, scene, keyLight: key, subject: "prop", followTone: true });
     stageApi.setBackgroundColor(backgroundColor);
 
     const bloomPipeline = createBloomPipeline({ renderer, scene, camera, width: 1, height: 1 });

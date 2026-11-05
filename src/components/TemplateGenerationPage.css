@@ -99,18 +99,6 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 20%, transparent);
 }
 
-.tm-color-chip input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.tm-color-chip:focus-within {
-  box-shadow: var(--cx-focus);
-}
 
 .tm-color-label {
   font-size: var(--cx-fs-control);

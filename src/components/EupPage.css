@@ -828,18 +828,6 @@
   content: none;
 }
 
-.eup-hair-custom input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.eup-hair-custom:focus-within {
-  box-shadow: var(--cx-focus);
-}
 
 /* Issues */
 .eup-issues-count {

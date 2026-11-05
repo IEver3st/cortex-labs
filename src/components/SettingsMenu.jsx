@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Search, X, Settings, Car, AlertTriangle, Monitor, Keyboard, Palette, Info, RefreshCw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Bug, Lightbulb, Sparkles, Aperture, UserRound, ShieldCheck } from "lucide-react";
+import { Search, X, Settings, Car, AlertTriangle, Monitor, Keyboard, Palette, Info, RefreshCw, RotateCcw, Download, CheckCircle2, AlertCircle, Loader, Stamp, Bug, Lightbulb, Sparkles, Aperture, UserRound, ShieldCheck } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { exists as fsExists } from "@tauri-apps/plugin-fs";
 import HotkeyInput from "./HotkeyInput";
@@ -173,7 +173,7 @@ const SETTINGS_SECTION_GROUPS = [
         label: "Appearance",
         description: "Theme, window chrome, and studio colors.",
         icon: Palette,
-        keywords: ["Color scheme", "Theme>Color scheme", "Dark mode>Color scheme", "Light mode>Color scheme", "Studio palette", "Preset>Studio palette", "Window controls", "Reduce motion", "Animations>Reduce motion", "Show shortcut keys", "Keycaps>Show shortcut keys", "Starting colors", "Base body>Starting colors", "Base background>Starting colors", "Auto template fill>Starting colors", "Auto template background>Starting colors"],
+        keywords: ["Color scheme", "Theme>Color scheme", "Dark mode>Color scheme", "Light mode>Color scheme", "Studio palette", "Preset>Studio palette", "3D stage", "Showroom tone>3D stage", "Light showroom>3D stage", "Window controls", "Reduce motion", "Animations>Reduce motion", "Show shortcut keys", "Keycaps>Show shortcut keys", "Starting colors", "Base body>Starting colors", "Base background>Starting colors", "Auto template fill>Starting colors", "Auto template background>Starting colors"],
       },
       {
         id: "watermark",
@@ -206,7 +206,7 @@ const SETTINGS_SECTION_GROUPS = [
         label: "Cortex account",
         description: "Optional. Sign in to use Juno in the Sirens editor.",
         icon: UserRound,
-        keywords: ["Sign in>Not signed in", "Sign out", "Discord", "Juno", "Status>Juno", "Ready>Juno", "Plan>This month", "This month", "Allowance>This month", "Usage>This month", "Used>This month", "Resets>This month"],
+        keywords: ["Sign in>Not signed in", "Sign out", "Discord", "Juno", "Status>Juno", "Ready>Juno", "Plan>Monthly allowance", "This month>Monthly allowance", "Allowance>Monthly allowance", "Usage>Monthly allowance", "Used>Monthly allowance", "Resets>Monthly allowance", "Monthly allowance", "Sends>Juno", "Never sends>Juno", "Kept>Juno", "Retention>Juno", "Terms>Juno", "Data>Juno"],
       },
     ],
   },
@@ -238,6 +238,43 @@ const SAVE_DELAY_MS = 350;
 
 const FOCUSABLE =
   'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+function formatLastChecked(timestamp) {
+  if (!timestamp) return null;
+  return `Last checked ${new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function describeUpdateStatus(updater, autoCheckOn) {
+  const lastChecked = formatLastChecked(updater.lastChecked);
+  const checked = Boolean(updater.lastChecked) && updater.statusKind !== "idle";
+  const settledLabel = updater.error ? "Retry" : checked ? "Check again" : "Check now";
+
+  if (updater.checking) {
+    return { tone: "busy", Icon: Loader, title: "Checking for updates…", desc: lastChecked, actionLabel: "Checking…" };
+  }
+  if (updater.error) {
+    return { tone: "error", Icon: AlertCircle, title: "Update check failed", desc: updater.error, actionLabel: settledLabel };
+  }
+  if (checked && updater.statusKind === "ahead") {
+    return {
+      tone: "warn",
+      Icon: AlertTriangle,
+      title: "Published feed is behind this build",
+      desc: updater.statusNote || lastChecked,
+      actionLabel: settledLabel,
+    };
+  }
+  if (checked) {
+    return { tone: "ok", Icon: CheckCircle2, title: "You're up to date", desc: lastChecked, actionLabel: settledLabel };
+  }
+  return {
+    tone: "idle",
+    Icon: null,
+    title: "Not checked yet",
+    desc: autoCheckOn ? null : "Automatic checks are off",
+    actionLabel: settledLabel,
+  };
+}
 
 function normalizeQuery(value) {
   return String(value || "").trim().toLowerCase();
@@ -1477,6 +1514,34 @@ export default function SettingsMenu({
                                 </section>
 
                                 <section className="settings-panel">
+                                  <div className="settings-panel-title">3D stage</div>
+                                  <div className="settings-row">
+                                    <div className="settings-row-label">
+                                      <div className="settings-row-title">Showroom tone</div>
+                                      <div className="settings-row-desc">The showroom's floor and backdrop in Vehicle, Multi, EUP and Prop Studio. Photo Mode keeps its own scene.</div>
+                                    </div>
+                                    <div className="settings-seg" role="radiogroup" aria-label="Showroom tone">
+                                      {[
+                                        ["theme", "Match theme"],
+                                        ["dark", "Dark"],
+                                        ["light", "Light"],
+                                      ].map(([value, label]) => (
+                                        <button
+                                          key={value}
+                                          type="button"
+                                          role="radio"
+                                          aria-checked={(draft.stageTone || "theme") === value}
+                                          className={`settings-seg-btn ${(draft.stageTone || "theme") === value ? "is-on" : ""}`}
+                                          onClick={() => setDraft((p) => ({ ...p, stageTone: value }))}
+                                        >
+                                          {label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </section>
+
+                                <section className="settings-panel">
                                   <div className="settings-panel-title">Window</div>
                                   <div className="settings-row">
                                     <div className="settings-row-label">
@@ -1622,125 +1687,73 @@ export default function SettingsMenu({
                                 <section className="settings-panel settings-update-panel">
                                   <div className="settings-panel-title">Updates</div>
 
-                                  {/* Published feed behind installed build */}
-                                  {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind === "ahead" ? (
-                                    <div className="settings-update-status settings-update-status--error" role="alert">
-                                      <AlertTriangle className="settings-status-icon" />
-                                      <div className="flex-1 min-w-0">
-                                        <div className="settings-status-title is-error">Published feed is behind this build</div>
-                                        <div className="settings-row-desc">
-                                          {updater.statusNote}
+                                  {!updater.available ? (() => {
+                                    const status = describeUpdateStatus(updater, draft.autoCheckUpdates !== false);
+                                    const { Icon } = status;
+                                    return (
+                                      <div className={`settings-row settings-update-status is-${status.tone}`}>
+                                        <div className="settings-row-label" role="status">
+                                          <div className="settings-row-title settings-status-title">
+                                            {Icon && status.tone === "busy" && !prefersReducedMotion ? (
+                                              <motion.span
+                                                className="settings-status-spin"
+                                                animate={{ rotate: 360 }}
+                                                transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                                              >
+                                                <Icon className="settings-status-icon" aria-hidden="true" />
+                                              </motion.span>
+                                            ) : Icon ? (
+                                              <Icon className="settings-status-icon" aria-hidden="true" />
+                                            ) : null}
+                                            {status.title}
+                                          </div>
+                                          {status.desc ? <div className="settings-row-desc">{status.desc}</div> : null}
                                         </div>
+                                        <button
+                                          type="button"
+                                          className="settings-mini settings-about-action"
+                                          onClick={updater.checking ? undefined : updater.checkNow}
+                                          aria-disabled={updater.checking || undefined}
+                                        >
+                                          <RefreshCw aria-hidden="true" />
+                                          {status.actionLabel}
+                                        </button>
                                       </div>
-                                      <button
-                                        type="button"
-                                        className="settings-mini settings-update-check-btn"
-                                        onClick={updater.checkNow}
-                                        disabled={updater.checking}
-                                      >
-                                        <RefreshCw className="h-3 w-3" />
-                                        Check again
-                                      </button>
-                                    </div>
-                                  ) : null}
-
-                                  {/* Up-to-date state */}
-                                  {!updater.available && !updater.checking && !updater.error && updater.lastChecked && updater.statusKind !== "ahead" ? (
-                                    <div className="settings-update-status settings-update-status--ok" role="status">
-                                      <CheckCircle2 className="settings-status-icon" />
-                                      <div className="flex-1 min-w-0">
-                                        <div className="settings-status-title">You're up to date</div>
-                                        <div className="settings-row-desc">
-                                          {updater.statusNote || `Last checked ${new Date(updater.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
-                                        </div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className="settings-mini settings-update-check-btn"
-                                        onClick={updater.checkNow}
-                                        disabled={updater.checking}
-                                      >
-                                        <RefreshCw className="h-3 w-3" />
-                                        Check again
-                                      </button>
-                                    </div>
-                                  ) : null}
-
-                                  {/* Never checked / idle */}
-                                  {!updater.available && !updater.checking && !updater.error && !updater.lastChecked ? (
-                                    <div className="settings-update-status" role="status">
-                                      <RefreshCw className="settings-status-icon" />
-                                      <div className="flex-1 min-w-0">
-                                        <div className="settings-status-title">Check for updates</div>
-                                        <div className="settings-row-desc">
-                                          {draft.autoCheckUpdates !== false ? "Checks automatically every 30 minutes" : "Automatic checks are off"}
-                                        </div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className="settings-mini settings-update-check-btn"
-                                        onClick={updater.checkNow}
-                                        disabled={updater.checking}
-                                      >
-                                        Check now
-                                      </button>
-                                    </div>
-                                  ) : null}
-
-                                  {/* Checking spinner */}
-                                  {updater.checking ? (
-                                    <div className="settings-update-status" role="status">
-                                      <motion.div
-                                        animate={prefersReducedMotion ? { rotate: 0 } : { rotate: 360 }}
-                                        transition={prefersReducedMotion ? { duration: 0 } : { repeat: Infinity, duration: 1, ease: "linear" }}
-                                        className="shrink-0"
-                                      >
-                                        <Loader className="settings-status-icon" />
-                                      </motion.div>
-                                      <div className="settings-status-title is-muted">Checking for updates…</div>
-                                    </div>
-                                  ) : null}
-
-                                  {/* Error state */}
-                                  {updater.error && !updater.checking && !updater.available ? (
-                                    <div className="settings-update-status settings-update-status--error" role="alert">
-                                      <AlertCircle className="settings-status-icon" />
-                                      <div className="flex-1 min-w-0">
-                                        <div className="settings-status-title is-error">Check failed</div>
-                                        <div className="settings-status-desc is-truncated">{updater.error}</div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className="settings-mini settings-update-check-btn"
-                                        onClick={updater.checkNow}
-                                      >
-                                        Retry
-                                      </button>
-                                    </div>
-                                  ) : null}
+                                    );
+                                  })() : null}
 
                                   {/* Update available */}
                                   {updater.available ? (
                                     <div className="settings-update-available">
-                                      <div className="settings-update-available-header">
-                                        {updater.installing ? (
-                                          <motion.span
-                                            className="shrink-0"
-                                            animate={prefersReducedMotion ? { rotate: 0 } : { rotate: 360 }}
-                                            transition={prefersReducedMotion ? { duration: 0 } : { repeat: Infinity, duration: 1, ease: "linear" }}
-                                          >
-                                            <Loader className="settings-status-icon" />
-                                          </motion.span>
-                                        ) : updater.error ? (
-                                          <AlertCircle className="settings-status-icon" />
-                                        ) : updater.downloaded || updater.installed ? (
-                                          <CheckCircle2 className="settings-status-icon" />
-                                        ) : (
-                                          <Download className="settings-status-icon" />
-                                        )}
-                                        <div className="flex-1 min-w-0">
-                                          <div className="settings-status-title is-accent">
-                                            Update available: v{updater.latest}
+                                      <div
+                                        className={`settings-row settings-update-available-header${
+                                          updater.installing ? "" : updater.error ? " is-error" : updater.downloaded || updater.installed ? " is-ready" : ""
+                                        }`}
+                                      >
+                                        <div className="settings-row-label" role="status">
+                                          <div className="settings-row-title settings-status-title">
+                                            {updater.installing && !prefersReducedMotion ? (
+                                              <motion.span
+                                                className="settings-status-spin"
+                                                animate={{ rotate: 360 }}
+                                                transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                                              >
+                                                <Loader className="settings-status-icon" aria-hidden="true" />
+                                              </motion.span>
+                                            ) : updater.installing ? (
+                                              <Loader className="settings-status-icon" aria-hidden="true" />
+                                            ) : updater.error ? (
+                                              <AlertCircle className="settings-status-icon" aria-hidden="true" />
+                                            ) : updater.downloaded || updater.installed ? (
+                                              <CheckCircle2 className="settings-status-icon" aria-hidden="true" />
+                                            ) : (
+                                              <Download className="settings-status-icon" aria-hidden="true" />
+                                            )}
+                                            {updater.installing
+                                              ? `Installing v${updater.latest}`
+                                              : updater.error && !updater.installed
+                                                ? `Update failed: v${updater.latest}`
+                                                : `Update available: v${updater.latest}`}
                                           </div>
                                           <div className="settings-row-desc">
                                             {updater.installing
@@ -1757,17 +1770,19 @@ export default function SettingsMenu({
                                         {!updater.installing && (updater.downloaded || updater.installed) ? (
                                           <button
                                             type="button"
-                                            className="settings-update-install-btn"
+                                            className={`settings-mini settings-about-action${updater.error ? "" : " is-primary"}`}
                                             onClick={updater.install}
                                           >
+                                            <RotateCcw aria-hidden="true" />
                                             {updater.installed ? "Restart" : updater.error ? "Retry update" : "Restart to update"}
                                           </button>
                                         ) : updater.error && !updater.downloading ? (
                                           <button
                                             type="button"
-                                            className="settings-update-install-btn"
+                                            className="settings-mini settings-about-action"
                                             onClick={updater.download}
                                           >
+                                            <Download aria-hidden="true" />
                                             Retry download
                                           </button>
                                         ) : null}
@@ -1807,7 +1822,7 @@ export default function SettingsMenu({
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="settings-row-title">Check automatically</div>
-                                      <div className="settings-row-desc">Look for updates in the background and download them when found</div>
+                                      <div className="settings-row-desc">Every 30 minutes. New versions download in the background.</div>
                                     </div>
                                     <Toggle
                                       checked={draft.autoCheckUpdates !== false}
@@ -1828,7 +1843,7 @@ export default function SettingsMenu({
                                     </div>
                                     <button
                                       type="button"
-                                      className="settings-mini"
+                                      className="settings-mini settings-about-action"
                                       onClick={() => {
                                         closeSettings();
                                         setTimeout(() => onOpenReleaseNotes?.(), 220);
@@ -1856,7 +1871,7 @@ export default function SettingsMenu({
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="settings-row-title">Send feedback</div>
-                                      <div className="settings-row-desc">Report a bug or request a feature. It is filed on the Cortex Labs issue tracker.</div>
+                                      <div className="settings-row-desc">Goes straight to the Cortex Labs issue tracker.</div>
                                     </div>
                                     <div className="settings-row-actions">
                                       <button

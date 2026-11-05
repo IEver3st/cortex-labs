@@ -17,6 +17,8 @@ import {
   Crosshair,
   Eye,
   EyeOff,
+  Flashlight,
+  FolderOpen,
   Grid3x3,
   Hexagon,
   ImageDown,
@@ -62,6 +64,7 @@ import {
   DeckButton,
   DeckViewMenu,
   deckButtonItems,
+  ErrorText,
   FloorField,
   CollisionSlip,
   InspectorTabs,
@@ -824,7 +827,7 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
             </header>
             <div className="lv-slot-body">
               {!settings.modelPath ? (
-                <p className="lv-slot-note">Open a prop to find its textures.</p>
+                <p className="lv-slot-note">Found next to the model and in the game files.</p>
               ) : (
                 <>
                   {textureNote ? (
@@ -906,11 +909,15 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
           )}
           {isTauriRuntime && !hasModel && !loading ? (
             <StageEmpty
+              icon={Flashlight}
               tone={load.status === "error" ? "error" : undefined}
               title={load.status === "error" ? "The model didn't load" : "No prop open"}
               line={load.status === "error" ? load.error : "Open a .ydr, .ydd or .yft, or drop one on the viewfinder."}
             >
-              <button type="button" className="cx-btn is-primary" onClick={handlePickModel}>Open a prop</button>
+              <button type="button" className="cx-btn is-primary" onClick={handlePickModel}>
+                <FolderOpen aria-hidden="true" />
+                Open a prop
+              </button>
             </StageEmpty>
           ) : null}
         </div>
@@ -953,7 +960,7 @@ export default function PropStudioPage({ workspaceState, onStateChange, onRename
                   <AlertTriangle className="lv-alert-icon" aria-hidden="true" />
                   <div className="lv-alert-copy">
                     <strong>{alert.label}</strong>
-                    <span>{alert.text}</span>
+                    <ErrorText error={alert.text} />
                   </div>
                   <button type="button" className="cx-icon-btn" onClick={() => dismissAlert(alert.id)} aria-label="Dismiss">
                     <X aria-hidden="true" />

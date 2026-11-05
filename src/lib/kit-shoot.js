@@ -695,7 +695,23 @@ export function buildKitShootManifest({
   };
 }
 
-function escapeHtml(value) {
+export const REPORT_CSS = `:root{color-scheme:light dark;--paper:#f0f0e9;--ink:#0f1012;--muted:#575b61;--line:#d2d2c7;--accent:#3462bd;--warn:#a8741a;--err:#b94842}
+@media (prefers-color-scheme:dark){:root{--paper:#121316;--ink:#f0f0e9;--muted:#a2a6ad;--line:#2c2f35;--accent:#558bf6;--warn:#e0b45c;--err:#dc7c72}}
+*{box-sizing:border-box}body{margin:0;padding:32px clamp(16px,4vw,48px);background:var(--paper);color:var(--ink);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}
+h1{margin:0;font:italic 800 clamp(30px,4vw,48px)/1 "Barlow Condensed","Arial Narrow",sans-serif;text-transform:uppercase}
+h2{margin:0 0 12px;font-size:15px;font-weight:650}h2 small,figcaption small{display:block;color:var(--muted);font:12px/1.4 Consolas,"Cascadia Mono",monospace}
+h3{margin:18px 0 10px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.facts{display:flex;flex-wrap:wrap;gap:6px 22px;margin:12px 0 0;color:var(--muted);font:12px Consolas,"Cascadia Mono",monospace}
+section{padding:24px 0;border-top:1px solid var(--line)}header{padding-bottom:24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}.grid.wide{grid-template-columns:repeat(auto-fill,minmax(360px,1fr))}
+figure{margin:0}figure img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:6px;background:var(--line)}
+figcaption{margin-top:6px;font-size:13px;font-weight:600}.hole{display:grid;place-items:center;aspect-ratio:16/9;border:1px dashed var(--line);border-radius:6px;color:var(--muted);font-size:12px}
+ul.issues{list-style:none;margin:0;padding:0}ul.issues li{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line)}
+ul.issues span{min-width:58px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}ul.issues .error span{color:var(--err)}ul.issues .warning span{color:var(--warn)}ul.issues .info span{color:var(--muted)}
+code{font:11.5px Consolas,"Cascadia Mono",monospace;color:var(--muted)}a{color:var(--accent)}.media{margin:-4px 0 12px;font-size:13px}
+`;
+
+export function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -703,11 +719,11 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-function encodePath(path) {
+export function encodePath(path) {
   return String(path).split("/").map(encodeURIComponent).join("/");
 }
 
-function figure(file, caption, sub = "") {
+export function figure(file, caption, sub = "") {
   if (!file) {
     return `<figure class="missing"><div class="hole">Not saved</div><figcaption>${escapeHtml(caption)}${sub ? `<small>${escapeHtml(sub)}</small>` : ""}</figcaption></figure>`;
   }
@@ -749,21 +765,7 @@ export function renderKitShootReport(manifest) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kit shoot · ${escapeHtml(title)}</title>
 <style>
-:root{color-scheme:light dark;--paper:#f0f0e9;--ink:#0f1012;--muted:#575b61;--line:#d2d2c7;--accent:#3462bd;--warn:#a8741a;--err:#b94842}
-@media (prefers-color-scheme:dark){:root{--paper:#121316;--ink:#f0f0e9;--muted:#a2a6ad;--line:#2c2f35;--accent:#558bf6;--warn:#e0b45c;--err:#dc7c72}}
-*{box-sizing:border-box}body{margin:0;padding:32px clamp(16px,4vw,48px);background:var(--paper);color:var(--ink);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}
-h1{margin:0;font:italic 800 clamp(30px,4vw,48px)/1 "Barlow Condensed","Arial Narrow",sans-serif;text-transform:uppercase}
-h2{margin:0 0 12px;font-size:15px;font-weight:650}h2 small,figcaption small{display:block;color:var(--muted);font:12px/1.4 Consolas,"Cascadia Mono",monospace}
-h3{margin:18px 0 10px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-.facts{display:flex;flex-wrap:wrap;gap:6px 22px;margin:12px 0 0;color:var(--muted);font:12px Consolas,"Cascadia Mono",monospace}
-section{padding:24px 0;border-top:1px solid var(--line)}header{padding-bottom:24px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}.grid.wide{grid-template-columns:repeat(auto-fill,minmax(360px,1fr))}
-figure{margin:0}figure img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:6px;background:var(--line)}
-figcaption{margin-top:6px;font-size:13px;font-weight:600}.hole{display:grid;place-items:center;aspect-ratio:16/9;border:1px dashed var(--line);border-radius:6px;color:var(--muted);font-size:12px}
-ul.issues{list-style:none;margin:0;padding:0}ul.issues li{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line)}
-ul.issues span{min-width:58px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}ul.issues .error span{color:var(--err)}ul.issues .warning span{color:var(--warn)}ul.issues .info span{color:var(--muted)}
-code{font:11.5px Consolas,"Cascadia Mono",monospace;color:var(--muted)}a{color:var(--accent)}.media{margin:-4px 0 12px;font-size:13px}
-</style>
+${REPORT_CSS}</style>
 </head>
 <body>
 <header>

@@ -20,7 +20,7 @@
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: var(--lv-dock) minmax(0, 1fr) var(--lv-insp);
+  grid-template-columns: minmax(min(220px, var(--lv-dock)), var(--lv-dock)) minmax(clamp(0px, 100% - 480px, 360px), 1fr) minmax(min(260px, var(--lv-insp)), var(--lv-insp));
   overflow: hidden;
   background: var(--mg-bg);
   color: var(--mg-fg);
@@ -28,7 +28,7 @@
 }
 
 .lv-root.is-inspector-closed {
-  grid-template-columns: var(--lv-dock) minmax(0, 1fr) 0;
+  grid-template-columns: minmax(min(220px, var(--lv-dock)), var(--lv-dock)) minmax(clamp(0px, 100% - 220px, 360px), 1fr) 0;
 }
 
 .lv-root.is-focus {
@@ -36,7 +36,7 @@
 }
 
 .lv-root.is-dock-hidden:not(.is-focus) {
-  grid-template-columns: 0 minmax(0, 1fr) var(--lv-insp);
+  grid-template-columns: 0 minmax(clamp(0px, 100% - 260px, 360px), 1fr) minmax(min(260px, var(--lv-insp)), var(--lv-insp));
 }
 
 .lv-root.is-dock-hidden.is-inspector-closed:not(.is-focus) {
@@ -64,6 +64,7 @@
 
 .lv-inspector {
   border-left: 1px solid var(--mg-border);
+  container: lv-insp / inline-size;
 }
 
 /* Drag handles on the inner edge of a resizable dock or inspector
@@ -255,7 +256,7 @@
   flex: 1;
   min-height: 0;
   padding: 22px 16px 24px 14px;
-  overflow-y: auto;
+  overflow: hidden auto;
 }
 
 .lv-slot {
@@ -500,7 +501,7 @@
   min-height: 0;
   overflow: hidden;
   background: var(--mg-bg);
-  container-type: inline-size;
+  container-type: size;
 }
 
 .lv-stage {
@@ -890,6 +891,11 @@
   white-space: nowrap;
 }
 
+.lv-foot-value.is-plain {
+  font-family: var(--font-main);
+  font-size: var(--cx-fs-body);
+}
+
 .lv-foot-value > :where(span, code) {
   min-width: 0;
   overflow: hidden;
@@ -928,7 +934,7 @@
   width: max-content;
   max-width: calc(100% - 2 * var(--lv-inset, 22px));
   max-height: calc(100% - 2 * var(--lv-inset, 22px));
-  overflow: auto;
+  overflow: hidden auto;
   padding: 22px 28px 24px;
   border: 1px solid var(--lv-slip-line);
   border-radius: 11px;
@@ -1286,8 +1292,10 @@
   bottom: calc(100% + 8px);
   display: grid;
   width: max-content;
-  min-width: 280px;
+  min-width: min(280px, calc(100cqi - 2 * var(--lv-inset)));
   max-width: calc(100cqi - 2 * var(--lv-inset));
+  max-height: calc(var(--lv-hud-block, 100cqb) - 2 * var(--lv-inset) - 52px);
+  overflow-y: auto;
   padding: 6px;
   border: 1px solid var(--lv-slip-line);
   border-radius: 10px;
@@ -1487,16 +1495,19 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--mg-primary);
+  color: var(--mg-fg);
   font-family: var(--font-main);
   font-size: var(--cx-fs-body);
   font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--mg-fg) 28%, transparent);
+  text-underline-offset: 3px;
   cursor: pointer;
+  transition: text-decoration-color 140ms var(--cx-ease);
 }
 
-.lv-link:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.lv-link:hover:not(:disabled) {
+  text-decoration-color: currentColor;
 }
 
 .lv-sheet-dest {
@@ -1676,6 +1687,13 @@
   padding-inline: 4px;
 }
 
+.lv-tabs.is-clipped {
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent), linear-gradient(#000, #000);
+  mask-size: 100% 100%, 100% 1px;
+  mask-position: 0 0, 0 100%;
+  mask-repeat: no-repeat;
+}
+
 .lv-tabs.is-tight .lv-tab::after {
   right: 4px;
   left: 4px;
@@ -1764,18 +1782,6 @@
   box-shadow: inset 0 0 0 1px var(--cx-invert-muted);
 }
 
-.lv-chip input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.lv-chip:focus-within {
-  box-shadow: var(--cx-focus);
-}
 
 .lv-color-label {
   overflow: hidden;
@@ -1881,6 +1887,18 @@
 .lv-paint .lv-hex,
 .lv-paint .lv-color-reset {
   height: 26px;
+}
+
+@container lv-insp (max-width: 280px) {
+  .lv-color,
+  .lv-color.lv-paint {
+    column-gap: 6px;
+    padding-inline: 2px;
+  }
+  .lv-hex {
+    width: calc(7ch + 12px);
+    padding: 0 4px;
+  }
 }
 
 .lv-paint-detail {
@@ -2269,6 +2287,10 @@
   .lv-deck {
     justify-content: flex-start;
     margin-inline: 0 auto;
+  }
+  .lv-view-menu {
+    right: auto;
+    left: 0;
   }
 }
 
@@ -2788,16 +2810,15 @@
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: 24px;
+  width: 18px;
   height: 24px;
-  border-radius: 6px;
-  background: var(--cx-wash-strong);
-  font-size: var(--cx-fs-title);
+  font-size: var(--cx-fs-display-sm);
+  line-height: 1;
+  color: var(--mg-muted);
 }
 
 .mw-row.is-selected .mw-letter {
-  background: var(--mg-primary);
-  color: var(--cx-on-primary);
+  color: var(--cx-invert-fg);
 }
 
 .mw-row-text {

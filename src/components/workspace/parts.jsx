@@ -1,4 +1,4 @@
-import { Children, Fragment, isValidElement, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Children, Fragment, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePaneMotion } from "./usePaneMotion";
 import { AnimatePresence, motion } from "motion/react";
@@ -29,6 +29,8 @@ import { SHOWROOM_FLOORS, SHOWROOM_FLOOR_LABELS } from "../../lib/showroom-floor
 import { TURNTABLE_MAX_SPEED, TURNTABLE_MIN_SPEED } from "../../lib/turntable.js";
 import LightDome from "../LightDome";
 import "./workspace.css";
+import { ColorInput } from "../ui/color-input";
+import { plainError } from "../../lib/plain-error";
 
 /* Shared building blocks for the viewer workspaces (Livery, All, Multi):
    the frame, viewfinder chrome, camera deck, and inspector sections. Each
@@ -131,14 +133,9 @@ export function ColorLine({ label, value, onChange, onReset, selected, onSelect 
         }
       }}
     >
-      <label className="lv-chip" style={{ "--chip": value }} onClick={(event) => event.stopPropagation()}>
-        <input
-          type="color"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          aria-label={`${label} colour`}
-        />
-      </label>
+      <span className="lv-chip" style={{ "--chip": value }}>
+        <ColorInput value={value} onChange={onChange} label={`${label} colour`} />
+      </span>
       <span className="lv-color-label">{label}</span>
       <span onClick={(event) => event.stopPropagation()}>
         <HexInput value={value} onCommit={onChange} label={label} />
@@ -311,17 +308,17 @@ export function StageEmpty({ icon: Icon, title, line, tone, children }) {
     <div className={`lv-stage-empty ${tone === "error" ? "is-error" : ""}`} role="status">
       {Icon ? <Icon className="lv-stage-empty-icon" aria-hidden="true" /> : null}
       <p className="lv-stage-empty-title">{title}</p>
-      {line ? <p className="lv-stage-empty-line">{line}</p> : null}
+      {line ? <p className="lv-stage-empty-line">{tone === "error" && typeof line === "string" ? <ErrorText error={line} /> : line}</p> : null}
       {children ? <div className="lv-stage-empty-actions">{children}</div> : null}
     </div>
   );
 }
 
-export function FootFact({ label, children, title }) {
+export function FootFact({ label, children, title, plain = false }) {
   return (
     <div className="lv-foot-fact" title={title}>
       <span className="cx-label">{label}</span>
-      <span className="lv-foot-value">{children}</span>
+      <span className={`lv-foot-value ${plain ? "is-plain" : ""}`}>{children}</span>
     </div>
   );
 }
@@ -537,10 +534,23 @@ export function DeckViewMenu({ groups, open: controlled, onOpenChange }) {
     const onPointerDown = (event) => {
       if (!rootRef.current?.contains(event.target)) setOpen(false);
     };
+    const onResize = () => setOpen(false);
     document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("resize", onResize);
+    };
   }, [open, setOpen]);
   const sections = groups.map((items) => items.filter(Boolean)).filter((items) => items.length);
+  const fitViewMenu = useCallback((menu) => {
+    const finder = menu?.closest(".lv-finder");
+    const anchor = menu?.offsetParent || menu?.parentElement;
+    if (!finder || !anchor) return;
+    const zoom = menu.offsetWidth ? menu.getBoundingClientRect().width / menu.offsetWidth || 1 : 1;
+    const room = (anchor.getBoundingClientRect().top - finder.getBoundingClientRect().top) / zoom - 20;
+    menu.style.maxHeight = `${Math.max(48, Math.round(room))}px`;
+  }, []);
   return (
     <div
       ref={rootRef}
@@ -565,7 +575,7 @@ export function DeckViewMenu({ groups, open: controlled, onOpenChange }) {
         <ChevronUp className="lv-view-chev" aria-hidden="true" />
       </button>
       {open ? (
-        <div className="lv-view-menu" role="dialog" aria-label="View">
+        <div className="lv-view-menu" role="dialog" aria-label="View" ref={fitViewMenu}>
           {sections.map((items, index) => (
             <div key={index} className="lv-view-section">
               {items.map((item) => (item.node
@@ -577,6 +587,12 @@ export function DeckViewMenu({ groups, open: controlled, onOpenChange }) {
       ) : null}
     </div>
   );
+}
+
+export function ErrorText({ error }) {
+  if (!error) return null;
+  const { text, detail } = plainError(error);
+  return <span title={detail || undefined}>{text}</span>;
 }
 
 /**
@@ -683,7 +699,7 @@ export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, v
                 <AlertTriangle className="lv-alert-icon" aria-hidden="true" />
                 <div className="lv-alert-copy">
                   <strong>{alert.label}</strong>
-                  <span>{alert.text}</span>
+                  <ErrorText error={alert.text} />
                 </div>
                 <button type="button" className="cx-icon-btn" onClick={alert.clear} aria-label="Dismiss">
                   <X aria-hidden="true" />
@@ -876,14 +892,20 @@ export function InspectorTabs({ tabs, active, onChange }) {
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) return undefined;
+    const edge = () => list.classList.toggle("is-clipped", list.scrollLeft + list.clientWidth < list.scrollWidth - 1);
     const fit = () => {
       list.classList.remove("is-tight");
       list.classList.toggle("is-tight", list.scrollWidth > list.clientWidth);
+      edge();
     };
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(list);
-    return () => observer.disconnect();
+    list.addEventListener("scroll", edge, { passive: true });
+    return () => {
+      observer.disconnect();
+      list.removeEventListener("scroll", edge);
+    };
   }, [labels]);
   return (
     <div className="lv-tabs" role="tablist" aria-label="Inspector sections" ref={listRef}>

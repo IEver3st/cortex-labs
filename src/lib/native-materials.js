@@ -22,6 +22,33 @@ import { applyMaterialDrawOrder, releaseMaterialDrawOrder } from "./native-draw-
 const DXT_FORMATS = new Set(["DXT1", "DXT3", "DXT5"]);
 const BC7_FORMATS = new Set([98, 99]);
 const LOAD_CONCURRENCY = 3;
+const PROGRESS_RENDER_INTERVAL_MS = 120;
+
+function createRenderBatcher(onRender, interval) {
+  let last = 0;
+  let timer = 0;
+  const flush = () => {
+    timer = 0;
+    last = performance.now();
+    onRender?.();
+  };
+  return {
+    request() {
+      if (!onRender || timer) return;
+      const wait = interval - (performance.now() - last);
+      if (wait <= 0) flush();
+      else timer = setTimeout(flush, wait);
+    },
+    finish() {
+      if (timer) clearTimeout(timer);
+      flush();
+    },
+    cancel() {
+      if (timer) clearTimeout(timer);
+      timer = 0;
+    },
+  };
+}
 
 const PROFILE_SETTINGS = {
   default: { metalness: 0.18, roughness: 0.58 },
@@ -411,6 +438,7 @@ export async function loadNativeMaterialView({
   };
 
   onSetup?.({ ...summary, plannedTextureCount: requests.length });
+  const render = createRenderBatcher(onRender, PROGRESS_RENDER_INTERVAL_MS);
 
   try {
     await runPool(requests, async (request) => {
@@ -445,12 +473,14 @@ export async function loadNativeMaterialView({
         loadedTextureCount: loaded,
         failedTextureCount: failures.length,
       });
-      onRender?.();
+      render.request();
     });
   } catch (error) {
+    render.cancel();
     dispose();
     throw error;
   }
+  render.finish();
 
   return {
     summary: {

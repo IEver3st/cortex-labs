@@ -3,39 +3,8 @@
 // encodes the DDS the write stages. The input is a file's bytes (`ext` says
 // which decoder) or RGBA the PSD and PDN decoders already produced.
 
-import { decodeDDSLevels } from "./dds-decode.js";
+import { decodeImageFile as decodeFile, MAX_DECODE_SIDE as MAX_SIDE } from "./livery-decode.js";
 import { buildLiveryTexture, thumbnailRgba } from "./livery-texture.js";
-
-const MAX_SIDE = 8192;
-
-async function decodeFile(bytes, ext) {
-  if (ext === "dds") {
-    const decoded = decodeDDSLevels(bytes, { decodeMips: false, flipY: false });
-    if (!decoded?.levels?.length) throw new Error("this DDS format cannot be read");
-    return { width: decoded.width, height: decoded.height, rgba: decoded.levels[0].data, dds: bytes };
-  }
-  if (ext === "tif" || ext === "tiff") {
-    const mod = await import("utif");
-    const UTIF = mod.default || mod;
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    const ifds = UTIF.decode(buffer);
-    if (!ifds?.length) throw new Error("the TIFF holds no image");
-    UTIF.decodeImage(buffer, ifds[0]);
-    return { width: ifds[0].width, height: ifds[0].height, rgba: new Uint8Array(UTIF.toRGBA8(ifds[0])) };
-  }
-  // Straight alpha and the file's own colours, as the game will sample them.
-  const bitmap = await createImageBitmap(new Blob([bytes]), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
-  try {
-    if (bitmap.width > MAX_SIDE || bitmap.height > MAX_SIDE) return { width: bitmap.width, height: bitmap.height, rgba: null };
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    context.drawImage(bitmap, 0, 0);
-    const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
-    return { width: bitmap.width, height: bitmap.height, rgba: new Uint8Array(data.buffer) };
-  } finally {
-    bitmap.close();
-  }
-}
 
 async function thumbnailUrl(image) {
   const thumb = thumbnailRgba(image.rgba, image.width, image.height, 96);

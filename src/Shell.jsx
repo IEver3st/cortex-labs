@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { Suspense, lazy, memo, use, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { AnimatePresence, MotionConfig, motion, useMotionValue, useTransform, useSpring } from "motion/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -31,7 +31,7 @@ import { subscribeUnsavedChanges, unsavedChangeKeys } from "./lib/unsaved-change
 import { clearSession } from "./lib/prefs";
 import UnsavedChangesDialog from "./components/UnsavedChangesDialog";
 import { loadOnboarded, setOnboarded, loadPrefs, PREFS_UPDATED_EVENT } from "./lib/prefs";
-import { markUsageNoticeSeen, trackUsage, usageNoticeSeen, usageStatsAvailable } from "./lib/usage";
+import { trackUsage } from "./lib/usage";
 import {
   WORKSPACE_MODES,
   WORKSPACE_MODE_GROUPS,
@@ -48,29 +48,45 @@ import {
 } from "./lib/hotkeys";
 
 // Secondary pages and modals load on first use so the viewer shell boots lighter.
-const lazyPage = (load) => lazy(() => load().then((module) => ({ default: memo(module.default) })));
+function lazyPage(importPage) {
+  let Loaded = null;
+  let loading = null;
+  const load = () => (loading ||= importPage().then(
+    (module) => (Loaded = module.default),
+    (error) => {
+      loading = null;
+      throw error;
+    },
+  ));
+  const Page = memo(function LazyPage(props) {
+    const Component = Loaded || use(load());
+    return <Component {...props} />;
+  });
+  Page.load = load;
+  return Page;
+}
+const VariantsPage = lazyPage(() => import("./components/VariantsPage"));
+const App = lazyPage(() => import("./App"));
+const EupPage = lazyPage(() => import("./components/EupPage"));
+const PropStudioPage = lazyPage(() => import("./components/PropStudioPage"));
+const PhotoModePage = lazyPage(() => import("./components/PhotoModePage"));
+const SoundStudioPage = lazyPage(() => import("./components/SoundStudioPage"));
+const TemplateGenerationPage = lazyPage(() => import("./components/TemplateGenerationPage"));
 const PAGE_LOADERS = {
-  viewer: () => import("./App"),
-  eupstudio: () => import("./components/EupPage"),
-  propstudio: () => import("./components/PropStudioPage"),
-  photo: () => import("./components/PhotoModePage"),
-  sounds: () => import("./components/SoundStudioPage"),
-  variants: () => import("./components/VariantsPage"),
-  templategen: () => import("./components/TemplateGenerationPage"),
+  viewer: App.load,
+  eupstudio: EupPage.load,
+  propstudio: PropStudioPage.load,
+  photo: PhotoModePage.load,
+  sounds: SoundStudioPage.load,
+  variants: VariantsPage.load,
+  templategen: TemplateGenerationPage.load,
 };
-const VariantsPage = lazyPage(PAGE_LOADERS.variants);
-const App = lazyPage(PAGE_LOADERS.viewer);
-const EupPage = lazyPage(PAGE_LOADERS.eupstudio);
-const PropStudioPage = lazyPage(PAGE_LOADERS.propstudio);
-const PhotoModePage = lazyPage(PAGE_LOADERS.photo);
-const SoundStudioPage = lazyPage(PAGE_LOADERS.sounds);
-const TemplateGenerationPage = lazyPage(PAGE_LOADERS.templategen);
+const preloadPage = (type) => PAGE_LOADERS[type]?.().catch(() => {});
 const MemoHomePage = memo(HomePage);
 const EMPTY_STATE = Object.freeze({});
 const WhatsNew = lazy(() => import("./components/WhatsNew"));
 const BugReportModal = lazy(() => import("./components/BugReportModal"));
 const Onboarding = lazy(() => import("./components/Onboarding"));
-const UsageNotice = lazy(() => import("./components/UsageNotice"));
 const SettingsMenu = lazy(() => import("./components/SettingsMenu"));
 
 // Long enough for the intro to land its lockup; boot also waits for the front tab's page chunk.
@@ -179,8 +195,10 @@ function clampUiScale(value) {
  */
 export default function Shell() {
   const [booted, setBooted] = useState(false);
+  const [frontPageReady, setFrontPageReady] = useState(false);
+  const [frontChunkReady, setFrontChunkReady] = useState(false);
+  const [startupOpensSettled, setStartupOpensSettled] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => !loadOnboarded());
-  const [usageNoticeOpen, setUsageNoticeOpen] = useState(() => usageStatsAvailable() && !usageNoticeSeen());
   const [isBugReportOpen, setIsBugReportOpen] = useState(false);
   // The modal chunk loads on first open and then stays mounted so its close
   // animation keeps working exactly as before.
@@ -323,9 +341,15 @@ export default function Shell() {
     const wait = (ms) => new Promise((resolve) => timers.push(setTimeout(resolve, ms)));
     const reduceMotion = reduceMotionPref || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const front = startupTabs.tabs.find((tab) => tab.id === startupTabs.activeTabId);
-    const frontPage = PAGE_LOADERS[front?.type]?.().catch(() => {});
-    Promise.all([wait(reduceMotion ? 0 : MIN_BOOT_MS), Promise.race([frontPage, wait(MAX_BOOT_WAIT_MS)])]).then(() => {
-      if (!cancelled) setBooted(true);
+    const loadFrontPage = PAGE_LOADERS[front?.type];
+    const frontChunk = loadFrontPage?.().then(() => {
+      if (!cancelled) setFrontChunkReady(true);
+    }, () => {});
+    const frontPage = Promise.race([frontChunk, wait(MAX_BOOT_WAIT_MS)]);
+    Promise.all([wait(reduceMotion ? 0 : MIN_BOOT_MS), frontPage]).then(() => {
+      if (cancelled) return;
+      setFrontPageReady(true);
+      setBooted(true);
     });
     return () => {
       cancelled = true;
@@ -431,7 +455,10 @@ export default function Shell() {
 
   // File-open handler (startup + running instance)
   useEffect(() => {
-    if (!isTauriRuntime) return;
+    if (!isTauriRuntime) {
+      setStartupOpensSettled(true);
+      return;
+    }
     let unlisten;
     let cancelled = false;
 
@@ -476,7 +503,9 @@ export default function Shell() {
       }
     };
 
-    start();
+    start().catch(() => {}).then(() => {
+      if (!cancelled) setStartupOpensSettled(true);
+    });
 
     return () => {
       cancelled = true;
@@ -495,6 +524,18 @@ export default function Shell() {
       setActiveTabId(tabs[tabs.length - 1].id);
     }
   }, [tabs, activeTabId]);
+
+  useEffect(() => {
+    if (frontPageReady || !frontChunkReady || !startupOpensSettled || pendingActiveRef.current) return;
+    setFrontPageReady(true);
+  }, [frontPageReady, frontChunkReady, startupOpensSettled, tabs, activeTabId]);
+
+  useEffect(() => {
+    if (booted) return undefined;
+    const swallowKeyDuringIntro = (event) => event.stopImmediatePropagation();
+    window.addEventListener("keydown", swallowKeyDuringIntro, true);
+    return () => window.removeEventListener("keydown", swallowKeyDuringIntro, true);
+  }, [booted]);
 
   // Close tab (unguarded; closeTab below asks first when edits would be lost)
   const closeTabNow = useCallback((tabId) => {
@@ -739,15 +780,12 @@ export default function Shell() {
     if (tab?.workspaceId) markWorkspaceOpened(tab.workspaceId);
   }, [activeTabId]);
 
-  // A tab restored at startup mounts the first time it is shown. Panes render
-  // after boot, so a file opened with the app before then skips mounting the
-  // tab that was in front last time.
   useEffect(() => {
-    if (!booted) return;
+    if (!frontPageReady) return;
     setTabs((prev) => (prev.some((tab) => tab.id === activeTabId && tab.deferred)
       ? prev.map((tab) => (tab.id === activeTabId ? { ...tab, deferred: false } : tab))
       : prev));
-  }, [activeTabId, booted]);
+  }, [activeTabId, frontPageReady]);
 
   useEffect(() => {
     if (!booted) return undefined;
@@ -812,12 +850,6 @@ export default function Shell() {
   useEffect(() => {
     if (booted) trackUsage("open");
   }, [booted]);
-
-  const finishUsageNotice = useCallback(() => {
-    markUsageNoticeSeen();
-    setUsageNoticeOpen(false);
-    trackUsage("open");
-  }, []);
 
   // Onboarding
 
@@ -1000,6 +1032,15 @@ export default function Shell() {
   // New-tab dropdown
   const [newTabOpen, setNewTabOpen] = useState(false);
   const newTabBtnRef = useRef(null);
+  const fitNewTabMenu = useCallback((menu) => {
+    if (!menu) return;
+    menu.style.translate = "";
+    const rect = menu.getBoundingClientRect();
+    const overflow = rect.right - (document.documentElement.clientWidth - 8);
+    if (overflow <= 0) return;
+    const scale = rect.width / menu.offsetWidth || 1;
+    menu.style.translate = `${-overflow / scale}px 0`;
+  }, []);
 
   // Tabs that don't fit scroll inside the strip (New tab stays pinned at its
   // end). Keep the active tab in view once the toolbar mounts, when it
@@ -1058,8 +1099,20 @@ export default function Shell() {
       if (newTabBtnRef.current?.contains(e.target)) return;
       setNewTabOpen(false);
     };
+    const handleKey = (e) => {
+      if (e.key !== "Escape") return;
+      setNewTabOpen(false);
+      newTabBtnRef.current?.querySelector(".shell-new-tab-btn")?.focus();
+    };
+    const handleResize = () => setNewTabOpen(false);
     window.addEventListener("mousedown", handleClick);
-    return () => window.removeEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("resize", handleResize);
+    };
   }, [newTabOpen]);
 
   // WhatsNew modal: auto-open on new version, manual open from settings
@@ -1090,6 +1143,7 @@ export default function Shell() {
       id: mode.id,
       icon: mode.icon,
       label: mode.label,
+      page: mode.page,
       action: mode.action,
       hotkey: hotkeys[mode.action],
       onSelect: () => launchWorkspaceMode(mode.id),
@@ -1131,13 +1185,6 @@ export default function Shell() {
           </Suspense>
         ) : null}
       </AnimatePresence>
-      <Suspense fallback={null}>
-        <AnimatePresence>
-          {booted && usageNoticeOpen && !showOnboarding && !settingsOpen ? (
-            <UsageNotice key="usage-notice" onDone={finishUsageNotice} />
-          ) : null}
-        </AnimatePresence>
-      </Suspense>
 
       {booted && (
         <>
@@ -1308,6 +1355,7 @@ export default function Shell() {
                 <AnimatePresence>
                   {newTabOpen && (
                     <motion.div
+                      ref={fitNewTabMenu}
                       className="shell-new-tab-menu"
                       role="menu"
                       aria-label="New tab"
@@ -1323,6 +1371,8 @@ export default function Shell() {
                           type="button"
                           role="menuitem"
                           className="shell-new-tab-option"
+                          onPointerEnter={() => preloadPage(opt.page)}
+                          onFocus={() => preloadPage(opt.page)}
                           onClick={() => { opt.onSelect(); setNewTabOpen(false); }}
                         >
                           <opt.icon className="shell-new-tab-option-icon" aria-hidden="true" />
@@ -1419,123 +1469,126 @@ export default function Shell() {
               </button>
             </motion.div>
           </motion.div>
+        </>
+      )}
 
-          {/* ━━━ Tab Panes: ALL stay mounted, only active one is visible ━━━ */}
-          <div className="shell-content">
-            {tabs.map((tab) => {
-              const isActive = tab.id === activeTabId && !settingsOpen;
-              if (tab.deferred && tab.id !== activeTabId) {
-                return <div key={tab.id} className="shell-pane is-hidden" aria-hidden="true" />;
-              }
+      {/* ━━━ Tab Panes: ALL stay mounted, only active one is visible ━━━ */}
+      {frontPageReady && (
+        <div className="shell-content" inert={!booted}>
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId && !settingsOpen;
+            if (tab.deferred && tab.id !== activeTabId) {
+              return <div key={tab.id} className="shell-pane is-hidden" aria-hidden="true" />;
+            }
 
-              return (
-                <div
-                  key={tab.id}
-                  className={`shell-pane ${tab.id === activeTabId ? "is-visible" : "is-hidden"}`}
-                  aria-hidden={!isActive}
-                  inert={!isActive}
-                  ref={(node) => {
-                    if (node) paneRefs.current.set(tab.id, node);
-                    else paneRefs.current.delete(tab.id);
-                  }}
-                >
-                  {tab.type === "home" && (
-                    <MemoHomePage
-                      isActive={isActive}
-                      onNavigate={handleNavigate}
-                      onOpenWorkspace={handleOpenWorkspace}
-                      onOpenSavedVehicle={handleOpenSavedVehicle}
-                      settingsVersion={settingsVersion}
-                    />
-                  )}
-                  {tab.type === "viewer" && (
-                    <Suspense fallback={<AppLoader variant="pane" />}>
-                    <App
-                      shellTab={tab}
-                      isActive={isActive}
-                      defaultTextureMode={tab.defaultMode || "vehicle"}
-                      initialState={tab.initialState || null}
+            return (
+              <div
+                key={tab.id}
+                className={`shell-pane ${tab.id === activeTabId ? "is-visible" : "is-hidden"}`}
+                aria-hidden={!isActive}
+                inert={!isActive}
+                ref={(node) => {
+                  if (node) paneRefs.current.set(tab.id, node);
+                  else paneRefs.current.delete(tab.id);
+                }}
+              >
+                {tab.type === "home" && (
+                  <MemoHomePage
+                    isActive={isActive}
+                    onNavigate={handleNavigate}
+                    onPreloadPage={preloadPage}
+                    onOpenWorkspace={handleOpenWorkspace}
+                    onOpenSavedVehicle={handleOpenSavedVehicle}
+                    settingsVersion={settingsVersion}
+                  />
+                )}
+                {tab.type === "viewer" && (
+                  <Suspense fallback={<AppLoader variant="pane" />}>
+                  <App
+                    shellTab={tab}
+                    isActive={isActive}
+                    defaultTextureMode={tab.defaultMode || "vehicle"}
+                    initialState={tab.initialState || null}
+                    onRenameTab={tabRenameSetter(tab.id)}
+                    onTabDetail={tabDetailSetter(tab.id)}
+                    onOpenPackBuilder={openPackBuilder}
+                    settingsVersion={settingsVersion}
+                    contextBarTarget={contextBarRef.current}
+                  />
+                  </Suspense>
+                )}
+                {tab.type === "eupstudio" && (
+                  <Suspense fallback={<AppLoader variant="pane" />}>
+                    <EupPage
+                      workspaceState={tab.initialState || EMPTY_STATE}
+                      onStateChange={getPageStateCallback(tab.id, "eupstudio")}
                       onRenameTab={tabRenameSetter(tab.id)}
-                      onTabDetail={tabDetailSetter(tab.id)}
-                      onOpenPackBuilder={openPackBuilder}
-                      settingsVersion={settingsVersion}
+                      isActive={isActive}
                       contextBarTarget={contextBarRef.current}
                     />
-                    </Suspense>
-                  )}
-                  {tab.type === "eupstudio" && (
-                    <Suspense fallback={<AppLoader variant="pane" />}>
-                      <EupPage
-                        workspaceState={tab.initialState || EMPTY_STATE}
-                        onStateChange={getPageStateCallback(tab.id, "eupstudio")}
-                        onRenameTab={tabRenameSetter(tab.id)}
-                        isActive={isActive}
-                        contextBarTarget={contextBarRef.current}
-                      />
-                    </Suspense>
-                  )}
-                  {tab.type === "propstudio" && (
-                    <Suspense fallback={<AppLoader variant="pane" />}>
-                      <PropStudioPage
-                        workspaceState={tab.initialState || EMPTY_STATE}
-                        onStateChange={getPageStateCallback(tab.id, "propstudio")}
-                        onRenameTab={tabRenameSetter(tab.id)}
-                        isActive={isActive}
-                        contextBarTarget={contextBarRef.current}
-                      />
-                    </Suspense>
-                  )}
-                  {tab.type === "photo" && (
-                    <Suspense fallback={<AppLoader variant="pane" />}>
-                      <PhotoModePage
-                        workspaceState={tab.initialState || EMPTY_STATE}
-                        onStateChange={getPageStateCallback(tab.id, "photo")}
-                        isActive={isActive}
-                        contextBarTarget={contextBarRef.current}
-                      />
-                    </Suspense>
-                  )}
-                  {tab.type === "sounds" && (
-                    <Suspense fallback={<AppLoader variant="pane" />}>
-                      <SoundStudioPage
-                        workspaceState={tab.initialState || EMPTY_STATE}
-                        onStateChange={getPageStateCallback(tab.id, "sounds")}
-                        onRenameTab={tabRenameSetter(tab.id)}
-                        isActive={isActive}
-                        contextBarTarget={contextBarRef.current}
-                      />
-                    </Suspense>
-                  )}
-                  {tab.type === "variants" && (
-                    <Suspense fallback={<AppLoader variant="pane" />}>
-                      <VariantsPage
-                        workspaceState={tab.initialState || EMPTY_STATE}
-                        onStateChange={getPageStateCallback(tab.id, "variants")}
-                        onRenameTab={tabRenameSetter(tab.id)}
-                        settingsVersion={settingsVersion}
-                        isActive={isActive}
-                        contextBarTarget={contextBarRef.current}
-                      />
-                    </Suspense>
-                  )}
-                  {tab.type === "templategen" && (
-                    <Suspense fallback={<AppLoader variant="pane" />}>
-                      <TemplateGenerationPage
-                        workspaceState={tab.initialState || EMPTY_STATE}
-                        onStateChange={getPageStateCallback(tab.id, "templategen")}
-                        onRenameTab={tabRenameSetter(tab.id)}
-                        settingsVersion={settingsVersion}
-                        isActive={isActive}
-                        contextBarTarget={contextBarRef.current}
-                      />
-                    </Suspense>
-                  )}
+                  </Suspense>
+                )}
+                {tab.type === "propstudio" && (
+                  <Suspense fallback={<AppLoader variant="pane" />}>
+                    <PropStudioPage
+                      workspaceState={tab.initialState || EMPTY_STATE}
+                      onStateChange={getPageStateCallback(tab.id, "propstudio")}
+                      onRenameTab={tabRenameSetter(tab.id)}
+                      isActive={isActive}
+                      contextBarTarget={contextBarRef.current}
+                    />
+                  </Suspense>
+                )}
+                {tab.type === "photo" && (
+                  <Suspense fallback={<AppLoader variant="pane" />}>
+                    <PhotoModePage
+                      workspaceState={tab.initialState || EMPTY_STATE}
+                      onStateChange={getPageStateCallback(tab.id, "photo")}
+                      isActive={isActive}
+                      contextBarTarget={contextBarRef.current}
+                    />
+                  </Suspense>
+                )}
+                {tab.type === "sounds" && (
+                  <Suspense fallback={<AppLoader variant="pane" />}>
+                    <SoundStudioPage
+                      workspaceState={tab.initialState || EMPTY_STATE}
+                      onStateChange={getPageStateCallback(tab.id, "sounds")}
+                      onRenameTab={tabRenameSetter(tab.id)}
+                      isActive={isActive}
+                      contextBarTarget={contextBarRef.current}
+                    />
+                  </Suspense>
+                )}
+                {tab.type === "variants" && (
+                  <Suspense fallback={<AppLoader variant="pane" />}>
+                    <VariantsPage
+                      workspaceState={tab.initialState || EMPTY_STATE}
+                      onStateChange={getPageStateCallback(tab.id, "variants")}
+                      onRenameTab={tabRenameSetter(tab.id)}
+                      settingsVersion={settingsVersion}
+                      isActive={isActive}
+                      contextBarTarget={contextBarRef.current}
+                    />
+                  </Suspense>
+                )}
+                {tab.type === "templategen" && (
+                  <Suspense fallback={<AppLoader variant="pane" />}>
+                    <TemplateGenerationPage
+                      workspaceState={tab.initialState || EMPTY_STATE}
+                      onStateChange={getPageStateCallback(tab.id, "templategen")}
+                      onRenameTab={tabRenameSetter(tab.id)}
+                      settingsVersion={settingsVersion}
+                      isActive={isActive}
+                      contextBarTarget={contextBarRef.current}
+                    />
+                  </Suspense>
+                )}
 
-                </div>
-              );
-            })}
-          </div>
-        </>
+              </div>
+            );
+          })}
+        </div>
       )}
       <UnsavedChangesDialog pending={pendingClose} onCancel={cancelPendingClose} onConfirm={confirmPendingClose} />
     </div>

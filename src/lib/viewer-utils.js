@@ -1075,7 +1075,7 @@ export async function loadTextureFromPath(texturePath, textureLoader, renderer) 
       texture = await attempt();
       if (texture) break;
     } catch (error) {
-      if (error?.type === "unsupported-bit-depth") throw error;
+      if (error?.type === "unsupported-bit-depth" || error?.type === "incomplete-file") throw error;
       /* continue */
     }
   }
@@ -1517,6 +1517,7 @@ export async function loadPsdTexture(bytes) {
     error.bitDepth = bitDepth;
     throw error;
   }
+  if (isTruncatedPsd(bytes)) throw incompletePsdError();
 
   // Preferred: only the merged composite, decoded in a worker.
   try {
@@ -1562,6 +1563,7 @@ export async function loadPsdTexture(bytes) {
 export async function decodePsdRgba(bytes) {
   const bitDepth = detectPsdBitDepth(bytes);
   if (bitDepth === 16 || bitDepth === 32) throw new Error(`${bitDepth}-bit PSD files are not supported; save it as 8-bit`);
+  if (isTruncatedPsd(bytes)) throw incompletePsdError();
   let imageData = null;
   let bitsPerChannel;
   try {
@@ -1588,6 +1590,49 @@ export async function decodePsdRgba(bytes) {
   if (!normalized) throw new Error("the PSD holds no merged image; save it with Maximize Compatibility on");
   const { data } = normalized;
   return { width: normalized.width, height: normalized.height, data: new Uint8Array(data.buffer, data.byteOffset, normalized.width * normalized.height * 4) };
+}
+
+export function isTruncatedPsd(bytes) {
+  if (!bytes?.length) return true;
+  if ([0x38, 0x42, 0x50, 0x53].some((byte, index) => index < bytes.length && bytes[index] !== byte)) return false;
+  if (bytes.length < 26) return true;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const length = bytes.byteLength;
+  const isPsb = view.getUint16(4, false) === 2;
+  const channels = view.getUint16(12, false);
+  const height = view.getUint32(14, false);
+  const width = view.getUint32(18, false);
+  const depth = view.getUint16(22, false);
+  let offset = 26;
+  for (const sizeBytes of [4, 4, isPsb ? 8 : 4]) {
+    if (offset + sizeBytes > length) return true;
+    const size = sizeBytes === 8
+      ? view.getUint32(offset, false) * 2 ** 32 + view.getUint32(offset + 4, false)
+      : view.getUint32(offset, false);
+    offset += sizeBytes + size;
+    if (offset > length) return true;
+  }
+  if (offset + 2 > length) return true;
+  const compression = view.getUint16(offset, false);
+  offset += 2;
+  if (compression === 0) return offset + channels * height * Math.ceil((width * depth) / 8) > length;
+  if (compression !== 1) return false;
+  const countBytes = isPsb ? 4 : 2;
+  const rows = channels * height;
+  const tableEnd = offset + rows * countBytes;
+  if (tableEnd > length) return true;
+  let end = tableEnd;
+  for (let row = 0; row < rows; row += 1) {
+    const at = offset + row * countBytes;
+    end += isPsb ? view.getUint32(at, false) : view.getUint16(at, false);
+  }
+  return end > length;
+}
+
+function incompletePsdError() {
+  const error = new Error("The PSD is incomplete. If it is still saving, it reloads when the save finishes.");
+  error.type = "incomplete-file";
+  return error;
 }
 
 export function detectPsdBitDepth(bytes) {

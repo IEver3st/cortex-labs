@@ -1,3 +1,30 @@
+version: 6.0.0
+date: 2026-11-05
+> Make a whole store listing for a vehicle in one run, check a vehicle or a pack before you sell it, and put your own images, text and stripes straight onto a model.
+
+## New
+- Listing Shoot | The new Listing tab in Vehicle makes the media for a Tebex or Cfx Marketplace listing in one run: hero stills in 16:9, 1:1 and 4:5, a livery lineup, a paint sheet, a turntable video and a night lights clip, plus mod kit shots when the vehicle has a kit. Each run gets its own folder with a report of what was made and what wasn't, and your livery, paint and parts come back when it ends. Desktop app only.
+- Pack Doctor in Listing Shoot | Listing Shoot runs Pack Doctor for the vehicle and puts its findings in the report and the Listing panel.
+- Pack Doctor | Check a vehicle or a folder of vehicles before you upload or sell it. Health in the Meta tab checks a vehicle's textures and streamed memory, and Doctor beside Pack and Vehicle checks every resource in a folder: textures, liveries, spawn names, light and siren ids, mod kits, manifest entries and streamed memory the way FiveM counts it. It reads your files and never changes them, and you can copy or save the report. Desktop app only.
+- Livery Canvas | Place your own images, text, stripes, bands and chevrons on a vehicle by clicking the model or the flat livery sheet, in the new Canvas section of the Liveries tab. Copy an item to the other side, fill a part with Battenburg or Check, save decal sets, export a PNG or layered PSD, or replace one of the vehicle's liveries after a backup.
+
+## Improved
+- Colour picker | Every custom colour opens a themed picker with a colour plane, hue, hex field, an eyedropper where available and your last ten colours, instead of the Windows colour dialog.
+- Faster livery reload | A saved livery shows on the model faster.
+- Faster start | The project you had open last starts loading behind the start-up screen, and game textures arrive in about half the time.
+- Sirens without a pattern | The Sirens tab keeps its preview and inspector with no pattern open, offers New pattern and Import, and plays a new pattern on a lightbar until you put it on a vehicle.
+- Showroom tone | Settings > Appearance > 3D stage keeps the showroom floor and backdrop dark, light or following the colour scheme in Vehicle, Multi, EUP and Prop Studio.
+- Plain error messages | Missing, locked, read-only and full-disk errors read as plain sentences, with the full error in the tooltip.
+- Small windows | Panels give way when the window is narrow, so the viewer keeps its room, and the New tab menu stays inside the window.
+- Tidier tools | Sound Studio keeps the pack and install steps on screen, EUP Studio asks for Male, Female or Custom, Variant Builder says why Export is unavailable, and Send feedback grows as you type.
+- Polish | Quieter disabled buttons, an icon on every empty stage, visible scrollbars in dark mode, start dates on untitled projects in Home and a clearer Cortex account page.
+
+## Fixed
+- Fly-look cursor | Holding the right mouse button to look around in Vehicle and Multi shows a crosshair again.
+- No more freezes on busy panels | Switching to a panel with many controls, like the Meta tab with Health open, no longer leaves Studio unresponsive.
+
+---
+
 version: 5.8.0
 date: 2026-11-02
 > Sound Studio is a new workspace for engine sounds and sirens: rev engine mods on a dyno, run siren tones through an LVC-style controller, and install either to your FiveM server.

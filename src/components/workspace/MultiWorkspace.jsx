@@ -32,6 +32,7 @@ import {
   CameraSection,
   CameraShots,
   DeckButton,
+  ErrorText,
   FootFact,
   InspectorTabs,
   LightSection,
@@ -105,7 +106,7 @@ function SlotNote({ tone, children }) {
   return (
     <p className={`lv-slot-note is-${tone}`} role={tone === "error" ? "alert" : "status"}>
       <span className="lv-dot" aria-hidden="true" />
-      {children}
+      {tone === "error" && typeof children === "string" ? <ErrorText error={children} /> : children}
     </p>
   );
 }
