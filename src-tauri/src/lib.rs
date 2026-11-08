@@ -4426,7 +4426,7 @@ pub fn run() {
             juno::juno_sign_in_start,
             juno::juno_sign_in_reopen,
             juno::juno_sign_in_cancel,
-            juno::juno_sign_in_poll,
+            juno::juno_sign_in_state,
             juno::juno_sign_out,
             juno::juno_account,
             juno::juno_siren_pattern,

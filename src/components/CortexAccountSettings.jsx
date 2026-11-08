@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, LogOut, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { JUNO_CHANGED, announceJunoChange, callJuno, junoError } from "../lib/juno.js";
+import { JUNO_CHANGED, JUNO_SIGN_IN, announceJunoChange, callJuno, junoError } from "../lib/juno.js";
 
 const SENDS = "Vehicle name and details, resource folder and setting name, light count and positions, timing, colours, and your description.";
 const NEVER_SENDS = "Your models, textures or files.";
@@ -124,7 +124,6 @@ export default function CortexAccountSettings({ isTauriRuntime }) {
   const [account, setAccount] = useState(null);
   const [accountError, setAccountError] = useState("");
   const [note, setNote] = useState(null);
-  const waiting = useRef(false);
 
   const readLocal = useCallback(() => {
     invoke("juno_local")
@@ -172,46 +171,61 @@ export default function CortexAccountSettings({ isTauriRuntime }) {
   }, [signedIn, loadAccount]);
 
   useEffect(() => {
-    waiting.current = phase === "waiting";
-    if (phase !== "waiting" || !signIn) return undefined;
-    let timer = null;
-    let stopped = false;
-    const poll = () => {
-      callJuno("juno_sign_in_poll")
-        .then((answer) => {
-          if (stopped) return;
-          if (answer?.status === "done") {
-            setPhase("idle");
-            setSignIn(null);
-            setNote({ tone: "ok", text: "Signed in." });
-            announceJunoChange();
-            readStatus();
-            return;
-          }
-          timer = setTimeout(poll, signIn.interval * 1000);
-        })
-        .catch((error) => {
-          if (stopped) return;
-          setPhase("idle");
-          setSignIn(null);
-          if (error.code !== "cancelled") setNote({ tone: "error", text: error.message });
-        });
+    if (!isTauriRuntime) return undefined;
+    let alive = true;
+    let settled = false;
+    invoke("juno_sign_in_state")
+      .then((current) => {
+        if (!alive || settled) return;
+        if (current?.active) {
+          setSignIn({ userCode: current.userCode, opened: Boolean(current.opened), offline: Boolean(current.offline) });
+          setPhase((value) => (value === "idle" ? "waiting" : value));
+        } else if (current?.error?.message && current.error.code !== "cancelled") {
+          setNote({ tone: "error", text: current.error.message });
+        }
+      })
+      .catch(() => {});
+    const onSignIn = (event) => {
+      const detail = event.detail || {};
+      if (detail.status === "offline" || detail.status === "waiting") {
+        setSignIn((current) => (current ? { ...current, offline: detail.status === "offline" } : current));
+        return;
+      }
+      settled = true;
+      setPhase("idle");
+      setSignIn(null);
+      if (detail.status === "done") {
+        setSignedIn(true);
+        setNote({ tone: "ok", text: "Signed in." });
+        readStatus();
+      } else if (detail.code !== "cancelled") {
+        setNote({ tone: "error", text: detail.message || "Sign-in didn't finish. Sign in again to retry." });
+      }
     };
-    timer = setTimeout(poll, signIn.interval * 1000);
+    window.addEventListener(JUNO_SIGN_IN, onSignIn);
     return () => {
-      stopped = true;
-      clearTimeout(timer);
+      alive = false;
+      window.removeEventListener(JUNO_SIGN_IN, onSignIn);
     };
-  }, [phase, signIn, readStatus]);
-
-  useEffect(() => () => {
-    if (waiting.current) invoke("juno_sign_in_cancel").catch(() => {});
-  }, []);
+  }, [isTauriRuntime, readStatus]);
 
   const cancel = () => {
-    if (phase === "waiting") invoke("juno_sign_in_cancel").catch(() => {});
+    invoke("juno_sign_in_cancel").catch(() => {});
     setPhase("idle");
     setSignIn(null);
+  };
+
+  const reopen = () => {
+    invoke("juno_sign_in_reopen")
+      .then(() => setSignIn((current) => (current ? { ...current, opened: true } : current)))
+      .catch((error) => {
+        const failure = junoError(error);
+        if (failure.code === "cancelled") {
+          setPhase("idle");
+          setSignIn(null);
+        }
+        setNote({ tone: "error", text: failure.message });
+      });
   };
 
   const start = async () => {
@@ -219,8 +233,8 @@ export default function CortexAccountSettings({ isTauriRuntime }) {
     setNote(null);
     try {
       const started = await callJuno("juno_sign_in_start");
-      setSignIn(started);
-      setPhase("waiting");
+      setSignIn({ userCode: started?.userCode || "", opened: Boolean(started?.opened), offline: false });
+      setPhase((value) => (value === "starting" ? "waiting" : value));
     } catch (error) {
       setPhase("idle");
       setNote({ tone: "error", text: error.message });
@@ -289,13 +303,15 @@ export default function CortexAccountSettings({ isTauriRuntime }) {
       <div className="settings-row">
         <div className="settings-row-label">
           <div className="settings-row-title settings-juno-state">
-            <span className="settings-juno-dot is-live" aria-hidden="true" />
-            Waiting for Discord
+            <span className={`settings-juno-dot ${signIn.offline ? "is-warn" : "is-live"}`} aria-hidden="true" />
+            {signIn.offline ? "Can't reach Cortex" : "Waiting for approval"}
           </div>
           <div className="settings-row-desc">
-            {signIn.userCode
-              ? `${signIn.opened ? "Approve in your browser" : "Open the sign-in page"} and check it shows this code.`
-              : signIn.opened ? "Approve the sign-in in your browser." : "Open the sign-in page to approve it."}
+            {signIn.offline
+              ? "Studio keeps trying. Approve on gsdmods.com when you're back online."
+              : signIn.opened
+                ? "Approve on gsdmods.com and check it shows this code."
+                : "Open gsdmods.com to approve, and check it shows this code."}
           </div>
         </div>
         <div className="settings-juno-actions">
@@ -305,11 +321,9 @@ export default function CortexAccountSettings({ isTauriRuntime }) {
               <span className="settings-account-code">{signIn.userCode}</span>
             </>
           ) : null}
-          <button type="button" className="settings-mini" onClick={() => invoke("juno_sign_in_reopen", { url: signIn.url })
-            .then(() => setSignIn((current) => (current ? { ...current, opened: true } : current)))
-            .catch((error) => setNote({ tone: "error", text: junoError(error).message }))}>
+          <button type="button" className="settings-mini" onClick={reopen}>
             <ExternalLink aria-hidden="true" />
-            {signIn.opened ? "Open again" : "Open sign-in page"}
+            {signIn.opened ? "Open again" : "Open gsdmods.com"}
           </button>
           <button type="button" className="settings-mini is-quiet" onClick={cancel}>Cancel</button>
         </div>
@@ -321,19 +335,17 @@ export default function CortexAccountSettings({ isTauriRuntime }) {
         <div className="settings-row-label">
           <div className="settings-row-title">Not signed in</div>
           <div className="settings-row-desc">
-            {checking
+            {signedIn === null
               ? "Checking…"
-              : closed
-                ? "Sign-in opens when Juno does."
-                : "Optional and free, for Juno and Cortex Forge. Needs a Discord account with a verified email."}
+              : "Optional and free, for Juno and Cortex Forge. You sign in on gsdmods.com with Discord (verified email)."}
           </div>
         </div>
-        {!checking && !closed ? (
+        {signedIn === null ? null : (
           <button type="button" className="settings-mini is-primary settings-juno-discord" onClick={start} disabled={phase === "starting"}>
             <DiscordMark />
-            {phase === "starting" ? "Opening Discord…" : "Sign in with Discord"}
+            {phase === "starting" ? "Opening gsdmods.com…" : "Sign in with Discord"}
           </button>
-        ) : null}
+        )}
       </div>
     );
   }

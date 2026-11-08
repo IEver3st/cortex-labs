@@ -1799,6 +1799,10 @@ html.dark .settings-danger-btn {
   50% { opacity: 0.3; }
 }
 
+.settings-juno-state .settings-juno-dot.is-warn {
+  background: var(--cx-caution);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .settings-juno-dot.is-live { animation: none; }
 }

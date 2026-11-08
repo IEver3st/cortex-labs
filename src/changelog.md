@@ -1,3 +1,13 @@
+version: 6.1.0
+date: 2026-11-08
+> Sign in to Cortex Studio on gsdmods.com with Discord.
+
+## Improved
+- Sign in on gsdmods.com | Sign in with Discord in Settings > Cortex account opens gsdmods.com, where you log in with Discord and approve. The page shows your PC's name, the code from Settings and the account it signs in as, and you type the code when Studio is on a different network. A GSD account without Discord can link it on the same page.
+- Keeps waiting for you | Studio keeps waiting while you sign in, even with Settings closed, and comes back to the front once you approve. Sign-in no longer waits for Juno to open.
+
+---
+
 version: 6.0.0
 date: 2026-11-05
 > Make a whole store listing for a vehicle in one run, check a vehicle or a pack before you sell it, and put your own images, text and stripes straight onto a model.
