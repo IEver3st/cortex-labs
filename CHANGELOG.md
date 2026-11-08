@@ -4,6 +4,20 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [Unreleased]
+
+---
+
+## [6.1.0] - 2026-11-08
+
+Sign in to Cortex Studio on gsdmods.com with Discord.
+
+### Changed
+
+- **Cortex account sign-in** - **Sign in with Discord** in **Settings > Cortex account** now opens gsdmods.com, where you log in with Discord and approve the request. The page shows the code from Settings, your PC's name, how long ago the request started and the account it signs in as; when Studio is on a different network you type the code instead. A GSD account without Discord can link it on the same page. Studio keeps waiting even if you close Settings or switch tabs, comes back to the front once you approve, and stops when the request expires or is turned down. Sign-in no longer waits for Juno to open.
+
+---
+
 ## [6.0.0] - 2026-11-05
 
 Cortex Studio 6 makes a whole store listing for a vehicle in one run, checks a vehicle or a pack the way FiveM sees it before you sell it, and puts your own images, text and stripes straight onto a model.

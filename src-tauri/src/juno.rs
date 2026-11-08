@@ -1,12 +1,23 @@
 use reqwest::blocking::Client;
-use reqwest::Method;
+use reqwest::{Method, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+use tauri::{Emitter, Manager};
 
 const DEFAULT_GATEWAY: &str = "https://api.cortexsoftware.net";
 const GATEWAY_ENV: &str = "CORTEX_GATEWAY_URL";
+const SITE_ORIGIN: &str = "https://gsdmods.com";
+const SITE_ORIGIN_ENV: &str = "CORTEX_SIGNIN_ORIGIN";
+const SITE_LINK_PATH: &str = "/cortex/link";
+const GATEWAY_LINK_PATH: &str = "/link";
+const SIGN_IN_EVENT: &str = "juno-sign-in";
+const DEFAULT_POLL_SECS: u64 = 5;
+const MAX_POLL_SECS: u64 = 30;
+const OFFLINE_NOTICE_AFTER: Duration = Duration::from_secs(30);
+const SIGN_IN_FAILURE_SHOWN_FOR: Duration = Duration::from_secs(15 * 60);
 const VAULT_SERVICE: &str = "Cortex Studio Juno";
 const TOKEN_KEY: &str = "token";
 const DEVICE_KEY: &str = "device";
@@ -30,6 +41,13 @@ const MAX_USAGE_COUNT: u32 = 500;
 
 const SIGNED_OUT: &str =
     "You've been signed out of your Cortex account. Sign in again in Settings > Cortex account.";
+const SIGN_IN_DENIED: &str = "The sign-in was turned down on gsdmods.com. Sign in again to retry.";
+const SIGN_IN_EXPIRED: &str = "The sign-in request expired. Sign in again for a new one.";
+const SIGN_IN_CANCELLED: &str = "Sign-in was cancelled. Sign in again to retry.";
+const SIGN_IN_FAILED: &str = "Sign-in didn't finish on the Cortex server. Sign in again to retry.";
+const SIGN_IN_UNREADABLE: &str = "Cortex sent a sign-in Studio can't read. Try again.";
+const SIGN_IN_OFFLINE: &str =
+    "Can't reach Cortex right now. Studio keeps trying until the request expires.";
 const OFFLINE: &str = "Can't reach Juno. Check your connection and try again.";
 const BUSY: &str = "Juno is busy right now. Try again later; nothing was used.";
 
@@ -50,9 +68,30 @@ impl JunoError {
 
 type Res<T> = Result<T, JunoError>;
 
+struct SignIn {
+    id: u64,
+    device_code: String,
+    user_code: String,
+    url: String,
+    opened: bool,
+    offline: bool,
+    expires_at: Instant,
+}
+
+type SignInSlot = Arc<Mutex<Option<SignIn>>>;
+type SignInFailure = Arc<Mutex<Option<(JunoError, Instant)>>>;
+
 #[derive(Default)]
 pub struct JunoState {
-    sign_in: Arc<Mutex<Option<String>>>,
+    sign_in: SignInSlot,
+    sign_in_failure: SignInFailure,
+    next_sign_in: AtomicU64,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn gateway() -> String {
@@ -240,12 +279,52 @@ fn clipped(text: &str, max: usize) -> String {
         .to_string()
 }
 
-fn origin(url: &str) -> Option<&str> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))?;
-    let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    Some(&url[..url.len() - rest.len() + host_end])
+fn site_origin() -> String {
+    if cfg!(debug_assertions) {
+        if let Some(origin) = std::env::var(SITE_ORIGIN_ENV)
+            .ok()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
+            .filter(|value| value.starts_with("http://") || value.starts_with("https://"))
+        {
+            return origin;
+        }
+    }
+    SITE_ORIGIN.to_string()
+}
+
+fn same_origin(url: &Url, base: &str) -> bool {
+    Url::parse(base)
+        .map(|base| base.origin() == url.origin())
+        .unwrap_or(false)
+}
+
+fn sign_in_url_allowed(raw: &str) -> bool {
+    let Ok(url) = Url::parse(raw) else {
+        return false;
+    };
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return false;
+    }
+    (same_origin(&url, &site_origin()) && url.path() == SITE_LINK_PATH)
+        || (same_origin(&url, &gateway()) && url.path() == GATEWAY_LINK_PATH)
+}
+
+fn gateway_link(user_code: &str) -> Res<String> {
+    Url::parse_with_params(
+        &format!("{}{GATEWAY_LINK_PATH}", gateway()),
+        [("code", user_code)],
+    )
+    .map(String::from)
+    .map_err(|_| JunoError::new("bad_response", SIGN_IN_UNREADABLE))
+}
+
+fn device_name() -> String {
+    let computer = clipped(&std::env::var("COMPUTERNAME").unwrap_or_default(), 40);
+    if computer.is_empty() {
+        DEVICE_NAME.to_string()
+    } else {
+        format!("{DEVICE_NAME} on {computer}")
+    }
 }
 
 fn open_in_browser(url: &str) -> Res<()> {
@@ -311,86 +390,212 @@ pub async fn juno_open(page: String) -> Res<()> {
 }
 
 #[tauri::command]
-pub async fn juno_sign_in_start(state: tauri::State<'_, JunoState>) -> Res<Value> {
+pub async fn juno_sign_in_start(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, JunoState>,
+) -> Res<Value> {
     let slot = state.sign_in.clone();
+    let failure = state.sign_in_failure.clone();
+    let id = state.next_sign_in.fetch_add(1, Ordering::Relaxed) + 1;
+    *lock(&failure) = None;
     blocking(move || {
         let started = send(
             Method::POST,
             "/v1/auth/device",
             None,
-            Some(json!({ "name": DEVICE_NAME, "client": CLIENT })),
+            Some(json!({ "name": device_name(), "client": CLIENT })),
             SHORT,
         )?
         .unwrap_or(Value::Null);
+        let unreadable = || JunoError::new("bad_response", SIGN_IN_UNREADABLE);
         let device_code = started["device_code"]
             .as_str()
             .filter(|code| !code.is_empty())
-            .ok_or_else(|| {
-                JunoError::new(
-                    "bad_response",
-                    "Juno sent a sign-in Studio can't read. Try again.",
-                )
-            })?;
+            .ok_or_else(unreadable)?
+            .to_string();
         let user_code = started["user_code"]
             .as_str()
-            .unwrap_or_default()
+            .map(str::trim)
+            .filter(|code| !code.is_empty())
+            .ok_or_else(unreadable)?
             .to_string();
-        let base = gateway();
         let offered = started["verification_uri_complete"]
             .as_str()
             .unwrap_or_default();
-        let url = if origin(offered).is_some() && origin(offered) == origin(&base) {
+        let url = if sign_in_url_allowed(offered) {
             offered.to_string()
         } else {
-            format!("{base}/link?code={user_code}")
+            gateway_link(&user_code)?
         };
-        *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
-            Some(device_code.to_string());
+        let interval = started["interval"]
+            .as_u64()
+            .unwrap_or(DEFAULT_POLL_SECS)
+            .clamp(2, MAX_POLL_SECS);
+        let expires_in = started["expires_in"]
+            .as_u64()
+            .unwrap_or(600)
+            .clamp(60, 1800);
+        *lock(&slot) = Some(SignIn {
+            id,
+            device_code,
+            user_code: user_code.clone(),
+            url: url.clone(),
+            opened: false,
+            offline: false,
+            expires_at: Instant::now() + Duration::from_secs(expires_in),
+        });
         let opened = open_in_browser(&url).is_ok();
+        if let Some(flow) = lock(&slot).as_mut().filter(|flow| flow.id == id) {
+            flow.opened = opened;
+        }
+        let watched = slot.clone();
+        std::thread::spawn(move || watch_sign_in(app, watched, failure, id, interval));
         Ok(json!({
             "userCode": user_code,
-            "url": url,
             "opened": opened,
-            "interval": started["interval"].as_u64().unwrap_or(5).clamp(2, 30),
-            "expiresIn": started["expires_in"].as_u64().unwrap_or(600),
+            "expiresIn": expires_in,
         }))
     })
     .await
 }
 
 #[tauri::command]
-pub async fn juno_sign_in_reopen(url: String) -> Res<()> {
+pub async fn juno_sign_in_state(state: tauri::State<'_, JunoState>) -> Res<Value> {
+    Ok(match lock(&state.sign_in).as_ref() {
+        Some(flow) if Instant::now() < flow.expires_at => json!({
+            "active": true,
+            "userCode": flow.user_code,
+            "opened": flow.opened,
+            "offline": flow.offline,
+            "expiresIn": flow.expires_at.saturating_duration_since(Instant::now()).as_secs(),
+        }),
+        _ => match lock(&state.sign_in_failure).as_ref() {
+            Some((error, at)) if at.elapsed() < SIGN_IN_FAILURE_SHOWN_FOR => {
+                json!({ "active": false, "error": error })
+            }
+            _ => json!({ "active": false }),
+        },
+    })
+}
+
+#[tauri::command]
+pub async fn juno_sign_in_reopen(state: tauri::State<'_, JunoState>) -> Res<()> {
+    let slot = state.sign_in.clone();
     blocking(move || {
-        if origin(&url).is_none() || origin(&url) != origin(&gateway()) {
-            return Err(JunoError::new(
-                "bad_request",
-                "That isn't a Cortex sign-in page.",
-            ));
+        let (id, url) = lock(&slot)
+            .as_ref()
+            .map(|flow| (flow.id, flow.url.clone()))
+            .ok_or_else(|| JunoError::new("cancelled", SIGN_IN_CANCELLED))?;
+        open_in_browser(&url)?;
+        if let Some(flow) = lock(&slot).as_mut().filter(|flow| flow.id == id) {
+            flow.opened = true;
         }
-        open_in_browser(&url)
+        Ok(())
     })
     .await
 }
 
 #[tauri::command]
-pub fn juno_sign_in_cancel(state: tauri::State<'_, JunoState>) {
-    *state
-        .sign_in
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+pub async fn juno_sign_in_cancel(state: tauri::State<'_, JunoState>) -> Res<()> {
+    *lock(&state.sign_in) = None;
+    *lock(&state.sign_in_failure) = None;
+    Ok(())
 }
 
-#[tauri::command]
-pub async fn juno_sign_in_poll(state: tauri::State<'_, JunoState>) -> Res<Value> {
-    let slot = state.sign_in.clone();
-    blocking(move || {
-        let Some(device_code) = slot
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-        else {
-            return Err(JunoError::new("cancelled", "Sign-in was cancelled."));
+fn mark_offline(slot: &SignInSlot, id: u64, offline: bool) {
+    if let Some(flow) = lock(slot).as_mut().filter(|flow| flow.id == id) {
+        flow.offline = offline;
+    }
+}
+
+fn current_flow(slot: &SignInSlot, id: u64) -> Option<(String, Instant)> {
+    lock(slot)
+        .as_ref()
+        .filter(|flow| flow.id == id)
+        .map(|flow| (flow.device_code.clone(), flow.expires_at))
+}
+
+fn announce_sign_in(app: &tauri::AppHandle, payload: Value) {
+    let _ = app.emit(SIGN_IN_EVENT, payload);
+}
+
+fn end_sign_in(
+    app: &tauri::AppHandle,
+    slot: &SignInSlot,
+    failure: &SignInFailure,
+    id: u64,
+    error: JunoError,
+) {
+    {
+        let mut current = lock(slot);
+        if current.as_ref().map(|flow| flow.id) != Some(id) {
+            return;
+        }
+        *current = None;
+        *lock(failure) = Some((error.clone(), Instant::now()));
+    }
+    announce_sign_in(
+        app,
+        json!({ "status": "error", "code": error.code, "message": error.message }),
+    );
+}
+
+fn keep_sign_in(slot: &SignInSlot, id: u64, issued: &Value) -> Res<Option<String>> {
+    let unreadable = || JunoError::new("bad_response", SIGN_IN_UNREADABLE);
+    let token = issued["token"]
+        .as_str()
+        .filter(|token| !token.is_empty())
+        .ok_or_else(unreadable)?;
+    let device = issued["device_id"]
+        .as_str()
+        .filter(|device| !device.is_empty())
+        .ok_or_else(unreadable)?;
+    let mut current = lock(slot);
+    if current.as_ref().map(|flow| flow.id) != Some(id) {
+        return Ok(None);
+    }
+    vault_write(DEVICE_KEY, device)?;
+    if let Err(error) = vault_write(TOKEN_KEY, token) {
+        let _ = vault_forget(DEVICE_KEY);
+        return Err(error);
+    }
+    *current = None;
+    Ok(Some(token.to_string()))
+}
+
+fn bring_to_front(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+    }
+}
+
+fn watch_sign_in(
+    app: tauri::AppHandle,
+    slot: SignInSlot,
+    failure: SignInFailure,
+    id: u64,
+    mut interval: u64,
+) {
+    let mut offline_since: Option<Instant> = None;
+    let mut told_offline = false;
+    loop {
+        std::thread::sleep(Duration::from_secs(interval));
+        let Some((device_code, expires_at)) = current_flow(&slot, id) else {
+            return;
         };
+        if Instant::now() >= expires_at {
+            end_sign_in(
+                &app,
+                &slot,
+                &failure,
+                id,
+                JunoError::new("expired_token", SIGN_IN_EXPIRED),
+            );
+            return;
+        }
         let answer = send(
             Method::POST,
             "/v1/auth/device/token",
@@ -398,58 +603,78 @@ pub async fn juno_sign_in_poll(state: tauri::State<'_, JunoState>) -> Res<Value>
             Some(json!({ "device_code": device_code })),
             SHORT,
         );
-        let clear = || *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-        let issued = match answer {
-            Ok(value) => value.unwrap_or(Value::Null),
-            Err(error) if error.code == "authorization_pending" || error.code == "slow_down" => {
-                return Ok(json!({ "status": "pending" }));
+        let error = match answer {
+            Ok(issued) => {
+                match keep_sign_in(&slot, id, &issued.unwrap_or(Value::Null)) {
+                    Ok(Some(token)) => {
+                        std::thread::spawn(move || end_pending_sessions(&token));
+                        bring_to_front(&app);
+                        announce_sign_in(&app, json!({ "status": "done" }));
+                    }
+                    Ok(None) => {}
+                    Err(error) => end_sign_in(&app, &slot, &failure, id, error),
+                }
+                return;
             }
-            Err(error) if error.code == "offline" => return Ok(json!({ "status": "pending" })),
-            Err(error) if error.code == "access_denied" => {
-                clear();
-                return Err(JunoError::new(
-                    "access_denied",
-                    "The sign-in was turned down in the browser. Sign in again to retry.",
-                ));
-            }
-            Err(error) if error.code == "expired_token" => {
-                clear();
-                return Err(JunoError::new(
-                    "expired_token",
-                    "The sign-in code expired. Sign in again for a new code.",
-                ));
-            }
-            Err(error) => {
-                clear();
-                return Err(error);
-            }
+            Err(error) => error,
         };
-        let token = issued["token"]
-            .as_str()
-            .filter(|token| !token.is_empty())
-            .ok_or_else(|| {
-                JunoError::new(
-                    "bad_response",
-                    "Juno sent a sign-in Studio can't read. Try again.",
-                )
-            })?;
-        {
-            let mut current = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if current.as_deref() != Some(device_code.as_str()) {
-                return Err(JunoError::new("cancelled", "Sign-in was cancelled."));
+        match error.code.as_str() {
+            "offline" | "internal_error" => {
+                let since = *offline_since.get_or_insert_with(Instant::now);
+                if !told_offline && since.elapsed() >= OFFLINE_NOTICE_AFTER {
+                    told_offline = true;
+                    mark_offline(&slot, id, true);
+                    announce_sign_in(
+                        &app,
+                        json!({ "status": "offline", "message": SIGN_IN_OFFLINE }),
+                    );
+                }
+                continue;
             }
-            vault_write(TOKEN_KEY, token)?;
-            match issued["device_id"].as_str().filter(|id| !id.is_empty()) {
-                Some(id) => vault_write(DEVICE_KEY, id)?,
-                None => vault_forget(DEVICE_KEY)?,
+            "authorization_pending" => {}
+            "slow_down" | "rate_limited" => interval = (interval + 5).min(MAX_POLL_SECS),
+            "access_denied" => {
+                end_sign_in(
+                    &app,
+                    &slot,
+                    &failure,
+                    id,
+                    JunoError::new("access_denied", SIGN_IN_DENIED),
+                );
+                return;
             }
-            *current = None;
+            "expired_token" => {
+                end_sign_in(
+                    &app,
+                    &slot,
+                    &failure,
+                    id,
+                    JunoError::new("expired_token", SIGN_IN_EXPIRED),
+                );
+                return;
+            }
+            "account_disabled" | "bad_response" | "vault" => {
+                end_sign_in(&app, &slot, &failure, id, error);
+                return;
+            }
+            _ => {
+                end_sign_in(
+                    &app,
+                    &slot,
+                    &failure,
+                    id,
+                    JunoError::new(&error.code, SIGN_IN_FAILED),
+                );
+                return;
+            }
         }
-        let token = token.to_string();
-        std::thread::spawn(move || end_pending_sessions(&token));
-        Ok(json!({ "status": "done" }))
-    })
-    .await
+        offline_since = None;
+        if told_offline {
+            told_offline = false;
+            mark_offline(&slot, id, false);
+            announce_sign_in(&app, json!({ "status": "waiting" }));
+        }
+    }
 }
 
 fn end_pending_sessions(token: &str) {

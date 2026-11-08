@@ -32,6 +32,7 @@ import { clearSession } from "./lib/prefs";
 import UnsavedChangesDialog from "./components/UnsavedChangesDialog";
 import { loadOnboarded, setOnboarded, loadPrefs, PREFS_UPDATED_EVENT } from "./lib/prefs";
 import { trackUsage } from "./lib/usage";
+import { watchJunoSignIn } from "./lib/juno";
 import {
   WORKSPACE_MODES,
   WORKSPACE_MODE_GROUPS,
@@ -512,6 +513,8 @@ export default function Shell() {
       if (unlisten) unlisten();
     };
   }, [isTauriRuntime, handleExternalFileOpen, handleSirenOpen]);
+
+  useEffect(() => (isTauriRuntime ? watchJunoSignIn() : undefined), [isTauriRuntime]);
 
   // Flush pending tab activation after tabs state updates
   useEffect(() => {

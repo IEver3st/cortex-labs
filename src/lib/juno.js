@@ -1,10 +1,35 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export const JUNO_CHANGED = "cortex:juno-changed";
+export const JUNO_SIGN_IN = "cortex:juno-sign-in";
+const NATIVE_SIGN_IN_EVENT = "juno-sign-in";
 
 export function announceJunoChange() {
   window.dispatchEvent(new CustomEvent(JUNO_CHANGED));
+}
+
+export function watchJunoSignIn() {
+  let stop = null;
+  let cancelled = false;
+  listen(NATIVE_SIGN_IN_EVENT, (event) => {
+    const detail = event.payload && typeof event.payload === "object" ? event.payload : {};
+    window.dispatchEvent(new CustomEvent(JUNO_SIGN_IN, { detail }));
+    if (detail.status !== "done") return;
+    announceJunoChange();
+    window.dispatchEvent(new CustomEvent("cortex:open-settings"));
+    window.dispatchEvent(new CustomEvent("cortex:nav-settings", { detail: { section: "account" } }));
+  })
+    .then((unlisten) => {
+      if (cancelled) unlisten();
+      else stop = unlisten;
+    })
+    .catch(() => {});
+  return () => {
+    cancelled = true;
+    if (stop) stop();
+  };
 }
 
 export function junoError(error) {

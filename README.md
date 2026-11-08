@@ -110,7 +110,7 @@ What Juno sends, shown before you sign in:
 
 > Juno writes siren patterns from a description. It needs a free Cortex account, signed in with Discord (verified email). Each request sends the vehicle's name and details, its resource folder and setting name, the number of lights and where they sit, the timing and colours, and your sentence, to the AI model Juno runs on. Never your models, textures or files. Requests and answers are kept for 30 days, then deleted. It's the same account and monthly allowance as Cortex Forge. Each new description uses a little of the allowance; Juno's one automatic retry after a failed check is free, and so is asking the exact same thing again unless that answer failed its checks. [Terms](https://api.cortexsoftware.net/terms) · [Privacy](https://api.cortexsoftware.net/privacy)
 
-The sign-in is kept in Windows Credential Manager, never in Cortex Studio's settings. **Sign out** in the same section signs this PC out of your Cortex account.
+You sign in on gsdmods.com with Discord and approve the request there; Studio picks it up on its own. The sign-in is kept in Windows Credential Manager, never in Cortex Studio's settings. **Sign out** in the same section signs this PC out of your Cortex account.
 
 ### Preview capture
 
