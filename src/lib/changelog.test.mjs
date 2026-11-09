@@ -190,10 +190,10 @@ test("toMarkdown renders one release", () => {
 
 test("bundled src/changelog.md parses into ordered, dated releases", () => {
   const raw = readFileSync(fileURLToPath(new URL("../changelog.md", import.meta.url)), "utf8");
-  const entries = parseChangelog(raw, { appVersion: "6.1.0" });
+  const entries = parseChangelog(raw, { appVersion: "6.1.1" });
   const versions = entries.map((e) => e.version);
   assert.deepEqual(versions, [
-    "6.1.0", "6.0.0", "5.8.0", "5.7.0", "5.6.0", "5.5.0", "5.4.0", "5.3.5", "5.3.0", "5.2.0", "5.1.1", "5.1.0", "5.0.4", "5.0.3", "5.0.2", "5.0.1", "5.0.0", "4.1.0", "4.0.0", "3.8.1", "3.8.0", "3.7.0", "3.5.0", "3.1.1", "3.1.0", "3.0.0", "2.3.3", "1.0.0",
+    "6.1.1", "6.1.0", "6.0.0", "5.8.0", "5.7.0", "5.6.0", "5.5.0", "5.4.0", "5.3.5", "5.3.0", "5.2.0", "5.1.1", "5.1.0", "5.0.4", "5.0.3", "5.0.2", "5.0.1", "5.0.0", "4.1.0", "4.0.0", "3.8.1", "3.8.0", "3.7.0", "3.5.0", "3.1.1", "3.1.0", "3.0.0", "2.3.3", "1.0.0",
   ]);
   for (const entry of entries) {
     assert.ok(entry.date, `${entry.version} has a date`);
@@ -201,8 +201,8 @@ test("bundled src/changelog.md parses into ordered, dated releases", () => {
     for (const item of entry.items) assert.ok(item.title, `${entry.version} item has a title`);
   }
   // The installed version's notes come first, so they open after an update.
-  assert.equal(entries[0].version, "6.1.0");
-  assert.ok(entries[0].summary, "6.1.0 has a summary");
-  assert.equal(entries[17].name, "PRISM");
-  assert.equal(entries[18].name, "ROAN");
+  assert.equal(entries[0].version, "6.1.1");
+  assert.ok(entries[0].summary, "6.1.1 has a summary");
+  assert.equal(entries[18].name, "PRISM");
+  assert.equal(entries[19].name, "ROAN");
 });

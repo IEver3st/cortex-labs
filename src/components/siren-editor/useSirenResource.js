@@ -99,6 +99,7 @@ export default function useSirenResource({ modelPath, modelInfo, isTauriRuntime,
       name: modelName,
       count: count || 2,
       headings: modelInfo?.lights?.sirenHeadings,
+      scaleFactor: modelInfo?.lights?.sirenScaleFactor,
     });
   };
 

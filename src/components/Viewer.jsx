@@ -74,7 +74,7 @@ import { normalizeModelRotation, orientModel } from "../lib/model-orientation.js
 import { isYtdTexturePath, resolveYtdTexturePath } from "../lib/ytd-texture.js";
 import { createPlateOverlay, findPlateMeshes } from "../lib/license-plate-overlay.js";
 import { buildPlateImage } from "../lib/license-plate-assets.js";
-import { anyLightOn, summarizeVehicleLights } from "../lib/emergency-lights.js";
+import { anyLightOn, classifyLightMesh, inferSirenPacking, summarizeVehicleLights } from "../lib/emergency-lights.js";
 import { stabilizeObjectForWorld } from "../lib/model-normalization.js";
 import { createViewerStage } from "../lib/viewer-stage.js";
 import {
@@ -4542,12 +4542,21 @@ export default memo(ViewerComponent);
 
 function summarizeModelLights(object) {
   const natives = [];
+  const litSirenEmitters = [];
   let lightBones = [];
   object?.traverse((child) => {
-    if (child.isMesh && child.userData?.nativeMaterial && child.userData.nativeLodActive !== false) natives.push(child.userData.nativeMaterial);
+    if (child.isMesh && child.userData?.nativeMaterial && child.userData.nativeLodActive !== false) {
+      natives.push(child.userData.nativeMaterial);
+      const light = classifyLightMesh(child.userData.nativeMaterial);
+      const position = child.geometry?.attributes?.position;
+      if (light?.kind === "siren" && light.lit && position?.itemSize === 3 && !position.isInterleavedBufferAttribute) {
+        litSirenEmitters.push({ siren: light.siren, positions: position.array, indices: child.geometry.index?.array || null });
+      }
+    }
     if (!lightBones.length && Array.isArray(child.userData?.lightBones)) lightBones = child.userData.lightBones;
   });
-  return summarizeVehicleLights(natives, lightBones);
+  const packing = inferSirenPacking(litSirenEmitters);
+  return { ...summarizeVehicleLights(natives, lightBones), sirenScaleFactor: packing.scaleFactor, packedSirens: packing.sirens };
 }
 
 // Per-model mod kit state and per-part native texture state. Kept out of

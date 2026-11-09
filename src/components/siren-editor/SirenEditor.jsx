@@ -197,6 +197,18 @@ function sirenTitle(light, index, hasMesh) {
   return parts.join(" · ");
 }
 
+function lastVisibleColumn(strip) {
+  const lamp = strip.querySelector(".se-lamp-group > .se-col:last-child");
+  if (lamp) return lamp;
+  const ghostBlock = strip.querySelector(".se-ghosts");
+  const ghostEdge = ghostBlock ? ghostBlock.getBoundingClientRect().right + 0.5 : 0;
+  const ghosts = ghostBlock ? [...ghostBlock.children] : [];
+  const shown = ghosts.filter((ghost) => ghost.offsetTop === ghosts[0].offsetTop && ghost.getBoundingClientRect().right <= ghostEdge);
+  if (shown.length) return shown[shown.length - 1];
+  const sirens = strip.querySelectorAll(".se-head-cols > .se-col");
+  return sirens[sirens.length - 1] || null;
+}
+
 function lampInitials(label) {
   return label.split(/\s+/).map((word) => word[0]).join("").toUpperCase();
 }
@@ -212,9 +224,14 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
   const speed = Number.isFinite(lights.speed) ? lights.speed : 1;
   const modelLights = s.metaModelInfo?.lights || null;
   const meshSirens = useMemo(() => new Set(modelLights?.sirens || []), [modelLights?.sirens]);
+  const modelScaleFactor = modelLights?.sirenScaleFactor || null;
+  const sizedForModel = (newLights) => (modelScaleFactor
+    ? newLights.map((light) => ({ ...light, scale: true, scaleFactor: modelScaleFactor }))
+    : newLights);
   const selection = editor.selection;
   const selected = useMemo(() => new Set(selection), [selection]);
   const primary = draft?.sirens[editor.primary] || null;
+  const lampLanes = Boolean(editor.lampLanes);
   const bps = beatsPerSecond(draft);
   const playing = s.sirenTrial || draft;
   const playBps = beatsPerSecond(playing);
@@ -273,7 +290,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
       cell.classList.add("is-now");
       const cellRect = cell.getBoundingClientRect();
       const trackRect = band.parentElement.getBoundingClientRect();
-      const lastRect = cols.querySelector(".se-lamp-group > .se-col:last-child")?.getBoundingClientRect();
+      const lastRect = lastVisibleColumn(cols)?.getBoundingClientRect();
       band.style.transform = `translateY(${cellRect.top - trackRect.top - 2}px)`;
       band.style.height = `${cellRect.height + 4}px`;
       band.style.width = lastRect ? `${lastRect.right - trackRect.left + 2}px` : "";
@@ -314,7 +331,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
       cancelAnimationFrame(frame);
       cleanup();
     };
-  }, [draft, playing, playBps, running, muted, switches.sirens, s, seekTick]);
+  }, [draft, playing, playBps, running, muted, switches.sirens, s, seekTick, lampLanes]);
 
   /* Draft operations. */
   const count = draft?.sirens.length || 0;
@@ -355,22 +372,26 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
       const width = parseFloat(style.getPropertyValue("--se-col-w")) || COLUMN_MAX;
       const gap = parseFloat(style.getPropertyValue("--se-col-gap")) || COLUMN_GAP;
       const ghosts = cols.querySelector(".se-ghosts");
-      const spare = ghosts ? ghosts.getBoundingClientRect().width + gap : 0;
-      const gapCount = n + cols.querySelectorAll(".se-col.is-sub").length;
-      const used = flexible[n - 1].getBoundingClientRect().right - cols.getBoundingClientRect().left - spare;
-      const fixed = used - n * width - gapCount * gap;
+      const placed = cols.querySelectorAll(".se-col:not(.se-col-steps):not(.is-ghost)");
+      const last = placed[placed.length - 1];
+      const ghostsBeforeLast = Boolean(ghosts) && Boolean(ghosts.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const gapsToLast = placed.length + (ghostsBeforeLast ? 1 : 0);
+      const gapCount = placed.length + (ghosts ? 1 : 0);
+      const used = last.getBoundingClientRect().right - cols.getBoundingClientRect().left - (ghostsBeforeLast ? ghosts.getBoundingClientRect().width : 0);
+      const fixed = used - n * width - gapsToLast * gap;
       const columnFor = (between) => Math.floor((room - fixed - gapCount * between) / n);
       const tight = columnFor(COLUMN_GAP) < COLUMN_TIGHT;
       const nextGap = tight ? COLUMN_GAP_TIGHT : COLUMN_GAP;
       const next = Math.max(COLUMN_MIN, Math.min(COLUMN_MAX, columnFor(nextGap)));
       if (next !== width) box.style.setProperty("--se-col-w", `${next}px`);
       if (nextGap !== gap) box.style.setProperty("--se-col-gap", `${nextGap}px`);
+      ghosts?.classList.toggle("is-cramped", ghosts.getBoundingClientRect().width < next);
     };
     fit();
     const watch = new ResizeObserver(fit);
     watch.observe(box);
     return () => watch.disconnect();
-  }, [columns.length, rotating]);
+  }, [columns.length, rotating, lampLanes]);
   const hasDraft = Boolean(draft);
   useLayoutEffect(() => {
     const box = canvas.current;
@@ -399,7 +420,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
     light.flash = true;
     light.flashiness.sequencer = setSequencerStep(0, step, true);
     stroke.current = { kind: "step", value: true, key: `paint:${Date.now()}` };
-    append([light]);
+    append(sizedForModel([light]));
   };
   const ghostStart = useRef(paintGhost);
   ghostStart.current = paintGhost;
@@ -417,7 +438,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
     </div>
   ) : null), [count]);
   const duplicate = () => append(duplicateLights(draft.sirens, sortedSelection));
-  const addDualHead = () => append(createDualHead(draft.sirens));
+  const addDualHead = () => append(sizedForModel(createDualHead(draft.sirens)));
   const selectionPair = selection.length === 2 ? sortedSelection : null;
   const canPair = Boolean(selectionPair) && heads.get(selectionPair[0])?.[1] !== selectionPair[1];
   const canSplit = selection.some((index) => heads.has(index));
@@ -459,7 +480,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
   // its lights after the last siren.
   const applyLightPreset = (presetId) => {
     if (selection.length) edit((current) => applySirenPreset(current, selection, presetId));
-    else append(presetLights(presetId));
+    else append(sizedForModel(presetLights(presetId)));
   };
   const applyPreset = (preset, alternate) => {
     const order = new Map(sortedSelection.map((index, rank) => [index, rank]));
@@ -885,17 +906,19 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
 
               {ghosts}
 
-              <div className="se-col-group se-lamp-group" role="group" aria-label="Head and tail lights">
-                {LAMP_KEYS.map((key) => (
-                  <div key={key} className="se-col is-lamp">
-                    <div className="se-col-top">
-                      <span className="se-col-head is-lamp" title={`${LAMP_LABELS[key]} sequencer while the sirens run`}>{lampInitials(LAMP_LABELS[key])}</span>
+              {lampLanes ? (
+                <div className="se-col-group se-lamp-group" role="group" aria-label="Head and tail lights">
+                  {LAMP_KEYS.map((key) => (
+                    <div key={key} className="se-col is-lamp">
+                      <div className="se-col-top">
+                        <span className="se-col-head is-lamp" title={`${LAMP_LABELS[key]} sequencer while the sirens run`}>{lampInitials(LAMP_LABELS[key])}</span>
+                      </div>
+                      <Lane sequencer={draft.lamps?.[key]?.sequencer ?? 0} color={key.includes("Head") ? "#fff4e0" : "#ff1a0a"} kind="lamp"
+                        label={`${LAMP_LABELS[key]} pattern`} onPaint={paintLamp(key)} />
                     </div>
-                    <Lane sequencer={draft.lamps?.[key]?.sequencer ?? 0} color={key.includes("Head") ? "#fff4e0" : "#ff1a0a"} kind="lamp"
-                      label={`${LAMP_LABELS[key]} pattern`} onPaint={paintLamp(key)} />
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
           <span ref={fade} className="se-canvas-fade" aria-hidden="true" hidden />

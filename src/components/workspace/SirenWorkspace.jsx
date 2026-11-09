@@ -47,9 +47,14 @@ import {
   withShortcut,
 } from "./parts";
 
-// The narrowest the sequencer column gets from dragging the right column;
-// matches --sw-main-min in SirenEditor.css, which also holds on window resize.
-const SEQUENCER_MIN = 660;
+const SEQUENCER_FLOOR_WITHOUT_RAIL = 660;
+const SEQUENCER_GRID_MIN = 410;
+const SIDE_MAX = 1400;
+
+function sequencerFloor(root) {
+  const rail = root.querySelector(".sw-main .se-rail");
+  return rail?.offsetWidth ? rail.offsetWidth + SEQUENCER_GRID_MIN : SEQUENCER_FLOOR_WITHOUT_RAIL;
+}
 
 const VIEWS = [
   { id: "setting", label: "Setting", Icon: Settings2 },
@@ -109,7 +114,7 @@ function patternAction(editor, resource, canCreate) {
       else if (canCreate) editor.start(adoptPattern(resource.createSetting(), pattern));
     },
     disabled: !editor.draft && !canCreate,
-    title: `Replace sirens 1 to ${count} with the pattern you built without a vehicle: colours, patterns, tempo and lamp patterns. The vehicle keeps its id, name, file and each siren's facing.${kept}`,
+    title: `Replace sirens 1 to ${count} with the pattern you built without a vehicle: colours, patterns, tempo and lamp patterns. The vehicle keeps its id, name, file and each siren's facing and scale.${kept}`,
   };
 }
 
@@ -408,7 +413,7 @@ function SirenSide({ s, ps, resource, els, elsMode, hasModel, inert, setWidth, c
 
   return (
     <aside className="lv-inspector sw-side" aria-label="Selection and vehicle" inert={inert}>
-      <PaneResizer side="insp" label="Resize the preview and panel column" setWidth={setWidth} minStage={SEQUENCER_MIN} />
+      <PaneResizer side="insp" label="Resize the preview and panel column" setWidth={setWidth} minStage={sequencerFloor} maxWidth={SIDE_MAX} />
       <header className="sw-side-head">
         <h3 className="cx-display sw-side-title" title={title}>{title}</h3>
         <div className="sw-side-views" role="group" aria-label="Panel">
@@ -486,7 +491,7 @@ function longestWordLength(text) {
 
 export default function SirenWorkspace({ s, viewer, overlays }) {
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const panes = usePaneWidths("cortex.sirens.panes");
+  const panes = usePaneWidths("cortex.sirens.panes", { inspectorMax: SIDE_MAX });
   const preview = usePreviewHeight("cortex.sirens.previewHeight");
   // The preview fills the workspace in focus mode, shared with the frame's
   // focus toggle and its hotkey.
@@ -638,7 +643,7 @@ export default function SirenWorkspace({ s, viewer, overlays }) {
             title="Resize the preview. Double-click for the default height." tabIndex={0}
             onPointerDown={preview.onPointerDown} onKeyDown={preview.onKeyDown} onDoubleClick={preview.reset} />
         )}
-        <PaneResizer side="insp" label="Resize the preview and inspector column" setWidth={panes.setWidth} minStage={SEQUENCER_MIN} />
+        <PaneResizer side="insp" label="Resize the preview and inspector column" setWidth={panes.setWidth} minStage={sequencerFloor} maxWidth={SIDE_MAX} />
       </section>
 
       <SirenSide s={s} ps={ps} resource={resource} els={els} elsMode={elsMode} hasModel={hasModel}

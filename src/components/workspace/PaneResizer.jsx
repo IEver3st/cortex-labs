@@ -7,12 +7,12 @@ import { useCallback, useEffect, useState } from "react";
 const LIMITS = { dock: [220, 520], insp: [260, 560] };
 const MIN_STAGE = 360;
 
-function readWidths(storageKey) {
+function readWidths(storageKey, limits) {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) || "null");
     const pick = (side) => {
       const value = Number(parsed?.[side]);
-      const [min, max] = LIMITS[side];
+      const [min, max] = limits[side];
       return Number.isFinite(value) && value >= min && value <= max ? Math.round(value) : null;
     };
     return { dock: pick("dock"), insp: pick("insp") };
@@ -21,8 +21,8 @@ function readWidths(storageKey) {
   }
 }
 
-export function usePaneWidths(storageKey) {
-  const [widths, setWidths] = useState(() => readWidths(storageKey));
+export function usePaneWidths(storageKey, { inspectorMax = LIMITS.insp[1] } = {}) {
+  const [widths, setWidths] = useState(() => readWidths(storageKey, { ...LIMITS, insp: [LIMITS.insp[0], inspectorMax] }));
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(widths));
@@ -110,13 +110,15 @@ export function usePreviewHeight(storageKey) {
  * (side "insp"). Drag or use the arrow keys; double-click returns to the
  * default width. `minStage` raises the floor kept for the centre column.
  */
-export function PaneResizer({ side, label, setWidth, minStage = MIN_STAGE }) {
+export function PaneResizer({ side, label, setWidth, minStage = MIN_STAGE, maxWidth = LIMITS[side][1] }) {
   const layoutWidth = (element) => (element ? element.offsetWidth || element.getBoundingClientRect().width : 0);
   const clampFor = (element, value) => {
-    const [min, max] = LIMITS[side];
+    const min = LIMITS[side][0];
+    const max = maxWidth;
     const root = element.closest(".lv-root");
     const other = root?.querySelector(side === "dock" ? ".lv-inspector" : ".lv-dock");
-    const room = root ? layoutWidth(root) - layoutWidth(other) - minStage : max;
+    const stageFloor = typeof minStage === "function" && root ? minStage(root) : Number(minStage) || MIN_STAGE;
+    const room = root ? layoutWidth(root) - layoutWidth(other) - stageFloor : max;
     return Math.round(Math.max(min, Math.min(max, room, value)));
   };
   const paneWidth = (element) => layoutWidth(element.parentElement);

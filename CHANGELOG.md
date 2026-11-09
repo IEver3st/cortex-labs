@@ -8,6 +8,22 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [6.1.1] - 2026-11-09
+
+Sirens: a new setting lights the lenses on models with small light emitters, the head and tail light lanes can be hidden, and the preview drags much wider.
+
+### Changed
+
+- **Sirens: head and tail light lanes** - The four head and tail light lanes (LH, RH, LT, RT) at the end of the grid now show only when the setting flashes one of those lamps or you turn on **Grid lanes** under **Head and tail lights** in the **Setting** panel. The same switch hides them, and the choice is remembered. Hidden patterns still play and save.
+- **Sirens: bigger preview** - The preview and panel column now drags up to 1400 px wide, as far as the window allows: the sequencer keeps its rail and about 410 px of grid. It stopped at 560 px before.
+
+### Fixed
+
+- **Sirens: dark lenses on a new setting** - **New siren setting** gave every siren a scale factor of 2. On models whose light emitters are stored at a tenth of their size, as many packs build them, the emitters stayed hidden inside their housings, so only the corona and the light on the ground showed. When a model's emitter pieces look that small, a new setting now starts at 10, and sirens you paint or add from **Dual colour** and **Presets** match. **Checks** adds a note when a siren on such a model grows too little to show its lens.
+- **Sirens: presets and Use my pattern keep each siren's scale** - Restyling sirens with a preset, or putting a pattern on a vehicle, reset every siren to a scale factor of 2. They now keep the scale they had. The rotator preset still turns scale off, except on a siren with a scale factor of 5 or more.
+
+---
+
 ## [6.1.0] - 2026-11-08
 
 Sign in to Cortex Studio on gsdmods.com with Discord.
