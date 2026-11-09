@@ -8,7 +8,7 @@
 // ride along in `extraXml` and are written back verbatim.
 
 import { findChild, findChildren, numberValue, parseXml } from "./xml-lite.js";
-import { describeFields, formatChangeValue, groupByChange, humanizeKey, leafChanges } from "./change-summary.js";
+import { compactNumbers, describeFields, formatChangeValue, groupByChange, humanizeKey, leafChanges } from "./change-summary.js";
 
 export const MAX_SIRENS = 32;
 export const SEQUENCER_STEPS = 32;
@@ -29,6 +29,10 @@ const FULL = 0xffffffff;
 /** 32-bit unsigned value, or 0 for anything that is not one. */
 export function toSequencer(value) {
   return Number.isFinite(value) ? Math.trunc(value) >>> 0 : 0;
+}
+
+export function countLampPatterns(setting) {
+  return LAMP_KEYS.filter((key) => toSequencer(setting?.lamps?.[key]?.sequencer) !== 0).length;
 }
 
 /** "1010..." (32 characters, MSB first) to a sequencer, or null when malformed. */
@@ -245,13 +249,14 @@ export function createSirenLight(overrides = {}) {
  * bone faces; the game turns a siren's meshes from there to its delta, so each
  * siren starts aimed the way its bone points.
  */
-export function createSirenSetting({ id = null, name = "", count = 0, colors = ["#ff0000", "#0000ff"], headings = {} } = {}) {
+export function createSirenSetting({ id = null, name = "", count = 0, colors = ["#ff0000", "#0000ff"], headings = {}, scaleFactor = null } = {}) {
   const half = SEQUENCER_PRESETS.find((entry) => entry.id === "half");
   const delta = (index) => (Number.isFinite(headings?.[index + 1]) ? headings[index + 1] : 0);
   const sirens = Array.from({ length: Math.max(0, Math.min(MAX_SIRENS, count)) }, (_, index) => createSirenLight({
     color: colors[index % colors.length],
     rotation: { delta: delta(index) },
     flashiness: { delta: delta(index), sequencer: index % 2 === 0 ? half.a : half.b },
+    ...(scaleFactor > 0 ? { scaleFactor } : {}),
   }));
   return {
     id,
@@ -325,6 +330,8 @@ export function presetLights(presetId) {
   return preset ? preset.lights.map((light) => createSirenLight(light)) : [];
 }
 
+const SHRUNK_MESH_SCALE_FACTOR = 5;
+
 /**
  * The sirens at `indices` take a preset's look, lowest index first, cycling
  * through the preset's lights. Each siren is a bone on the model, so it keeps
@@ -337,8 +344,11 @@ export function applySirenPreset(setting, indices, presetId) {
   const rank = new Map([...new Set(indices)].sort((a, b) => a - b).map((index, order) => [index, order]));
   return updateSirens(setting, indices, (light, index) => {
     const look = looks[rank.get(index) % looks.length];
+    const shrunk = light.scaleFactor >= SHRUNK_MESH_SCALE_FACTOR;
     return {
       ...look,
+      ...(look.scale || (light.scale && shrunk) ? { scale: light.scale } : {}),
+      ...(look.scale || shrunk ? { scaleFactor: light.scaleFactor } : {}),
       rotation: { ...look.rotation, delta: light.rotation?.delta ?? 0 },
       flashiness: { ...look.flashiness, delta: light.flashiness?.delta ?? 0 },
       extraXml: [...(light.extraXml || [])],
@@ -453,6 +463,7 @@ export function createPatternSetting() {
 
 export function adoptPattern(target, pattern) {
   const aims = (target?.sirens || []).map((light) => [light.rotation?.delta ?? 0, light.flashiness?.delta ?? 0]);
+  const scales = (target?.sirens || []).map((light) => ({ scale: light.scale, scaleFactor: light.scaleFactor }));
   const lights = (pattern?.sirens || []).slice(0, MAX_SIRENS);
   const tail = (target?.sirens || []).slice(lights.length).map(cloneSirenLight);
   const taken = [...tail];
@@ -461,6 +472,7 @@ export function adoptPattern(target, pattern) {
     ...lights.map((light, index) => {
       const next = cloneSirenLight(light);
       if (aims[index]) [next.rotation.delta, next.flashiness.delta] = aims[index];
+      if (scales[index]) Object.assign(next, scales[index]);
       if (next.head) {
         if (!heads.has(next.head)) {
           const head = freeHeadId(taken);
@@ -626,6 +638,16 @@ export function checkSirenSetting(setting, context = {}) {
     const unused = bones.filter((index) => index > sirens.length).sort((a, b) => a - b);
     if (unbound.length) issues.push(issue("NO_BONE", "info", `${listIndices(unbound)} ${unbound.length === 1 ? "has" : "have"} no siren bone on this model and light nothing.`));
     if (unused.length) issues.push(issue("BONE_UNUSED", "warn", `The model has siren ${unused.join(", ")} but this setting stops at ${sirens.length}. Those lights never flash.`));
+  }
+  const packedFactor = Number.isFinite(context.emitterScaleFactor) && context.emitterScaleFactor > 1 ? context.emitterScaleFactor : null;
+  if (packedFactor && Array.isArray(context.packedSirens)) {
+    const packed = new Set(context.packedSirens);
+    const growth = (light) => (light.scale ? Number(light.scaleFactor) || 0 : 1);
+    const hidden = sirens.flatMap((light, index) => (packed.has(index + 1) && growth(light) < packedFactor / 2 ? [index + 1] : []));
+    if (hidden.length) {
+      const one = hidden.length === 1;
+      issues.push(issue("SCALE_TOO_SMALL", "info", `${one ? `Siren ${hidden[0]} grows` : `Sirens ${compactNumbers(hidden)} grow`} less than ×${packedFactor / 2} while lit, and ${one ? "its" : "their"} light emitters look about a tenth of full size on this model, as in many packs. If the ${one ? "lens stays" : "lenses stay"} dark, set Scale on with a scale factor of ${packedFactor}.`));
+    }
   }
   const rank = { error: 0, warn: 1, info: 2 };
   return issues.sort((a, b) => rank[a.severity] - rank[b.severity]);

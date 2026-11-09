@@ -275,6 +275,83 @@ export function sirenFlashScale(scaleFactor) {
   return Number.isFinite(scaleFactor) && scaleFactor > 0 ? scaleFactor : 1;
 }
 
+const PACKED_SCALE_FACTOR = 10;
+const PACKED_EMITTER_SPAN_METRES = 0.022;
+const EMITTER_VERTEX_BUDGET = 60000;
+const WELD_STEPS_PER_METRE = 20000;
+
+function largestIslandSpan(positions, indices) {
+  const vertexCount = Math.floor(positions.length / 3);
+  const welded = new Map();
+  const weldedId = new Int32Array(vertexCount);
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    const at = vertex * 3;
+    const key = `${Math.round(positions[at] * WELD_STEPS_PER_METRE)},${Math.round(positions[at + 1] * WELD_STEPS_PER_METRE)},${Math.round(positions[at + 2] * WELD_STEPS_PER_METRE)}`;
+    let id = welded.get(key);
+    if (id === undefined) {
+      id = welded.size;
+      welded.set(key, id);
+    }
+    weldedId[vertex] = id;
+  }
+  const parent = Int32Array.from({ length: welded.size }, (_, id) => id);
+  const rootOf = (id) => {
+    let node = id;
+    while (parent[node] !== node) {
+      parent[node] = parent[parent[node]];
+      node = parent[node];
+    }
+    return node;
+  };
+  const cornerCount = indices ? indices.length : vertexCount;
+  const cornerVertex = (corner) => (indices ? indices[corner] : corner);
+  for (let corner = 0; corner + 2 < cornerCount; corner += 3) {
+    const first = rootOf(weldedId[cornerVertex(corner)]);
+    parent[rootOf(weldedId[cornerVertex(corner + 1)])] = first;
+    parent[rootOf(weldedId[cornerVertex(corner + 2)])] = first;
+  }
+  const boxes = new Map();
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    const root = rootOf(weldedId[vertex]);
+    let box = boxes.get(root);
+    if (!box) {
+      box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+      boxes.set(root, box);
+    }
+    for (let axis = 0; axis < 3; axis += 1) {
+      const value = positions[vertex * 3 + axis];
+      if (value < box[axis]) box[axis] = value;
+      if (value > box[axis + 3]) box[axis + 3] = value;
+    }
+  }
+  let largest = 0;
+  for (const box of boxes.values()) {
+    const span = Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]);
+    if (Number.isFinite(span) && span > largest) largest = span;
+  }
+  return largest;
+}
+
+export function inferSirenPacking(litSirenEmitters) {
+  const unpacked = { scaleFactor: null, sirens: [] };
+  const largestSpanBySiren = new Map();
+  let vertices = 0;
+  for (const emitter of litSirenEmitters || []) {
+    const positions = emitter?.positions;
+    if (!positions?.length || !Number.isInteger(emitter.siren)) continue;
+    vertices += positions.length / 3;
+    if (vertices > EMITTER_VERTEX_BUDGET) break;
+    const span = largestIslandSpan(positions, emitter.indices || null);
+    if (span > (largestSpanBySiren.get(emitter.siren) || 0)) largestSpanBySiren.set(emitter.siren, span);
+  }
+  const spans = [...largestSpanBySiren.values()].sort((a, b) => a - b);
+  if (!spans.length || spans[Math.floor(spans.length / 2)] >= PACKED_EMITTER_SPAN_METRES) return unpacked;
+  return {
+    scaleFactor: PACKED_SCALE_FACTOR,
+    sirens: [...largestSpanBySiren].filter(([, span]) => span < PACKED_EMITTER_SPAN_METRES).map(([siren]) => siren).sort((a, b) => a - b),
+  };
+}
+
 /** Wig-wag state of the four lamps carcols can flash while sirens run. */
 export function evaluateLampSequencers(setting, time) {
   const bps = beatsPerSecond(setting);

@@ -22,7 +22,7 @@
 }
 
 .se-rail {
-  --se-rail-w: clamp(250px, calc(21vw / var(--es-ui-scale, 1)), 300px);
+  --se-rail-w: var(--sw-rail, clamp(250px, calc(21vw / var(--es-ui-scale, 1)), 300px));
   container: se-rail / size;
   display: flex;
   flex: 0 0 var(--se-rail-w);
@@ -636,6 +636,10 @@
 
 .se-ghosts > .se-col {
   height: 100%;
+}
+
+.se-ghosts.is-cramped > .se-col {
+  visibility: hidden;
 }
 
 .se-col-head.is-ghost {
@@ -1574,10 +1578,9 @@ html.dark .se-callout-num.is-selected {
    whole grid, so the viewer is never remounted. */
 .lv-root.sw-root {
   --lv-insp: clamp(300px, 24vw, 400px);
-  /* The sequencer's 32 steps stop reading under this width, so the preview
-     column gives way first (down to the inspector's resize floor). Keep in
-     step with SEQUENCER_MIN in SirenWorkspace.jsx. */
-  --sw-main-min: 660px;
+  --sw-rail: clamp(250px, calc(21vw / var(--es-ui-scale, 1)), 300px);
+  --sw-panel-max: 560px;
+  --sw-main-min: calc(var(--sw-rail) + 410px);
   grid-template-rows: var(--sw-preview-h, clamp(220px, 38%, 480px)) minmax(0, 1fr);
 }
 
@@ -2042,6 +2045,14 @@ html.dark .se-callout-num.is-selected {
 
 .sw-root .lv-inspector {
   position: relative;
+}
+
+.sw-root .lv-inspector-scroll > * {
+  max-width: var(--sw-panel-max);
+}
+
+.sw-root .sw-side-head {
+  padding-right: max(8px, calc(100% - var(--sw-panel-max) - 17px));
 }
 
 .lv-pane-resizer {

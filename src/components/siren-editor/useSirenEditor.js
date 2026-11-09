@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { cloneSirenSetting, serializeSirenSetting } from "../../lib/siren-settings.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cloneSirenSetting, countLampPatterns, serializeSirenSetting } from "../../lib/siren-settings.js";
 
 // Siren editor state for the loaded model. The draft is what the viewer's light
 // preview runs while it exists, so every edit shows on the model at once. The
@@ -21,6 +21,17 @@ function loadMarkerStyle() {
     return MARKER_STYLES.includes(stored) ? stored : MARKER_STYLES[0];
   } catch {
     return MARKER_STYLES[0];
+  }
+}
+
+const LAMP_LANES_KEY = "cortex-labs:siren-lamp-lanes.v1";
+
+function loadLampLanesChoice() {
+  try {
+    const stored = localStorage.getItem(LAMP_LANES_KEY);
+    return stored === "on" ? true : stored === "off" ? false : null;
+  } catch {
+    return null;
   }
 }
 
@@ -179,12 +190,29 @@ export default function useSirenEditor({ modelPath, fileSetting }) {
     }
   }, []);
 
+  const [lampLanesChoice, setLampLanesChoice] = useState(loadLampLanesChoice);
+  const lampPatterns = useMemo(() => countLampPatterns(state.draft), [state.draft]);
+  const lampLanesSeen = useRef({ path: null, shown: false });
+  if (lampLanesSeen.current.path !== state.path || !state.draft) lampLanesSeen.current = { path: state.path, shown: false };
+  if (lampPatterns > 0) lampLanesSeen.current.shown = true;
+  const setLampLanes = useCallback((shown) => {
+    setLampLanesChoice(Boolean(shown));
+    try {
+      localStorage.setItem(LAMP_LANES_KEY, shown ? "on" : "off");
+    } catch (err) {
+      console.error("[Sirens] Could not save the head and tail lanes choice:", err);
+    }
+  }, []);
+
   return {
     open: state.open,
     markers: state.markers,
     setMarkers,
     markerStyle,
     setMarkerStyle,
+    lampLanes: lampLanesChoice ?? lampLanesSeen.current.shown,
+    lampPatterns,
+    setLampLanes,
     draft: state.draft,
     base: state.base,
     patternOnly: !modelPath,

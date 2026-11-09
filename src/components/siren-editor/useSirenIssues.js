@@ -23,7 +23,9 @@ export default function useSirenIssues(s) {
       sirenBones,
       otherSettings: others,
       variationId: context ? context.variationId : undefined,
+      emitterScaleFactor: modelLights?.sirenScaleFactor,
+      packedSirens: modelLights?.packedSirens,
     });
-  }, [draft, base, context, sirenBones]);
+  }, [draft, base, context, sirenBones, modelLights]);
   return { issues, blocking: issues.filter((entry) => entry.severity === "error") };
 }

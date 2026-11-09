@@ -273,7 +273,8 @@ export function SettingPanel({ s }) {
   if (!editor?.draft) return <p className="se-empty">No siren setting open yet.</p>;
   return (
     <div className="se-panel">
-      <SettingFields draft={editor.draft} setSettingField={setSettingField} setLampMultiples={setLampMultiples} />
+      <SettingFields draft={editor.draft} setSettingField={setSettingField} setLampMultiples={setLampMultiples}
+        lampLanes={Boolean(editor.lampLanes)} lampPatterns={editor.lampPatterns || 0} setLampLanes={editor.setLampLanes} />
     </div>
   );
 }
@@ -373,7 +374,7 @@ function ChannelFields({ channel, prefix, setField, rotation = false }) {
   );
 }
 
-function SettingFields({ draft, setSettingField, setLampMultiples }) {
+function SettingFields({ draft, setSettingField, setLampMultiples, lampLanes, lampPatterns, setLampLanes }) {
   return (
     <>
       <Group title="Setting">
@@ -396,14 +397,26 @@ function SettingFields({ draft, setSettingField, setLampMultiples }) {
         <RangeField label="Light offset" value={draft.lightOffset ?? 0} min={-2} max={2} step={0.01}
           onChange={(value) => setSettingField("lightOffset", value)} />
       </Group>
-      <Group title="Head and tail multiples">
-        {LAMP_KEYS.map((key) => (
-          <Field key={key} label={LAMP_LABELS[key]}>
-            <NumberInput value={draft.lamps?.[key]?.multiples ?? 1} min={1} max={16} integer label={`${LAMP_LABELS[key]} multiples`}
-              onChange={(value) => setLampMultiples(key, value)} />
-          </Field>
-        ))}
-        <p className="se-note">Their patterns are the last four lanes of the grid.</p>
+      <Group title="Head and tail lights">
+        <ToggleField label="Grid lanes" hint="Four lanes at the end of the grid that flash the headlights and tail lights with the sirens"
+          checked={lampLanes} onChange={setLampLanes} />
+        {lampLanes ? (
+          <>
+            {LAMP_KEYS.map((key) => (
+              <Field key={key} label={LAMP_LABELS[key]} hint="Flashes per lit step">
+                <NumberInput value={draft.lamps?.[key]?.multiples ?? 1} min={1} max={16} integer label={`${LAMP_LABELS[key]} multiples`}
+                  onChange={(value) => setLampMultiples(key, value)} />
+              </Field>
+            ))}
+            <p className="se-note">Paint their patterns in the last four lanes of the grid. Each number is that lamp's flashes per lit step.</p>
+          </>
+        ) : (
+          <p className="se-note">
+            {lampPatterns
+              ? `This setting flashes ${lampPatterns === 4 ? "all four lamps" : `${lampPatterns} of the four lamps`}. Their patterns still play and save while the lanes are hidden.`
+              : "Turn on to paint headlight and tail light flashes in the grid."}
+          </p>
+        )}
       </Group>
       {draft.extraXml?.length ? (
         <p className="se-note">Keeps {draft.extraXml.length} other {draft.extraXml.length === 1 ? "tag" : "tags"} from carcols.meta on save.</p>

@@ -1,3 +1,17 @@
+version: 6.1.1
+date: 2026-11-09
+> Sirens: a new setting lights the lenses on models with small light emitters, the head and tail light lanes can be hidden, and the preview drags much wider.
+
+## Improved
+- Head and tail light lanes | The four LH, RH, LT and RT lanes at the end of the siren grid show only when the setting flashes one of those lamps, or when you turn on Grid lanes under Head and tail lights in the Setting panel. Hidden patterns still play and save.
+- Bigger siren preview | The preview and panel column drags up to 1400 px wide, as far as the window allows. It stopped at 560 px before.
+
+## Fixed
+- Dark lenses on a new siren setting | New siren setting started every siren at a scale factor of 2, which left the lenses dark on models that store their light emitters at a tenth of their size, as many packs do. A new setting on such a model now starts at 10, and Checks adds a note when a siren grows too little to show its lens.
+- Presets keep each siren's scale | Restyling sirens with a preset, or putting a pattern on a vehicle with Use my pattern, no longer resets every siren to a scale factor of 2.
+
+---
+
 version: 6.1.0
 date: 2026-11-08
 > Sign in to Cortex Studio on gsdmods.com with Discord.
