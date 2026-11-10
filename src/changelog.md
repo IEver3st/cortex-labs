@@ -1,3 +1,15 @@
+version: 6.2.1
+date: 2026-11-09
+> Sirens: Ctrl+S saves straight back to carcols.meta, and saving no longer wipes patterns stored as negative numbers.
+
+## New
+- Ctrl+S saves to carcols.meta | Ctrl+S, or Save in the rail, writes your siren changes back into the carcols.meta the setting came from or was last saved to, with no file dialog. It works while you type in a field too. The first save into a file keeps a .bak of it, and if the setting changed in the file since you opened it, Studio asks before overwriting. A setting without a file still asks where to write, and Save as (Ctrl+Shift+S, under More) always asks.
+
+## Fixed
+- Saving keeps every pattern | carcols.meta files written by CodeWalker or OpenIV store some patterns as negative numbers, like -1 for every step on. Studio read those as invalid and saved them back as 0, wiping those flash, rotation and head or tail light patterns. They now load as their real pattern, and saving other changes leaves them exactly as written.
+
+---
+
 version: 6.2.0
 date: 2026-11-09
 > Sirens: speed is a percentage of the bpm, column tops clear and recolour with a drag, and the preview keeps your camera when it resizes.

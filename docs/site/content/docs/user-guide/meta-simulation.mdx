@@ -72,7 +72,7 @@ Backgrounds, the plate font and each style's font colour, outline and text box c
 | `MODKIT_ID_CONFLICT`, `SIREN_ID_CONFLICT`, `LIGHT_ID_CONFLICT` | The same id is defined twice in the resource. |
 | `COLOR_INDEX_INVALID` | A colour index is outside 0 to 160 and not defined in carcols. |
 | `DUPLICATE_MODEL` | The model is defined more than once across the resource. |
-| `SIREN_SEQUENCER_INVALID` | A flashing or rotating siren has a missing or out-of-range sequencer (0 to 4294967295). |
+| `SIREN_SEQUENCER_INVALID` | A flashing or rotating siren has a missing or out-of-range sequencer (0 to 4294967295, or the signed form -2147483648 to 2147483647 that CodeWalker and OpenIV write). |
 | `SIREN_BONE_MISSING` | A siren entry has settings but the model has no matching `sirenN` bone, so it lights nothing. |
 | `SIREN_SETTINGS_MISSING` | The model has a `sirenN` bone beyond the number of sirens in its siren setting, so that light never flashes. |
 | `TXD_PARENT_UNRESOLVED` | A txdRelationships parent is not defined in the resource and does not look like a base game dictionary. |

@@ -143,6 +143,23 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern }) {
   const { issues } = useSirenIssues(s);
   const [openError, setOpenError] = useState("");
   const forge = useForgeCheck(source, native);
+  const saverRef = useRef(saver);
+  saverRef.current = saver;
+  const active = s.isActive !== false && !s.panelCollapsed;
+  useEffect(() => {
+    if (!active || !native) return undefined;
+    const onKeyDown = (event) => {
+      if (event.defaultPrevented || event.altKey || !(event.ctrlKey || event.metaKey)) return;
+      if (String(event.key || "").toLowerCase() !== "s" && event.code !== "KeyS") return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"]')) return;
+      event.preventDefault();
+      if (event.repeat) return;
+      if (event.shiftKey) saverRef.current.saveToFile();
+      else saverRef.current.saveInPlace();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [active, native]);
   const { sirenOpen, clearSirenOpen, modelPath } = s;
   const { openRequest } = importer;
   useEffect(() => {
@@ -286,19 +303,25 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern }) {
       )}
       {patternMode ? null : <UsePattern editor={editor} resource={resource} canCreate={canCreate} className="cx-btn is-quiet lv-btn-sm sw-use-pattern" />}
       <div className="lv-foot-row">
-        <button type="button" className="cx-btn lv-btn-sm" onClick={saver.saveToFile}
+        <button type="button" className="cx-btn lv-btn-sm" onClick={saver.saveInPlace}
           disabled={Boolean(saver.disabledReason) || saver.saving}
-          title={saver.disabledReason || "Write this setting into a carcols.meta you choose"}>
-          {saver.saving ? "Saving…" : "Save to file…"}
+          title={saver.disabledReason || (saver.fileTarget
+            ? `Write your changes into ${fileName(saver.fileTarget)} (Ctrl+S)`
+            : "Write this setting into a carcols.meta you choose (Ctrl+S)")}>
+          {saver.saving ? "Saving…" : saver.fileTarget ? "Save" : "Save to file…"}
         </button>
         {importButton("Import…", "Replace this setting's pattern with one from any carcols.meta", "cx-btn lv-btn-sm", false)}
-        <Menu label="More" title="Copy XML, check in Forge, discard">
+        <Menu label="More" title={saver.fileTarget ? "Save as, copy XML, check in Forge, discard" : "Copy XML, check in Forge, discard"}>
+          {saver.fileTarget ? (
+            <MenuItem onSelect={saver.saveToFile} disabled={Boolean(saver.disabledReason) || saver.saving}
+              hint="Ctrl+Shift+S" title={saver.disabledReason || "Write this setting into a carcols.meta you choose"}>Save as…</MenuItem>
+          ) : null}
           <MenuItem onSelect={saver.copyXml} title="Copy this setting's <Sirens> Item">Copy XML</MenuItem>
           {native && forge.folder ? (
             <MenuItem onSelect={forge.check} disabled={Boolean(forgeReason) || forge.starting} title={forgeReason || forge.hint}>Check in Forge</MenuItem>
           ) : null}
           <div className="se-menu-rule" role="separator" />
-          <MenuItem onSelect={editor.revert} disabled={!editor.dirty}
+          <MenuItem onSelect={() => { saver.clearStatus(); editor.revert(); }} disabled={!editor.dirty}
             title={!editor.dirty ? "Nothing to discard: the setting matches its file" : editor.base ? "Back to the values in carcols.meta" : "Discard the new setting"}>
             {editor.base ? "Revert" : "Discard"}
           </MenuItem>

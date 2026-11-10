@@ -336,7 +336,7 @@ function parseLight(item, sourcePath) {
 // 32-bit sequencer, or null when the value is missing or out of range.
 function sequencerOrNull(node) {
   const value = numberValue(node, Number.NaN);
-  return Number.isInteger(value) && value >= 0 && value <= 0xffffffff ? value : null;
+  return Number.isInteger(value) && value >= -0x80000000 && value <= 0xffffffff ? value >>> 0 : null;
 }
 
 function parseSirenChannel(node) {
@@ -907,7 +907,7 @@ export function simulateVehicle(resourceMeta, modelName, options = {}) {
         makeWarning(
           "SIREN_SEQUENCER_INVALID",
           "error",
-          `Siren ${badSequencers.join(", ")} ${badSequencers.length === 1 ? "has" : "have"} a missing or out-of-range sequencer. Sequencers are 32-bit values from 0 to 4294967295.`,
+          `Siren ${badSequencers.join(", ")} ${badSequencers.length === 1 ? "has" : "have"} a missing or out-of-range sequencer. Sequencers are 32-bit patterns, written from 0 to 4294967295 or as signed values from -2147483648 to 2147483647.`,
           "Write each sequencer as a decimal 32-bit pattern, for example 2863311530 for 1010...",
         ),
       );

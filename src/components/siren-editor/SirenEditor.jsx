@@ -83,6 +83,8 @@ const SHORTCUTS = [
   [["Alt", "←→"], "Move head"],
   [["Del"], "Delete"],
   [["Ctrl", "Z"], "Undo"],
+  [["Ctrl", "S"], "Save"],
+  [["Ctrl", "Shift", "S"], "Save as"],
 ];
 
 function cx(...parts) {

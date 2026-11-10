@@ -721,7 +721,7 @@ export function describeSirenChanges(base, draft, { canInstall = true } = {}) {
   const sirens = Array.isArray(draft.sirens) ? draft.sirens : [];
   if (!base) {
     return [
-      `New setting: no carcols.meta has it yet. ${canInstall ? "Install or Save to carcols.meta adds" : "Save to file adds"} it as id ${draft.id ?? "(none)"}.`,
+      `New setting: no carcols.meta has it yet. ${canInstall ? "Install or Save to file adds" : "Save to file adds"} it as id ${draft.id ?? "(none)"}.`,
       `${sirens.length} ${sirens.length === 1 ? "siren" : "sirens"} at ${formatChangeValue(draft.sequencerBpm)} bpm`,
     ];
   }
