@@ -1,5 +1,6 @@
 import { sirenHeading } from "./emergency-lights.js";
 import { checkSirenSetting, facingFromDelta, sequencerFromPattern, updateSirens } from "./siren-settings.js";
+import { retimeSirenSpeeds } from "./siren-speed.js";
 
 export const JUNO_ASK_LIMIT = 700;
 export const JUNO_LABEL_LIMIT = 24;
@@ -90,7 +91,7 @@ export function applySirenPattern(setting, result) {
     if (colors?.[row]) light.color = String(colors[row]).toLowerCase();
     return light;
   });
-  return Number.isFinite(result.bpm) ? { ...next, sequencerBpm: result.bpm } : next;
+  return Number.isFinite(result.bpm) ? retimeSirenSpeeds(next, setting.sequencerBpm, result.bpm) : next;
 }
 
 export function darkLightsNote(preview) {

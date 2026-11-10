@@ -8,6 +8,27 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [6.2.0] - 2026-11-09
+
+Sirens: speed is a percentage of the bpm, column tops clear and recolour with a drag, and the preview keeps your camera when it resizes.
+
+### Added
+
+- **Sirens: clear columns from the top** - Right-click the top of a column (its number, mute or lamp) to clear its whole pattern, and keep the button down while you drag across other columns to clear those too. It works on rotation and head and tail light columns, leaves colours, mutes and the selection alone, and one drag is one undo step.
+- **Sirens: colour a siren from its lamp** - Click the lamp over a column to give that siren the colour picked in the rail, or drag across lamps to colour several in one undo step. Dual-colour heads keep their two colours.
+
+### Changed
+
+- **Sirens: speed is a percentage of the bpm** - A channel's **Speed** is now a percentage of the setting's bpm, as in the modding-forum SirenSetting speed calculator, in place of the raw 0 to 30 slider. 100% is the bpm's own pace and turns **Sync to bpm** on; any other percentage turns it off and writes `speed = bpm × 0.16 × percentage`. **Strobe** (200, 300, 400%) and **Rotator** (6.25, 12.5, 25, 50%) set the calculator's usual speeds, and **Speed value** shows the number that goes in the file and takes a typed one. Changing the bpm keeps every un-synced channel's percentage, so their speeds follow in the same undo step. A loaded setting shows its own values and changes nothing until you edit it.
+- **Sirens: un-synced channels keep the pattern in the preview** - The preview ran an un-synced channel's pattern at its own tempo, so it drifted from the grid. The pattern now always steps at the bpm, and the speed sets how long each flash stays lit.
+- **Sirens: halogen rotator preset follows the bpm** - The preset wrote a fixed rotation speed of 3. It now writes the slowest rotator speed (6.25%) for the setting's bpm.
+
+### Fixed
+
+- **Preview keeps your camera when it resizes** - Expanding or collapsing the preview, dragging a pane or resizing the window put the camera back on its preset angle. After you orbit, pan or zoom, the view now keeps its angle and the model scales with the pane. A view you have not moved still refits, and presets and reset work as before. The Multi workspace gets the same fix.
+
+---
+
 ## [6.1.1] - 2026-11-09
 
 Sirens: a new setting lights the lenses on models with small light emitters, the head and tail light lanes can be hidden, and the preview drags much wider.
