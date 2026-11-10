@@ -574,6 +574,7 @@ function ViewerComponent({
     presetKey: DEFAULT_CAMERA_PRESET,
     zoomFactor: 1,
   });
+  const cameraUserOwnedRef = useRef(false);
   const [modelVersion, setModelVersion] = useState(0);
   const [vehicleModsRevision, setVehicleModsRevision] = useState(0);
   // Bumped each time the model's native materials finish loading, so the game
@@ -1038,8 +1039,35 @@ function ViewerComponent({
         presetKey: framing.presetKey,
         zoomFactor,
       };
+      cameraUserOwnedRef.current = false;
 
       if (shouldRequestRender) requestRenderRef.current?.();
+    };
+    const rescaleCameraFrame = () => {
+      if (!containerRef.current || !fitRef.current?.bounds) return;
+      const { clientWidth, clientHeight } = containerRef.current;
+      if (!clientWidth || !clientHeight) return;
+      const framing = buildCameraFraming({
+        bounds: fitRef.current.bounds,
+        aspect: clientWidth / clientHeight,
+        fov: camera.fov,
+        presetKey: cameraStateRef.current.presetKey,
+        zoomFactor: cameraStateRef.current.zoomFactor,
+      });
+      const scale = framing.baseDistance / fitRef.current.baseDistance;
+      if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return;
+      syncViewerCameraPose({
+        camera,
+        controls,
+        position: camera.position.clone().sub(controls.target).multiplyScalar(scale).add(controls.target),
+        target: controls.target.clone(),
+        up: camera.up.clone(),
+        near: framing.near,
+        far: framing.far,
+        minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
+        maxDistance: Math.max(framing.baseDistance * 4, 1),
+      });
+      fitRef.current = { ...fitRef.current, distance: framing.distance, baseDistance: framing.baseDistance };
     };
 
     // Frames the camera on the model where it now stands (after a turn).
@@ -1540,7 +1568,8 @@ function ViewerComponent({
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
       if (sizeChanged && fitRef.current?.bounds) {
-        applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
+        if (cameraUserOwnedRef.current) rescaleCameraFrame();
+        else applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
       }
       resizeBloomPipeline(bloomRef.current, clientWidth, clientHeight, pixelRatio);
       resizeAoPipeline(aoRef.current, clientWidth, clientHeight, pixelRatio);
@@ -1566,9 +1595,22 @@ function ViewerComponent({
       applyResize();
     });
 
-    controls.addEventListener("start", requestRenderFrame);
-    controls.addEventListener("change", requestRenderFrame);
-    controls.addEventListener("end", requestRenderFrame);
+    let cameraInteracting = false;
+    const handleControlsStart = () => {
+      cameraInteracting = true;
+      requestRenderFrame();
+    };
+    const handleControlsChange = () => {
+      if (cameraInteracting) cameraUserOwnedRef.current = true;
+      requestRenderFrame();
+    };
+    const handleControlsEnd = () => {
+      cameraInteracting = false;
+      requestRenderFrame();
+    };
+    controls.addEventListener("start", handleControlsStart);
+    controls.addEventListener("change", handleControlsChange);
+    controls.addEventListener("end", handleControlsEnd);
 
     requestRenderFrame();
 
@@ -1848,12 +1890,15 @@ function ViewerComponent({
         });
       },
       getSirenLocalPoints: (definitions) => lightRigRef.current?.getSirenLocalPoints(definitions) ?? null,
-      getViewState: () => cloneViewerCameraState({
-        camera,
-        controls,
-        fit: fitRef.current,
-        cameraState: cameraStateRef.current,
-      }),
+      getViewState: () => {
+        const viewState = cloneViewerCameraState({
+          camera,
+          controls,
+          fit: fitRef.current,
+          cameraState: cameraStateRef.current,
+        });
+        return viewState && { ...viewState, userOwned: cameraUserOwnedRef.current };
+      },
       restoreViewState: (viewState) => {
         const restored = restoreViewerCameraState({
           camera,
@@ -1864,6 +1909,7 @@ function ViewerComponent({
         });
         fitRef.current = restored.fit;
         cameraStateRef.current = restored.cameraState;
+        if (viewState) cameraUserOwnedRef.current = viewState.userOwned !== false;
 
         requestRenderRef.current?.();
       },
@@ -2151,9 +2197,9 @@ function ViewerComponent({
       restoreVehicleDragControls();
       vehicleRigRef.current = null;
       clearTemplatePickHover();
-      controls.removeEventListener("start", requestRenderFrame);
-      controls.removeEventListener("change", requestRenderFrame);
-      controls.removeEventListener("end", requestRenderFrame);
+      controls.removeEventListener("start", handleControlsStart);
+      controls.removeEventListener("change", handleControlsChange);
+      controls.removeEventListener("end", handleControlsEnd);
       lightRigRef.current?.dispose();
       lightRigRef.current = null;
       plateOverlayRef.current?.dispose();
@@ -3063,6 +3109,7 @@ function ViewerComponent({
             zoomFactor: currentZoom,
           };
           if (!reloadedInPlace) {
+            cameraUserOwnedRef.current = false;
             syncViewerCameraPose({
               camera: cameraRef.current,
               controls: controlsRef.current,

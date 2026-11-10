@@ -1,3 +1,21 @@
+version: 6.2.0
+date: 2026-11-09
+> Sirens: speed is a percentage of the bpm, column tops clear and recolour with a drag, and the preview keeps your camera when it resizes.
+
+## New
+- Clear columns from the top | Right-click the top of a siren column to clear its whole pattern, and keep the button down while you drag across other columns to clear those too. One drag is one undo step, and colours, mutes and the selection stay.
+- Colour a siren from its lamp | Click the lamp over a column to give that siren the colour picked in the rail, or drag across lamps to colour several at once.
+
+## Improved
+- Speed as a percentage of the bpm | A siren's Speed is now a percentage of the setting's bpm, as in the modding-forum SirenSetting speed calculator, so it can no longer run out of step with the pattern. 100% syncs to the bpm, Strobe and Rotator set the usual speeds, and Speed value shows the number written to the file. Changing the bpm keeps each siren's percentage.
+- Un-synced sirens stay on the grid | The preview no longer runs an un-synced siren's pattern at its own tempo. The pattern steps at the bpm, and the speed sets how long each flash stays lit.
+- Halogen rotator preset | The preset now turns at the slowest rotator speed for the setting's bpm instead of a fixed 3.
+
+## Fixed
+- Preview keeps your camera | Expanding the preview, dragging a pane or resizing the window no longer snaps the camera back to its preset angle after you orbit, pan or zoom. The model scales with the pane instead. Multi gets the same fix.
+
+---
+
 version: 6.1.1
 date: 2026-11-09
 > Sirens: a new setting lights the lenses on models with small light emitters, the head and tail light lanes can be hidden, and the preview drags much wider.

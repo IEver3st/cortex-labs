@@ -179,6 +179,7 @@ function MultiModelViewer({
     zoomFactor: 1,
   });
   const cameraStateRef = useRef({ presetKey: DEFAULT_CAMERA_PRESET, zoomFactor: 1 });
+  const cameraUserOwnedRef = useRef(false);
 
   const [sceneReady, setSceneReady] = useState(false);
   // Bumped when a vehicle is added to or removed from the scene.
@@ -347,6 +348,7 @@ function MultiModelViewer({
         presetKey: framing.presetKey,
         zoomFactor,
       };
+      cameraUserOwnedRef.current = false;
       syncViewerCameraPose({
         camera,
         controls,
@@ -499,7 +501,34 @@ function MultiModelViewer({
         zoomFactor,
       };
       cameraStateRef.current = { presetKey: framing.presetKey, zoomFactor };
+      cameraUserOwnedRef.current = false;
       if (shouldRender) requestRenderRef.current?.();
+    };
+    const rescaleCameraFrame = () => {
+      if (!fitRef.current?.bounds) return;
+      const { clientWidth, clientHeight } = container;
+      if (!clientWidth || !clientHeight) return;
+      const framing = buildCameraFraming({
+        bounds: fitRef.current.bounds,
+        aspect: clientWidth / clientHeight,
+        fov: camera.fov,
+        presetKey: cameraStateRef.current.presetKey,
+        zoomFactor: cameraStateRef.current.zoomFactor,
+      });
+      const scale = framing.baseDistance / fitRef.current.baseDistance;
+      if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return;
+      syncViewerCameraPose({
+        camera,
+        controls,
+        position: camera.position.clone().sub(controls.target).multiplyScalar(scale).add(controls.target),
+        target: controls.target.clone(),
+        up: camera.up.clone(),
+        near: framing.near,
+        far: framing.far,
+        minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
+        maxDistance: Math.max(framing.baseDistance * 10, 10),
+      });
+      fitRef.current = { ...fitRef.current, distance: framing.distance, baseDistance: framing.baseDistance };
     };
 
     let frameId = 0;
@@ -592,7 +621,8 @@ function MultiModelViewer({
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
       if (fitRef.current?.bounds) {
-        applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
+        if (cameraUserOwnedRef.current) rescaleCameraFrame();
+        else applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
       }
       requestRenderFrame();
     };
@@ -605,9 +635,22 @@ function MultiModelViewer({
       if (resizeBuffers()) requestRenderFrame();
     });
 
-    controls.addEventListener("start", requestRenderFrame);
-    controls.addEventListener("change", requestRenderFrame);
-    controls.addEventListener("end", requestRenderFrame);
+    let cameraInteracting = false;
+    const handleControlsStart = () => {
+      cameraInteracting = true;
+      requestRenderFrame();
+    };
+    const handleControlsChange = () => {
+      if (cameraInteracting) cameraUserOwnedRef.current = true;
+      requestRenderFrame();
+    };
+    const handleControlsEnd = () => {
+      cameraInteracting = false;
+      requestRenderFrame();
+    };
+    controls.addEventListener("start", handleControlsStart);
+    controls.addEventListener("change", handleControlsChange);
+    controls.addEventListener("end", handleControlsEnd);
     requestRenderFrame();
     setSceneReady(true);
 
@@ -669,9 +712,9 @@ function MultiModelViewer({
       if (frameId) cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
       stopViewerControls();
-      controls.removeEventListener("start", requestRenderFrame);
-      controls.removeEventListener("change", requestRenderFrame);
-      controls.removeEventListener("end", requestRenderFrame);
+      controls.removeEventListener("start", handleControlsStart);
+      controls.removeEventListener("change", handleControlsChange);
+      controls.removeEventListener("end", handleControlsEnd);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("contextmenu", preventContextMenu);

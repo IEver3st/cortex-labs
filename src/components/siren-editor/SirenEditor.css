@@ -829,6 +829,23 @@ button.se-col-head:hover {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mg-fg) 16%, transparent);
 }
 
+.se-col-top[data-tint] > .se-col-lamp {
+  cursor: pointer;
+  touch-action: none;
+}
+
+.se-col-top[data-tint] > .se-col-lamp:hover,
+.se-cols.is-tinting .se-col-top[data-tint]:hover > .se-col-lamp {
+  box-shadow:
+    inset 0 -4px 0 var(--se-brush),
+    inset 0 -5px 0 var(--mg-bg),
+    inset 0 0 0 1px color-mix(in srgb, var(--mg-fg) 45%, transparent);
+}
+
+.se-cols.is-clearing .se-col-top[data-clear]:hover {
+  background: color-mix(in srgb, var(--mg-fg) 9%, var(--mg-bg));
+}
+
 .se-mute {
   grid-row: 3;
   visibility: hidden;
@@ -1248,6 +1265,32 @@ button.se-col-head:hover {
 
 .se-range:focus-visible::-webkit-slider-thumb {
   box-shadow: var(--cx-focus);
+}
+
+.se-range:disabled,
+.se-num:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.se-speed-steps {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.se-speed-steps .se-chip {
+  padding: 0 6px;
+}
+
+.se-speed-base {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+  font-size: var(--cx-fs-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--mg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* ── Menus (portaled to the body) ── */

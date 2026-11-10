@@ -13,6 +13,17 @@ import {
   sequencerFromPattern,
   updateSirens,
 } from "../../lib/siren-settings.js";
+import {
+  ROTATOR_STEPS,
+  STROBE_STEPS,
+  SYNCED_PERCENT,
+  baseSpeed,
+  channelPercent,
+  channelSpeedPatch,
+  isSynced,
+  retimeSirenSpeeds,
+  speedFromPercent,
+} from "../../lib/siren-speed.js";
 import "./SirenEditor.css";
 import { ColorInput } from "../ui/color-input";
 
@@ -27,7 +38,7 @@ function cx(...parts) {
 }
 
 // Number entry that edits live while the text parses and snaps back on blur.
-export function NumberInput({ value, onChange, min = -Infinity, max = Infinity, step = 1, integer = false, label, scale = 1, digits = 3, unit = "" }) {
+export function NumberInput({ value, onChange, min = -Infinity, max = Infinity, step = 1, integer = false, label, scale = 1, digits = 3, unit = "", disabled = false }) {
   const shown = Number.isFinite(value) ? Number((value * scale).toFixed(digits)) : "";
   const [text, setText] = useState(String(shown));
   const focused = useRef(false);
@@ -42,7 +53,7 @@ export function NumberInput({ value, onChange, min = -Infinity, max = Infinity, 
     onChange(next / scale);
   };
   const input = (
-    <input className={cx("se-num", unit && "has-unit")} value={text} inputMode="decimal" spellCheck={false} aria-label={label}
+    <input className={cx("se-num", unit && "has-unit")} value={text} inputMode="decimal" spellCheck={false} aria-label={label} disabled={disabled}
       onFocus={() => { focused.current = true; }}
       onBlur={() => { focused.current = false; setText(String(shown)); }}
       onChange={(event) => { setText(event.target.value); commit(event.target.value); }}
@@ -76,15 +87,15 @@ export function Field({ label, hint, children }) {
 }
 
 // The slider covers the usual range; typed values may go past its top end.
-export function RangeField({ label, hint, value, onChange, min, max, step, integer, scale = 1, digits = 3, unit = "" }) {
+export function RangeField({ label, hint, value, onChange, min, max, step, integer, scale = 1, digits = 3, unit = "", disabled = false }) {
   const scaled = Number.isFinite(value) ? value * scale : min;
   const fill = `${Math.max(0, Math.min(100, ((scaled - min) / (max - min)) * 100))}%`;
   return (
     <Field label={label} hint={hint}>
       <input className="se-range" type="range" min={min} max={max} step={step} value={Math.max(min, Math.min(max, scaled))}
-        style={{ "--fill": fill }} aria-label={label}
+        style={{ "--fill": fill }} aria-label={label} disabled={disabled} title={disabled ? hint : undefined}
         onChange={(event) => onChange(Number(event.target.value) / scale)} />
-      <NumberInput value={value} onChange={onChange} min={min} step={step}
+      <NumberInput value={value} onChange={onChange} min={min} step={step} disabled={disabled}
         integer={integer} label={`${label} value`} scale={scale} digits={digits} unit={unit} />
     </Field>
   );
@@ -244,23 +255,38 @@ export function useSirenOps(editor) {
   const setSettingField = useCallback((field, value) => {
     edit((current) => ({ ...current, [field]: value }), `setting:${field}`);
   }, [edit]);
+  const setChannel = useCallback((channel, patch, key) => {
+    edit((current) => updateSirens(current, selection, (light) => {
+      light[channel] = { ...light[channel], ...patch };
+    }), `field:${key}:${selection.join(",")}`);
+  }, [edit, selection]);
   const setLampMultiples = useCallback((key, value) => {
     edit((current) => ({ ...current, lamps: { ...current.lamps, [key]: { sequencer: 0, ...current.lamps?.[key], multiples: value } } }), `lamp:${key}`);
   }, [edit]);
-  return { setField, setLightPatch, setSettingField, setLampMultiples };
+  const pausedTempo = useRef({ sirens: null, bpm: 0 });
+  const setSequencerBpm = useCallback((value) => {
+    edit((current) => {
+      const paused = pausedTempo.current;
+      const from = current.sequencerBpm > 0 ? current.sequencerBpm : paused.sirens === current.sirens ? paused.bpm : 0;
+      const next = retimeSirenSpeeds(current, from, value);
+      if (!(value > 0)) pausedTempo.current = { sirens: next.sirens, bpm: from };
+      return next;
+    }, "setting:sequencerBpm");
+  }, [edit]);
+  return { setField, setLightPatch, setChannel, setSettingField, setSequencerBpm, setLampMultiples };
 }
 
 /** The selected sirens' fields. */
 export function SirenPanel({ s }) {
   const editor = s.sirenEditor;
-  const { setField, setLightPatch } = useSirenOps(editor);
+  const { setField, setLightPatch, setChannel } = useSirenOps(editor);
   const light = editor?.draft?.sirens[editor.primary] || null;
   if (!editor?.draft) return <p className="se-empty">No siren setting open yet.</p>;
   if (!light) return <p className="se-empty">Select a siren in the grid or on the model.</p>;
   return (
     <div className="se-panel">
       <SirenFields light={light} multi={editor.selection.length > 1} count={editor.selection.length} index={editor.primary + 1}
-        setField={setField} setLightPatch={setLightPatch}
+        bpm={editor.draft.sequencerBpm} setField={setField} setLightPatch={setLightPatch} setChannel={setChannel}
         lens={s.modelPath ? <LensFields s={s} light={light} sirens={editor.selection.map((index) => index + 1)} primary={editor.primary + 1} /> : null} />
     </div>
   );
@@ -279,7 +305,7 @@ export function SettingPanel({ s }) {
   );
 }
 
-function SirenFields({ light, multi, count, index, setField, setLightPatch, lens }) {
+function SirenFields({ light, multi, count, index, bpm, setField, setLightPatch, setChannel, lens }) {
   return (
     <>
       {multi ? (
@@ -302,14 +328,14 @@ function SirenFields({ light, multi, count, index, setField, setLightPatch, lens
 
       <Group title="Flash" trailing={<Toggle checked={light.flash} onChange={(value) => setField("flash", value)} ariaLabel="Flash" />}>
         <PatternField label="Pattern" value={light.flashiness.sequencer} onChange={(value) => setField("flashiness.sequencer", value)} />
-        <ChannelFields channel={light.flashiness} prefix="flashiness" setField={setField} />
+        <ChannelFields channel={light.flashiness} prefix="flashiness" bpm={bpm} setField={setField} setChannel={setChannel} />
       </Group>
 
       <Group title="Rotation" trailing={<Toggle checked={light.rotate} onChange={(value) => setField("rotate", value)} ariaLabel="Rotate" />}>
         {light.rotate ? (
           <>
             <PatternField label="Pattern" value={light.rotation.sequencer} onChange={(value) => setField("rotation.sequencer", value)} />
-            <ChannelFields channel={light.rotation} prefix="rotation" setField={setField} rotation />
+            <ChannelFields channel={light.rotation} prefix="rotation" bpm={bpm} setField={setField} setChannel={setChannel} rotation />
           </>
         ) : <p className="se-note">Turn on to spin everything on this siren's bone.</p>}
       </Group>
@@ -352,7 +378,51 @@ function FacingPicker({ value, onChange }) {
 }
 
 // delta and start are radians in carcols; the editor shows degrees.
-function ChannelFields({ channel, prefix, setField, rotation = false }) {
+const SPEED_SLIDER_MAX = 400;
+
+const formatSpeed = (value) => String(Number(value.toFixed(3)));
+
+function SpeedFields({ channel, prefix, bpm, setChannel, rotation }) {
+  const synced = isSynced(channel);
+  const percent = channelPercent(channel, bpm);
+  const base = baseSpeed(bpm);
+  const steps = rotation ? ROTATOR_STEPS : STROBE_STEPS;
+  const noTempo = base ? null : "Set a bpm first: the percentage is of the setting's bpm";
+  const key = `${prefix}.speed`;
+  const setPercent = (value) => setChannel(prefix, channelSpeedPatch(bpm, value), key);
+  return (
+    <>
+      <ToggleField label="Sync to bpm" hint="Lights each step for exactly one beat, the same as 100%" checked={synced}
+        onChange={(on) => setChannel(prefix, base ? { syncToBpm: on, speed: speedFromPercent(bpm, SYNCED_PERCENT) } : { syncToBpm: on }, `${prefix}.syncToBpm`)} />
+      <RangeField label="Speed" value={percent} min={0} max={SPEED_SLIDER_MAX} step={1} digits={2} unit="%" disabled={Boolean(noTempo)} onChange={setPercent}
+        hint={noTempo || "Percent of the bpm's own pace. 100% syncs to the bpm; higher shortens each flash, lower stretches it into the next steps. The pattern keeps the bpm either way."} />
+      <Field label={rotation ? "Rotator" : "Strobe"}
+        hint={noTempo || (rotation
+          ? "Slower rotator, wig-wag and halogen speeds: bpm ÷ 100 × 1, 2, 4 or 8. A flashing mesh wants twice these."
+          : "Above 100% shortens each flash. 200 to 300% or higher suits strobes.")}>
+        <div className="se-chips se-speed-steps" role="group" aria-label={rotation ? "Rotator speeds" : "Strobe speeds"}>
+          {steps.map((step) => {
+            const on = !synced && Number.isFinite(percent) && Math.abs(percent - step.percent) < 1e-6;
+            return (
+              <button key={step.id} type="button" className={cx("se-chip", on && "is-on")} aria-pressed={on} disabled={Boolean(noTempo)}
+                title={`${step.label}: ${step.percent}%${base ? `, speed ${formatSpeed(speedFromPercent(bpm, step.percent))}` : ""}`}
+                onClick={() => setPercent(step.percent)}>{step.percent}</button>
+            );
+          })}
+        </div>
+      </Field>
+      <Field label="Speed value" hint={synced
+        ? "The stored speed. The game ignores it while synced. Typing one turns sync off."
+        : "Written to carcols as speed. Type one to match a file and the percentage follows."}>
+        <span className="se-speed-base">{base ? `100% = ${formatSpeed(base)}` : "No bpm"}</span>
+        <NumberInput value={channel.speed} onChange={(value) => setChannel(prefix, { syncToBpm: false, speed: value }, key)} min={0} step={0.5}
+          label="Speed value" />
+      </Field>
+    </>
+  );
+}
+
+function ChannelFields({ channel, prefix, bpm, setField, setChannel, rotation = false }) {
   return (
     <>
       {rotation ? null : <FacingPicker value={channel.delta ?? 0} onChange={(value) => setField(`${prefix}.delta`, value)} />}
@@ -365,9 +435,7 @@ function ChannelFields({ channel, prefix, setField, rotation = false }) {
       <RangeField label="Start" hint={rotation ? "Angle the turn starts from" : "Stored for the game; the preview does not use it on a flash"}
         value={channel.start ?? 0} min={-180} max={180} step={1} scale={DEG} digits={1} unit="°"
         onChange={(value) => setField(`${prefix}.start`, value)} />
-      <ToggleField label="Sync to bpm" hint="Off runs this channel at its own speed" checked={channel.syncToBpm !== false} onChange={(value) => setField(`${prefix}.syncToBpm`, value)} />
-      <RangeField label="Speed" hint={channel.syncToBpm !== false ? "Used when sync to bpm is off" : "This channel's own rate"}
-        value={channel.speed ?? 0} min={0} max={30} step={0.1} digits={2} onChange={(value) => setField(`${prefix}.speed`, value)} />
+      <SpeedFields channel={channel} prefix={prefix} bpm={bpm} setChannel={setChannel} rotation={rotation} />
       <ToggleField label="Direction" hint={rotation ? "Off turns the other way" : "Stored for the game; no visible effect on a flash"}
         checked={channel.direction !== false} onChange={(value) => setField(`${prefix}.direction`, value)} />
     </>

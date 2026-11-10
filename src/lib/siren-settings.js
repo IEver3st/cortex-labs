@@ -9,6 +9,7 @@
 
 import { findChild, findChildren, numberValue, parseXml } from "./xml-lite.js";
 import { compactNumbers, describeFields, formatChangeValue, groupByChange, humanizeKey, leafChanges } from "./change-summary.js";
+import { ROTATOR_STEPS, channelSpeedPatch, retimeSirenSpeeds } from "./siren-speed.js";
 
 export const MAX_SIRENS = 32;
 export const SEQUENCER_STEPS = 32;
@@ -302,7 +303,8 @@ export const SIREN_LIGHT_PRESETS = Object.freeze([
       flash: false,
       rotate: true,
       scale: false,
-      rotation: { speed: 3, sequencer: FULL, syncToBpm: false },
+      rotation: { sequencer: FULL },
+      speeds: { rotation: ROTATOR_STEPS[0].percent },
       corona: { intensity: 50, size: 0.4 },
     }],
   },
@@ -325,9 +327,13 @@ export const SIREN_LIGHT_PRESETS = Object.freeze([
   },
 ]);
 
-export function presetLights(presetId) {
+export function presetLights(presetId, bpm = SETTING_DEFAULTS.sequencerBpm) {
   const preset = SIREN_LIGHT_PRESETS.find((entry) => entry.id === presetId);
-  return preset ? preset.lights.map((light) => createSirenLight(light)) : [];
+  return preset ? preset.lights.map(({ speeds, ...look }) => {
+    const light = createSirenLight(look);
+    for (const [channel, percent] of Object.entries(speeds || {})) Object.assign(light[channel], channelSpeedPatch(bpm, percent));
+    return light;
+  }) : [];
 }
 
 const SHRUNK_MESH_SCALE_FACTOR = 5;
@@ -339,7 +345,7 @@ const SHRUNK_MESH_SCALE_FACTOR = 5;
  * editor doesn't model.
  */
 export function applySirenPreset(setting, indices, presetId) {
-  const looks = presetLights(presetId);
+  const looks = presetLights(presetId, setting?.sequencerBpm);
   if (!looks.length || !indices.length) return setting;
   const rank = new Map([...new Set(indices)].sort((a, b) => a - b).map((index, order) => [index, order]));
   return updateSirens(setting, indices, (light, index) => {
@@ -465,7 +471,8 @@ export function adoptPattern(target, pattern) {
   const aims = (target?.sirens || []).map((light) => [light.rotation?.delta ?? 0, light.flashiness?.delta ?? 0]);
   const scales = (target?.sirens || []).map((light) => ({ scale: light.scale, scaleFactor: light.scaleFactor }));
   const lights = (pattern?.sirens || []).slice(0, MAX_SIRENS);
-  const tail = (target?.sirens || []).slice(lights.length).map(cloneSirenLight);
+  const kept = (target?.sirens || []).slice(lights.length).map(cloneSirenLight);
+  const tail = retimeSirenSpeeds({ sirens: kept }, target?.sequencerBpm, pattern?.sequencerBpm).sirens;
   const taken = [...tail];
   const heads = new Map();
   const sirens = [

@@ -10,6 +10,8 @@
 // `multiples` splits a beat, rotation speed units, unsynced `speed` timing, the
 // indicator blink rate, and the brightness curve below.
 
+import { SPEED_PER_BPM, channelSpeedRatio, isSynced } from "./siren-speed.js";
+
 export const VANILLA_SIREN_COUNT = 20;
 export const MAX_SIREN_COUNT = 32;
 export const SEQUENCER_STEPS = 32;
@@ -181,20 +183,24 @@ export function beatsPerSecond(setting) {
   return Math.max(0, (bpm * multiplier) / 60);
 }
 
-// Unsynced channels run their own beat from `speed`. Community testing matches an
-// all-ones synced sequencer when speed = bpm / 100 x 16.
-function unsyncedBeatsPerSecond(speed) {
-  return Math.max(0, (finite(speed, 0) * 100) / 16 / 60);
-}
-
-function channelBeat(channel, time, syncedBps) {
-  return channel?.syncToBpm === false ? time * unsyncedBeatsPerSecond(channel.speed) : time * syncedBps;
+export function channelOn(channel, beat, ratio = 1) {
+  if (ratio === 1) return sequencerOn(channel?.sequencer, channel?.multiples, beat);
+  if (!Number.isFinite(beat)) return false;
+  const sequencer = Number.isFinite(channel?.sequencer) ? channel.sequencer >>> 0 : 0;
+  if (!sequencer) return false;
+  const count = Math.max(1, Math.floor(finite(channel.multiples, 1)));
+  const length = ratio > 0 ? 1 / (ratio * (count === 1 ? 1 : 2 * count)) : Infinity;
+  if (length >= SEQUENCER_STEPS) return true;
+  for (let slot = Math.floor(beat * count); beat - slot / count < length; slot -= 1) {
+    if (sequencerBit(sequencer, Math.floor(slot / count))) return true;
+  }
+  return false;
 }
 
 // Rotation rate: pi / 16 rad per second per speed unit, so a 600 bpm synced
 // rotator (speed equivalent 96) turns about three times a second.
-function rotationRate(channel, syncedBps) {
-  const speed = channel?.syncToBpm === false ? finite(channel.speed, 0) : syncedBps * 60 / 100 * 16;
+function rotationRate(channel, setting, syncedBps) {
+  const speed = isSynced(channel) ? syncedBps * 60 * SPEED_PER_BPM : finite(channel.speed, 0) * Math.max(0, finite(setting?.timeMultiplier, 1));
   return (speed * Math.PI) / 16;
 }
 
@@ -230,17 +236,19 @@ export function sirenHeading(siren) {
 export function evaluateSirens(setting, time) {
   const sirens = Array.isArray(setting?.sirens) ? setting.sirens : [];
   const bps = beatsPerSecond(setting);
+  const bpm = finite(setting?.sequencerBpm, 0);
   const t = finite(time, 0);
+  const beat = t * bps;
   return sirens.slice(0, MAX_SIREN_COUNT).map((siren, index) => {
     const flash = siren.flashiness || {};
     const rotation = siren.rotation || {};
     let on = true;
-    if (siren.flash !== false) on = sequencerOn(flash.sequencer, flash.multiples, channelBeat(flash, t, bps));
+    if (siren.flash !== false) on = channelOn(flash, beat, channelSpeedRatio(flash, bpm));
     let spin = 0;
     if (siren.rotate) {
-      on = on && sequencerOn(rotation.sequencer, rotation.multiples, channelBeat(rotation, t, bps));
+      on = on && channelOn(rotation, beat, channelSpeedRatio(rotation, bpm));
       const direction = rotation.direction === false ? -1 : 1;
-      spin = direction * (finite(rotation.start, 0) + rotationRate(rotation, bps) * t);
+      spin = direction * (finite(rotation.start, 0) + rotationRate(rotation, setting, bps) * t);
     }
     const yaw = sirenHeading(siren) + spin;
     return {

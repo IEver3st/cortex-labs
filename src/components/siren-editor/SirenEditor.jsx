@@ -75,7 +75,8 @@ const COLUMN_GAP_TIGHT = 2;
 const SHORTCUTS = [
   [["1–6"], "Colour"],
   [["Click"], "Draw"],
-  [["Right"], "Erase"],
+  [["Right"], "Erase, clear head"],
+  [["Lamp"], "Colour head"],
   [["Space", "P"], "Play, pause"],
   [["↑", "↓"], "Step"],
   [["←", "→"], "Select head"],
@@ -111,6 +112,26 @@ function IconButton({ label, onClick, disabled, children, pressed }) {
 }
 
 /* ─── Track grid ─── */
+
+function crosses(rect, x0, y0, x1, y1) {
+  let from = 0;
+  let to = 1;
+  for (const [start, delta, low, high] of [[x0, x1 - x0, rect.left, rect.right], [y0, y1 - y0, rect.top, rect.bottom]]) {
+    if (delta === 0) {
+      if (start < low || start > high) return false;
+      continue;
+    }
+    const a = (low - start) / delta;
+    const b = (high - start) / delta;
+    from = Math.max(from, Math.min(a, b));
+    to = Math.min(to, Math.max(a, b));
+  }
+  return from <= to;
+}
+
+function sameColour(a, b) {
+  return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+}
 
 function stepAt(event) {
   const step = Number(event.target.dataset?.step);
@@ -413,6 +434,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
     };
   }, [hasDraft]);
   const [brush, setBrush] = useState(SIREN_PALETTE[0].color);
+  const brushName = (SIREN_PALETTE.find((entry) => sameColour(entry.color, brush))?.label || "in the picked colour").toLowerCase();
   const paintGhost = (step) => {
     if (count >= MAX_SIRENS) return;
     const light = createSirenLight();
@@ -480,7 +502,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
   // its lights after the last siren.
   const applyLightPreset = (presetId) => {
     if (selection.length) edit((current) => applySirenPreset(current, selection, presetId));
-    else append(sizedForModel(presetLights(presetId)));
+    else append(sizedForModel(presetLights(presetId, draft.sequencerBpm)));
   };
   const applyPreset = (preset, alternate) => {
     const order = new Map(sortedSelection.map((index, rank) => [index, rank]));
@@ -507,14 +529,19 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
       });
     });
   };
-  const setColor = (color) => edit((current) => updateSirens(current, selection, (light) => {
-    light.color = color;
-  }), `field:color:${selection.join(",")}`);
+  const colourSirens = useCallback((indices, color, key, options) => edit((current) => {
+    const targets = indices.filter((index) => current.sirens[index] && !sameColour(current.sirens[index].color, color));
+    if (!targets.length) return current;
+    return updateSirens(current, targets, (light) => {
+      light.color = color;
+    });
+  }, key, options), [edit]);
+  const setColor = (color) => colourSirens(selection, color, `field:color:${selection.join(",")}`);
   const pickColour = (color) => {
     setBrush(color);
     if (selection.length) setColor(color);
   };
-  const { setSettingField } = useSirenOps(editor);
+  const { setSettingField, setSequencerBpm } = useSirenOps(editor);
   const copyPattern = () => {
     if (!primary) return;
     clipboard.current = toSequencer(primary[patternChannel(primary)].sequencer);
@@ -579,15 +606,83 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
       return { ...current, lamps: { ...current.lamps, [lampKey]: { ...lamp, sequencer: setSequencerStep(lamp.sequencer, step, on) } } };
     }, key);
   };
+  const clearPattern = useCallback((target, key) => {
+    const at = target.indexOf(":");
+    const channel = target.slice(0, at);
+    const id = target.slice(at + 1);
+    edit((current) => {
+      if (channel === "lamp") {
+        const lamp = current.lamps?.[id];
+        if (!lamp || toSequencer(lamp.sequencer) === 0) return current;
+        return { ...current, lamps: { ...current.lamps, [id]: { ...lamp, sequencer: 0 } } };
+      }
+      const targets = id.split(",").map(Number).filter((index) => toSequencer(current.sirens[index]?.[channel]?.sequencer) !== 0);
+      if (!targets.length) return current;
+      return updateSirens(current, targets, (light) => {
+        light[channel].sequencer = 0;
+      });
+    }, key, { held: true });
+  }, [edit]);
+  const strokeTop = useCallback((top) => {
+    const run = stroke.current;
+    const target = run?.kind === "clear" ? top.dataset.clear : run?.kind === "tint" ? top.dataset.tint : null;
+    if (!target || run.done.has(target)) return;
+    run.done.add(target);
+    if (run.kind === "clear") clearPattern(target, run.key);
+    else colourSirens([Number(target)], run.color, run.key, { held: true });
+  }, [clearPattern, colourSirens]);
+  const startTopStroke = (event) => {
+    const top = event.target instanceof Element ? event.target.closest(".se-col-top") : null;
+    if (!top) return;
+    const kind = event.button === 2 && top.dataset.clear ? "clear"
+      : event.button === 0 && top.dataset.tint && event.target.closest(".se-col-lamp") ? "tint" : null;
+    if (!kind) return;
+    event.preventDefault();
+    if (!sheet.current.contains(document.activeElement)) sheet.current.focus({ preventScroll: true });
+    stroke.current = { kind, key: `${kind}:${Date.now()}`, color: brush, done: new Set(), x: event.clientX, y: event.clientY };
+    strip.current?.classList.add(kind === "clear" ? "is-clearing" : "is-tinting");
+    if (kind === "tint") {
+      const index = Number(top.dataset.tint);
+      if (!selected.has(index)) select([index], index);
+    }
+    strokeTop(top);
+  };
   useEffect(() => {
-    const end = () => { stroke.current = null; };
+    const end = () => {
+      stroke.current = null;
+      strip.current?.classList.remove("is-clearing", "is-tinting");
+    };
+    const sweep = (event) => {
+      const run = stroke.current;
+      if (run?.kind !== "clear" && run?.kind !== "tint") return;
+      if (!(event.buttons & (run.kind === "clear" ? 2 : 1))) {
+        end();
+        return;
+      }
+      const box = canvas.current;
+      const cols = strip.current;
+      if (box && cols) {
+        const view = box.getBoundingClientRect();
+        const left = cols.querySelector(".se-col-steps")?.getBoundingClientRect().right ?? view.left;
+        const right = view.left + box.clientLeft + box.clientWidth;
+        for (const top of cols.querySelectorAll(run.kind === "clear" ? ".se-col-top[data-clear]" : ".se-col-top[data-tint]")) {
+          const rect = top.getBoundingClientRect();
+          const shown = { left: Math.max(rect.left, left), right: Math.min(rect.right, right), top: rect.top, bottom: rect.bottom };
+          if (shown.left < shown.right && crosses(shown, run.x, run.y, event.clientX, event.clientY)) strokeTop(top);
+        }
+      }
+      run.x = event.clientX;
+      run.y = event.clientY;
+    };
+    window.addEventListener("pointermove", sweep);
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
     return () => {
+      window.removeEventListener("pointermove", sweep);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, []);
+  }, [strokeTop]);
 
   const clickHead = (event, pair) => {
     if (event.shiftKey && selection.length) {
@@ -662,7 +757,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
             <div className="se-tempo">
               <div className="se-tempo-field" title="Steps per minute: one sequencer bit per step">
                 <span className="cx-label">BPM</span>
-                <NumberInput value={draft.sequencerBpm ?? 0} onChange={(value) => setSettingField("sequencerBpm", value)} min={0} step={10}
+                <NumberInput value={draft.sequencerBpm ?? 0} onChange={setSequencerBpm} min={0} step={10}
                   integer label="Sequencer bpm" />
               </div>
               <div className="se-tempo-field is-multiplier" title="Multiplies the bpm in game">
@@ -827,7 +922,8 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
 
         <div className="se-canvas-wrap">
           <div ref={canvas} className="se-canvas custom-scrollbar" onContextMenu={(event) => event.preventDefault()}>
-            <div ref={strip} className="se-cols" role="group" aria-label="Siren patterns: a column per head, a row per step">
+            <div ref={strip} className="se-cols" role="group" aria-label="Siren patterns: a column per head, a row per step"
+              style={{ "--se-brush": brush }} onPointerDown={startTopStroke}>
               <div className="se-col se-col-steps">
                 <div className="se-col-top" aria-hidden="true">
                   <span className="se-col-head is-steps">Step</span>
@@ -856,8 +952,8 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
                   const names = members.map((member) => member + 1).join("+");
                   const unbound = modelLights ? members.filter((member) => !meshSirens.has(member + 1)).map((member) => member + 1) : [];
                   const title = partner
-                    ? `Dual-colour head: sirens ${names}. Click a step for the first colour, again for the second, again for off; right-click clears it. In game each colour needs its own siren bone.${unbound.length ? ` Siren ${unbound.join(", ")} has no light on the model.` : ""}`
-                    : sirenTitle(light, first + 1, !unbound.length);
+                    ? `Dual-colour head: sirens ${names}. Click a step for the first colour, again for the second, again for off; right-click clears it. Right-click the head to clear both patterns, or right-drag across heads. In game each colour needs its own siren bone.${unbound.length ? ` Siren ${unbound.join(", ")} has no light on the model.` : ""}`
+                    : `${sirenTitle(light, first + 1, !unbound.length)}. Right-click clears its pattern; right-drag across heads clears more.`;
                   const muteColumn = () => setLights({
                     muted: isMuted
                       ? [...muted].filter((entry) => !members.includes(entry - 1))
@@ -866,7 +962,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
                   return (
                     <div key={first} className={cx("se-head-cols", isSelected && "is-selected", isMuted && "is-muted")}>
                       <div className={cx("se-col", partner && "is-dual")}>
-                        <div className="se-col-top">
+                        <div className="se-col-top" data-clear={`flashiness:${members.join(",")}`} data-tint={partner ? undefined : first}>
                           <button type="button" className={cx("se-col-head", partner && "is-dual")} onClick={(event) => (partner ? clickHead(event, members) : clickRow(event, first))}
                             title={title} aria-label={`${partner ? "Sirens" : "Siren"} ${names}`} aria-pressed={isSelected}>
                             <span className="se-col-index" aria-hidden="true">
@@ -878,7 +974,8 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
                           </button>
                           <button type="button" className={cx("se-mute", isMuted && "is-on")} onClick={partner ? muteColumn : () => toggleMute(first + 1)}
                             aria-pressed={isMuted} aria-label={`Mute ${partner ? "sirens" : "siren"} ${names}`} title={isMuted ? "Unmute" : "Mute on the model"}>M</button>
-                          <span className="se-col-lamp" data-members={members.join(",")} aria-hidden="true" />
+                          <span className="se-col-lamp" data-members={members.join(",")} aria-hidden="true"
+                            title={partner ? undefined : `Colour siren ${first + 1} ${brushName}: click, or drag across lamps. Pick the colour with 1–6.`} />
                         </div>
                         {partner ? (
                           <DualLane first={light} second={partner} dim={!light.flash && !partner.flash}
@@ -890,8 +987,8 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
                       </div>
                       {members.filter((member) => draft.sirens[member].rotate).map((member) => (
                         <div key={member} className="se-col is-sub">
-                          <div className="se-col-top">
-                            <span className="se-col-head is-sub" title={`Siren ${member + 1} rotation pattern`}>
+                          <div className="se-col-top" data-clear={`rotation:${member}`}>
+                            <span className="se-col-head is-sub" title={`Siren ${member + 1} rotation pattern. Right-click here to clear it.`}>
                               <RotateCw aria-hidden="true" />
                             </span>
                           </div>
@@ -910,8 +1007,8 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
                 <div className="se-col-group se-lamp-group" role="group" aria-label="Head and tail lights">
                   {LAMP_KEYS.map((key) => (
                     <div key={key} className="se-col is-lamp">
-                      <div className="se-col-top">
-                        <span className="se-col-head is-lamp" title={`${LAMP_LABELS[key]} sequencer while the sirens run`}>{lampInitials(LAMP_LABELS[key])}</span>
+                      <div className="se-col-top" data-clear={`lamp:${key}`}>
+                        <span className="se-col-head is-lamp" title={`${LAMP_LABELS[key]} sequencer while the sirens run. Right-click here to clear it.`}>{lampInitials(LAMP_LABELS[key])}</span>
                       </div>
                       <Lane sequencer={draft.lamps?.[key]?.sequencer ?? 0} color={key.includes("Head") ? "#fff4e0" : "#ff1a0a"} kind="lamp"
                         label={`${LAMP_LABELS[key]} pattern`} onPaint={paintLamp(key)} />

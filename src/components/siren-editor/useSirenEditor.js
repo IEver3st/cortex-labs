@@ -114,12 +114,12 @@ export default function useSirenEditor({ modelPath, fileSetting }) {
   const close = useCallback(() => update((current) => ({ ...current, open: false })), [update]);
 
   /** Applies `recipe(draft) -> draft`; `key` groups rapid edits into one undo step. */
-  const edit = useCallback((recipe, key = null) => update((current) => {
+  const edit = useCallback((recipe, key = null, { held = false } = {}) => update((current) => {
     if (!current.draft) return current;
     const next = recipe(current.draft);
     if (!next || next === current.draft) return current;
     const now = Date.now();
-    const merge = key && key === current.lastKey && now - current.lastAt < COALESCE_MS;
+    const merge = key && key === current.lastKey && (held || now - current.lastAt < COALESCE_MS);
     const past = merge ? current.past : [...current.past, current.draft].slice(-HISTORY_LIMIT);
     return {
       ...current,
