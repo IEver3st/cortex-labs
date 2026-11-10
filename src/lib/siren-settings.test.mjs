@@ -327,7 +327,7 @@ test("the unsaved change list names what an edit changed against the file", () =
   assert.deepEqual(describeSirenChanges(base, grown), ["Siren count 4 → 5", "Siren 1: colour #ff0000 → #00ff00"]);
   assert.deepEqual(describeSirenChanges(base, structuredClone(base)), []);
   assert.deepEqual(describeSirenChanges(null, base), [
-    "New setting: no carcols.meta has it yet. Install or Save to carcols.meta adds it as id 7265.",
+    "New setting: no carcols.meta has it yet. Install or Save to file adds it as id 7265.",
     "4 sirens at 600 bpm",
   ]);
 });

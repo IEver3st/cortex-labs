@@ -8,6 +8,20 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [6.2.1] - 2026-11-09
+
+Sirens: Ctrl+S saves straight back to carcols.meta, and saving no longer wipes patterns stored as negative numbers.
+
+### Added
+
+- **Sirens: Ctrl+S saves to carcols.meta** - Ctrl+S, or **Save** in the rail, writes your changes back into the carcols.meta the setting came from or was last saved to, with no file dialog. The first save into a file in a session keeps a timestamped `.bak` of it, and if the setting changed in the file since you opened it, nothing is written until you choose to overwrite it, with a fresh `.bak` kept first. A setting without a file still asks where to write. **Save as…** (Ctrl+Shift+S, under **More**) always asks.
+
+### Fixed
+
+- **Sirens: saving no longer zeroes signed sequencers** - carcols.meta files written by CodeWalker or OpenIV store patterns with the top bit set as negative numbers (`-1`, `-1431655766`). These were read as invalid and saved back as `0`, wiping those flash, rotation and head or tail light patterns. They now load as their real pattern, and saving other changes leaves those sequencers exactly as written.
+
+---
+
 ## [6.2.0] - 2026-11-09
 
 Sirens: speed is a percentage of the bpm, column tops clear and recolour with a drag, and the preview keeps your camera when it resizes.

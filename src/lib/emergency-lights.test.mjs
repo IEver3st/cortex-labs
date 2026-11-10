@@ -218,7 +218,7 @@ test("simulation resolves the model's siren setting and checks bones", () => {
 
 test("bad sequencers are reported; extra sirens are not", () => {
   const items = Array.from({ length: 22 }, (_, index) => `
-    <Item><flashiness><sequencer value="${index === 3 ? "-5" : "4294967295"}" /></flashiness><flash value="true" /></Item>`).join("");
+    <Item><flashiness><sequencer value="${index === 3 ? "4294967296" : "4294967295"}" /></flashiness><flash value="true" /></Item>`).join("");
   const carcols = `<CVehicleModelInfoVarGlobal><Sirens><Item><id value="9" /><name>big</name><sequencerBpm value="300" /><sirens>${items}</sirens></Item></Sirens></CVehicleModelInfoVarGlobal>`;
   const variations = `<CVehicleModelInfoVariation><variationData><Item><modelName>big</modelName><sirenSettings value="9" /></Item></variationData></CVehicleModelInfoVariation>`;
   const meta = loadResourceMeta([{ path: "carcols.meta", text: carcols }, { path: "carvariations.meta", text: variations }]);
