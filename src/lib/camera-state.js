@@ -53,6 +53,37 @@ export function syncViewerCameraPose({
   controls.update();
 }
 
+export function rescaleViewerCameraPose({
+  camera,
+  controls,
+  zoomRatio = null,
+  previousBaseDistance,
+  baseDistance,
+  near,
+  far,
+  minDistance,
+  maxDistance,
+}) {
+  if (!camera || !controls) return null;
+  flushOrbitControlsDamping(controls);
+  const offset = camera.position.clone().sub(controls.target);
+  const distance = offset.length();
+  const nextZoomRatio = Number.isFinite(zoomRatio) && zoomRatio > 0 ? zoomRatio : distance / previousBaseDistance;
+  if (!Number.isFinite(nextZoomRatio) || nextZoomRatio <= 0 || !(baseDistance > 0) || distance === 0) return null;
+  syncViewerCameraPose({
+    camera,
+    controls,
+    position: offset.setLength(baseDistance * nextZoomRatio).add(controls.target),
+    target: controls.target.clone(),
+    up: camera.up.clone(),
+    near,
+    far,
+    minDistance,
+    maxDistance,
+  });
+  return nextZoomRatio;
+}
+
 export function restoreViewerCameraState({
   camera,
   controls,

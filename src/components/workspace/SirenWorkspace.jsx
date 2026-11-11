@@ -192,9 +192,13 @@ function SirenSheet({ s, resource, hasModel, system, onStartPattern }) {
       {resource.errors.length === 1 ? `${fileName(resource.errors[0].path)} could not be read` : `${resource.errors.length} meta files could not be read`}
     </p>
   ) : null;
+  const refresh = () => {
+    resource.rescan();
+    s.reloadModel?.();
+  };
   const rescan = hasModel && native ? (
-    <button type="button" className="cx-icon-btn" onClick={resource.rescan} disabled={resource.status === "scanning"}
-      aria-label="Read the meta files again" title="Read the meta files again">
+    <button type="button" className="cx-icon-btn" onClick={refresh} disabled={resource.status === "scanning"}
+      aria-label="Reload the model and its meta files" title="Reload the model and its meta files">
       <RefreshCw aria-hidden="true" />
     </button>
   ) : null;

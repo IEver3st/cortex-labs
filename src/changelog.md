@@ -1,3 +1,15 @@
+version: 6.2.2
+date: 2026-11-10
+> Sirens: refresh reloads the vehicle model too, and resizing the preview no longer creeps the camera closer.
+
+## Improved
+- Refresh reloads the model | The refresh button in the Sirens rail now reloads the model from disk as well as its meta files, so a re-exported .yft shows up without reopening the vehicle. Your camera stays where it was.
+
+## Fixed
+- Preview zoom stays put | Shrinking the preview and widening it again left the camera a little closer each time, until the model filled the view. It now comes back to the zoom you set, in every 3D preview, Multi included.
+
+---
+
 version: 6.2.1
 date: 2026-11-09
 > Sirens: Ctrl+S saves straight back to carcols.meta, and saving no longer wipes patterns stored as negative numbers.

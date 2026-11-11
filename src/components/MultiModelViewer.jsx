@@ -23,7 +23,7 @@ import {
   CAMERA_PRESET_KEYS,
   DEFAULT_CAMERA_PRESET,
 } from "../lib/camera-framing.js";
-import { syncViewerCameraPose } from "../lib/camera-state.js";
+import { rescaleViewerCameraPose, syncViewerCameraPose } from "../lib/camera-state.js";
 import { createViewerStage } from "../lib/viewer-stage.js";
 import {
   applyShadowFlags,
@@ -180,6 +180,7 @@ function MultiModelViewer({
   });
   const cameraStateRef = useRef({ presetKey: DEFAULT_CAMERA_PRESET, zoomFactor: 1 });
   const cameraUserOwnedRef = useRef(false);
+  const resizeZoomRatioRef = useRef(null);
 
   const [sceneReady, setSceneReady] = useState(false);
   // Bumped when a vehicle is added to or removed from the scene.
@@ -349,6 +350,7 @@ function MultiModelViewer({
         zoomFactor,
       };
       cameraUserOwnedRef.current = false;
+      resizeZoomRatioRef.current = null;
       syncViewerCameraPose({
         camera,
         controls,
@@ -502,6 +504,7 @@ function MultiModelViewer({
       };
       cameraStateRef.current = { presetKey: framing.presetKey, zoomFactor };
       cameraUserOwnedRef.current = false;
+      resizeZoomRatioRef.current = null;
       if (shouldRender) requestRenderRef.current?.();
     };
     const rescaleCameraFrame = () => {
@@ -517,12 +520,12 @@ function MultiModelViewer({
       });
       const scale = framing.baseDistance / fitRef.current.baseDistance;
       if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return;
-      syncViewerCameraPose({
+      resizeZoomRatioRef.current = rescaleViewerCameraPose({
         camera,
         controls,
-        position: camera.position.clone().sub(controls.target).multiplyScalar(scale).add(controls.target),
-        target: controls.target.clone(),
-        up: camera.up.clone(),
+        zoomRatio: resizeZoomRatioRef.current,
+        previousBaseDistance: fitRef.current.baseDistance,
+        baseDistance: framing.baseDistance,
         near: framing.near,
         far: framing.far,
         minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
@@ -636,12 +639,18 @@ function MultiModelViewer({
     });
 
     let cameraInteracting = false;
+    let interactionDistance = 0;
     const handleControlsStart = () => {
       cameraInteracting = true;
+      interactionDistance = camera.position.distanceTo(controls.target);
       requestRenderFrame();
     };
     const handleControlsChange = () => {
-      if (cameraInteracting) cameraUserOwnedRef.current = true;
+      if (cameraInteracting) {
+        cameraUserOwnedRef.current = true;
+        const distance = camera.position.distanceTo(controls.target);
+        if (Math.abs(distance - interactionDistance) > interactionDistance * 1e-6) resizeZoomRatioRef.current = null;
+      }
       requestRenderFrame();
     };
     const handleControlsEnd = () => {

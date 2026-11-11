@@ -49,6 +49,7 @@ import {
 } from "../lib/camera-framing.js";
 import {
   cloneViewerCameraState,
+  rescaleViewerCameraPose,
   restoreViewerCameraState,
   syncViewerCameraPose,
 } from "../lib/camera-state.js";
@@ -575,6 +576,7 @@ function ViewerComponent({
     zoomFactor: 1,
   });
   const cameraUserOwnedRef = useRef(false);
+  const resizeZoomRatioRef = useRef(null);
   const [modelVersion, setModelVersion] = useState(0);
   const [vehicleModsRevision, setVehicleModsRevision] = useState(0);
   // Bumped each time the model's native materials finish loading, so the game
@@ -1040,6 +1042,7 @@ function ViewerComponent({
         zoomFactor,
       };
       cameraUserOwnedRef.current = false;
+      resizeZoomRatioRef.current = null;
 
       if (shouldRequestRender) requestRenderRef.current?.();
     };
@@ -1056,12 +1059,12 @@ function ViewerComponent({
       });
       const scale = framing.baseDistance / fitRef.current.baseDistance;
       if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return;
-      syncViewerCameraPose({
+      resizeZoomRatioRef.current = rescaleViewerCameraPose({
         camera,
         controls,
-        position: camera.position.clone().sub(controls.target).multiplyScalar(scale).add(controls.target),
-        target: controls.target.clone(),
-        up: camera.up.clone(),
+        zoomRatio: resizeZoomRatioRef.current,
+        previousBaseDistance: fitRef.current.baseDistance,
+        baseDistance: framing.baseDistance,
         near: framing.near,
         far: framing.far,
         minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
@@ -1574,6 +1577,7 @@ function ViewerComponent({
       resizeBloomPipeline(bloomRef.current, clientWidth, clientHeight, pixelRatio);
       resizeAoPipeline(aoRef.current, clientWidth, clientHeight, pixelRatio);
       if (!isActiveRef.current) return;
+      stageRef.current?.constrainControls(controls);
       const needsUpdate = controls.update();
       renderView(camera);
       onFrameRef.current?.();
@@ -1596,12 +1600,18 @@ function ViewerComponent({
     });
 
     let cameraInteracting = false;
+    let interactionDistance = 0;
     const handleControlsStart = () => {
       cameraInteracting = true;
+      interactionDistance = camera.position.distanceTo(controls.target);
       requestRenderFrame();
     };
     const handleControlsChange = () => {
-      if (cameraInteracting) cameraUserOwnedRef.current = true;
+      if (cameraInteracting) {
+        cameraUserOwnedRef.current = true;
+        const distance = camera.position.distanceTo(controls.target);
+        if (Math.abs(distance - interactionDistance) > interactionDistance * 1e-6) resizeZoomRatioRef.current = null;
+      }
       requestRenderFrame();
     };
     const handleControlsEnd = () => {
@@ -1909,6 +1919,7 @@ function ViewerComponent({
         });
         fitRef.current = restored.fit;
         cameraStateRef.current = restored.cameraState;
+        resizeZoomRatioRef.current = null;
         if (viewState) cameraUserOwnedRef.current = viewState.userOwned !== false;
 
         requestRenderRef.current?.();
@@ -3109,6 +3120,7 @@ function ViewerComponent({
             zoomFactor: currentZoom,
           };
           if (!reloadedInPlace) {
+            resizeZoomRatioRef.current = null;
             cameraUserOwnedRef.current = false;
             syncViewerCameraPose({
               camera: cameraRef.current,
