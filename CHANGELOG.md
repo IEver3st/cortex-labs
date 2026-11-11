@@ -8,6 +8,16 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [6.2.5] - 2026-11-10
+
+Sirens and lights: dim vertex paint on emissives now reads as dim in the preview.
+
+### Fixed
+
+- **Sirens and lights: dim vertex paint now reads as dim** - A light painted with a darker red vertex colour barely changed in the preview, so a dim steady layer under a brighter flash looked constant. Painted lights now stay lit the way they do in game, and the glow and white-hot core above that lit level scale with the paint, so darker paint draws a smaller glow and a less white-hot lamp. Mid paint reads dimmer than before, closer to the game's own step between layers.
+
+---
+
 ## [6.2.4] - 2026-11-10
 
 Sirens: unsynced lights strobe through a lit block in the preview, and sirens saved to carcols.meta are numbered.

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import {
-  EMISSION_KNEE,
+  EMISSION_SCALE,
   MAX_SIREN_COUNT,
   anyLightOn,
   boneHeading,
@@ -168,8 +168,11 @@ const GLOW_COVERAGE = [
   "\tglowKnee *= glowKnee * glowKnee;",
   "\tdiffuseColor.a *= 1.0 - exp( -glowBurn * glowKnee / ( 1.0 + glowKnee ) );",
 ].join("\n");
-const GAME_EMISSIVE_PER_GAIN = (1 / (EMISSIVE_GAIN * EMISSION_KNEE)).toFixed(6);
-const PAINTED_STRENGTH = `\tdiffuseColor.rgb *= log2( 1.0 + glowGain * vEmissiveDim * ${GAME_EMISSIVE_PER_GAIN} ) / max( log2( 1.0 + glowGain * ${GAME_EMISSIVE_PER_GAIN} ), 1e-4 );`;
+const LADDER_SCALE = EMISSION_SCALE.toFixed(4);
+const PAINTED_STRENGTH = [
+  `\tfloat paintLit = ${LADDER_SCALE} * log2( 1.0 + ( exp2( glowStrength / ${LADDER_SCALE} ) - 1.0 ) * vEmissiveDim );`,
+  "\tdiffuseColor.rgb *= ( min( paintLit, 1.0 ) + max( glowStrength - 1.0, 0.0 ) * vEmissiveDim ) / max( glowStrength, 1e-4 );",
+].join("\n");
 
 // Lit emitters draw as solid surfaces, as the game draws emissives: where a red
 // and a blue emitter overlap, the nearer one shows instead of the two adding up
@@ -207,13 +210,15 @@ function createOverlay(mesh, order, alphaFloor = 0) {
   // glow, and the material colour (the tint) colours it.
   material.userData.glowGain = { value: 1 };
   material.userData.glowKeepHue = { value: 1 };
+  material.userData.glowStrength = { value: 1 };
   const dimmed = hasEmissiveDim(mesh.geometry);
   material.userData.glowDimmed = dimmed;
   material.onBeforeCompile = (shader) => {
     if (dimmed) declareEmissiveDim(shader);
     shader.uniforms.glowGain = material.userData.glowGain;
     shader.uniforms.glowKeepHue = material.userData.glowKeepHue;
-    shader.fragmentShader = `uniform float glowGain;\nuniform float glowKeepHue;\n${shader.fragmentShader}`;
+    shader.uniforms.glowStrength = material.userData.glowStrength;
+    shader.fragmentShader = `uniform float glowGain;\nuniform float glowKeepHue;\nuniform float glowStrength;\n${shader.fragmentShader}`;
     if (material.userData.glowMode !== "texture") {
       if (dimmed) {
         shader.fragmentShader = shader.fragmentShader.replace(
@@ -832,6 +837,7 @@ export function createEmergencyLightRig({ scene, model }) {
       else if (map) color = "#ffffff";
       const glowMaterial = overlay.material;
       glowMaterial.userData.glowKeepHue.value = lens ? 0 : 1;
+      glowMaterial.userData.glowStrength.value = strength;
       if (glowMaterial.map !== map || glowMaterial.userData.glowMode !== glowMode) {
         glowMaterial.map = map;
         const blended = Boolean(map) || glowMaterial.userData.glowDimmed;

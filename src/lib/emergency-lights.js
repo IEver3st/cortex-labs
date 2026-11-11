@@ -94,10 +94,11 @@ const INDICATOR_PERIOD = 0.75;
  * blooms while an indicator still reads as lit. Ratios keep their order.
  */
 export const EMISSION_KNEE = 4;
+export const EMISSION_SCALE = 0.65;
 
 export function emissionStrength(gameValue) {
   if (!Number.isFinite(gameValue) || gameValue <= 0) return 0;
-  return 0.65 * Math.log2(1 + gameValue / EMISSION_KNEE);
+  return EMISSION_SCALE * Math.log2(1 + gameValue / EMISSION_KNEE);
 }
 
 function lower(value) {
