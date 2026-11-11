@@ -1,3 +1,15 @@
+version: 6.2.4
+date: 2026-11-10
+> Sirens: unsynced lights strobe through a lit block in the preview, and sirens saved to carcols.meta are numbered.
+
+## New
+- Numbered sirens in carcols.meta | Every siren Studio writes now has a "Siren 12" comment above it, matching its column in the grid. Saving a change into an existing carcols.meta also labels that setting's sirens that have no comment yet. A siren with its own comment keeps it, and a save that changes nothing leaves the file untouched.
+
+## Fixed
+- Unsynced lights strobe inside a lit block | A flash with Sync to bpm off now keeps its own time through a run of lit steps: on for one step ÷ speed percentage, off for as long, until the run ends. The preview used to restart the flash on every lit step, so a block of lit steps just above 100% drew as an almost solid light where the game strobes.
+
+---
+
 version: 6.2.3
 date: 2026-11-10
 > Vertex paint dims emissives as in game, the Sirens panel and grid use the space they have, and previews, pane drags and the sequencer run smoother.

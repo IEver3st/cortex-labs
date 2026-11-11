@@ -199,6 +199,31 @@ export function channelOn(channel, beat, ratio = 1) {
   return false;
 }
 
+export function unsyncedFlashOn(channel, beat, ratio) {
+  if (!Number.isFinite(beat)) return false;
+  const sequencer = Number.isFinite(channel?.sequencer) ? channel.sequencer >>> 0 : 0;
+  if (!sequencer) return false;
+  const flashesPerBeat = Math.max(1, Math.floor(finite(channel.multiples, 1)));
+  const flashBeats = ratio > 0 ? 1 / (ratio * (flashesPerBeat === 1 ? 1 : 2 * flashesPerBeat)) : Infinity;
+  if (flashBeats >= SEQUENCER_STEPS) return true;
+  if (sequencer === 0xffffffff) return Math.floor(beat / flashBeats) % 2 === 0;
+  const currentBeat = Math.floor(beat);
+  let lastLitBeat = currentBeat;
+  while (!sequencerBit(sequencer, lastLitBeat)) lastLitBeat -= 1;
+  let runStart = lastLitBeat;
+  while (sequencerBit(sequencer, runStart - 1)) runStart -= 1;
+  const sinceRunStart = beat - runStart;
+  if (lastLitBeat === currentBeat) return Math.floor(sinceRunStart / flashBeats) % 2 === 0;
+  const runBeats = lastLitBeat + 1 - runStart;
+  const finalFlashStart = (Math.ceil(runBeats / (2 * flashBeats)) - 1) * 2 * flashBeats;
+  return sinceRunStart < finalFlashStart + flashBeats;
+}
+
+function flashOn(flash, beat, bpm) {
+  if (isSynced(flash) || !(bpm > 0)) return sequencerOn(flash?.sequencer, flash?.multiples, beat);
+  return unsyncedFlashOn(flash, beat, channelSpeedRatio(flash, bpm));
+}
+
 // Rotation rate: pi / 16 rad per second per speed unit, so a 600 bpm synced
 // rotator (speed equivalent 96) turns about three times a second.
 function rotationRate(channel, setting, syncedBps) {
@@ -245,7 +270,7 @@ export function evaluateSirens(setting, time) {
     const flash = siren.flashiness || {};
     const rotation = siren.rotation || {};
     let on = true;
-    if (siren.flash !== false) on = channelOn(flash, beat, channelSpeedRatio(flash, bpm));
+    if (siren.flash !== false) on = flashOn(flash, beat, bpm);
     let spin = 0;
     if (siren.rotate) {
       on = on && channelOn(rotation, beat, channelSpeedRatio(rotation, bpm));
