@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import {
+  EMISSION_KNEE,
   MAX_SIREN_COUNT,
   anyLightOn,
   boneHeading,
@@ -14,6 +15,7 @@ import {
 } from "./emergency-lights.js";
 import { elsRunning, evaluateEls } from "./els-lights.js";
 import { elsColorHex } from "./els-vcf.js";
+import { declareEmissiveDim, hasEmissiveDim } from "./native-shader.js";
 import { FLOOR_LIGHT_LAYER, GLOW_LAYER } from "./viewer-render-effects.js";
 import { createBeamMaterial } from "./viewer-stage.js";
 
@@ -161,6 +163,14 @@ function isShown(object, root) {
   return true;
 }
 
+const GLOW_COVERAGE = [
+  `\tfloat glowKnee = glowBurn / ${GLOW_KNEE.toFixed(2)};`,
+  "\tglowKnee *= glowKnee * glowKnee;",
+  "\tdiffuseColor.a *= 1.0 - exp( -glowBurn * glowKnee / ( 1.0 + glowKnee ) );",
+].join("\n");
+const GAME_EMISSIVE_PER_GAIN = (1 / (EMISSIVE_GAIN * EMISSION_KNEE)).toFixed(6);
+const PAINTED_STRENGTH = `\tdiffuseColor.rgb *= log2( 1.0 + glowGain * vEmissiveDim * ${GAME_EMISSIVE_PER_GAIN} ) / max( log2( 1.0 + glowGain * ${GAME_EMISSIVE_PER_GAIN} ), 1e-4 );`;
+
 // Lit emitters draw as solid surfaces, as the game draws emissives: where a red
 // and a blue emitter overlap, the nearer one shows instead of the two adding up
 // to purple. Coincident surfaces resolve by siren order.
@@ -197,11 +207,23 @@ function createOverlay(mesh, order, alphaFloor = 0) {
   // glow, and the material colour (the tint) colours it.
   material.userData.glowGain = { value: 1 };
   material.userData.glowKeepHue = { value: 1 };
+  const dimmed = hasEmissiveDim(mesh.geometry);
+  material.userData.glowDimmed = dimmed;
   material.onBeforeCompile = (shader) => {
-    if (material.userData.glowMode !== "texture") return;
+    if (dimmed) declareEmissiveDim(shader);
     shader.uniforms.glowGain = material.userData.glowGain;
     shader.uniforms.glowKeepHue = material.userData.glowKeepHue;
-    shader.fragmentShader = `uniform float glowGain;\nuniform float glowKeepHue;\n${shader.fragmentShader}`.replace(
+    shader.fragmentShader = `uniform float glowGain;\nuniform float glowKeepHue;\n${shader.fragmentShader}`;
+    if (material.userData.glowMode !== "texture") {
+      if (dimmed) {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <map_fragment>",
+          ["#include <map_fragment>", "\tfloat glowBurn = glowGain * vEmissiveDim;", GLOW_COVERAGE, PAINTED_STRENGTH].join("\n"),
+        );
+      }
+      return;
+    }
+    shader.fragmentShader = shader.fragmentShader.replace(
       "#include <map_fragment>",
       [
         "#ifdef USE_MAP",
@@ -215,16 +237,15 @@ function createOverlay(mesh, order, alphaFloor = 0) {
         "\t\tglowArea += 0.25 * max( glowTap.r, max( glowTap.g, glowTap.b ) );",
         "\t}",
         `\tfloat glowAlpha = step( 0.002, glowTexel.a ) * max( glowTexel.a, ${alphaFloor.toFixed(2)} );`,
-        "\tfloat glowBurn = min( glowLevel, glowArea ) * glowAlpha * glowGain;",
-        `\tfloat glowKnee = glowBurn / ${GLOW_KNEE.toFixed(2)};`,
-        "\tglowKnee *= glowKnee * glowKnee;",
-        "\tdiffuseColor.a *= 1.0 - exp( -glowBurn * glowKnee / ( 1.0 + glowKnee ) );",
+        `\tfloat glowBurn = min( glowLevel, glowArea ) * glowAlpha * glowGain${dimmed ? " * vEmissiveDim" : ""};`,
+        GLOW_COVERAGE,
         "\tdiffuseColor.rgb *= mix( vec3( 1.0 ), glowTexel.rgb / max( glowLevel, 1e-4 ), glowKeepHue );",
+        dimmed ? PAINTED_STRENGTH : "",
         "#endif",
       ].join("\n"),
     );
   };
-  material.customProgramCacheKey = () => `light-glow-${material.userData.glowMode || "solid"}-${alphaFloor}`;
+  material.customProgramCacheKey = () => `light-glow-${material.userData.glowMode || "solid"}-${alphaFloor}${dimmed ? "-dim" : ""}`;
   const overlay = new THREE.Mesh(mesh.geometry, material);
   overlay.name = `light-glow:${mesh.name}`;
   overlay.matrixAutoUpdate = false;
@@ -813,9 +834,10 @@ export function createEmergencyLightRig({ scene, model }) {
       glowMaterial.userData.glowKeepHue.value = lens ? 0 : 1;
       if (glowMaterial.map !== map || glowMaterial.userData.glowMode !== glowMode) {
         glowMaterial.map = map;
-        glowMaterial.transparent = Boolean(map);
+        const blended = Boolean(map) || glowMaterial.userData.glowDimmed;
+        glowMaterial.transparent = blended;
         // Dark and empty texels write no depth, so they cannot hide emitters behind them.
-        glowMaterial.alphaTest = map ? 0.01 : 0;
+        glowMaterial.alphaTest = blended ? 0.01 : 0;
         glowMaterial.userData.glowMode = glowMode;
         glowMaterial.needsUpdate = true;
       }

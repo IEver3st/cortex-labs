@@ -8,6 +8,25 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [6.2.3] - 2026-11-10
+
+Vertex paint dims emissives as in game, the Sirens panel and grid use the space they have, and previews, pane drags and the sequencer run smoother.
+
+### Fixed
+
+- **Vertex paint on emissives now shows** - Vehicle emissive materials (`vehicle_lightsemissive`, siren, dash and the other `vehicle_*emissive*` shaders) glow by the red channel of their vertex paint, as in game: white is full strength, grey is dimmed, black is off. Painted-off housings and dimmed LEDs used to light up at full brightness in the Vehicle, Sirens and Prop previews. Models reload once after the update to pick up their vertex colours.
+- **Sirens panel fills a wide column** - Dragging the preview and panel column wider no longer leaves the siren options in a narrow strip with the panel buttons stranded mid-header. Past about 660px the Siren panel splits into two columns (light, lens glow and corona beside flash, rotation and scale), and past about 1000px into three. The Setting, Scene, Vehicle and Mods views reflow the same way, and a narrow panel keeps its single column in the usual order.
+- **Sirens grid uses the space it has** - The pattern grid shows one empty column for the next siren instead of every unused slot up to 32, so the head and tail light lanes sit right after your sirens instead of at the far edge. Columns widen to fill the grid pane, and on very tall windows the rows stop growing at a comfortable height.
+- **Sirens playhead lines up at any UI scale** - With UI Scaling above or below 100%, the highlighted step drifted off its row the further down the pattern it played and ran past the grid into the inspector. It now covers its step exactly and ends at the last lane.
+- **Lens glow choice no longer clips** - In a narrow inspector, Texture, Siren and Custom move under the Colour label instead of being cut off.
+- **Dragging pane edges is smoother** - Resizing the Sirens preview column or its height, and the dock and inspector edges in the other workspaces, no longer rebuilds the whole workspace on every pointer move. The new size is applied once per frame and saved when you let go, and the Sirens preview draws once per frame while it resizes instead of twice.
+- **Sirens sequencer keeps up while it plays and resizes** - The playhead and lamp previews now only touch the page when a step or lamp actually changes, instead of rewriting and re-measuring the grid every frame, and the step columns size themselves in one pass when the preview column is dragged instead of measuring and redrawing the grid twice. Playback lays out the grid once per step instead of every frame, and dragging the preview edge with a 32-siren pattern runs at about half the layout cost, with the same picture at every width and UI scale.
+- **3D preview draws faster** - Each preview frame no longer re-prepares every vehicle material for the floor reflection and the lamp glow, and shadows are only redrawn when something that casts them moves or changes. A flashing lightbar on a detailed vehicle like the GSD Tahoe now takes about a quarter less time per frame, with the same picture.
+- **Sound Studio engine rests in a background tab** - Leaving a Sound Studio tab with the engine running no longer keeps its simulation and rev counter updating every frame, and no stray pops or dump valve play from the hidden tab. The engine picks up where it was when you switch back.
+- **Fly camera keeps its view when the preview resizes** - Looking around with the right mouse button or flying with W A S D, Q and E now counts as moving the camera yourself, the same as orbiting. Resizing, expanding or restoring the preview straight after used to snap the camera back to the preset angle when it hadn't been orbited first.
+
+---
+
 ## [6.2.2] - 2026-11-10
 
 Sirens: refresh reloads the vehicle model too, and resizing the preview no longer creeps the camera closer.

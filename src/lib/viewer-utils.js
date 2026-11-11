@@ -1125,6 +1125,7 @@ export function setupWasdControls({
   requestRenderRef,
   domElement,
   isActiveRef,
+  onUserMove,
 }) {
   const state = wasdStateRef.current;
   const controls = controlsRef.current;
@@ -1138,6 +1139,7 @@ export function setupWasdControls({
   const lookForward = new THREE.Vector3();
   const lookEuler = new THREE.Euler(0, 0, 0, "YXZ");
   let lookDistance = 1;
+  let lookDistanceChanged = false;
   let orbitEnabledBeforeLook = true;
   let orbitDampingBeforeLook = true;
 
@@ -1212,6 +1214,7 @@ export function setupWasdControls({
       camera.position.add(move);
       controls.target.add(move);
       controls.update();
+      onUserMove?.({ distanceChanged: false });
       requestRenderRef.current?.();
     }
 
@@ -1300,11 +1303,13 @@ export function setupWasdControls({
     controls.enabled = false;
     controls.enableDamping = false;
     controls.update();
+    const orbitDistance = camera.position.distanceTo(controls.target);
     lookDistance = THREE.MathUtils.clamp(
-      camera.position.distanceTo(controls.target),
+      orbitDistance,
       Math.max((fitRef.current?.baseDistance || 1) * 0.05, 0.05),
       Math.max((fitRef.current?.baseDistance || 1) * 10, 10),
     );
+    lookDistanceChanged = Math.abs(lookDistance - orbitDistance) > orbitDistance * 1e-6;
     camera.up.copy(worldUp);
     domElement.classList.add("is-fly-looking");
 
@@ -1330,6 +1335,7 @@ export function setupWasdControls({
     });
     syncLookTarget();
     controls.update();
+    onUserMove?.({ distanceChanged: lookDistanceChanged });
     requestRenderRef.current?.();
   };
 

@@ -23,19 +23,26 @@ export default function PatternLightbar({ s }) {
   const { getLightTime } = s;
 
   useEffect(() => {
+    const lamps = Array.from(bar.current?.children || [], (node) => ({
+      node,
+      members: node.dataset.members.split(",").map(Number),
+      key: null,
+    }));
     const paint = () => {
-      const lamps = bar.current?.children;
-      if (!lamps) return;
       const time = getLightTime?.();
       const live = switches.sirens && Number.isFinite(time) && bps > 0;
       const states = live ? evaluateSirens(playing, time) : [];
       for (const lamp of lamps) {
-        const lit = lamp.dataset.members.split(",").map(Number)
-          .filter((index) => states[index]?.on && !muted.has(index + 1))
-          .map((index) => states[index].color);
-        lamp.style.setProperty("--lit", lit[0] || "transparent");
-        lamp.style.setProperty("--lit-b", lit[1] || lit[0] || "transparent");
-        lamp.classList.toggle("is-on", lit.length > 0);
+        const lit = [];
+        for (const index of lamp.members) {
+          if (states[index]?.on && !muted.has(index + 1)) lit.push(states[index].color);
+        }
+        const key = lit.join(" ");
+        if (lamp.key === key) continue;
+        lamp.key = key;
+        lamp.node.style.setProperty("--lit", lit[0] || "transparent");
+        lamp.node.style.setProperty("--lit-b", lit[1] || lit[0] || "transparent");
+        lamp.node.classList.toggle("is-on", lit.length > 0);
       }
     };
     paint();

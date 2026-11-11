@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { DDSLoader } from "three/examples/jsm/loaders/DDSLoader";
@@ -9,7 +9,7 @@ import { readFile, stat } from "@tauri-apps/plugin-fs";
 import { parseYftAsync } from "../lib/yft-loader";
 import { parseClmesh } from "../lib/clmesh.js";
 import { getBridgeParseIdentity, getLoadedModelCacheKey, getModelCacheKey, isBridgeCancelled, readBridgeWarnings, requestBridgeParse } from "../lib/model-load.js";
-import { UV_ORIGIN_TOP, userTextureUvAttribute } from "../lib/clmesh-object.js";
+import { UV_ORIGIN_TOP, applyVertexEmissiveDim, userTextureUvAttribute } from "../lib/clmesh-object.js";
 import { getModelExtras, loadVehicleModPart, summarizeParentTextures } from "../lib/vehicle-mod-parts.js";
 import { createPartSwapAnimator, enterDelay, prefersReducedMotion, SWAP_HANDOFF_MS } from "../lib/part-swap-animation.js";
 import { parseDDSAsync } from "../lib/dds";
@@ -59,6 +59,7 @@ import {
   configureShadowLight,
   createAoPipeline,
   createBloomPipeline,
+  createShadowMapCache,
   createSolidWireMaterial,
   disposeAoPipeline,
   disposeBloomPipeline,
@@ -704,7 +705,7 @@ function ViewerComponent({
     renderer.renderLists?.dispose?.();
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     isActiveRef.current = isActive;
     if (isActive) {
       requestRenderRef.current?.();
@@ -906,6 +907,10 @@ function ViewerComponent({
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = Boolean(shadowsEnabled);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const shadowMapCache = createShadowMapCache(renderer);
+    scene.onBeforeRender = (_renderer, _scene, _camera, target) => {
+      if (!target) shadowMapCache.update(scene);
+    };
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
     camera.position.set(2.4, 1.2, 2.8);
@@ -965,6 +970,9 @@ function ViewerComponent({
     let frameId = 0;
     let isRendering = false;
     let renderRequested = false;
+    let resizeDrewSinceLoopFrame = false;
+    let resizePending = false;
+    let hasViewport = false;
     const lastViewport = { width: 0, height: 0, pixelRatio: 0 };
     // Bloom runs only while a vehicle light is on; the composer is created on
     // first use and kept for the life of the renderer.
@@ -1151,11 +1159,7 @@ function ViewerComponent({
     };
 
     let recording = null;
-    const canRenderFrame = () => {
-      if (!isActiveRef.current || recording) return false;
-      const container = containerRef.current;
-      return Boolean(container && container.clientWidth > 0 && container.clientHeight > 0);
-    };
+    const canRenderFrame = () => Boolean(isActiveRef.current && !recording && hasViewport && containerRef.current);
 
     let turntableAt = null;
     const advanceTurntable = () => {
@@ -1178,6 +1182,8 @@ function ViewerComponent({
         turntableAt = null;
         return;
       }
+      const resizeOwnsDraw = resizeDrewSinceLoopFrame;
+      resizeDrewSinceLoopFrame = false;
       const turning = advanceTurntable();
       stageRef.current?.fit(fitRef.current?.bounds, modelRef.current, { atRest: measureAtRest });
       stageRef.current?.constrainControls(controls);
@@ -1191,10 +1197,10 @@ function ViewerComponent({
       if (vehicleRig) vehicleRig.wasAnimating = partsAnimating;
       const swapsAnimating = partSwapRef.current?.tick() || false;
       plateOverlayRef.current?.update();
-      renderView(camera);
+      if (!resizeOwnsDraw) renderView(camera);
       onFrameRef.current?.();
       reportMeshStats();
-      if (renderRequested || needsUpdate || lightsAnimating || partsAnimating || swapsAnimating || turning) {
+      if (resizeOwnsDraw || renderRequested || needsUpdate || lightsAnimating || partsAnimating || swapsAnimating || turning) {
         renderRequested = false;
         frameId = requestAnimationFrame(renderFrame);
       } else {
@@ -1202,7 +1208,12 @@ function ViewerComponent({
       }
     };
 
+    const flushPendingResize = () => {
+      if (resizePending && !recording) applyResize(true);
+    };
+
     const requestRenderFrame = () => {
+      if (isActiveRef.current) flushPendingResize();
       if (!canRenderFrame()) return;
       renderRequested = true;
       if (isRendering) return;
@@ -1214,6 +1225,17 @@ function ViewerComponent({
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
+    let canvasRect = null;
+    const readCanvasRect = (fresh) => {
+      if (fresh || !canvasRect) canvasRect = renderer.domElement.getBoundingClientRect();
+      return canvasRect;
+    };
+    const forgetCanvasRect = () => {
+      canvasRect = null;
+    };
+    window.addEventListener("scroll", forgetCanvasRect, { capture: true, passive: true });
+    window.addEventListener("resize", forgetCanvasRect);
+    renderer.domElement.addEventListener("pointerenter", forgetCanvasRect);
 
     // Window templates: a click on glass adds or removes that part. Plain
     // drags still orbit.
@@ -1233,9 +1255,9 @@ function ViewerComponent({
       onTemplatePartLeaveRef.current?.();
     };
 
-    const getTemplatePickHit = (event) => {
+    const getTemplatePickHit = (event, fresh) => {
       if (!modelRef.current) return null;
-      const rect = renderer.domElement.getBoundingClientRect();
+      const rect = readCanvasRect(fresh);
       if (!rect.width || !rect.height) return null;
 
       const clientX = Number(event?.clientX);
@@ -1265,9 +1287,18 @@ function ViewerComponent({
       else onTemplatePartLeaveRef.current?.();
     };
 
+    let templateHoverFrame = 0;
+    let templateHoverEvent = null;
+    const updateTemplatePickHover = () => {
+      templateHoverFrame = 0;
+      const event = templateHoverEvent;
+      templateHoverEvent = null;
+      if (event && isPartPickingEnabled()) reportTemplatePickHover(getTemplatePickHit(event, false));
+    };
     const handleTemplatePickPointerMove = (event) => {
       if (!isPartPickingEnabled()) return;
-      reportTemplatePickHover(getTemplatePickHit(event));
+      templateHoverEvent = event;
+      if (!templateHoverFrame) templateHoverFrame = requestAnimationFrame(updateTemplatePickHover);
       const state = templatePickStateRef.current;
       if (state.pointerId !== null) {
         const distance = Math.hypot(
@@ -1285,14 +1316,15 @@ function ViewerComponent({
       state.startX = Number(event.clientX) || 0;
       state.startY = Number(event.clientY) || 0;
       state.moved = false;
-      reportTemplatePickHover(getTemplatePickHit(event));
+      reportTemplatePickHover(getTemplatePickHit(event, true));
     };
 
     const handleTemplatePickPointerUp = (event) => {
       if (!isPartPickingEnabled()) return;
       const state = templatePickStateRef.current;
       if (state.pointerId !== null && event.pointerId !== state.pointerId) return;
-      const hit = getTemplatePickHit(event);
+      templateHoverEvent = null;
+      const hit = getTemplatePickHit(event, true);
       reportTemplatePickHover(hit);
       if (!state.moved && hit) onTemplatePartPickRef.current?.(hit);
       state.pointerId = null;
@@ -1300,6 +1332,7 @@ function ViewerComponent({
     };
 
     const handleTemplatePickPointerCancel = () => {
+      templateHoverEvent = null;
       if (!isPartPickingEnabled()) return;
       templatePickStateRef.current.pointerId = null;
       templatePickStateRef.current.moved = false;
@@ -1313,9 +1346,9 @@ function ViewerComponent({
     renderer.domElement.addEventListener("pointercancel", handleTemplatePickPointerCancel, true);
 
     const liveryCanvasPick = { pointerId: null, x: 0, y: 0, moved: false, frame: 0, at: null };
-    const pickLiveryCanvasSurface = (clientX, clientY) => {
+    const pickLiveryCanvasSurface = (clientX, clientY, fresh) => {
       const model = modelRef.current;
-      const rect = renderer.domElement.getBoundingClientRect();
+      const rect = readCanvasRect(fresh);
       if (!model || !rect.width || !rect.height || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -(((clientY - rect.top) / rect.height) * 2 - 1);
@@ -1354,7 +1387,7 @@ function ViewerComponent({
         liveryCanvasPick.frame = 0;
         const { at } = liveryCanvasPick;
         const picker = liveryCanvasPickerRef.current;
-        if (at && picker && liveryCanvasPick.pointerId === null) picker.onHover?.(pickLiveryCanvasSurface(at.x, at.y));
+        if (at && picker && liveryCanvasPick.pointerId === null) picker.onHover?.(pickLiveryCanvasSurface(at.x, at.y, false));
       });
     };
     const handleLiveryCanvasPointerUp = (event) => {
@@ -1362,7 +1395,7 @@ function ViewerComponent({
       if (!picker || liveryCanvasPick.pointerId === null || (event.pointerId ?? null) !== liveryCanvasPick.pointerId) return;
       const { moved } = liveryCanvasPick;
       liveryCanvasPick.pointerId = null;
-      if (!moved) picker.onPick?.(pickLiveryCanvasSurface(event.clientX, event.clientY));
+      if (!moved) picker.onPick?.(pickLiveryCanvasSurface(event.clientX, event.clientY, true));
     };
     const handleLiveryCanvasPointerLeave = () => {
       liveryCanvasPick.pointerId = null;
@@ -1375,17 +1408,17 @@ function ViewerComponent({
 
     // Vehicle parts: a click opens or closes a door, bonnet, boot or roof;
     // Alt-drag swings a part to any angle. Plain drags still orbit.
-    const setPointerRay = (event) => {
-      const rect = renderer.domElement.getBoundingClientRect();
+    const setPointerRay = (event, fresh) => {
+      const rect = readCanvasRect(fresh);
       if (!rect.width || !rect.height) return false;
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
       raycaster.setFromCamera(pointer, camera);
       return true;
     };
-    const pickVehiclePart = (event) => {
+    const pickVehiclePart = (event, fresh) => {
       const rig = vehicleRigRef.current;
-      if (!rig || !modelRef.current || !setPointerRay(event)) return null;
+      if (!rig || !modelRef.current || !setPointerRay(event, fresh)) return null;
       // The raycaster tests hidden meshes too; skip inactive LODs and hidden extras.
       const candidates = [];
       modelRef.current.traverseVisible((child) => {
@@ -1405,7 +1438,7 @@ function ViewerComponent({
     const updatePartHover = () => {
       hoverFrame = 0;
       if (!hoverEvent || vehiclePartDragRef.current || isTemplatePickingEnabled()) return;
-      const target = pickVehiclePart(hoverEvent);
+      const target = pickVehiclePart(hoverEvent, false);
       renderer.domElement.style.cursor = target ? (hoverEvent.altKey && target.kind === "part" ? "grab" : "pointer") : "";
     };
     const restoreVehicleDragControls = () => {
@@ -1414,7 +1447,7 @@ function ViewerComponent({
       if (drag) controls.enabled = drag.controlsEnabled;
     };
     const dragValue = (drag, event) => {
-      if (!setPointerRay(event)) return null;
+      if (!setPointerRay(event, true)) return null;
       const ray = raycaster.ray;
       if (drag.kind === "rotation" && Math.abs(ray.direction.dot(drag.axis)) > 0.2) {
         // Grab the part: the angle the pointer sweeps around the hinge.
@@ -1436,7 +1469,7 @@ function ViewerComponent({
     };
     const handlePartPointerDown = (event) => {
       if (event.button !== 0 || isTemplatePickingEnabled()) return;
-      const target = pickVehiclePart(event);
+      const target = pickVehiclePart(event, true);
       vehicleClick.pointerId = null;
       if (!target) return;
       if (event.altKey && target.kind === "part") {
@@ -1450,7 +1483,7 @@ function ViewerComponent({
         const travel = target.part.kind === "rotation"
           ? axis.clone().cross(target.point.clone().sub(origin))
           : axis.clone();
-        const rect = renderer.domElement.getBoundingClientRect();
+        const rect = readCanvasRect(false);
         const toScreen = (point) => {
           const projected = point.clone().project(camera);
           return new THREE.Vector2((projected.x + 1) * 0.5 * rect.width, (1 - projected.y) * 0.5 * rect.height);
@@ -1545,17 +1578,22 @@ function ViewerComponent({
     renderer.domElement.addEventListener("pointerleave", handlePartPointerCancel, true);
     renderer.domElement.addEventListener("pointercancel", handlePartPointerCancel, true);
 
-    const applyResize = () => {
+    const applyResize = (force) => {
       if (!containerRef.current) return;
-      if (recording) {
-        recording.resizeMissed = true;
+      forgetCanvasRect();
+      if (recording || (!isActiveRef.current && force !== true)) {
+        resizePending = true;
         return;
       }
+      resizePending = false;
       const { clientWidth, clientHeight } = containerRef.current;
-      if (clientWidth === 0 || clientHeight === 0) return;
+      const regained = !hasViewport;
+      hasViewport = clientWidth > 0 && clientHeight > 0;
+      if (!hasViewport) return;
       const pixelRatio = getPixelRatio();
       const sizeChanged = clientWidth !== lastViewport.width || clientHeight !== lastViewport.height;
       if (!sizeChanged && pixelRatio === lastViewport.pixelRatio) {
+        if (regained) requestRenderFrame();
         return;
       }
       lastViewport.width = clientWidth;
@@ -1577,11 +1615,16 @@ function ViewerComponent({
       resizeBloomPipeline(bloomRef.current, clientWidth, clientHeight, pixelRatio);
       resizeAoPipeline(aoRef.current, clientWidth, clientHeight, pixelRatio);
       if (!isActiveRef.current) return;
+      if (force === true) {
+        requestRenderFrame();
+        return;
+      }
       stageRef.current?.constrainControls(controls);
       const needsUpdate = controls.update();
       renderView(camera);
+      resizeDrewSinceLoopFrame = isRendering;
       onFrameRef.current?.();
-      if (needsUpdate || renderRequested) {
+      if (needsUpdate || renderRequested || regained) {
         requestRenderFrame();
       }
     };
@@ -1685,7 +1728,7 @@ function ViewerComponent({
       const previousRatio = renderer.getPixelRatio();
       const previousSize = renderer.getSize(new THREE.Vector2());
       const previousYaw = turntableGroup.rotation.y;
-      const session = { resizeMissed: false, disposed: false };
+      const session = { disposed: false };
       recording = session;
       if (frameId) cancelAnimationFrame(frameId);
       frameId = 0;
@@ -1812,7 +1855,7 @@ function ViewerComponent({
           resizeAoPipeline(aoRef.current, previousSize.x, previousSize.y, ratio);
           syncWorldOverlays(camera);
           turntableAt = null;
-          if (session.resizeMissed) applyResize();
+          flushPendingResize();
           requestRenderFrame();
         }
       }
@@ -1954,12 +1997,14 @@ function ViewerComponent({
       },
       captureScreenshot: () => {
         if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return null;
+        flushPendingResize();
         // Render a fresh frame and capture it (the drawing buffer is not preserved)
         renderView(cameraRef.current);
         return rendererRef.current.domElement.toDataURL("image/png");
       },
       captureScreenshotBlob: () => {
         if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return Promise.resolve(null);
+        flushPendingResize();
         renderView(cameraRef.current);
         return new Promise((resolve) => {
           rendererRef.current.domElement.toBlob((blob) => resolve(blob || null), "image/png");
@@ -1967,6 +2012,7 @@ function ViewerComponent({
       },
       /** Captures a preset framing without moving the live camera. */
       captureFrame: ({ presetKey = null, zoomFactor = 1, thumbWidth = 0 } = {}) => {
+        flushPendingResize();
         if (presetKey ? !renderPresetShot(presetKey, zoomFactor) : false) return null;
         if (!presetKey) restoreLiveFrame();
         const dataUrl = encodeCanvas(thumbWidth);
@@ -1974,6 +2020,7 @@ function ViewerComponent({
         return dataUrl;
       },
       captureFrameBlob: ({ presetKey = null, zoomFactor = 1 } = {}) => {
+        flushPendingResize();
         if (presetKey ? !renderPresetShot(presetKey, zoomFactor) : false) return Promise.resolve(null);
         if (!presetKey) restoreLiveFrame();
         // toBlob snapshots the drawing buffer when called, before the restore below.
@@ -2198,6 +2245,10 @@ function ViewerComponent({
       renderer.domElement.removeEventListener("pointerup", handleLiveryCanvasPointerUp, true);
       renderer.domElement.removeEventListener("pointerleave", handleLiveryCanvasPointerLeave, true);
       if (liveryCanvasPick.frame) cancelAnimationFrame(liveryCanvasPick.frame);
+      if (templateHoverFrame) cancelAnimationFrame(templateHoverFrame);
+      window.removeEventListener("scroll", forgetCanvasRect, { capture: true });
+      window.removeEventListener("resize", forgetCanvasRect);
+      renderer.domElement.removeEventListener("pointerenter", forgetCanvasRect);
       liveryCanvasPickerRef.current = null;
       renderer.domElement.removeEventListener("pointerdown", handlePartPointerDown, true);
       renderer.domElement.removeEventListener("pointermove", handlePartPointerMove, true);
@@ -2447,6 +2498,10 @@ function ViewerComponent({
       requestRenderRef,
       domElement: rendererRef.current?.domElement,
       isActiveRef,
+      onUserMove: ({ distanceChanged }) => {
+        cameraUserOwnedRef.current = true;
+        if (distanceChanged) resizeZoomRatioRef.current = null;
+      },
     });
   }, [sceneReady, wasdEnabled]);
 
@@ -4733,6 +4788,7 @@ function buildClmeshObject(meshes) {
     if (mesh.indices) {
       geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
     }
+    applyVertexEmissiveDim(geometry, mesh);
     if (mesh.skinIndices && mesh.skinWeights) {
       // Blended vertices (soft convertible roofs) for vehicle-rig.js.
       geometry.userData.skin = { indices: mesh.skinIndices, weights: mesh.skinWeights };

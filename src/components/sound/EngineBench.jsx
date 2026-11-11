@@ -276,6 +276,11 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
   }, [removeLibraryEntry]);
 
   const tick = useCallback((now) => {
+    if (!isActiveRef.current) {
+      frameRef.current = 0;
+      lastTimeRef.current = 0;
+      return;
+    }
     const last = lastTimeRef.current || now;
     const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000));
     lastTimeRef.current = now;
@@ -297,7 +302,7 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
     simRef.current = result.state;
     const engine = audioRef.current;
     if (engine) {
-      engine.control(isActiveRef.current ? result.control : { ...result.control, running: false });
+      engine.control(result.control);
       for (const event of result.events) {
         if (event.type === "pop") engine.play(event.set, { strength: event.strength, delay: event.delay || 0, bang: event.bang });
       }
@@ -326,9 +331,11 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
 
   useEffect(() => {
     if (isActive) {
-      if (simRef.current.running) kick();
+      if (simRef.current.running || simRef.current.rev > 0.002) kick();
       return;
     }
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = 0;
     inputRef.current.keys.clear();
     inputRef.current.pedal = 0;
     inputRef.current.brake = false;

@@ -14,7 +14,7 @@ namespace CodeWalkerBridge;
 public static partial class Program
 {
     private const string Magic = "CLM1";
-    private const ushort Version = 3;
+    private const ushort Version = 4;
     private static string? LoadedGtaKeyFolder;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -1391,6 +1391,7 @@ public static partial class Program
             DiffuseColor = source.DiffuseColor,
             EmissiveMultiplier = source.EmissiveMultiplier,
             VertexLightIds = copyBytes(source.VertexLightIds),
+            Colors = copyBytes(source.Colors, 4),
             SkinIndices = copyShorts(source.SkinIndices, 4),
             SkinWeights = copyBytes(source.SkinWeights, 4),
         };
@@ -1462,6 +1463,9 @@ public static partial class Program
             && HasComponent(info, VertexSemantics.Colour0)
             && info.GetComponentType((int)VertexSemantics.Colour0) is VertexComponentType.Colour or VertexComponentType.UByte4
                 ? new byte[vertexCount] : null;
+        var colors = HasComponent(info, VertexSemantics.Colour0)
+            && info.GetComponentType((int)VertexSemantics.Colour0) is VertexComponentType.Colour or VertexComponentType.UByte4
+                ? new byte[vertexCount * 4] : null;
 
         for (var v = 0; v < vertexCount; v += 1)
         {
@@ -1511,9 +1515,15 @@ public static partial class Program
                 uvs4[uvIndex + 1] = uv.Y;
             }
 
-            if (lightIds != null)
+            if (colors != null)
             {
-                lightIds[v] = vertexData.GetUByte4(v, (int)VertexSemantics.Colour0).A;
+                var colour = vertexData.GetUByte4(v, (int)VertexSemantics.Colour0);
+                var cIndex = v * 4;
+                colors[cIndex] = colour.R;
+                colors[cIndex + 1] = colour.G;
+                colors[cIndex + 2] = colour.B;
+                colors[cIndex + 3] = colour.A;
+                if (lightIds != null) lightIds[v] = colour.A;
             }
         }
 
@@ -1578,6 +1588,7 @@ public static partial class Program
             DiffuseColor = ExtractDiffuseColor(geom.Shader),
             EmissiveMultiplier = ExtractEmissiveMultiplier(geom.Shader),
             VertexLightIds = lightIds,
+            Colors = colors,
         };
     }
 
@@ -2882,6 +2893,8 @@ public static partial class Program
             if (mesh.Uvs4 != null) flags |= 0x10;
             var skinned = mesh.SkinIndices?.Length == mesh.VertexCount * 4 && mesh.SkinWeights?.Length == mesh.VertexCount * 4;
             if (skinned) flags |= 0x20;
+            var coloured = mesh.Colors?.Length == mesh.VertexCount * 4;
+            if (coloured) flags |= 0x40;
             writer.Write(flags);
 
             WriteFloatArray(writer, mesh.Positions);
@@ -2910,6 +2923,7 @@ public static partial class Program
                 foreach (var bone in mesh.SkinIndices!) writer.Write(bone);
                 writer.Write(mesh.SkinWeights!);
             }
+            if (coloured) writer.Write(mesh.Colors!);
             WriteUIntArray(writer, mesh.Indices);
         }
     }
@@ -3109,6 +3123,7 @@ public sealed class MeshData
     public int? LightId { get; set; }
     /// Per-vertex light ids, read for the light split only and not written to the cache.
     public byte[]? VertexLightIds { get; set; }
+    public byte[]? Colors { get; set; }
     /// Manifest skeleton bone every vertex follows; null when the mesh spans
     /// several bones or its drawable does not own the manifest skeleton.
     public int? BoneIndex { get; set; }

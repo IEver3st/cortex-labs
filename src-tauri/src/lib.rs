@@ -49,7 +49,8 @@ const BRIDGE_CLOSING: &str = "Cortex Studio is closing; the CodeWalker bridge wa
 /// reused only while every file the bridge read for it is unchanged. v19: a
 /// texture dictionary the resource streams is no longer also read from the game
 /// files (manifest v12), so v18 entries that list the game copy are not reused.
-const PARSE_YFT_CACHE_REVISION: &[u8] = b"parse_yft_v19";
+/// v20: `.clmesh` v4 carries vertex colour 0, which v19 entries lack.
+const PARSE_YFT_CACHE_REVISION: &[u8] = b"parse_yft_v20";
 /// Bridge warnings kept per parse; the rest are summarised in one line.
 const MAX_PARSE_WARNINGS: usize = 100;
 

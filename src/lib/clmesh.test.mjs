@@ -54,6 +54,7 @@ function buildClmesh(version, meshes) {
     if (mesh.uvs3) flags |= 0x8;
     if (mesh.uvs4) flags |= 0x10;
     if (version >= 3 && mesh.skinIndices) flags |= 0x20;
+    if (version >= 4 && mesh.colors) flags |= 0x40;
 
     chunks.push(
       encodeString(mesh.name),
@@ -72,6 +73,7 @@ function buildClmesh(version, meshes) {
     if (version >= 3 && mesh.skinIndices) {
       chunks.push(Buffer.concat(mesh.skinIndices.map(u16)), Buffer.from(mesh.skinWeights));
     }
+    if (version >= 4 && mesh.colors) chunks.push(Buffer.from(mesh.colors));
     chunks.push(encodeUintArray(mesh.indices));
   }
   return new Uint8Array(Buffer.concat(chunks));
@@ -155,6 +157,65 @@ test("parseClmesh rejects a truncated skin channel", () => {
   }]);
   // Cut into the weights so neither they nor the indices fit.
   assert.throws(() => parseClmesh(bytes.subarray(0, bytes.length - 6)), /truncated/);
+});
+
+test("parseClmesh reads version 4 vertex colours only where flagged", () => {
+  const bytes = buildClmesh(4, [
+    {
+      name: "lightbar",
+      materialName: "vehicle_lightsemissive",
+      positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
+      skinIndices: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+      skinWeights: [255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0],
+      colors: [255, 255, 0, 9, 41, 255, 0, 9, 0, 255, 0, 9],
+      indices: [0, 1, 2],
+    },
+    {
+      name: "body",
+      materialName: "vehicle_paint1",
+      positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
+      indices: [0, 1, 2],
+    },
+  ]);
+
+  const [lightbar, body] = parseClmesh(bytes);
+  assert.deepEqual(Array.from(lightbar.colors), [255, 255, 0, 9, 41, 255, 0, 9, 0, 255, 0, 9]);
+  assert.deepEqual(Array.from(lightbar.indices), [0, 1, 2]);
+  assert.equal(body.colors, null);
+  assert.deepEqual(Array.from(body.indices), [0, 1, 2]);
+  assert.equal(parseClmesh(buildClmesh(3, [{ ...body }]))[0].colors, null);
+});
+
+test("parseClmesh rejects a truncated colour channel", () => {
+  const bytes = buildClmesh(4, [{
+    name: "lightbar",
+    materialName: "vehicle_lightsemissive",
+    positions: [0, 0, 0],
+    colors: [255, 255, 0, 9],
+    indices: [0],
+  }]);
+  assert.throws(() => parseClmesh(bytes.subarray(0, bytes.length - 6)), /truncated/);
+});
+
+test("vertex red dims emission on vehicle emissive shaders only", () => {
+  const mesh = (shaderName, colors) => ({
+    name: "m",
+    materialName: shaderName,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    indices: new Uint32Array([0, 1, 2]),
+    colors: new Uint8Array(colors),
+    nativeMaterial: { shaderName },
+  });
+  const painted = [255, 255, 0, 9, 41, 255, 0, 9, 0, 255, 0, 9];
+  const dim = (entry) => buildClmeshObject([entry]).children[0].geometry.attributes.emissiveDim;
+
+  const attribute = dim(mesh("vehicle_lightsemissive", painted));
+  assert.deepEqual(Array.from(attribute.array), [255, 41, 0]);
+  assert.equal(attribute.normalized, true);
+  assert.ok(dim(mesh("vehicle_dash_emissive", painted)));
+  assert.equal(dim(mesh("vehicle_paint1", painted)), undefined);
+  assert.equal(dim(mesh("emissive", painted)), undefined);
+  assert.equal(dim(mesh("vehicle_lightsemissive", [255, 0, 0, 1, 255, 0, 0, 1, 255, 0, 0, 1])), undefined);
 });
 
 test("parseClmesh rejects unknown versions", () => {

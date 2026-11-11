@@ -113,10 +113,21 @@ class GlowSourcePass extends Pass {
     const savedAlpha = renderer.getClearAlpha();
     renderer.getClearColor(clearColor);
 
+    const shadowAutoUpdate = renderer.shadowMap.autoUpdate;
+    const shadowNeedsUpdate = renderer.shadowMap.needsUpdate;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = false;
+
     const hidden = [];
     const lenses = [];
     const blockers = [];
+    const lights = [];
     scene.traverse((object) => {
+      if (object.isLight) {
+        lights.push(object, object.layers.mask);
+        object.layers.enableAll();
+        return;
+      }
       if (!object.visible || object.layers.isEnabled(GLOW_LAYER)) return;
       if (object.userData?.nativeDepthOnly && object.isMesh) {
         object.visible = false;
@@ -166,6 +177,9 @@ class GlowSourcePass extends Pass {
       });
     }
 
+    for (let index = 0; index < lights.length; index += 2) lights[index].layers.mask = lights[index + 1];
+    renderer.shadowMap.autoUpdate = shadowAutoUpdate;
+    renderer.shadowMap.needsUpdate = shadowNeedsUpdate;
     camera.layers.mask = savedMask;
     scene.background = savedBackground;
     renderer.autoClear = savedAutoClear;
@@ -506,6 +520,139 @@ export function disposeAoPipeline(pipeline) {
   pipeline.aoPass.dispose();
   pipeline.composite.material.dispose();
   pipeline.composite.dispose();
+}
+
+function pushMatrix(write, matrix) {
+  const elements = matrix.elements;
+  for (let index = 0; index < 16; index += 1) write(elements[index]);
+}
+
+function pushTexture(write, texture) {
+  write(texture ? texture.id : -1);
+  write(texture ? texture.version : -1);
+}
+
+function pushShadowLight(write, light) {
+  const { shadow } = light;
+  const camera = shadow.camera;
+  write(light.id);
+  write(light.layers.mask);
+  pushMatrix(write, light.matrixWorld);
+  if (light.target) pushMatrix(write, light.target.matrixWorld);
+  write(light.angle ?? 0);
+  write(light.distance ?? 0);
+  write(light.penumbra ?? 0);
+  write(shadow.focus ?? 1);
+  write(shadow.mapSize.x);
+  write(shadow.mapSize.y);
+  write(shadow.map ? shadow.map.texture.id : -1);
+  write(camera.near);
+  write(camera.far);
+  write(camera.left ?? 0);
+  write(camera.right ?? 0);
+  write(camera.top ?? 0);
+  write(camera.bottom ?? 0);
+  write(camera.zoom ?? 1);
+  write(camera.layers.mask);
+}
+
+function pushShadowCaster(write, object) {
+  write(object.id);
+  write(object.layers.mask);
+  write(object.frustumCulled ? 1 : 0);
+  pushMatrix(write, object.matrixWorld);
+  const geometry = object.geometry;
+  write(geometry ? geometry.id : -1);
+  write(geometry?.attributes?.position ? geometry.attributes.position.version : -1);
+  write(geometry?.index ? geometry.index.version : -1);
+  write(geometry ? geometry.drawRange.start : 0);
+  write(geometry ? geometry.drawRange.count : 0);
+  if (object.isInstancedMesh) {
+    write(object.count);
+    write(object.instanceMatrix.version);
+  }
+  if (object.morphTargetInfluences) for (const influence of object.morphTargetInfluences) write(influence);
+  if (object.isSkinnedMesh) {
+    pushMatrix(write, object.bindMatrix);
+    for (const bone of object.skeleton.bones) pushMatrix(write, bone.matrixWorld);
+  }
+  const materials = Array.isArray(object.material) ? object.material : [object.material];
+  for (const material of materials) {
+    if (!material) {
+      write(-1);
+      continue;
+    }
+    write(material.id);
+    write(material.visible ? 1 : 0);
+    write(material.side);
+    write(material.shadowSide ?? -1);
+    write(material.alphaTest);
+    write(material.alphaHash ? 1 : 0);
+    write(material.displacementScale ?? 0);
+    write(material.displacementBias ?? 0);
+    pushTexture(write, material.map);
+    pushTexture(write, material.alphaMap);
+    pushTexture(write, material.displacementMap);
+  }
+}
+
+export function createShadowMapCache(renderer) {
+  let values = new Float64Array(4096);
+  let length = 0;
+  let changed = true;
+  const write = (value) => {
+    if (length === values.length) {
+      const grown = new Float64Array(values.length * 2);
+      grown.set(values);
+      values = grown;
+    }
+    if (values[length] !== value) changed = true;
+    values[length] = value;
+    length += 1;
+  };
+  const lights = [];
+  const casters = [];
+  const visit = (object) => {
+    if (object.isLight) {
+      if (object.castShadow && object.shadow) lights.push(object);
+    } else if (object.castShadow && (object.isMesh || object.isLine || object.isPoints)) {
+      casters.push(object);
+    }
+  };
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
+  return {
+    update(scene) {
+      if (!renderer.shadowMap.enabled) {
+        changed = true;
+        return false;
+      }
+      lights.length = 0;
+      casters.length = 0;
+      scene.traverseVisible(visit);
+      const previous = length;
+      length = 0;
+      write(renderer.shadowMap.type);
+      let layers = 0;
+      for (const light of lights) {
+        layers |= light.shadow.camera.layers.mask;
+        pushShadowLight(write, light);
+      }
+      for (const caster of casters) {
+        if (caster.layers.mask & layers) pushShadowCaster(write, caster);
+      }
+      lights.length = 0;
+      casters.length = 0;
+      if (length !== previous) changed = true;
+      const stale = changed;
+      changed = false;
+      if (stale) renderer.shadowMap.needsUpdate = true;
+      return stale;
+    },
+    invalidate() {
+      changed = true;
+    },
+  };
 }
 
 export function applyShadowFlags(root, enabled) {

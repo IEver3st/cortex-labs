@@ -15,7 +15,7 @@ import {
   summarizeNativeMaterialMeshes,
   usesNativeAlphaBlending,
 } from "./native-material-plan.js";
-import { patchNativeShader } from "./native-shader.js";
+import { hasEmissiveDim, patchNativeShader } from "./native-shader.js";
 import { isLampBlocker, makeDepthOnlyOccluder, releaseDepthOnlyOccluder } from "./native-occluder.js";
 import { applyMaterialDrawOrder, releaseMaterialDrawOrder } from "./native-draw-order.js";
 
@@ -190,6 +190,7 @@ function createNativeMaterial(mesh, nativeMaterial) {
     baseRoughness: material.roughness,
     baseMetalness: material.metalness,
   };
+  const emissiveDim = hasEmissiveDim(mesh?.geometry);
   material.onBeforeCompile = (shader) => {
     const overlayMap = material.userData.nativeOverlayMap;
     if (overlayMap) {
@@ -201,10 +202,11 @@ function createNativeMaterial(mesh, nativeMaterial) {
       overlay: Boolean(overlayMap),
       specularFromRed: Boolean(material.specularIntensityMap),
       diffusePoints: true,
+      emissiveDim,
     });
   };
   material.customProgramCacheKey = () =>
-    `cortex-native-v3|${material.userData.nativeOverlayMap ? "overlay" : ""}|${material.specularIntensityMap ? "spec-r" : ""}`;
+    `cortex-native-v4|${material.userData.nativeOverlayMap ? "overlay" : ""}|${material.specularIntensityMap ? "spec-r" : ""}|${emissiveDim ? "dim" : ""}`;
   return material;
 }
 

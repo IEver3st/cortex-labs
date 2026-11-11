@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls";
@@ -216,7 +216,7 @@ function MultiModelViewer({
     ambientOcclusionRef.current = ambientOcclusion;
     requestRenderRef.current?.();
   }, [ambientOcclusion]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     isActiveRef.current = isActive;
     if (isActive) requestRenderRef.current?.();
   }, [isActive]);
@@ -600,7 +600,9 @@ function MultiModelViewer({
       }
     };
 
+    let resizePending = false;
     const requestRenderFrame = () => {
+      if (resizePending && isActiveRef.current) resize();
       if (!canRenderFrame()) return;
       renderRequested = true;
       if (isRendering) return;
@@ -619,7 +621,8 @@ function MultiModelViewer({
       return true;
     };
     const resize = () => {
-      if (!resizeBuffers()) return;
+      resizePending = !isActiveRef.current;
+      if (resizePending || !resizeBuffers()) return;
       const { clientWidth, clientHeight } = container;
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
@@ -1198,6 +1201,10 @@ function MultiModelViewer({
       requestRenderRef,
       domElement: rendererRef.current?.domElement,
       isActiveRef,
+      onUserMove: ({ distanceChanged }) => {
+        cameraUserOwnedRef.current = true;
+        if (distanceChanged) resizeZoomRatioRef.current = null;
+      },
     });
   }, [sceneReady, wasdEnabled]);
 

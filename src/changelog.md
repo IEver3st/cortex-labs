@@ -1,3 +1,21 @@
+version: 6.2.3
+date: 2026-11-10
+> Vertex paint dims emissives as in game, the Sirens panel and grid use the space they have, and previews, pane drags and the sequencer run smoother.
+
+## Fixed
+- Vertex paint on emissives | Emissive vehicle materials now glow by the red channel of their vertex paint, as in game: white is full strength, grey is dimmed, black is off. Painted-off housings and dimmed LEDs used to light up at full brightness. Models reload once after the update to pick up their vertex colours.
+- Sirens panel fills a wide column | A wide preview and panel column no longer leaves the siren options in a narrow strip. The Siren panel splits into two columns past about 660px and three past about 1000px, and the Setting, Scene, Vehicle and Mods views reflow the same way.
+- Sirens grid uses its space | The pattern grid shows one empty column for the next siren instead of every unused slot up to 32, columns widen to fill the pane, and rows stop growing on very tall windows.
+- Playhead lines up at any UI scale | With UI Scaling above or below 100%, the highlighted step drifted off its row and ran past the grid. It now covers its step exactly.
+- Lens glow choice no longer clips | In a narrow inspector, Texture, Siren and Custom move under the Colour label instead of being cut off.
+- Smoother pane drags | Resizing the Sirens preview, and the dock and inspector edges in the other workspaces, applies the new size once per frame instead of rebuilding the workspace on every pointer move.
+- Sequencer keeps up | The Sirens playhead and lamp previews only touch the page when a step or lamp changes, and the step columns size themselves in one pass while the preview column is dragged.
+- 3D preview draws faster | Preview frames no longer re-prepare every vehicle material for the floor reflection and lamp glow, and shadows are redrawn only when something that casts them changes. A flashing lightbar on a detailed vehicle takes about a quarter less time per frame.
+- Sound Studio rests in a background tab | Leaving a Sound Studio tab with the engine running no longer keeps its simulation updating every frame. It picks up where it was when you switch back.
+- Fly camera keeps its view | Looking around with the right mouse button or flying with W A S D now counts as moving the camera yourself, so resizing the preview straight after no longer snaps it back to the preset angle.
+
+---
+
 version: 6.2.2
 date: 2026-11-10
 > Sirens: refresh reloads the vehicle model too, and resizing the preview no longer creeps the camera closer.

@@ -363,7 +363,7 @@ function VehicleSlip({ s }) {
 function VehicleView({ s, ps, resource, els, elsMode, setTool }) {
   const lights = s.vehicleLights || {};
   return (
-    <div className="lv-meta">
+    <div className="lv-meta sw-flow">
       <Facts label="Vehicle">
         <GameTextures s={s} />
         <ModelWarnings s={s} />
@@ -417,10 +417,10 @@ function SirenSide({ s, ps, resource, els, elsMode, hasModel, inert, setWidth, c
   let body = noSetting && !shown ? <p className="se-empty">Start a pattern and its sirens show here. The Scene tab sets up the stage.</p> : <SirenPanel s={s} />;
   if (shown === "setting") body = <SettingPanel s={s} />;
   else if (shown === "vehicle") body = <VehicleView s={s} ps={ps} resource={resource} els={els} elsMode={elsMode} setTool={setTool} />;
-  else if (shown === "mods") body = <ModkitPanel s={s} />;
+  else if (shown === "mods") body = <div className="sw-flow"><ModkitPanel s={s} /></div>;
   else if (shown === "scene") {
     body = (
-      <>
+      <div className="sw-flow">
         <StageSection s={s}>
           <FloorField id="se-stage-floor-label" value={s.stageFloor} onChange={s.setStageFloor} />
         </StageSection>
@@ -434,7 +434,7 @@ function SirenSide({ s, ps, resource, els, elsMode, hasModel, inert, setWidth, c
           onReset={s.resetVehiclePaintSlot}
         />
         {s.cameraControlsInPanel ? <CameraSection>{cameraShots}</CameraSection> : null}
-      </>
+      </div>
     );
   }
 
