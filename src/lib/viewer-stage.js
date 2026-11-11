@@ -672,6 +672,82 @@ export function createBeamMaterial() {
   });
 }
 
+const MIRROR_UNSYNCED = new Set(["_listeners", "version", "onBeforeCompile", "customProgramCacheKey"]);
+
+function mirrorKeys(source) {
+  return Object.keys(source).filter((key) => !MIRROR_UNSYNCED.has(key));
+}
+
+function syncMirrorMaterial(standIn, source, keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (standIn[key] !== source[key]) standIn[key] = source[key];
+  }
+}
+
+function createMirrorMaterials(renderer) {
+  const entries = new WeakMap();
+  const releases = new Set();
+  const create = (source) => {
+    const material = new source.constructor();
+    const keys = mirrorKeys(source);
+    syncMirrorMaterial(material, source, keys);
+    material.customProgramCacheKey = () => source.customProgramCacheKey();
+    material.onBeforeCompile = (shader, target) => {
+      const builtIn = new Set(Object.keys(shader.uniforms));
+      const userData = { ...source.userData };
+      source.onBeforeCompile(shader, target);
+      for (const key of Object.keys(source.userData)) {
+        if (key in userData) source.userData[key] = userData[key];
+        else delete source.userData[key];
+      }
+      const compiled = renderer.properties.get(source);
+      for (const name of Object.keys(shader.uniforms)) {
+        if (builtIn.has(name)) continue;
+        const fallback = shader.uniforms[name];
+        shader.uniforms[name] = {
+          get value() {
+            return (compiled.uniforms?.[name] ?? fallback).value;
+          },
+        };
+      }
+    };
+    const entry = { material, keys, version: source.version };
+    const release = () => {
+      source.removeEventListener("dispose", release);
+      releases.delete(release);
+      entries.delete(source);
+      material.dispose();
+    };
+    source.addEventListener("dispose", release);
+    releases.add(release);
+    return entry;
+  };
+  return {
+    get(source) {
+      if (!source?.isMaterial || source.isShaderMaterial || source.constructor !== THREE[source.type]) return source;
+      const compiled = renderer.properties.get(source);
+      if (!compiled.currentProgram || compiled.__version !== source.version) return source;
+      let entry = entries.get(source);
+      if (!entry) {
+        entry = create(source);
+        entries.set(source, entry);
+        return entry.material;
+      }
+      if (entry.version !== source.version) {
+        entry.version = source.version;
+        entry.keys = mirrorKeys(source);
+        entry.material.needsUpdate = true;
+      }
+      syncMirrorMaterial(entry.material, source, entry.keys);
+      return entry.material;
+    },
+    dispose() {
+      for (const release of [...releases]) release();
+    },
+  };
+}
+
 export function createViewerStage({ renderer, scene, keyLight, subject = "vehicle", followTone = false }) {
   // Peds face +Z; turning the vehicle light table half a turn keeps "front"
   // meaning the subject's front.
@@ -779,13 +855,28 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     // keep shadow maps across frames (autoUpdate off) render it in both
     // passes: reusing it there lit shadowed interiors seen through glass.
     const renderMirror = next.onBeforeRender;
+    const mirrorMaterials = createMirrorMaterials(renderer);
+    next.userData.mirrorMaterials = mirrorMaterials;
+    const mirrorLayers = next.camera.layers;
     let mirrorFrame = -1;
     let mirrorCamera = null;
     next.onBeforeRender = (renderer, scene, camera, ...rest) => {
       if (state.reflect <= 0.01) return;
       const reusable = renderer.shadowMap.autoUpdate;
       if (reusable && camera === mirrorCamera && renderer.info.render.frame === mirrorFrame) return;
-      renderMirror(renderer, scene, camera, ...rest);
+      const swapped = [];
+      scene.traverseVisible((object) => {
+        if (!object.material || object === next || !object.layers.test(mirrorLayers)) return;
+        const material = object.material;
+        const standIn = Array.isArray(material) ? material.map(mirrorMaterials.get) : mirrorMaterials.get(material);
+        swapped.push(object, material);
+        object.material = standIn;
+      });
+      try {
+        renderMirror(renderer, scene, camera, ...rest);
+      } finally {
+        for (let index = 0; index < swapped.length; index += 2) swapped[index].material = swapped[index + 1];
+      }
       mirrorFrame = renderer.info.render.frame;
       mirrorCamera = camera;
     };
@@ -1300,6 +1391,7 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
       voidDome.material.dispose();
       beam.geometry.dispose();
       beamMaterial.dispose();
+      floor?.userData.mirrorMaterials?.dispose();
       floor?.dispose?.();
       floor?.geometry?.dispose?.();
       environment?.dispose?.();

@@ -67,11 +67,6 @@ import "./SirenEditor.css";
 // model shows each change as it is made. Saving lives in the workspace dock.
 
 const SPEEDS = [[0.25, "¼×"], [0.5, "½×"], [1, "1×"]];
-const COLUMN_MIN = 16;
-const COLUMN_MAX = 44;
-const COLUMN_TIGHT = 24;
-const COLUMN_GAP = 4;
-const COLUMN_GAP_TIGHT = 2;
 const SHORTCUTS = [
   [["1–6"], "Colour"],
   [["Click"], "Draw"],
@@ -221,15 +216,14 @@ function sirenTitle(light, index, hasMesh) {
 }
 
 function lastVisibleColumn(strip) {
-  const lamp = strip.querySelector(".se-lamp-group > .se-col:last-child");
-  if (lamp) return lamp;
-  const ghostBlock = strip.querySelector(".se-ghosts");
-  const ghostEdge = ghostBlock ? ghostBlock.getBoundingClientRect().right + 0.5 : 0;
-  const ghosts = ghostBlock ? [...ghostBlock.children] : [];
-  const shown = ghosts.filter((ghost) => ghost.offsetTop === ghosts[0].offsetTop && ghost.getBoundingClientRect().right <= ghostEdge);
-  if (shown.length) return shown[shown.length - 1];
-  const sirens = strip.querySelectorAll(".se-head-cols > .se-col");
-  return sirens[sirens.length - 1] || null;
+  const lanes = strip.querySelectorAll(".se-col:not(.se-col-steps):not(.is-ghost)");
+  return lanes[lanes.length - 1] || null;
+}
+
+// The UI scale setting zooms the body. Rects come back zoomed; CSS lengths set
+// on an element are zoomed again, so measured offsets are divided back out.
+function cssZoom(element) {
+  return element?.currentCSSZoom || 1;
 }
 
 function lampInitials(label) {
@@ -295,55 +289,88 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
   }, [playBps, s, seekStep, setLights, speed]);
   useEffect(() => {
     if (!draft) return undefined;
-    let placed = { step: -1, height: 0, width: 0 };
+    const band = column.current;
+    const cols = strip.current;
+    const cells = ruler.current?.children;
+    const label = stepLabel.current;
+    const lamps = Array.from(cols?.querySelectorAll("[data-members]") || [], (node) => ({
+      node,
+      members: node.dataset.members.split(",").map(Number),
+      background: null,
+      on: null,
+    }));
+    const drawn = { step: -1, transform: null, height: null, width: null, text: label?.textContent };
+    let rows = [];
+    let reach = "";
+    const measure = () => {
+      if (!band || !cells || !cols) return;
+      const zoom = cssZoom(cols);
+      const track = band.parentElement.getBoundingClientRect();
+      const last = lastVisibleColumn(cols)?.getBoundingClientRect();
+      rows = Array.from(cells, (cell) => {
+        const rect = cell.getBoundingClientRect();
+        return [`translateY(${(rect.top - track.top) / zoom - 2}px)`, `${rect.height / zoom + 4}px`];
+      });
+      reach = last ? `${(last.right - track.left) / zoom + 2}px` : "";
+    };
     const placeRow = (step, live) => {
-      const band = column.current;
-      const cells = ruler.current?.children;
       if (!band || !cells) return;
-      band.hidden = !live;
-      const cols = strip.current;
-      const height = cols?.clientHeight || 0;
-      const width = cols?.clientWidth || 0;
-      if (placed.step === (live ? step : -1) && placed.height === height && placed.width === width) return;
-      if (placed.step >= 0) cells[placed.step]?.classList.remove("is-now");
-      placed = { step: live ? step : -1, height, width };
-      if (!live) return;
-      const cell = cells[step];
-      if (!cell) return;
-      cell.classList.add("is-now");
-      const cellRect = cell.getBoundingClientRect();
-      const trackRect = band.parentElement.getBoundingClientRect();
-      const lastRect = lastVisibleColumn(cols)?.getBoundingClientRect();
-      band.style.transform = `translateY(${cellRect.top - trackRect.top - 2}px)`;
-      band.style.height = `${cellRect.height + 4}px`;
-      band.style.width = lastRect ? `${lastRect.right - trackRect.left + 2}px` : "";
+      if (band.hidden !== !live) band.hidden = !live;
+      const now = live && cells[step] ? step : -1;
+      if (drawn.step !== now) {
+        if (drawn.step >= 0) cells[drawn.step]?.classList.remove("is-now");
+        if (now >= 0) cells[now].classList.add("is-now");
+        drawn.step = now;
+      }
+      const row = rows[now];
+      if (!row) return;
+      if (drawn.transform !== row[0]) band.style.transform = drawn.transform = row[0];
+      if (drawn.height !== row[1]) band.style.height = drawn.height = row[1];
+      if (drawn.width !== reach) band.style.width = drawn.width = reach;
     };
     const place = () => {
       const time = s.getLightTime?.();
       const live = switches.sirens && Number.isFinite(time) && playBps > 0;
       const step = live ? Math.floor(time * playBps + 1e-6) % SEQUENCER_STEPS : 0;
       placeRow(step, live);
-      if (stepLabel.current) stepLabel.current.textContent = live ? String(step + 1).padStart(2, "0") : "--";
-      const lamps = strip.current?.querySelectorAll("[data-members]");
-      if (!lamps) return;
+      const text = live ? String(step + 1).padStart(2, "0") : "--";
+      if (label && drawn.text !== text) label.textContent = drawn.text = text;
       const states = live ? evaluateSirens(playing, time) : [];
       for (const lamp of lamps) {
-        const lit = lamp.dataset.members.split(",").map(Number)
-          .filter((index) => states[index]?.on && !muted.has(index + 1))
-          .map((index) => states[index].color);
-        lamp.style.background = lit.length > 1 ? `linear-gradient(90deg, ${lit[0]} 50%, ${lit[1]} 50%)` : lit[0] || "";
-        lamp.classList.toggle("is-on", lit.length > 0);
+        const lit = [];
+        for (const index of lamp.members) {
+          if (states[index]?.on && !muted.has(index + 1)) lit.push(states[index].color);
+        }
+        const background = lit.length > 1 ? `linear-gradient(90deg, ${lit[0]} 50%, ${lit[1]} 50%)` : lit[0] || "";
+        if (lamp.background !== background) {
+          lamp.node.style.background = background;
+          lamp.background = background;
+        }
+        const on = lit.length > 0;
+        if (lamp.on !== on) {
+          lamp.node.classList.toggle("is-on", on);
+          lamp.on = on;
+        }
       }
     };
-    place();
-    const resize = new ResizeObserver(() => {
-      placed = { ...placed, height: -1 };
+    const remeasure = () => {
+      measure();
       place();
-    });
-    if (strip.current) resize.observe(strip.current);
+    };
+    remeasure();
+    const resize = new ResizeObserver(remeasure);
+    if (cols) resize.observe(cols);
+    let rescaled = 0;
+    const rescale = () => {
+      cancelAnimationFrame(rescaled);
+      rescaled = requestAnimationFrame(remeasure);
+    };
+    window.addEventListener("cortex:ui-scale-changed", rescale);
     const cleanup = () => {
       resize.disconnect();
-      if (placed.step >= 0) ruler.current?.children[placed.step]?.classList.remove("is-now");
+      window.removeEventListener("cortex:ui-scale-changed", rescale);
+      cancelAnimationFrame(rescaled);
+      if (drawn.step >= 0) cells?.[drawn.step]?.classList.remove("is-now");
     };
     if (!running) return cleanup;
     let frame = requestAnimationFrame(function tick() {
@@ -382,48 +409,20 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
     return [[offset]];
   }), [draft, heads]);
   const rotating = draft?.sirens.filter((light) => light.rotate).length ?? 0;
-  useLayoutEffect(() => {
-    const box = canvas.current;
-    const cols = strip.current;
-    if (!box || !cols) return undefined;
-    const fit = () => {
-      const flexible = cols.querySelectorAll(".se-col:not(.se-col-steps):not(.is-ghost):not(.is-sub)");
-      const n = flexible.length;
-      if (!n || !box.clientWidth) return;
-      const style = getComputedStyle(box);
-      const room = box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-      const width = parseFloat(style.getPropertyValue("--se-col-w")) || COLUMN_MAX;
-      const gap = parseFloat(style.getPropertyValue("--se-col-gap")) || COLUMN_GAP;
-      const ghosts = cols.querySelector(".se-ghosts");
-      const placed = cols.querySelectorAll(".se-col:not(.se-col-steps):not(.is-ghost)");
-      const last = placed[placed.length - 1];
-      const ghostsBeforeLast = Boolean(ghosts) && Boolean(ghosts.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING);
-      const gapsToLast = placed.length + (ghostsBeforeLast ? 1 : 0);
-      const gapCount = placed.length + (ghosts ? 1 : 0);
-      const used = last.getBoundingClientRect().right - cols.getBoundingClientRect().left - (ghostsBeforeLast ? ghosts.getBoundingClientRect().width : 0);
-      const fixed = used - n * width - gapsToLast * gap;
-      const columnFor = (between) => Math.floor((room - fixed - gapCount * between) / n);
-      const tight = columnFor(COLUMN_GAP) < COLUMN_TIGHT;
-      const nextGap = tight ? COLUMN_GAP_TIGHT : COLUMN_GAP;
-      const next = Math.max(COLUMN_MIN, Math.min(COLUMN_MAX, columnFor(nextGap)));
-      if (next !== width) box.style.setProperty("--se-col-w", `${next}px`);
-      if (nextGap !== gap) box.style.setProperty("--se-col-gap", `${nextGap}px`);
-      ghosts?.classList.toggle("is-cramped", ghosts.getBoundingClientRect().width < next);
-    };
-    fit();
-    const watch = new ResizeObserver(fit);
-    watch.observe(box);
-    return () => watch.disconnect();
-  }, [columns.length, rotating, lampLanes]);
+  const flexibleColumns = columns.length + (count < MAX_SIRENS ? 1 : 0) + (lampLanes ? LAMP_KEYS.length : 0);
   const hasDraft = Boolean(draft);
   useLayoutEffect(() => {
     const box = canvas.current;
     const edge = fade.current;
     if (!box || !edge) return undefined;
+    const drawn = { hidden: edge.hidden, right: null, bottom: null };
     const mark = () => {
-      edge.hidden = box.scrollWidth - box.clientWidth - box.scrollLeft <= 1;
-      edge.style.right = `${box.offsetWidth - box.clientWidth}px`;
-      edge.style.bottom = `${box.offsetHeight - box.clientHeight}px`;
+      const hidden = box.scrollWidth - box.clientWidth - box.scrollLeft <= 1;
+      const right = `${box.offsetWidth - box.clientWidth}px`;
+      const bottom = `${box.offsetHeight - box.clientHeight}px`;
+      if (drawn.hidden !== hidden) edge.hidden = drawn.hidden = hidden;
+      if (drawn.right !== right) edge.style.right = drawn.right = right;
+      if (drawn.bottom !== bottom) edge.style.bottom = drawn.bottom = bottom;
     };
     mark();
     const watch = new ResizeObserver(mark);
@@ -448,17 +447,13 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
   };
   const ghostStart = useRef(paintGhost);
   ghostStart.current = paintGhost;
-  const ghosts = useMemo(() => (count < MAX_SIRENS ? (
-    <div className="se-ghosts" aria-hidden="true">
-      {Array.from({ length: MAX_SIRENS - count }, (_, offset) => (
-        <div key={offset} className={cx("se-col is-ghost", offset === 0 && "is-next")}
-          title={offset === 0 ? `Paint a step here to add siren ${count + 1} in the picked colour` : undefined}>
-          <div className="se-col-top">
-            <span className="se-col-head is-ghost">{count + offset + 1}</span>
-          </div>
-          <GhostLane onStart={offset === 0 ? (step) => ghostStart.current(step) : null} />
-        </div>
-      ))}
+  const ghost = useMemo(() => (count < MAX_SIRENS ? (
+    <div className="se-col is-ghost is-next" aria-hidden="true"
+      title={`Paint a step here to add siren ${count + 1} in the picked colour`}>
+      <div className="se-col-top">
+        <span className="se-col-head is-ghost">{count + 1}</span>
+      </div>
+      <GhostLane onStart={(step) => ghostStart.current(step)} />
     </div>
   ) : null), [count]);
   const duplicate = () => append(duplicateLights(draft.sirens, sortedSelection));
@@ -925,7 +920,13 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
         <div className="se-canvas-wrap">
           <div ref={canvas} className="se-canvas custom-scrollbar" onContextMenu={(event) => event.preventDefault()}>
             <div ref={strip} className="se-cols" role="group" aria-label="Siren patterns: a column per head, a row per step"
-              style={{ "--se-brush": brush }} onPointerDown={startTopStroke}>
+              style={{
+                "--se-brush": brush,
+                "--se-n": flexibleColumns,
+                "--se-placed": flexibleColumns + rotating,
+                "--se-subs": rotating,
+                "--se-lamps": lampLanes ? 1 : 0,
+              }} onPointerDown={startTopStroke}>
               <div className="se-col se-col-steps">
                 <div className="se-col-top" aria-hidden="true">
                   <span className="se-col-head is-steps">Step</span>
@@ -1003,7 +1004,7 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
                 })}
               </div>
 
-              {ghosts}
+              {ghost}
 
               {lampLanes ? (
                 <div className="se-col-group se-lamp-group" role="group" aria-label="Head and tail lights">

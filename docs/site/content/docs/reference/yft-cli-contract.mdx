@@ -293,7 +293,7 @@ All commands run their filesystem and bridge work on a blocking thread so the ma
 
 Layout under `<appCacheDir>/cortex-labs/`:
 
-- `yft-cache/<key>/` with `model.clmesh`, `manifest.json`, `meta.json`, `textures/`. `<key>` hashes the parser revision (`parse_yft_v19`), input path, modified time, and size.
+- `yft-cache/<key>/` with `model.clmesh`, `manifest.json`, `meta.json`, `textures/`. `<key>` hashes the parser revision (`parse_yft_v20`), input path, modified time, and size.
 - `yft-cache/.shared-textures/<sha256>.dds` stores each shared DDS once. Manifest paths such as `../.shared-textures/<sha256>.dds` resolve from the model entry directory.
 - `ytd-cache/<key>/` with DDS files and `textures.json`.
 - `lens-write/<pid>-<nanos>/`: a lens write's staged DDS files and rebuilt dictionaries, removed when the write ends.
@@ -306,7 +306,7 @@ Layout under `<appCacheDir>/cortex-labs/`:
 
 A `yft-cache` entry is complete only when `model.clmesh`, `manifest.json` and `meta.json` all exist. `meta.json` is the bridge summary plus `inputPath`, normalized `warnings` and `inputs`, and is written last (through a `.tmp` file), so an entry interrupted by a crash, kill, or cancel is never reused. A parse that fails or is cancelled deletes its entry. Before reusing a complete entry the app checks every recorded input: a file must still have the recorded `mtimeMs` and `size`, and a `missing` candidate must still be absent; otherwise the model is parsed again. An entry without `inputs` is never reused.
 
-Compatibility: v19 changed which game dictionaries a parse reads (manifest v12), so the revision moved from `parse_yft_v18` to `parse_yft_v19` instead of reusing v18 entries that list the game copy of a dictionary the resource streams. v18 entries are never looked up again; the first v19 parse of a model deletes its v18 entry and maintenance trims the rest, so every cached model parses once after the upgrade. v18 changed what a complete entry is, so the revision moved from `parse_yft_v17` to `parse_yft_v18` instead of reinterpreting v17 entries. v17 entries are never looked up again; the first v18 parse of a model deletes its v17 entry and maintenance trims the rest.
+Compatibility: v20 added vertex colour 0 to the mesh cache (`.clmesh` v4), so the revision moved from `parse_yft_v19` to `parse_yft_v20` instead of reusing v19 entries, whose meshes have no colours and would preview vertex-painted emissives at full strength. v19 entries are never looked up again; the first v20 parse of a model deletes its v19 entry and maintenance trims the rest, so every cached model parses once after the upgrade. v19 changed which game dictionaries a parse reads (manifest v12), so the revision moved from `parse_yft_v18` to `parse_yft_v19` instead of reusing v18 entries that list the game copy of a dictionary the resource streams. v18 entries are never looked up again; the first v19 parse of a model deletes its v18 entry and maintenance trims the rest, so every cached model parses once after the upgrade. v18 changed what a complete entry is, so the revision moved from `parse_yft_v17` to `parse_yft_v18` instead of reinterpreting v17 entries. v17 entries are never looked up again; the first v18 parse of a model deletes its v17 entry and maintenance trims the rest.
 
 Eviction:
 
@@ -376,10 +376,11 @@ Current manifest fields:
 - Version `1` stores positions, optional normals, optional `uv0`, and indices.
 - Version `2` extends the cache with optional `uv1`, `uv2`, and `uv3` payloads after `uv0`, preserving the same vertex/index ordering.
 - Version `3` adds an optional skin channel (flag `0x20`) after `uv3`: four `uint16` skeleton bone indices then four `uint8` weights (0-255) per vertex. The bridge writes it only for meshes where some vertex blends several bones, such as soft convertible roofs; every other mesh poses rigidly from `boneIndex`.
+- Version `4` adds an optional colour channel (flag `0x40`) after the skin channel and before the indices: vertex colour 0 as four `uint8` values per vertex in stored order (red, green, blue, alpha). The bridge writes it for every mesh whose vertex format has a colour 0 component and does not interpret the channels. The viewer reads red as the emission scale on `vehicle_*emissive*` shaders (255 full, 0 off), the way the game dims vertex-painted emissives; other shaders ignore the channel. The frontend parser reads versions 1 to 4 and rejects a cache cut short inside the channel.
 
 ## Notes
 
-- The app caches parsed meshes based on input path + modified time + file size plus the internal `parse_yft_v19` revision, and reuses an entry only while its recorded `inputs` are unchanged.
+- The app caches parsed meshes based on input path + modified time + file size plus the internal `parse_yft_v20` revision, and reuses an entry only while its recorded `inputs` are unchanged.
 - The single viewer calls `parse_yft` on every open, even when it still holds the model in memory, and keys that in-memory model by the returned `cacheKey` plus the modified time and size of its `manifest.json`. A parse redone after a `.ytd` or meta edit rewrites the manifest under the same key, so the viewer never shows a model built from an older parse. A model the JS parser read is kept by the file's path, modified time and size.
 - Manifest numbers are always finite. A `matDiffuseColor` with NaN or infinite components is reported as `diffuseColor: null` (the material's own colour applies); wheels and light bones with such transforms are left out with a warning; anything else fails the parse with exit code 3.
 - The `.clmesh` cache is parsed in the frontend into Three.js geometry.

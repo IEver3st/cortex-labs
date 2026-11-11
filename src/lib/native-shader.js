@@ -30,7 +30,37 @@ export function diffusePointLights(fragmentShader) {
   return fragmentShader.replace("#include <lights_fragment_begin>", diffusePointLightsChunk);
 }
 
-export function patchNativeShader(shader, { overlay = false, specularFromRed = false, diffusePoints = false } = {}) {
+export const EMISSIVE_DIM_ATTRIBUTE = "emissiveDim";
+
+export function emissiveDimAttribute(colors, vertexCount) {
+  if (!colors || !(vertexCount > 0) || colors.length < vertexCount * 4) return null;
+  let painted = false;
+  for (let i = 0; i < vertexCount && !painted; i += 1) painted = colors[i * 4] < 255;
+  if (!painted) return null;
+  const red = new Uint8Array(vertexCount);
+  for (let i = 0; i < vertexCount; i += 1) red[i] = colors[i * 4];
+  return new THREE.BufferAttribute(red, 1, true);
+}
+
+export function hasEmissiveDim(geometry) {
+  return Boolean(geometry?.attributes?.[EMISSIVE_DIM_ATTRIBUTE]);
+}
+
+export function declareEmissiveDim(shader) {
+  shader.vertexShader = shader.vertexShader
+    .replace("#include <common>", `#include <common>\nattribute float ${EMISSIVE_DIM_ATTRIBUTE};\nvarying float vEmissiveDim;`)
+    .replace("#include <begin_vertex>", `#include <begin_vertex>\nvEmissiveDim = ${EMISSIVE_DIM_ATTRIBUTE};`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace("#include <common>", "#include <common>\nvarying float vEmissiveDim;");
+  return shader;
+}
+
+export function patchNativeShader(shader, { overlay = false, specularFromRed = false, diffusePoints = false, emissiveDim = false } = {}) {
+  if (emissiveDim) {
+    declareEmissiveDim(shader);
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\ntotalEmissiveRadiance *= vEmissiveDim;");
+  }
   if (overlay) {
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nattribute vec2 nativeOverlayUv;\nvarying vec2 vNativeOverlayUv;")

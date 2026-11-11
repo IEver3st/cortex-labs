@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { dimsEmissionByVertexRed } from "./native-material-plan.js";
+import { EMISSIVE_DIM_ATTRIBUTE, emissiveDimAttribute } from "./native-shader.js";
 
 // .clmesh UVs keep GTA's top-left origin (v grows down the image), which native
 // DDS uploads sample as-is. User-loaded textures (PNG/PSD/DDS through the viewer
@@ -33,6 +35,12 @@ export function userTextureUvAttribute(geometry, attribute) {
   return flipped;
 }
 
+export function applyVertexEmissiveDim(geometry, mesh) {
+  if (!dimsEmissionByVertexRed(mesh?.nativeMaterial)) return;
+  const attribute = emissiveDimAttribute(mesh.colors, (mesh.positions?.length || 0) / 3);
+  if (attribute) geometry.setAttribute(EMISSIVE_DIM_ATTRIBUTE, attribute);
+}
+
 // Builds a group from parsed .clmesh meshes (see clmesh.js), keeping all four
 // GTA UV sets on geometry.userData.gtaUvSets and the manifest's native material
 // record on each mesh for native-materials.js. Meshes stay in GTA model space.
@@ -57,6 +65,7 @@ export function buildClmeshObject(meshes) {
     if (gtaUvSets[3]) geometry.setAttribute("uv4", gtaUvSets[3]);
     geometry.userData.gtaUvSets = gtaUvSets;
     geometry.userData.uvOrigin = UV_ORIGIN_TOP;
+    applyVertexEmissiveDim(geometry, mesh);
     if (mesh.indices) geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
     if (!mesh.normals) geometry.computeVertexNormals();
     geometry.computeBoundingBox();

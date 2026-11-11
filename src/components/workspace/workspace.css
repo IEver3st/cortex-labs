@@ -5,6 +5,21 @@
    colour and light-on-light or dark-on-dark text must never happen. No
    backdrop blur: it would re-sample the WebGL canvas every frame. */
 
+@property --lv-dock {
+  syntax: "*";
+  inherits: false;
+}
+
+@property --lv-insp {
+  syntax: "*";
+  inherits: false;
+}
+
+@property --sw-preview-h {
+  syntax: "*";
+  inherits: false;
+}
+
 .lv-root {
   /* vw ignores the body zoom of UI scaling, so the second term measures the
      window in scaled pixels: when a large scale leaves a narrow window, the

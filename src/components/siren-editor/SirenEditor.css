@@ -410,15 +410,32 @@
   padding: 0 7px;
 }
 
-/* The inspector's lens glow choice fills its field. */
+/* The lens glow choice fills its field, and drops under the label rather
+   than squeezing its words when the inspector is narrow. */
+.se-field.se-field-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 6px;
+}
+
+.se-field-wrap > .se-field-label {
+  flex: 0 0 92px;
+}
+
+.se-field-wrap > .se-field-control {
+  flex: 1 0 max-content;
+}
+
 .se-seg.se-lens-seg {
   flex: 1;
-  min-width: 0;
+  grid-auto-columns: minmax(max-content, 1fr);
   margin: 0;
 }
 
 .se-lens-seg .lv-seg-btn {
-  padding: 0 4px;
+  padding: 0 8px;
+  white-space: nowrap;
 }
 
 .se-lens-write {
@@ -588,11 +605,23 @@
   display: none;
 }
 
+@property --se-col-w {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 34px;
+}
+
+@property --se-col-gap {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 4px;
+}
+
 .se-canvas {
+  container: se-grid / inline-size;
   --se-top: 84px;
   --se-step-col: 30px;
-  --se-col-gap: 4px;
-  --se-col-w: 34px;
+  --se-row-max: 34px;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -602,6 +631,9 @@
 }
 
 .se-cols {
+  --se-fit: calc(round(nearest, 100cqi, 1px) - var(--se-step-col) - var(--se-subs, 0) * 12px - var(--se-lamps, 0) * 16px);
+  --se-col-gap: clamp(2px, 4px + 1000 * (var(--se-fit) - var(--se-placed, 1) * 4px - var(--se-n, 1) * 24px), 4px);
+  --se-col-w: clamp(16px, round(down, (var(--se-fit) - var(--se-placed, 1) * var(--se-col-gap)) / var(--se-n, 1), 1px), 60px);
   position: relative;
   display: flex;
   gap: var(--se-col-gap);
@@ -609,6 +641,7 @@
   min-width: 100%;
   height: 100%;
   min-height: calc(var(--se-top) + 32 * 11px + 31 * 2px + 7 * 3px);
+  max-height: calc(var(--se-top) + 4px + 32 * var(--se-row-max) + 31 * 2px + 7 * 3px);
 }
 
 .se-col-group,
@@ -621,25 +654,6 @@
   flex: 0 0 var(--se-col-w);
   flex-direction: column;
   min-width: var(--se-col-w);
-}
-
-.se-ghosts {
-  display: flex;
-  flex: 1 1 0;
-  gap: var(--se-col-gap);
-  flex-wrap: wrap;
-  align-content: flex-start;
-  min-width: 0;
-  overflow: clip;
-  contain: inline-size;
-}
-
-.se-ghosts > .se-col {
-  height: 100%;
-}
-
-.se-ghosts.is-cramped > .se-col {
-  visibility: hidden;
 }
 
 .se-col-head.is-ghost {
@@ -1074,6 +1088,18 @@ button.se-col-head:hover {
   display: grid;
   align-content: start;
   gap: 22px;
+}
+
+.se-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 22px;
+}
+
+.se-pair,
+.se-slot {
+  display: contents;
 }
 
 .se-panel-title {
@@ -1622,7 +1648,6 @@ html.dark .se-callout-num.is-selected {
 .lv-root.sw-root {
   --lv-insp: clamp(300px, 24vw, 400px);
   --sw-rail: clamp(250px, calc(21vw / var(--es-ui-scale, 1)), 300px);
-  --sw-panel-max: 560px;
   --sw-main-min: calc(var(--sw-rail) + 410px);
   grid-template-rows: var(--sw-preview-h, clamp(220px, 38%, 480px)) minmax(0, 1fr);
 }
@@ -2090,12 +2115,73 @@ html.dark .se-callout-num.is-selected {
   position: relative;
 }
 
-.sw-root .lv-inspector-scroll > * {
-  max-width: var(--sw-panel-max);
+.sw-root .se-empty {
+  max-width: 64ch;
 }
 
-.sw-root .sw-side-head {
-  padding-right: max(8px, calc(100% - var(--sw-panel-max) - 17px));
+.sw-flow:not(.lv-meta) {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+/* The panel column drags up to 1400px wide. Past one comfortable column the
+   inspector splits into two, then three, instead of stretching every row.
+   The Siren and Setting panels place their groups in fixed slots (se-flow);
+   the Scene, Vehicle and Mods views balance theirs in CSS columns. */
+@container lv-insp (min-width: 660px) {
+  .se-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 36px;
+  }
+
+  .se-pair {
+    display: grid;
+    align-content: start;
+    gap: 22px;
+    min-width: 0;
+  }
+
+  .sw-root .sw-flow {
+    display: block;
+    columns: 296px 3;
+    column-gap: 36px;
+  }
+
+  .sw-root .sw-flow > * {
+    break-inside: avoid;
+    margin-bottom: 28px;
+  }
+}
+
+@container lv-insp (min-width: 1000px) {
+  .se-flow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .se-pair {
+    display: contents;
+  }
+
+  .se-slot {
+    display: grid;
+    grid-row: 1;
+    align-content: start;
+    gap: 22px;
+    min-width: 0;
+  }
+
+  .se-slot-1 {
+    grid-column: 1;
+  }
+
+  .se-slot-2 {
+    grid-column: 2;
+  }
+
+  .se-slot-3 {
+    grid-column: 3;
+  }
 }
 
 .lv-pane-resizer {

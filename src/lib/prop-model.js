@@ -10,6 +10,7 @@ import {
 import { parseYftAsync } from "./yft-loader.js";
 import { isBridgeCancelled, readBridgeWarnings, requestBridgeParse } from "./model-load.js";
 import { buildDrawableObject, YDD_SCAN_SETTINGS } from "./viewer-utils.js";
+import { declareEmissiveDim, hasEmissiveDim } from "./native-shader.js";
 import { GLOW_LAYER } from "./viewer-render-effects.js";
 import { normalizeManifestSkeleton } from "./vehicle-rig.js";
 import { summarizeParentTextures } from "./vehicle-mod-parts.js";
@@ -504,12 +505,13 @@ export function createPropModel(asset) {
           material.needsUpdate = true;
         }
         if (material.emissive.getHex() === 0) material.emissive.setHex(0xffffff);
+        const dimmed = hasEmissiveDim(mesh.geometry);
         const overlay = new THREE.Mesh(mesh.geometry, new THREE.MeshBasicMaterial({
           map: material.emissiveMap || material.map || null,
           color: 0x000000,
           side: material.side,
           alphaTest: material.alphaTest || 0,
-          transparent: material.transparent,
+          transparent: material.transparent || dimmed,
           depthWrite: false,
           depthFunc: THREE.LessEqualDepth,
           polygonOffset: true,
@@ -517,6 +519,16 @@ export function createPropModel(asset) {
           polygonOffsetUnits: -1,
           toneMapped: false,
         }));
+        if (dimmed) {
+          overlay.material.onBeforeCompile = (shader) => {
+            declareEmissiveDim(shader);
+            shader.fragmentShader = shader.fragmentShader.replace(
+              "#include <map_fragment>",
+              "#include <map_fragment>\n\tdiffuseColor.a *= vEmissiveDim;",
+            );
+          };
+          overlay.material.customProgramCacheKey = () => "prop-glow-dim";
+        }
         overlay.name = `glow:${mesh.name}`;
         overlay.userData.propHelper = true;
         overlay.layers.set(GLOW_LAYER);

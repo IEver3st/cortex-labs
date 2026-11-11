@@ -380,6 +380,11 @@ export function isLightDrivenEmissive(nativeMaterial) {
   return cleanString(nativeMaterial?.shaderName).toLowerCase().includes("lightsemissive");
 }
 
+export function dimsEmissionByVertexRed(nativeMaterial) {
+  const shaderName = cleanString(nativeMaterial?.shaderName).toLowerCase();
+  return shaderName.startsWith("vehicle_") && shaderName.includes("emissive");
+}
+
 export function summarizeNativeMaterialMeshes(meshes) {
   const entries = (Array.isArray(meshes) ? meshes : [])
     .map((mesh) => mesh?.nativeMaterial)

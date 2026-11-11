@@ -15,7 +15,7 @@ export function parseClmesh(bytes) {
 
   const version = view.getUint16(offset, true);
   offset += 2;
-  if (version < 1 || version > 3) {
+  if (version < 1 || version > 4) {
     throw new Error(`Unsupported mesh cache version ${version}.`);
   }
 
@@ -88,6 +88,15 @@ export function parseClmesh(bytes) {
       offset += vertexCount * 4;
     }
 
+    let colors = null;
+    if (version >= 4 && (flags & 0x40)) {
+      if (offset + vertexCount * 4 > bytes.length) {
+        throw new Error("Mesh cache is truncated.");
+      }
+      colors = bytes.subarray(offset, offset + vertexCount * 4);
+      offset += vertexCount * 4;
+    }
+
     const indices = readClmeshUintArray(bytes, offset, indexCount);
     offset += indexCount * 4;
     // An index past the vertex data would read garbage attributes on the GPU.
@@ -97,7 +106,7 @@ export function parseClmesh(bytes) {
       }
     }
 
-    meshes.push({ name, materialName, positions, normals, uvs, uvs2, uvs3, uvs4, indices, skinIndices, skinWeights });
+    meshes.push({ name, materialName, positions, normals, uvs, uvs2, uvs3, uvs4, indices, skinIndices, skinWeights, colors });
   }
 
   return meshes;

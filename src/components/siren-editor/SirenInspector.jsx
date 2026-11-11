@@ -77,9 +77,9 @@ export function NumberInput({ value, onChange, min = -Infinity, max = Infinity, 
   );
 }
 
-export function Field({ label, hint, children }) {
+export function Field({ label, hint, className, children }) {
   return (
-    <div className="se-field">
+    <div className={cx("se-field", className)}>
       <span className="se-field-label" title={hint}>{label}</span>
       <div className="se-field-control">{children}</div>
     </div>
@@ -184,14 +184,14 @@ function LensFields({ s, light, sirens, primary }) {
   const choose = (option) => apply(option === "texture" ? null : option === "siren" ? "siren" : custom.toLowerCase());
   const tinted = Object.keys(tints).length;
   return (
-    <Group title="Lens glow" trailing={tinted ? (
+    <Group title="Lens glow" order={2} trailing={tinted ? (
       <button type="button" className="cx-btn is-quiet lv-btn-sm" onClick={() => s.updateVehicleLights({ lensTints: {} })}
         title={`Back to the texture's colour on ${tinted === 1 ? "the 1 tinted siren" : `all ${tinted} tinted sirens`}`}>
         <RotateCcw aria-hidden="true" />
         Reset all
       </button>
     ) : null}>
-      <Field label="Colour" hint="The colour the lens glows in the preview">
+      <Field label="Colour" hint="The colour the lens glows in the preview" className="se-field-wrap">
         <div className="lv-seg se-seg se-lens-seg" role="radiogroup" aria-label="Lens glow colour">
           {LENS_MODES.map(([option, label]) => (
             <button key={option} type="button" role="radio" aria-checked={mode === option}
@@ -225,9 +225,11 @@ function LensFields({ s, light, sirens, primary }) {
   );
 }
 
-function Group({ title, trailing, children }) {
+// Groups keep their reading order in one column; wider panels place them in
+// fixed columns (se-flow), so toggling a group never moves another one.
+function Group({ title, trailing, order, children }) {
   return (
-    <section className="se-group">
+    <section className="se-group" style={order ? { order } : undefined}>
       <header className="se-group-head">
         <h4 className="cx-label">{title}</h4>
         {trailing}
@@ -313,44 +315,54 @@ function SirenFields({ light, multi, count, index, bpm, setField, setLightPatch,
           <span className="se-note">Changes apply to every selected siren. Values shown are siren {index}'s.</span>
         </p>
       ) : null}
-      <Group title="Light">
-        <ColorField light={light} onChange={(patch) => setLightPatch(patch, "color")} />
-        <RangeField label="Intensity" value={light.intensity ?? 0} min={0} max={10} step={0.05} onChange={(value) => setField("intensity", value)} />
-        <Field label="Light group" hint="Lights sharing a group share one real light in game">
-          <NumberInput value={light.lightGroup ?? 0} min={0} max={255} integer label="Light group" onChange={(value) => setField("lightGroup", value)} />
-        </Field>
-        <ToggleField label="Casts light" hint="Lights the world and the body, not only the lens" checked={light.light} onChange={(value) => setField("light", value)} />
-        <ToggleField label="Spot light" hint="A cone along the aim instead of a point light" checked={light.spotLight} onChange={(value) => setField("spotLight", value)} />
-        <ToggleField label="Cast shadows" checked={light.castShadows} onChange={(value) => setField("castShadows", value)} />
-      </Group>
+      <div className="se-flow">
+        <div className="se-pair se-slot se-slot-1">
+          <Group title="Light" order={1}>
+            <ColorField light={light} onChange={(patch) => setLightPatch(patch, "color")} />
+            <RangeField label="Intensity" value={light.intensity ?? 0} min={0} max={10} step={0.05} onChange={(value) => setField("intensity", value)} />
+            <Field label="Light group" hint="Lights sharing a group share one real light in game">
+              <NumberInput value={light.lightGroup ?? 0} min={0} max={255} integer label="Light group" onChange={(value) => setField("lightGroup", value)} />
+            </Field>
+            <ToggleField label="Casts light" hint="Lights the world and the body, not only the lens" checked={light.light} onChange={(value) => setField("light", value)} />
+            <ToggleField label="Spot light" hint="A cone along the aim instead of a point light" checked={light.spotLight} onChange={(value) => setField("spotLight", value)} />
+            <ToggleField label="Cast shadows" checked={light.castShadows} onChange={(value) => setField("castShadows", value)} />
+          </Group>
 
-      {lens}
+          {lens}
 
-      <Group title="Flash" trailing={<Toggle checked={light.flash} onChange={(value) => setField("flash", value)} ariaLabel="Flash" />}>
-        <PatternField label="Pattern" value={light.flashiness.sequencer} onChange={(value) => setField("flashiness.sequencer", value)} />
-        <ChannelFields channel={light.flashiness} prefix="flashiness" bpm={bpm} setField={setField} setChannel={setChannel} />
-      </Group>
+          <Group title="Corona" order={6}>
+            <RangeField label="Intensity" value={light.corona.intensity ?? 0} min={0} max={100} step={0.5} onChange={(value) => setField("corona.intensity", value)} />
+            <RangeField label="Size" hint="0 turns the corona off" value={light.corona.size ?? 0} min={0} max={3} step={0.01} onChange={(value) => setField("corona.size", value)} />
+            <RangeField label="Pull" hint="Pulls the corona toward the camera" value={light.corona.pull ?? 0} min={0} max={1} step={0.01} onChange={(value) => setField("corona.pull", value)} />
+            <ToggleField label="Face camera" hint="Off fades the corona when the light points away" checked={light.corona.faceCamera} onChange={(value) => setField("corona.faceCamera", value)} />
+          </Group>
+        </div>
 
-      <Group title="Rotation" trailing={<Toggle checked={light.rotate} onChange={(value) => setField("rotate", value)} ariaLabel="Rotate" />}>
-        {light.rotate ? (
-          <>
-            <PatternField label="Pattern" value={light.rotation.sequencer} onChange={(value) => setField("rotation.sequencer", value)} />
-            <ChannelFields channel={light.rotation} prefix="rotation" bpm={bpm} setField={setField} setChannel={setChannel} rotation />
-          </>
-        ) : <p className="se-note">Turn on to spin everything on this siren's bone.</p>}
-      </Group>
+        <div className="se-pair">
+          <div className="se-slot se-slot-2">
+            <Group title="Flash" order={3} trailing={<Toggle checked={light.flash} onChange={(value) => setField("flash", value)} ariaLabel="Flash" />}>
+              <PatternField label="Pattern" value={light.flashiness.sequencer} onChange={(value) => setField("flashiness.sequencer", value)} />
+              <ChannelFields channel={light.flashiness} prefix="flashiness" bpm={bpm} setField={setField} setChannel={setChannel} />
+            </Group>
+          </div>
 
-      <Group title="Scale" trailing={<Toggle checked={light.scale} onChange={(value) => setField("scale", value)} ariaLabel="Scale" />}>
-        <RangeField label="Scale factor" hint="How much the bone's meshes grow while lit" value={light.scaleFactor ?? 1}
-          min={0} max={20} step={0.5} digits={2} onChange={(value) => setField("scaleFactor", value)} />
-      </Group>
+          <div className="se-slot se-slot-3">
+            <Group title="Rotation" order={4} trailing={<Toggle checked={light.rotate} onChange={(value) => setField("rotate", value)} ariaLabel="Rotate" />}>
+              {light.rotate ? (
+                <>
+                  <PatternField label="Pattern" value={light.rotation.sequencer} onChange={(value) => setField("rotation.sequencer", value)} />
+                  <ChannelFields channel={light.rotation} prefix="rotation" bpm={bpm} setField={setField} setChannel={setChannel} rotation />
+                </>
+              ) : <p className="se-note">Turn on to spin everything on this siren's bone.</p>}
+            </Group>
 
-      <Group title="Corona">
-        <RangeField label="Intensity" value={light.corona.intensity ?? 0} min={0} max={100} step={0.5} onChange={(value) => setField("corona.intensity", value)} />
-        <RangeField label="Size" hint="0 turns the corona off" value={light.corona.size ?? 0} min={0} max={3} step={0.01} onChange={(value) => setField("corona.size", value)} />
-        <RangeField label="Pull" hint="Pulls the corona toward the camera" value={light.corona.pull ?? 0} min={0} max={1} step={0.01} onChange={(value) => setField("corona.pull", value)} />
-        <ToggleField label="Face camera" hint="Off fades the corona when the light points away" checked={light.corona.faceCamera} onChange={(value) => setField("corona.faceCamera", value)} />
-      </Group>
+            <Group title="Scale" order={5} trailing={<Toggle checked={light.scale} onChange={(value) => setField("scale", value)} ariaLabel="Scale" />}>
+              <RangeField label="Scale factor" hint="How much the bone's meshes grow while lit" value={light.scaleFactor ?? 1}
+                min={0} max={20} step={0.5} digits={2} onChange={(value) => setField("scaleFactor", value)} />
+            </Group>
+          </div>
+        </div>
+      </div>
 
       {light.extraXml?.length ? (
         <p className="se-note">Keeps {light.extraXml.length} other {light.extraXml.length === 1 ? "tag" : "tags"} from carcols.meta on save.</p>
@@ -445,47 +457,57 @@ function ChannelFields({ channel, prefix, bpm, setField, setChannel, rotation = 
 function SettingFields({ draft, setSettingField, setLampMultiples, lampLanes, lampPatterns, setLampLanes }) {
   return (
     <>
-      <Group title="Setting">
-        <TextField label="Name" value={draft.name || ""} placeholder="police" onChange={(value) => setSettingField("name", value)} />
-        <Field label="Id" hint="carvariations.meta links a model to this id with sirenSettings">
-          <NumberInput value={draft.id} min={0} max={4294967295} integer label="Siren setting id" onChange={(value) => setSettingField("id", value)} />
-        </Field>
-        <TextField label="Texture" value={draft.textureName || ""} placeholder="VehicleLight_sirenlight" onChange={(value) => setSettingField("textureName", value)} />
-        <ToggleField label="Use real lights" checked={draft.useRealLights !== false} onChange={(value) => setSettingField("useRealLights", value)} />
-      </Group>
-      <Group title="Light spill">
-        <RangeField label="Falloff max" hint="How far siren light reaches, in metres" value={draft.lightFalloffMax ?? 0} min={0} max={100} step={0.5}
-          onChange={(value) => setSettingField("lightFalloffMax", value)} />
-        <RangeField label="Falloff exponent" value={draft.lightFalloffExponent ?? 0} min={0} max={100} step={0.5}
-          onChange={(value) => setSettingField("lightFalloffExponent", value)} />
-        <RangeField label="Inner cone" hint="Half-angle of the full-strength cone" value={draft.lightInnerConeAngle ?? 0} min={0} max={90} step={0.5} unit="°"
-          onChange={(value) => setSettingField("lightInnerConeAngle", value)} />
-        <RangeField label="Outer cone" hint="Half-angle where the light fades out" value={draft.lightOuterConeAngle ?? 0} min={0} max={90} step={0.5} unit="°"
-          onChange={(value) => setSettingField("lightOuterConeAngle", value)} />
-        <RangeField label="Light offset" value={draft.lightOffset ?? 0} min={-2} max={2} step={0.01}
-          onChange={(value) => setSettingField("lightOffset", value)} />
-      </Group>
-      <Group title="Head and tail lights">
-        <ToggleField label="Grid lanes" hint="Four lanes at the end of the grid that flash the headlights and tail lights with the sirens"
-          checked={lampLanes} onChange={setLampLanes} />
-        {lampLanes ? (
-          <>
-            {LAMP_KEYS.map((key) => (
-              <Field key={key} label={LAMP_LABELS[key]} hint="Flashes per lit step">
-                <NumberInput value={draft.lamps?.[key]?.multiples ?? 1} min={1} max={16} integer label={`${LAMP_LABELS[key]} multiples`}
-                  onChange={(value) => setLampMultiples(key, value)} />
+      <div className="se-flow">
+        <div className="se-pair">
+          <div className="se-slot se-slot-1">
+            <Group title="Setting" order={1}>
+              <TextField label="Name" value={draft.name || ""} placeholder="police" onChange={(value) => setSettingField("name", value)} />
+              <Field label="Id" hint="carvariations.meta links a model to this id with sirenSettings">
+                <NumberInput value={draft.id} min={0} max={4294967295} integer label="Siren setting id" onChange={(value) => setSettingField("id", value)} />
               </Field>
-            ))}
-            <p className="se-note">Paint their patterns in the last four lanes of the grid. Each number is that lamp's flashes per lit step.</p>
-          </>
-        ) : (
-          <p className="se-note">
-            {lampPatterns
-              ? `This setting flashes ${lampPatterns === 4 ? "all four lamps" : `${lampPatterns} of the four lamps`}. Their patterns still play and save while the lanes are hidden.`
-              : "Turn on to paint headlight and tail light flashes in the grid."}
-          </p>
-        )}
-      </Group>
+              <TextField label="Texture" value={draft.textureName || ""} placeholder="VehicleLight_sirenlight" onChange={(value) => setSettingField("textureName", value)} />
+              <ToggleField label="Use real lights" checked={draft.useRealLights !== false} onChange={(value) => setSettingField("useRealLights", value)} />
+            </Group>
+          </div>
+          <div className="se-slot se-slot-3">
+            <Group title="Head and tail lights" order={3}>
+              <ToggleField label="Grid lanes" hint="Four lanes at the end of the grid that flash the headlights and tail lights with the sirens"
+                checked={lampLanes} onChange={setLampLanes} />
+              {lampLanes ? (
+                <>
+                  {LAMP_KEYS.map((key) => (
+                    <Field key={key} label={LAMP_LABELS[key]} hint="Flashes per lit step">
+                      <NumberInput value={draft.lamps?.[key]?.multiples ?? 1} min={1} max={16} integer label={`${LAMP_LABELS[key]} multiples`}
+                        onChange={(value) => setLampMultiples(key, value)} />
+                    </Field>
+                  ))}
+                  <p className="se-note">Paint their patterns in the last four lanes of the grid. Each number is that lamp's flashes per lit step.</p>
+                </>
+              ) : (
+                <p className="se-note">
+                  {lampPatterns
+                    ? `This setting flashes ${lampPatterns === 4 ? "all four lamps" : `${lampPatterns} of the four lamps`}. Their patterns still play and save while the lanes are hidden.`
+                    : "Turn on to paint headlight and tail light flashes in the grid."}
+                </p>
+              )}
+            </Group>
+          </div>
+        </div>
+        <div className="se-pair se-slot se-slot-2">
+          <Group title="Light spill" order={2}>
+            <RangeField label="Falloff max" hint="How far siren light reaches, in metres" value={draft.lightFalloffMax ?? 0} min={0} max={100} step={0.5}
+              onChange={(value) => setSettingField("lightFalloffMax", value)} />
+            <RangeField label="Falloff exponent" value={draft.lightFalloffExponent ?? 0} min={0} max={100} step={0.5}
+              onChange={(value) => setSettingField("lightFalloffExponent", value)} />
+            <RangeField label="Inner cone" hint="Half-angle of the full-strength cone" value={draft.lightInnerConeAngle ?? 0} min={0} max={90} step={0.5} unit="°"
+              onChange={(value) => setSettingField("lightInnerConeAngle", value)} />
+            <RangeField label="Outer cone" hint="Half-angle where the light fades out" value={draft.lightOuterConeAngle ?? 0} min={0} max={90} step={0.5} unit="°"
+              onChange={(value) => setSettingField("lightOuterConeAngle", value)} />
+            <RangeField label="Light offset" value={draft.lightOffset ?? 0} min={-2} max={2} step={0.01}
+              onChange={(value) => setSettingField("lightOffset", value)} />
+          </Group>
+        </div>
+      </div>
       {draft.extraXml?.length ? (
         <p className="se-note">Keeps {draft.extraXml.length} other {draft.extraXml.length === 1 ? "tag" : "tags"} from carcols.meta on save.</p>
       ) : null}
