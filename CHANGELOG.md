@@ -8,6 +8,20 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [6.2.2] - 2026-11-10
+
+Sirens: refresh reloads the vehicle model too, and resizing the preview no longer creeps the camera closer.
+
+### Changed
+
+- **Sirens: refresh reloads the model** - The refresh button in the Sirens rail now reloads the model from disk as well as reading its meta files again, so a re-exported `.yft` shows up without reopening the vehicle. Your camera stays where it was.
+
+### Fixed
+
+- **Preview zoom no longer creeps closer on resize** - Shrinking the preview past the showroom's reach and widening it again left the camera closer each time, so a few pane drags or expand and restore cycles zoomed the model right in. The view now returns to the zoom you set, in every 3D preview, Multi included.
+
+---
+
 ## [6.2.1] - 2026-11-09
 
 Sirens: Ctrl+S saves straight back to carcols.meta, and saving no longer wipes patterns stored as negative numbers.
