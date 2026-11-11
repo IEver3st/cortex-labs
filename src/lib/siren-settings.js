@@ -781,7 +781,13 @@ function formatInt(value) {
   return String(Math.trunc(Number(value)));
 }
 
-function sirenLines(setting, style = DEFAULT_STYLE) {
+const SIREN_LABEL = /<!--\s*Siren\s+\d+\s*-->/i;
+
+function sirenLabel(number) {
+  return `<!-- Siren ${number} -->`;
+}
+
+function sirenLines(setting, style = DEFAULT_STYLE, { labels = true, firstNumber = 1 } = {}) {
   const lines = [];
   const close = style.close;
   const formatFloat = (value) => Number(value).toFixed(style.decimals);
@@ -837,7 +843,8 @@ function sirenLines(setting, style = DEFAULT_STYLE) {
   if (!sirens.length) add(1, `<sirens${close}`);
   else {
     add(1, "<sirens>");
-    for (const light of sirens) {
+    sirens.forEach((light, index) => {
+      if (labels) add(2, sirenLabel(firstNumber + index));
       add(2, "<Item>");
       channel(3, "rotation", light.rotation);
       channel(3, "flashiness", light.flashiness);
@@ -860,7 +867,7 @@ function sirenLines(setting, style = DEFAULT_STYLE) {
       bool(3, "castShadows", light.castShadows);
       extras(3, light.extraXml);
       add(2, "</Item>");
-    }
+    });
     add(1, "</sirens>");
   }
   extras(1, setting.extraXml);
@@ -909,8 +916,8 @@ function detectIndentUnit(text, root) {
 // ---------------------------------------------------------------------------
 
 // Siren light Items, as serialized lines relative to the Item.
-function lightItemLines(lights, style) {
-  const lines = sirenLines({ id: null, sirens: lights, lamps: {}, extraXml: [] }, style);
+function lightItemLines(lights, style, labelling) {
+  const lines = sirenLines({ id: null, sirens: lights, lamps: {}, extraXml: [] }, style, labelling);
   const open = lines.findIndex(([depth, text]) => depth === 1 && text === "<sirens>");
   const close = lines.findIndex(([depth, text]) => depth === 1 && text === "</sirens>");
   return open < 0 || close < 0 ? [] : lines.slice(open + 1, close).map(([depth, text]) => [depth == null ? null : depth - 2, text]);
@@ -1023,6 +1030,7 @@ function patchSirenItem(text, item, setting, { unit, eol }) {
 
   const lights = (setting.sirens || []).slice(0, MAX_SIRENS);
   const list = findChild(item, "sirens");
+  let missingLabels = [];
   if (!list) {
     if (lights.length) return null;
   } else {
@@ -1030,6 +1038,9 @@ function patchSirenItem(text, item, setting, { unit, eol }) {
     const originals = findChildren(list, "Item");
     if (/\/>$/.test(listRaw) && lights.length) return null;
     const shared = Math.min(originals.length, lights.length);
+    const unlabelled = originals.slice(0, shared).filter((node) => !/-->\s*$/.test(text.slice(list.start, node.start)));
+    const labelled = unlabelled.length < originals.length || !originals.length || SIREN_LABEL.test(listRaw);
+    missingLabels = unlabelled.map((node) => ({ node, number: originals.indexOf(node) + 1 }));
     for (let index = 0; index < shared && !failed; index += 1) {
       const node = originals[index];
       const light = lights[index];
@@ -1059,7 +1070,7 @@ function patchSirenItem(text, item, setting, { unit, eol }) {
       if (closeIndent == null) return null;
       const itemIndent = (originals[0] && lineIndent(text, originals[0].start)) ?? closeIndent + unit;
       const at = close - closeIndent.length;
-      const body = lightItemLines(lights.slice(originals.length), style)
+      const body = lightItemLines(lights.slice(originals.length), style, { labels: labelled, firstNumber: originals.length + 1 })
         .map(([depth, line]) => (depth == null ? line : `${itemIndent}${unit.repeat(depth)}${line}`)).join(eol);
       edits.push({ start: at, end: at, text: `${body}${eol}` });
     } else if (lights.length < originals.length) {
@@ -1070,6 +1081,13 @@ function patchSirenItem(text, item, setting, { unit, eol }) {
     }
   }
   if (failed) return null;
+  if (edits.length) {
+    for (const { node, number } of missingLabels) {
+      const lead = lineIndent(text, node.start);
+      if (lead == null) continue;
+      edits.push({ start: node.start - lead.length, end: node.start - lead.length, text: `${lead}${sirenLabel(number)}${eol}` });
+    }
+  }
 
   edits.sort((a, b) => b.start - a.start || b.end - a.end);
   let out = text;

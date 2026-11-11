@@ -8,6 +8,20 @@ All notable changes to Cortex Studio are documented here.
 
 ---
 
+## [6.2.4] - 2026-11-10
+
+Sirens: unsynced lights strobe through a lit block in the preview, and sirens saved to carcols.meta are numbered.
+
+### Added
+
+- **Sirens: numbered sirens in carcols.meta** - Every siren Studio writes now has a `<!-- Siren 12 -->` comment above it, matching its column number in the grid, in new files, Save as, copied XML and sirens added to an existing setting. Saving a change into an existing carcols.meta also labels that setting's sirens that have no comment above them yet. A siren with its own comment keeps it, and a save that changes nothing still leaves the file byte for byte.
+
+### Fixed
+
+- **Sirens: unsynced lights strobe inside a lit block** - A flash with **Sync to bpm** off now keeps its own time through a run of lit steps: on for one step ÷ speed percentage, off for as long, repeating until the run ends. The preview used to restart the flash on every lit step, so a block of lit steps just above 100% (a 16-step block at 110%, for example) drew as an almost solid light where the game strobes. Single lit steps, slow halogen speeds and synced lights look as they did.
+
+---
+
 ## [6.2.3] - 2026-11-10
 
 Vertex paint dims emissives as in game, the Sirens panel and grid use the space they have, and previews, pane drags and the sequencer run smoother.
