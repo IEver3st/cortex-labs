@@ -11,7 +11,7 @@ import GlobalContextMenu from "./components/GlobalContextMenu";
 import { Keycaps } from "./components/ui/keycaps";
 import * as Ctx from "./components/ContextMenu";
 import appMeta from "../package.json";
-import cortexLogo from "../src-tauri/icons/128x128@2x.png";
+import cortexLogo from "./assets/brand/mark.png";
 import "./Shell.css";
 import {
   setActiveWorkspaceId,

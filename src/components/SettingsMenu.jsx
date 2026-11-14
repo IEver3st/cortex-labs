@@ -12,7 +12,7 @@ import UsageStatsSettings from "./UsageStatsSettings";
 import { ColorField } from "./SettingsColorField";
 import { Toggle } from "./ui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
+import cortexLogo from "../assets/brand/mark.png";
 import "./SettingsMenu.css";
 import {
   DEFAULT_HOTKEYS,

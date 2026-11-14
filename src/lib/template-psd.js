@@ -2079,8 +2079,8 @@ async function canvasToPngDataUrl(canvas) {
 
 /* ── Vehicle overlay and logo ────────────────────────────────────── */
 
-// The whole app icon at 512 px; the loader's split faces are only 320 px.
-const TEMPLATE_LOGO_URL = new URL("../../src-tauri/icons/icon.png", import.meta.url);
+// The Cortex brand mark at 512 px, kept apart from the OS app icon; the loader's split faces are only 320 px.
+const TEMPLATE_LOGO_URL = new URL("../assets/brand/mark-512.png", import.meta.url);
 
 /**
  * Decodes the Cortex Studio mark for the template. Returns

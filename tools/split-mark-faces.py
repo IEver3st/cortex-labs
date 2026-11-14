@@ -1,8 +1,8 @@
 """Split the Cortex mark into its colour faces for the boot intro.
 
 Writes src/assets/brand/mark-{left,right,lid,base,inner}.png from
-src-tauri/icons/icon.png. Each opaque pixel goes to exactly one face, so the
-faces stacked in place recombine into the icon. Rerun after the logo changes:
+src/assets/brand/mark-512.png. Each opaque pixel goes to exactly one face, so the
+faces stacked in place recombine into the mark. Rerun after the mark changes:
 
     python tools/split-mark-faces.py
 """
@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = ROOT / "src-tauri" / "icons" / "icon.png"
+SOURCE = ROOT / "src" / "assets" / "brand" / "mark-512.png"
 OUT = ROOT / "src" / "assets" / "brand"
 SIZE = 320
 

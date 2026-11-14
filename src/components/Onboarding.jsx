@@ -15,7 +15,7 @@ import { WORKSPACE_MODES, WORKSPACE_MODE_GROUPS } from "../lib/workspace-modes";
 import { Keycaps } from "./ui/keycaps";
 import { Toggle } from "./ui/toggle";
 import appMeta from "../../package.json";
-import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
+import cortexLogo from "../assets/brand/mark.png";
 import "./Onboarding.css";
 
 const HOME_ID = "home";

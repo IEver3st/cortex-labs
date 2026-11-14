@@ -1,0 +1,25 @@
+{
+  "masters": { "full": "icon.svg", "small": "small.svg" },
+  "smallBelow": 48,
+  "inset": 0.02,
+  "outputs": [
+    { "file": "../icon.ico", "sizes": [16, 20, 24, 32, 40, 48, 64, 96, 128, 256] },
+    { "file": "../icon.icns" },
+    { "file": "../32x32.png", "size": 32 },
+    { "file": "../64x64.png", "size": 64 },
+    { "file": "../128x128.png", "size": 128 },
+    { "file": "../128x128@2x.png", "size": 256 },
+    { "file": "../icon.png", "size": 512 },
+    { "file": "../Square30x30Logo.png", "size": 30 },
+    { "file": "../Square44x44Logo.png", "size": 44 },
+    { "file": "../Square71x71Logo.png", "size": 71 },
+    { "file": "../Square89x89Logo.png", "size": 89 },
+    { "file": "../Square107x107Logo.png", "size": 107 },
+    { "file": "../Square142x142Logo.png", "size": 142 },
+    { "file": "../Square150x150Logo.png", "size": 150 },
+    { "file": "../Square284x284Logo.png", "size": 284 },
+    { "file": "../Square310x310Logo.png", "size": 310 },
+    { "file": "../StoreLogo.png", "size": 50 },
+    { "file": "../../../public/app-icon.png", "size": 64, "master": "small" }
+  ]
+}
