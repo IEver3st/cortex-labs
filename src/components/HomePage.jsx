@@ -39,7 +39,7 @@ import { WORKSPACE_MODES, WORKSPACE_MODE_GROUPS, workspaceModeRoute } from "../l
 import { normalizeTextureMode } from "../lib/workspace-state";
 import { DEFAULT_HOTKEYS, HOTKEY_ACTIONS, mergeHotkeys } from "../lib/hotkeys";
 import appMeta from "../../package.json";
-import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
+import cortexLogo from "../assets/brand/mark.png";
 import * as Ctx from "./ContextMenu";
 import { Keycaps, hotkeyLabel } from "./ui/keycaps";
 import HomeSavedVehicles from "./HomeSavedVehicles";

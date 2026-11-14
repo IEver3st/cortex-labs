@@ -1,3 +1,12 @@
+version: 6.2.6
+date: 2026-11-13
+> A new app icon: the Cortex cube, carved and glossy, on a paper tile.
+
+## Improved
+- New app icon | Studio's icon on the taskbar, Start menu, installer, uninstaller, window and files it opens is now the Cortex cube, carved and glossy, on a paper tile. A simpler version stays readable at small sizes on light and dark taskbars. The logo inside the app and on generated templates is unchanged.
+
+---
+
 version: 6.2.5
 date: 2026-11-10
 > Sirens and lights: dim vertex paint on emissives now reads as dim in the preview.

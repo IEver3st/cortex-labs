@@ -232,12 +232,13 @@ Focused test commands are also available for the CLMESH parser, native materials
 ```text
 cortex-labs/
 ├── src/
+│   ├── assets/brand/          # In-app Cortex mark and the loader's face cuts
 │   ├── components/            # React workspaces, viewers, and desktop UI
 │   └── lib/                   # Parsers, materials, capture, templates, and state
 ├── src-tauri/
 │   ├── src/                   # Rust commands and native integration boundary
 │   ├── capabilities/          # Tauri permissions
-│   └── icons/                 # Application branding and platform icons
+│   └── icons/                 # OS app icon set, built from icons/icon-src
 ├── tools/
 │   └── codewalker-bridge/     # .NET asset conversion sidecar
 ├── docs/

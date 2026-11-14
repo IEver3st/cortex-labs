@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import cortexLogo from "../../src-tauri/icons/128x128@2x.png";
+import cortexLogo from "../assets/brand/mark.png";
 import appMeta from "../../package.json";
 import markLeft from "../assets/brand/mark-left.png";
 import markRight from "../assets/brand/mark-right.png";
@@ -8,8 +8,8 @@ import markBase from "../assets/brand/mark-base.png";
 import markInner from "../assets/brand/mark-inner.png";
 import "./AppLoader.css";
 
-/* The mark's faces, cut from the real icon by colour with
-   tools/split-mark-faces.py. Stacked in place they recombine into the icon,
+/* The mark's faces, cut from the brand mark by colour with
+   tools/split-mark-faces.py. Stacked in place they recombine into the mark,
    so the assembly always lands on the true logo. */
 const FACES = [
   { id: "left", src: markLeft },
