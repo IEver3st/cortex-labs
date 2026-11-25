@@ -23,8 +23,14 @@ const HEX_RE = /^#[0-9a-f]{6}$/i;
 
 function HexInput({ value, onCommit, label }) {
   const [draft, setDraft] = useState(value);
+  const cancellingRef = useRef(false);
   useEffect(() => setDraft(value), [value]);
   const commit = () => {
+    if (cancellingRef.current) {
+      cancellingRef.current = false;
+      setDraft(value);
+      return;
+    }
     const next = draft.startsWith("#") ? draft : `#${draft}`;
     if (HEX_RE.test(next) && next.toLowerCase() !== value) onCommit(next.toLowerCase());
     else setDraft(value);
@@ -41,6 +47,7 @@ function HexInput({ value, onCommit, label }) {
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();
         if (event.key === "Escape") {
+          cancellingRef.current = true;
           setDraft(value);
           event.currentTarget.blur();
         }

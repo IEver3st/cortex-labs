@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { STAGE_BAY_LIMIT, createViewerStage } from "./viewer-stage.js";
+import { STAGE_BAY_LIMIT, createViewerStage, syncMirrorRuntime } from "./viewer-stage.js";
 
 // The bay layout needs no GL context: the floor and studio environment are
 // only built on entering the showroom, which these tests do not do.
@@ -102,4 +102,23 @@ test("dispose releases the bay lights", () => {
   stage.fit(lineupBounds(cars), cars, { bays: true });
   stage.dispose();
   assert.equal(scene.getObjectByName("viewer-stage"), undefined);
+});
+
+test("syncMirrorRuntime updates mutable standard and physical properties without touching foreign keys", () => {
+  const srcPhys = new THREE.MeshPhysicalMaterial({ roughness: 0.2, metalness: 0.9, clearcoat: 0.85, opacity: 0.5, transparent: true });
+  const dstPhys = new THREE.MeshPhysicalMaterial();
+  syncMirrorRuntime(dstPhys, srcPhys);
+  assert.equal(dstPhys.roughness, 0.2);
+  assert.equal(dstPhys.metalness, 0.9);
+  assert.equal(dstPhys.clearcoat, 0.85);
+  assert.equal(dstPhys.opacity, 0.5);
+  assert.equal(dstPhys.transparent, true);
+
+  const srcStd = new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.1, wireframe: true });
+  const dstStd = new THREE.MeshStandardMaterial();
+  syncMirrorRuntime(dstStd, srcStd);
+  assert.equal(dstStd.roughness, 0.7);
+  assert.equal(dstStd.metalness, 0.1);
+  assert.equal(dstStd.wireframe, true);
+  assert.equal("clearcoat" in dstStd, false);
 });

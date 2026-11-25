@@ -130,9 +130,15 @@ export const PROP_ATTACH_BONES = Object.freeze([
   { tag: 18905, label: "Left hand (SKEL_L_Hand)" },
   { tag: 6286, label: "Right hand IK (IK_R_Hand)" },
   { tag: 36029, label: "Left hand IK (IK_L_Hand)" },
+  { tag: 28252, label: "Right forearm (SKEL_R_Forearm)" },
+  { tag: 61163, label: "Left forearm (SKEL_L_Forearm)" },
   { tag: 31086, label: "Head (SKEL_Head)" },
   { tag: 24818, label: "Chest (SKEL_Spine3)" },
   { tag: 11816, label: "Pelvis (SKEL_Pelvis)" },
+  { tag: 51826, label: "Right thigh (SKEL_R_Thigh)" },
+  { tag: 58271, label: "Left thigh (SKEL_L_Thigh)" },
+  { tag: 36864, label: "Right calf (SKEL_R_Calf)" },
+  { tag: 63931, label: "Left calf (SKEL_L_Calf)" },
 ]);
 
 export const DEFAULT_PROP_BONE = 28422;
@@ -228,8 +234,9 @@ export function parseEmoteSnippet(text) {
   let clip = "";
   // A TaskPlayAnim call names the pair outright; otherwise take the first two
   // quoted names separated only by a comma, as emote entries list them.
+  const PED_ARG = String.raw`(?:[^,()]|\([^()]*\))+`;
   const candidates = [
-    ...body.matchAll(new RegExp(String.raw`TaskPlayAnim\s*\([^,()]+,\s*${STR}\s*,\s*${STR}`, "g")),
+    ...body.matchAll(new RegExp(String.raw`TaskPlayAnim\s*\(${PED_ARG},\s*${STR}\s*,\s*${STR}`, "g")),
     ...body.matchAll(new RegExp(String.raw`${STR}\s*,\s*${STR}`, "g")),
   ];
   for (const match of candidates) {
@@ -259,7 +266,7 @@ export function parseEmoteSnippet(text) {
 
   if (!props.length) {
     const attach = new RegExp(
-      String.raw`GetPedBoneIndex\s*\([^,()]+,\s*(\d+)\s*\)\s*,\s*${Array(6).fill(NUMBER).join(String.raw`\s*,\s*`)}`,
+      String.raw`GetPedBoneIndex\s*\(${PED_ARG},\s*(\d+)\s*\)\s*,\s*${Array(6).fill(NUMBER).join(String.raw`\s*,\s*`)}`,
     ).exec(body);
     const model = /(?:GetHashKey|joaat)\s*\(\s*["'`]([^"'`]+)["'`]\s*\)|`([a-z0-9_-]+)`/i.exec(body);
     if (attach && model) {
@@ -274,6 +281,112 @@ export function parseEmoteSnippet(text) {
 
 const PROP_EULER = new THREE.Euler();
 const PROP_UNIT = new THREE.Vector3(1, 1, 1);
+const IDENTITY_QUAT = Object.freeze(new THREE.Quaternion());
+const ZERO_VEC = Object.freeze(new THREE.Vector3());
+const SCRATCH_Q1 = new THREE.Quaternion();
+const SCRATCH_PROP_POS = new THREE.Vector3();
+const SCRATCH_PROP_QUAT = new THREE.Quaternion();
+const SCRATCH_PROP_OFFSET = new THREE.Matrix4();
+const SCRATCH_LOCAL_MAT = new THREE.Matrix4();
+
+const validClipCache = new WeakMap();
+const skeletonCache = new WeakMap();
+
+function getSkeletonCache(skeleton) {
+  const bones = skeleton?.bones;
+  if (!Array.isArray(bones)) return null;
+  let entry = skeletonCache.get(skeleton);
+  if (entry && entry.bones === bones && entry.length === bones.length) return entry;
+
+  const indexByTag = new Map();
+  const bindQuats = new Array(bones.length);
+  const bindPos = new Array(bones.length);
+  for (let i = 0; i < bones.length; i += 1) {
+    const b = bones[i];
+    if (!indexByTag.has(b.tag)) indexByTag.set(b.tag, i);
+    bindQuats[i] = new THREE.Quaternion(b.qx, b.qy, b.qz, b.qw).normalize();
+    bindPos[i] = new THREE.Vector3(b.tx, b.ty, b.tz);
+  }
+  const rootIndex = indexByTag.get(PED_BONE_TAGS.root);
+  const rootBind = rootIndex === undefined ? new THREE.Quaternion() : bindQuats[rootIndex];
+  entry = {
+    bones,
+    length: bones.length,
+    indexByTag,
+    rootIndex,
+    rootBind,
+    bindQuats,
+    bindPos,
+    bindWorldQuats: new Array(bones.length),
+    chains: new Array(bones.length),
+    compiledClips: new WeakMap(),
+  };
+  skeletonCache.set(skeleton, entry);
+  return entry;
+}
+
+/** O(1) bone index lookup by bone tag using the cached skeleton table. */
+export function findBoneIndexByTag(skeleton, tag) {
+  const cache = getSkeletonCache(skeleton);
+  if (!cache) return -1;
+  const idx = cache.indexByTag.get(tag);
+  return idx === undefined ? -1 : idx;
+}
+
+function getBoneChain(cache, index) {
+  let chain = cache.chains[index];
+  if (chain) return chain;
+  const bones = cache.bones;
+  const rev = [];
+  const seen = new Set();
+  for (let i = index; Number.isInteger(i) && i >= 0 && i < bones.length && !seen.has(i); i = bones[i].parentIndex) {
+    seen.add(i);
+    rev.push(i);
+  }
+  // Store root-to-bone order so computePosedBoneMatrix walks forward.
+  chain = new Int32Array(rev.length);
+  for (let k = 0; k < rev.length; k += 1) chain[k] = rev[rev.length - 1 - k];
+  cache.chains[index] = chain;
+  return chain;
+}
+
+function getCompiledClip(cache, clip) {
+  let compiled = cache.compiledClips.get(clip);
+  if (compiled) return compiled;
+
+  const { indexByTag, rootIndex } = cache;
+  const rotByTag = new Map();
+  for (let i = 0; i < clip.rotations.length; i += 1) {
+    const track = clip.rotations[i];
+    rotByTag.set(track.bone, track.values);
+  }
+  for (const [roll, source] of COPY_ROTATION) {
+    if (!rotByTag.has(roll) && rotByTag.has(source)) rotByTag.set(roll, rotByTag.get(source));
+  }
+  const rotTracks = [];
+  for (const [tag, values] of rotByTag) {
+    const index = indexByTag.get(tag);
+    if (index === undefined) continue;
+    rotTracks.push({ index, values, isRoot: index === rootIndex });
+  }
+
+  const transByIndex = new Map();
+  const srcTrans = clip.translations || [];
+  for (let i = 0; i < srcTrans.length; i += 1) {
+    const track = srcTrans[i];
+    const index = indexByTag.get(track.bone);
+    if (index === undefined) continue;
+    transByIndex.set(index, track.values);
+  }
+  const transTracks = [];
+  for (const [index, values] of transByIndex) {
+    transTracks.push({ index, values, isRoot: index === rootIndex });
+  }
+
+  compiled = { rotTracks, transTracks };
+  cache.compiledClips.set(clip, compiled);
+  return compiled;
+}
 
 /**
  * Where a held prop sits in ped space: the bone's posed transform times the
@@ -282,27 +395,41 @@ const PROP_UNIT = new THREE.Vector3(1, 1, 1);
  * Returns null when the skeleton has no bone with the prop's tag.
  */
 export function propAttachmentMatrix(skeleton, pose, prop) {
-  const bones = skeleton?.bones;
-  if (!Array.isArray(bones) || !prop) return null;
-  const index = bones.findIndex((bone) => bone.tag === prop.bone);
-  if (index < 0) return null;
-  const [x = 0, y = 0, z = 0] = prop.position || [];
-  const [rx = 0, ry = 0, rz = 0] = prop.rotation || [];
+  const cache = getSkeletonCache(skeleton);
+  if (!cache || !prop) return null;
+  const index = cache.indexByTag.get(prop.bone);
+  if (index === undefined) return null;
+  const pos = prop.position;
+  const rot = prop.rotation;
+  const x = pos?.[0] ?? 0;
+  const y = pos?.[1] ?? 0;
+  const z = pos?.[2] ?? 0;
+  const rx = rot?.[0] ?? 0;
+  const ry = rot?.[1] ?? 0;
+  const rz = rot?.[2] ?? 0;
   const toRad = THREE.MathUtils.degToRad;
   PROP_EULER.set(toRad(rx), toRad(ry), toRad(rz), "ZXY");
-  const offset = new THREE.Matrix4().compose(
-    new THREE.Vector3(x, y, z),
-    new THREE.Quaternion().setFromEuler(PROP_EULER),
-    PROP_UNIT,
-  );
+  SCRATCH_PROP_POS.set(x, y, z);
+  SCRATCH_PROP_QUAT.setFromEuler(PROP_EULER);
+  SCRATCH_PROP_OFFSET.compose(SCRATCH_PROP_POS, SCRATCH_PROP_QUAT, PROP_UNIT);
+
   const { rotations, translations } = poseParts(pose);
   const posed = (rotations?.size || 0) + (translations?.size || 0) > 0;
-  const bone = bones[index];
+  const bone = cache.bones[index];
   // Without a pose the bind world transform is exact, as ped props use it.
-  const boneMatrix = posed || !Number.isFinite(bone.worldTx)
-    ? computePosedBoneMatrix(skeleton, pose, index)
-    : new THREE.Matrix4().compose(new THREE.Vector3(bone.worldTx, bone.worldTy, bone.worldTz), boneWorldQuaternion(bone), PROP_UNIT);
-  return boneMatrix.multiply(offset);
+  let boneMatrix;
+  if (posed || !Number.isFinite(bone.worldTx)) {
+    boneMatrix = computePosedBoneMatrix(skeleton, pose, index);
+  } else {
+    let wq = cache.bindWorldQuats[index];
+    if (!wq) {
+      wq = boneWorldQuaternion(bone);
+      cache.bindWorldQuats[index] = wq;
+    }
+    SCRATCH_PROP_POS.set(bone.worldTx, bone.worldTy, bone.worldTz);
+    boneMatrix = new THREE.Matrix4().compose(SCRATCH_PROP_POS, wq, PROP_UNIT);
+  }
+  return boneMatrix.multiply(SCRATCH_PROP_OFFSET);
 }
 
 function boneLocalQuaternion(bone) {
@@ -315,12 +442,18 @@ function boneWorldQuaternion(bone) {
 
 /** Checks the shape of a bridge clip export before it is sampled. */
 export function isValidClip(clip) {
-  if (!clip || !Number.isInteger(clip.samples) || clip.samples < 2) return false;
-  if (!(clip.duration > 0) || !(clip.sampleRate > 0)) return false;
-  const ok = (tracks, width) =>
-    Array.isArray(tracks) &&
-    tracks.every((track) => Number.isInteger(track?.bone) && track.values?.length === clip.samples * width);
-  return ok(clip.rotations, 4) && ok(clip.translations || [], 3);
+  if (!clip || typeof clip !== "object") return false;
+  const cached = validClipCache.get(clip);
+  if (cached !== undefined) return cached;
+  let valid = false;
+  if (Number.isInteger(clip.samples) && clip.samples >= 2 && clip.duration > 0 && clip.sampleRate > 0) {
+    const ok = (tracks, width) =>
+      Array.isArray(tracks) &&
+      tracks.every((track) => Number.isInteger(track?.bone) && track.values?.length === clip.samples * width);
+    valid = ok(clip.rotations, 4) && ok(clip.translations || [], 3);
+  }
+  validClipCache.set(clip, valid);
+  return valid;
 }
 
 /** Ground speed of a walk cycle in metres per second (0 for stationary clips). */
@@ -340,49 +473,98 @@ export function clipGroundSpeed(clip) {
 export function sampleClipPose(skeleton, clip, time) {
   const rotations = new Map();
   const translations = new Map();
-  const bones = skeleton?.bones;
-  if (!Array.isArray(bones) || !isValidClip(clip)) return { rotations, translations };
+  const cache = getSkeletonCache(skeleton);
+  if (!cache || !isValidClip(clip)) return { rotations, translations };
 
+  const safeTime = Number.isFinite(time) ? time : 0;
   const span = clip.samples - 1;
-  const position = (((time * clip.sampleRate) % span) + span) % span;
+  const position = (((safeTime * clip.sampleRate) % span) + span) % span;
   const i0 = Math.floor(position);
-  const i1 = Math.min(i0 + 1, span);
+  const i1 = i0 < span ? i0 + 1 : span;
   const alpha = position - i0;
+  const o0 = i0 * 4;
+  const o1 = i1 * 4;
+  const t0 = i0 * 3;
+  const t1 = i1 * 3;
 
-  const indexByTag = new Map();
-  bones.forEach((bone, index) => {
-    if (!indexByTag.has(bone.tag)) indexByTag.set(bone.tag, index);
-  });
+  const { rotTracks, transTracks } = getCompiledClip(cache, clip);
+  const rootBind = cache.rootBind;
 
-  const q0 = new THREE.Quaternion();
-  const q1 = new THREE.Quaternion();
-  const byTag = new Map();
-  for (const track of clip.rotations) {
+  for (let k = 0, n = rotTracks.length; k < n; k += 1) {
+    const track = rotTracks[k];
     const v = track.values;
-    q0.set(v[i0 * 4], v[i0 * 4 + 1], v[i0 * 4 + 2], v[i0 * 4 + 3]);
-    q1.set(v[i1 * 4], v[i1 * 4 + 1], v[i1 * 4 + 2], v[i1 * 4 + 3]);
-    byTag.set(track.bone, q0.clone().slerp(q1, alpha).normalize());
-  }
-  for (const [roll, source] of COPY_ROTATION) {
-    if (!byTag.has(roll) && byTag.has(source)) byTag.set(roll, byTag.get(source).clone());
-  }
-
-  const rootIndex = indexByTag.get(PED_BONE_TAGS.root);
-  const rootBind = rootIndex === undefined ? new THREE.Quaternion() : boneLocalQuaternion(bones[rootIndex]);
-  for (const [tag, rotation] of byTag) {
-    const index = indexByTag.get(tag);
-    if (index === undefined) continue;
-    rotations.set(index, index === rootIndex ? rootBind.clone().multiply(rotation) : rotation);
+    const q = new THREE.Quaternion(v[o0], v[o0 + 1], v[o0 + 2], v[o0 + 3]);
+    if (alpha > 0) {
+      SCRATCH_Q1.set(v[o1], v[o1 + 1], v[o1 + 2], v[o1 + 3]);
+      q.slerp(SCRATCH_Q1, alpha);
+    }
+    q.normalize();
+    if (track.isRoot) q.premultiply(rootBind);
+    rotations.set(track.index, q);
   }
 
-  for (const track of clip.translations || []) {
-    const index = indexByTag.get(track.bone);
-    if (index === undefined) continue;
+  for (let k = 0, n = transTracks.length; k < n; k += 1) {
+    const track = transTracks[k];
     const v = track.values;
-    const t = new THREE.Vector3(v[i0 * 3], v[i0 * 3 + 1], v[i0 * 3 + 2])
-      .lerp(new THREE.Vector3(v[i1 * 3], v[i1 * 3 + 1], v[i1 * 3 + 2]), alpha);
-    translations.set(index, index === rootIndex ? t.applyQuaternion(rootBind) : t);
+    const vec = alpha > 0
+      ? new THREE.Vector3(
+        v[t0] + (v[t1] - v[t0]) * alpha,
+        v[t0 + 1] + (v[t1 + 1] - v[t0 + 1]) * alpha,
+        v[t0 + 2] + (v[t1 + 2] - v[t0 + 2]) * alpha,
+      )
+      : new THREE.Vector3(v[t0], v[t0 + 1], v[t0 + 2]);
+    if (track.isRoot) vec.applyQuaternion(rootBind);
+    translations.set(track.index, vec);
   }
+  return { rotations, translations };
+}
+
+/**
+ * Smoothly blends two poses (`fromPose` -> `toPose`) at factor `alpha` in [0, 1].
+ * Missing bones in either pose (or a null bind pose) blend from/to the skeleton's
+ * bind quaternion and position so pose transitions never snap.
+ */
+export function blendPoses(fromPose, toPose, alpha, skeleton) {
+  const t = Number.isFinite(alpha) ? Math.min(1, Math.max(0, alpha)) : 1;
+  if (t <= 0) return fromPose || null;
+  if (t >= 1) return toPose || null;
+
+  const from = poseParts(fromPose);
+  const to = poseParts(toPose);
+  const cache = getSkeletonCache(skeleton);
+  const bindQuats = cache?.bindQuats || null;
+  const bindPos = cache?.bindPos || null;
+
+  const rotations = new Map();
+  if (from.rotations) {
+    for (const [idx, qa] of from.rotations) {
+      const qb = to.rotations?.get(idx) || bindQuats?.[idx] || IDENTITY_QUAT;
+      rotations.set(idx, qa.clone().slerp(qb, t).normalize());
+    }
+  }
+  if (to.rotations) {
+    for (const [idx, qb] of to.rotations) {
+      if (rotations.has(idx)) continue;
+      const qa = bindQuats?.[idx] || IDENTITY_QUAT;
+      rotations.set(idx, qa.clone().slerp(qb, t).normalize());
+    }
+  }
+
+  const translations = new Map();
+  if (from.translations) {
+    for (const [idx, ta] of from.translations) {
+      const tb = to.translations?.get(idx) || bindPos?.[idx] || ZERO_VEC;
+      translations.set(idx, ta.clone().lerp(tb, t));
+    }
+  }
+  if (to.translations) {
+    for (const [idx, tb] of to.translations) {
+      if (translations.has(idx)) continue;
+      const ta = bindPos?.[idx] || ZERO_VEC;
+      translations.set(idx, ta.clone().lerp(tb, t));
+    }
+  }
+
   return { rotations, translations };
 }
 
@@ -420,23 +602,18 @@ function poseParts(pose) {
  * `world*` fields). `pose` is `{ rotations, translations }` or a rotation Map.
  */
 export function computePosedBoneMatrix(skeleton, pose, index) {
-  const bones = skeleton?.bones || [];
-  const { rotations, translations } = poseParts(pose);
+  const cache = getSkeletonCache(skeleton);
   const result = new THREE.Matrix4();
-  const chain = [];
-  const seen = new Set();
-  for (let i = index; i >= 0 && i < bones.length && !seen.has(i); i = bones[i].parentIndex) {
-    seen.add(i);
-    chain.push(i);
-  }
-  const unit = new THREE.Vector3(1, 1, 1);
-  const local = new THREE.Matrix4();
-  for (let k = chain.length - 1; k >= 0; k--) {
-    const bone = bones[chain[k]];
-    const rotation = rotations?.get(chain[k]) || boneLocalQuaternion(bone);
-    const translation = translations?.get(chain[k]) || new THREE.Vector3(bone.tx, bone.ty, bone.tz);
-    local.compose(translation, rotation, unit);
-    result.multiply(local);
+  if (!cache || index < 0 || index >= cache.length) return result;
+  const { rotations, translations } = poseParts(pose);
+  const chain = getBoneChain(cache, index);
+  const { bindQuats, bindPos } = cache;
+  for (let k = 0, n = chain.length; k < n; k += 1) {
+    const idx = chain[k];
+    const rotation = rotations?.get(idx) || bindQuats[idx];
+    const translation = translations?.get(idx) || bindPos[idx];
+    SCRATCH_LOCAL_MAT.compose(translation, rotation, PROP_UNIT);
+    result.multiply(SCRATCH_LOCAL_MAT);
   }
   return result;
 }

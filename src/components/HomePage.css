@@ -1029,6 +1029,7 @@
 .hp-row[data-cat="prop"] { --cat: var(--cx-cat-prop); }
 .hp-row[data-cat="siren"] { --cat: var(--cx-cat-siren); }
 .hp-row[data-cat="sound"] { --cat: var(--cx-cat-sound); }
+.hp-row[data-cat="photo"] { --cat: var(--cx-cat-photo); }
 
 .hp-row:hover {
   background: var(--cx-wash);
@@ -1311,7 +1312,10 @@
 }
 
 .home-modal {
+  display: flex;
+  flex-direction: column;
   width: min(calc(480 * var(--u)), 100%);
+  max-height: calc(100vh - calc(48 * var(--u)));
   border: 1px solid var(--mg-border);
   border-radius: calc(8 * var(--u));
   background: var(--cx-raised);
@@ -1335,6 +1339,8 @@
   display: flex;
   flex-direction: column;
   gap: calc(20 * var(--u));
+  min-height: 0;
+  overflow-y: auto;
   padding: calc(14 * var(--u)) calc(22 * var(--u)) calc(6 * var(--u));
 }
 

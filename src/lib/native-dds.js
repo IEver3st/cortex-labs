@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { DDSLoader } from "three/examples/jsm/loaders/DDSLoader.js";
 import { decodeDDSLevels, parseDDSHeader } from "./dds-decode.js";
 
 const DDS_MAGIC = 0x20534444;
@@ -8,6 +7,12 @@ const DDSCAPS2_CUBEMAP = 0x200;
 const D3D10_RESOURCE_DIMENSION_TEXTURE2D = 3;
 const DXGI_FORMAT_BC7_UNORM = 98;
 const DXGI_FORMAT_BC7_UNORM_SRGB = 99;
+const S3TC_THREE_FORMATS = {
+  // RGBA DXT1 uses the same payload while preserving optional 1-bit alpha for cutouts/decals.
+  DXT1: { format: THREE.RGBA_S3TC_DXT1_Format, blockBytes: 8 },
+  DXT3: { format: THREE.RGBA_S3TC_DXT3_Format, blockBytes: 16 },
+  DXT5: { format: THREE.RGBA_S3TC_DXT5_Format, blockBytes: 16 },
+};
 
 function byteView(value) {
   if (value instanceof Uint8Array) return value;
@@ -37,7 +42,12 @@ export const TRANSPARENT_PROBE_MAX_PIXELS = 64 * 64;
 
 export function isFullyTransparentDds(value) {
   const bytes = byteView(value);
-  if (!bytes) return false;
+  if (!bytes || bytes.byteLength < 128) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== DDS_MAGIC) return false;
+  const height = view.getUint32(12, true);
+  const width = view.getUint32(16, true);
+  if (!width || !height || width * height > TRANSPARENT_PROBE_MAX_PIXELS) return false;
   const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
     ? bytes.buffer
     : bytes.slice().buffer;
@@ -84,17 +94,43 @@ export function clampDdsMipCount(buffer, blockBytes, headerBytes = 128) {
 }
 
 export function createS3tcDdsTexture(buffer, fourCc) {
-  const data = new DDSLoader().parse(clampDdsMipCount(buffer, fourCc === "DXT1" ? 8 : 16), true);
-  if (!data?.width || !data?.height || !data?.format || !Array.isArray(data.mipmaps) || data.mipmaps.length === 0) {
-    return null;
+  const spec = S3TC_THREE_FORMATS[fourCc];
+  if (!spec || !(buffer instanceof ArrayBuffer) || buffer.byteLength < 128 + spec.blockBytes) return null;
+  const view = new DataView(buffer);
+  if (view.getUint32(0, true) !== DDS_MAGIC || view.getUint32(4, true) !== 124) return null;
+  const caps2 = view.getUint32(112, true);
+  if (caps2 & DDSCAPS2_CUBEMAP) return null;
+  const width = view.getUint32(16, true);
+  const height = view.getUint32(12, true);
+  if (!width || !height) return null;
+
+  const flags = view.getUint32(8, true);
+  const mipmapCount = flags & DDSD_MIPMAPCOUNT ? Math.max(1, view.getUint32(28, true)) : 1;
+  const mipmaps = [];
+  let offset = 128;
+  let mipWidth = width;
+  let mipHeight = height;
+
+  // Direct zero-copy mip views: avoids DDSLoader overhead and buffer copies on truncated mip chains.
+  for (let level = 0; level < mipmapCount; level += 1) {
+    const dataLength = Math.max(1, (mipWidth + 3) >> 2) * Math.max(1, (mipHeight + 3) >> 2) * spec.blockBytes;
+    if (offset + dataLength > buffer.byteLength) {
+      if (level === 0) return null;
+      break;
+    }
+    mipmaps.push({
+      data: new Uint8Array(buffer, offset, dataLength),
+      width: mipWidth,
+      height: mipHeight,
+    });
+    offset += dataLength;
+    if (mipWidth === 1 && mipHeight === 1) break;
+    mipWidth = Math.max(1, mipWidth >> 1);
+    mipHeight = Math.max(1, mipHeight >> 1);
   }
-  if (fourCc === "DXT1") {
-    // The RGBA variant uses the same DXT1 payload while preserving its optional
-    // one-bit alpha mode for cutout and decal textures.
-    data.format = THREE.RGBA_S3TC_DXT1_Format;
-  }
-  const texture = new THREE.CompressedTexture(data.mipmaps, data.width, data.height, data.format);
-  texture.minFilter = data.mipmapCount > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+
+  const texture = new THREE.CompressedTexture(mipmaps, width, height, spec.format);
+  texture.minFilter = mipmaps.length > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.needsUpdate = true;
   return texture;

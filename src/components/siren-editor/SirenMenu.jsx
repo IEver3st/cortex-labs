@@ -6,6 +6,11 @@ function cx(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
+function getUiZoom() {
+  const zoom = Number.parseFloat(window.getComputedStyle(document.body).zoom);
+  return Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+}
+
 export function Menu({ label, icon, disabled, title, children, ariaLabel, pressed, className }) {
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState(null);
@@ -13,10 +18,20 @@ export function Menu({ label, icon, disabled, title, children, ariaLabel, presse
   const panel = useRef(null);
   useLayoutEffect(() => {
     if (!open || !trigger.current) return;
+    const zoom = getUiZoom();
     const rect = trigger.current.getBoundingClientRect();
+    const rectLeft = rect.left / zoom;
+    const rectTop = rect.top / zoom;
+    const rectBottom = rect.bottom / zoom;
+    const viewW = window.innerWidth / zoom;
+    const viewH = window.innerHeight / zoom;
     const height = panel.current?.offsetHeight || 0;
-    const below = rect.bottom + 4 + height < window.innerHeight;
-    setPlace({ left: Math.min(rect.left, window.innerWidth - 240), top: below ? rect.bottom + 4 : Math.max(8, rect.top - 4 - height) });
+    const width = Math.max(panel.current?.offsetWidth || 0, 240);
+    const below = rectBottom + 4 + height < viewH;
+    setPlace({
+      left: Math.max(8, Math.min(rectLeft, viewW - width - 8)),
+      top: below ? rectBottom + 4 : Math.max(8, rectTop - 4 - height),
+    });
   }, [open]);
   useEffect(() => {
     if (!open) return undefined;

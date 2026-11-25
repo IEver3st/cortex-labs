@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -22,10 +23,18 @@ public static partial class Program
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
+    private static readonly JsonSerializerOptions ManifestJsonOptions = new()
+    {
+        WriteIndented = false,
+        Converters = { new FiniteFloatConverter() },
+    };
+
     private static bool JenkIndexLoaded;
     private static bool SharedArchiveResolved;
     private static SharedTextureArchive? SharedArchive;
     private static readonly Dictionary<string, Dictionary<string, RpfFileEntry>> PedIndexCache = new(StringComparer.OrdinalIgnoreCase);
+    private sealed record CachedSharedTexture(string Name, uint NameHash, string HashFileName);
+    private static readonly Dictionary<string, List<CachedSharedTexture>> SharedTxdExportCache = new(StringComparer.OrdinalIgnoreCase);
 
     public static int Main(string[] args)
     {
@@ -1824,10 +1833,7 @@ public static partial class Program
         }
         if (ytd.TextureDict?.Textures?.data_items == null) return;
 
-        foreach (var texture in ytd.TextureDict.Textures.data_items)
-        {
-            ExportTexture(texture, source, folderName, textureRoot, library, addByName: true, fileName);
-        }
+        ExportTextureBatch(ytd.TextureDict.Textures.data_items, source, folderName, textureRoot, library, addByName: true, fileName);
     }
 
     private static void ExportYtdFromArchive(
@@ -1842,13 +1848,53 @@ public static partial class Program
         if (!archive.YtdEntries.TryGetValue(lookupKey, out var entry)) return;
         if (!exportedTxdNames.Add(lookupKey)) return;
 
+        var cacheEntryRoot = Directory.GetParent(textureRoot)?.FullName;
+        var cacheRoot = Directory.GetParent(textureRoot)?.Parent?.FullName;
+        var sharedDir = cacheRoot != null ? Path.Combine(cacheRoot, ".shared-textures") : null;
+        if (sharedDir != null && cacheEntryRoot != null
+            && SharedTxdExportCache.TryGetValue(lookupKey, out var cachedEntries)
+            && cachedEntries.All(item => File.Exists(Path.Combine(sharedDir, item.HashFileName))))
+        {
+            var now = DateTime.UtcNow;
+            foreach (var item in cachedEntries)
+            {
+                var sharedPath = Path.Combine(sharedDir, item.HashFileName);
+                try { File.SetLastWriteTimeUtc(sharedPath, now); } catch { }
+                var relativePath = ToManifestPath(Path.GetRelativePath(cacheEntryRoot, sharedPath));
+                var exported = new ExportedTextureEntry(item.Name, "shared", relativePath, item.NameHash);
+                library.Entries.Add(exported);
+                var key = NormalizeTextureLookupKey(item.Name);
+                if (!library.ByName.ContainsKey(key)) library.ByName[key] = exported;
+            }
+            return;
+        }
+
         try
         {
             var ytd = archive.Manager.GetFile<YtdFile>(entry);
             if (ytd?.TextureDict?.Textures?.data_items == null) return;
-            foreach (var texture in ytd.TextureDict.Textures.data_items)
+            var exportedList = new List<CachedSharedTexture>();
+            var beforeCount = library.Entries.Count;
+            ExportTextureBatch(
+                ytd.TextureDict.Textures.data_items,
+                "shared",
+                $"shared/{SanitizeFolderName(txdName)}",
+                textureRoot,
+                library,
+                addByName: true,
+                $"{txdName}.ytd (game files)");
+            for (var idx = beforeCount; idx < library.Entries.Count; idx += 1)
             {
-                ExportTexture(texture, "shared", $"shared/{SanitizeFolderName(txdName)}", textureRoot, library, addByName: true, $"{txdName}.ytd (game files)");
+                var added = library.Entries[idx];
+                var fileName = Path.GetFileName(added.RelativePath);
+                if (!string.IsNullOrEmpty(fileName))
+                {
+                    exportedList.Add(new CachedSharedTexture(added.Name, added.NameHash, fileName));
+                }
+            }
+            if (exportedList.Count > 0 && exportedList.Count == library.Entries.Count - beforeCount)
+            {
+                SharedTxdExportCache[lookupKey] = exportedList;
             }
         }
         catch (Exception ex)
@@ -2385,6 +2431,123 @@ public static partial class Program
         return textures;
     }
 
+    private static void ExportTextureBatch(
+        Texture[] items,
+        string source,
+        string folderName,
+        string textureRoot,
+        TextureLibrary library,
+        bool addByName,
+        string origin)
+    {
+        if (items.Length < 4)
+        {
+            foreach (var texture in items)
+            {
+                ExportTexture(texture, source, folderName, textureRoot, library, addByName, origin);
+            }
+            return;
+        }
+
+        var relativeFolder = string.IsNullOrWhiteSpace(folderName) ? source : folderName;
+        var sourceFolder = Path.Combine(textureRoot, relativeFolder.Replace('/', Path.DirectorySeparatorChar));
+        var isShared = source == "shared";
+        string? sharedDir = null;
+        string? cacheEntryRoot = null;
+        if (isShared)
+        {
+            cacheEntryRoot = Directory.GetParent(textureRoot)?.FullName;
+            var cacheRoot = cacheEntryRoot != null ? Directory.GetParent(cacheEntryRoot)?.FullName : null;
+            if (cacheRoot != null)
+            {
+                sharedDir = Path.Combine(cacheRoot, ".shared-textures");
+                Directory.CreateDirectory(sharedDir);
+            }
+        }
+        else
+        {
+            Directory.CreateDirectory(sourceFolder);
+        }
+
+        var jobs = new List<(Texture Texture, string Name, string FileName, string AbsolutePath)>(items.Length);
+        var seenInBatch = new HashSet<Texture>();
+        foreach (var texture in items)
+        {
+            if (texture == null || library.ByInstance.ContainsKey(texture) || !seenInBatch.Add(texture)) continue;
+            var textureName = GetTextureName(texture);
+            if (string.IsNullOrWhiteSpace(textureName)) continue;
+            var safeName = SanitizeFileName(textureName);
+            var fileName = EnsureUniqueFileName(sourceFolder, safeName, library.UsedRelativePaths);
+            jobs.Add((texture, textureName, fileName, Path.Combine(sourceFolder, fileName)));
+        }
+        if (jobs.Count == 0) return;
+
+        var results = new (string? RelativePath, string? Error)[jobs.Count];
+        var now = DateTime.UtcNow;
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = Math.Min(Math.Max(2, Environment.ProcessorCount), 8),
+        };
+        Parallel.For(0, jobs.Count, parallelOptions, index =>
+        {
+            var job = jobs[index];
+            try
+            {
+                var dds = DDSIO.GetDDSFile(job.Texture);
+                if (isShared)
+                {
+                    if (sharedDir == null || cacheEntryRoot == null)
+                    {
+                        throw new IOException("Texture cache root is unavailable.");
+                    }
+                    var hash = Convert.ToHexStringLower(SHA256.HashData(dds));
+                    var sharedPath = Path.Combine(sharedDir, hash + ".dds");
+                    if (!File.Exists(sharedPath))
+                    {
+                        var stagingPath = sharedPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                        try
+                        {
+                            File.WriteAllBytes(stagingPath, dds);
+                            try { File.Move(stagingPath, sharedPath); }
+                            catch (IOException) when (File.Exists(sharedPath)) { }
+                        }
+                        finally { if (File.Exists(stagingPath)) File.Delete(stagingPath); }
+                    }
+                    try { File.SetLastWriteTimeUtc(sharedPath, now); } catch { }
+                    results[index] = (ToManifestPath(Path.GetRelativePath(cacheEntryRoot, sharedPath)), null);
+                }
+                else
+                {
+                    File.WriteAllBytes(job.AbsolutePath, dds);
+                    results[index] = (ToManifestPath(Path.Combine("textures", relativeFolder, job.FileName)), null);
+                }
+            }
+            catch (Exception ex)
+            {
+                results[index] = (null, ShortReason(ex));
+            }
+        });
+
+        for (var index = 0; index < jobs.Count; index += 1)
+        {
+            var job = jobs[index];
+            var res = results[index];
+            if (res.Error != null || res.RelativePath == null)
+            {
+                Warn($"Texture '{job.Name}' from {origin} could not be exported: {res.Error ?? "unknown error"}");
+                continue;
+            }
+            var entry = new ExportedTextureEntry(job.Name, source, res.RelativePath, job.Texture.NameHash);
+            library.Entries.Add(entry);
+            library.ByInstance[job.Texture] = entry;
+            if (addByName)
+            {
+                var key = NormalizeTextureLookupKey(job.Name);
+                if (!library.ByName.ContainsKey(key)) library.ByName[key] = entry;
+            }
+        }
+    }
+
     private static void ExportTexture(
         Texture? texture,
         string source,
@@ -2402,7 +2565,10 @@ public static partial class Program
 
         var relativeFolder = string.IsNullOrWhiteSpace(folderName) ? source : folderName;
         var sourceFolder = Path.Combine(textureRoot, relativeFolder.Replace('/', Path.DirectorySeparatorChar));
-        Directory.CreateDirectory(sourceFolder);
+        if (source != "shared")
+        {
+            Directory.CreateDirectory(sourceFolder);
+        }
 
         var safeName = SanitizeFileName(textureName);
         var fileName = EnsureUniqueFileName(sourceFolder, safeName, library.UsedRelativePaths);
@@ -2814,31 +2980,21 @@ public static partial class Program
 
     private static Vector3 ToVector3(Vector4 value) => new(value.X, value.Y, value.Z);
 
-    private static Vector3 ToVector3(Half4 value)
-    {
-        var f = DxHalf.ConvertToFloat(new[] { value.X, value.Y, value.Z, value.W });
-        return new Vector3(f[0], f[1], f[2]);
-    }
+    private static float HalfToFloat(DxHalf h) => (float)BitConverter.UInt16BitsToHalf(h.RawValue);
 
-    private static Vector3 ToVector3(Half2 value)
-    {
-        var f = DxHalf.ConvertToFloat(new[] { value.X, value.Y });
-        return new Vector3(f[0], f[1], 0f);
-    }
+    private static Vector3 ToVector3(Half4 value) =>
+        new(HalfToFloat(value.X), HalfToFloat(value.Y), HalfToFloat(value.Z));
+
+    private static Vector3 ToVector3(Half2 value) =>
+        new(HalfToFloat(value.X), HalfToFloat(value.Y), 0f);
 
     private static Vector2 ToVector2(Vector4 value) => new(value.X, value.Y);
 
-    private static Vector2 ToVector2(Half4 value)
-    {
-        var f = DxHalf.ConvertToFloat(new[] { value.X, value.Y, value.Z, value.W });
-        return new Vector2(f[0], f[1]);
-    }
+    private static Vector2 ToVector2(Half4 value) =>
+        new(HalfToFloat(value.X), HalfToFloat(value.Y));
 
-    private static Vector2 ToVector2(Half2 value)
-    {
-        var f = DxHalf.ConvertToFloat(new[] { value.X, value.Y });
-        return new Vector2(f[0], f[1]);
-    }
+    private static Vector2 ToVector2(Half2 value) =>
+        new(HalfToFloat(value.X), HalfToFloat(value.Y));
 
     private static void WriteClmesh(string outputPath, List<MeshData> meshes)
     {
@@ -2859,7 +3015,7 @@ public static partial class Program
         var stagingPath = outputPath + ".tmp";
         try
         {
-            using (var stream = new FileStream(stagingPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var stream = new FileStream(stagingPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 65536))
             using (var writer = new BinaryWriter(stream, Encoding.UTF8, false))
             {
                 WriteClmeshBody(writer, meshes);
@@ -2920,7 +3076,7 @@ public static partial class Program
             }
             if (skinned)
             {
-                foreach (var bone in mesh.SkinIndices!) writer.Write(bone);
+                WriteUShortArray(writer, mesh.SkinIndices!);
                 writer.Write(mesh.SkinWeights!);
             }
             if (coloured) writer.Write(mesh.Colors!);
@@ -3042,15 +3198,13 @@ public static partial class Program
             }),
         };
 
-        var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            Converters = { new FiniteFloatConverter() },
-        });
         var stagingPath = manifestPath + ".tmp";
         try
         {
-            File.WriteAllText(stagingPath, json);
+            using (var stream = new FileStream(stagingPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 65536))
+            {
+                JsonSerializer.Serialize(stream, manifest, ManifestJsonOptions);
+            }
             File.Move(stagingPath, manifestPath, overwrite: true);
         }
         finally
@@ -3094,13 +3248,36 @@ public static partial class Program
 
     private static void WriteFloatArray(BinaryWriter writer, float[] data)
     {
+        if (data.Length == 0) return;
+        if (BitConverter.IsLittleEndian)
+        {
+            writer.Write(MemoryMarshal.AsBytes(data.AsSpan()));
+            return;
+        }
         var bytes = new byte[data.Length * sizeof(float)];
         Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
         writer.Write(bytes);
     }
 
+    private static void WriteUShortArray(BinaryWriter writer, ushort[] data)
+    {
+        if (data.Length == 0) return;
+        if (BitConverter.IsLittleEndian)
+        {
+            writer.Write(MemoryMarshal.AsBytes(data.AsSpan()));
+            return;
+        }
+        foreach (var value in data) writer.Write(value);
+    }
+
     private static void WriteUIntArray(BinaryWriter writer, uint[] data)
     {
+        if (data.Length == 0) return;
+        if (BitConverter.IsLittleEndian)
+        {
+            writer.Write(MemoryMarshal.AsBytes(data.AsSpan()));
+            return;
+        }
         var bytes = new byte[data.Length * sizeof(uint)];
         Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
         writer.Write(bytes);

@@ -6,7 +6,7 @@ import {
   readCompressedMipmaps,
   shouldDecodeMipChain,
 } from "./dds-decode.js";
-import { createWorkerClient, WORKER_TIMEOUT } from "./worker-client.js";
+import { createWorkerPool, WORKER_TIMEOUT } from "./worker-client.js";
 
 export { MIP_DECODE_THRESHOLD, parseDDSHeader, shouldDecodeMipChain };
 
@@ -115,23 +115,28 @@ export function parseDDS(buffer, options = {}) {
   return createDecodedTexture(decodeDDSLevels(buffer, { decodeMips, header, flipY: options.flipY !== false }));
 }
 
-let ddsWorkerClient = null;
-function getDdsWorkerClient() {
+let ddsWorkerPool = null;
+function getDdsWorkerPool() {
   if (typeof Worker === "undefined") return null;
-  if (!ddsWorkerClient) {
-    ddsWorkerClient = createWorkerClient(
+  if (!ddsWorkerPool) {
+    const cores = typeof navigator !== "undefined" && Number.isFinite(navigator.hardwareConcurrency)
+      ? navigator.hardwareConcurrency
+      : 4;
+    const size = Math.max(2, Math.min(8, cores - 1));
+    ddsWorkerPool = createWorkerPool(
       () => new Worker(new URL("./dds-worker.js", import.meta.url), { type: "module" }),
-      { label: "DDS worker", timeoutMs: 45_000 },
+      { size, label: "DDS worker", timeoutMs: 45_000 },
     );
   }
-  return ddsWorkerClient;
+  return ddsWorkerPool;
 }
 
 /**
  * Async parse for the viewers: compressed upload when the renderer supports
- * the format, otherwise the decode runs in a worker. It falls back to the main
- * thread when no worker is available or the worker fails; a timed-out decode
- * is rejected.
+ * the format, otherwise the decode runs in a worker pool. It falls back to the
+ * main thread when no worker is available or the worker fails; a timed-out
+ * decode is rejected. Pass `{ transfer: true }` when the caller no longer
+ * needs `buffer` to avoid a main-thread copy before posting to the worker.
  */
 export async function parseDDSAsync(buffer, options = {}) {
   const header = parseDDSHeader(buffer);
@@ -147,11 +152,11 @@ export async function parseDDSAsync(buffer, options = {}) {
   const flipY = options.flipY !== false;
   logHeader(header, options, decodeMips ? "worker-decode+mips" : "worker-decode");
 
-  const client = getDdsWorkerClient();
-  if (client) {
+  const pool = getDdsWorkerPool();
+  if (pool) {
     try {
-      const copy = buffer.slice(0);
-      const result = await client.request({ buffer: copy, decodeMips, flipY }, [copy]);
+      const payload = options.transfer === true ? buffer : buffer.slice(0);
+      const result = await pool.request({ buffer: payload, decodeMips, flipY }, [payload]);
       if (result?.levels?.length) {
         return createDecodedTexture({
           width: result.width,
@@ -168,9 +173,11 @@ export async function parseDDSAsync(buffer, options = {}) {
       // A decode that used up its time in the worker would block the UI at
       // least as long here, so it fails instead.
       if (error?.code === WORKER_TIMEOUT) throw error;
+      if (buffer.byteLength === 0) throw error;
       console.warn("[DDS] Worker decode failed, decoding on the main thread:", error);
     }
   }
 
+  if (buffer.byteLength === 0) return null;
   return createDecodedTexture(decodeDDSLevels(buffer, { decodeMips, header, flipY }));
 }

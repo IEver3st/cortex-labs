@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { parseYftAsync } from "./yft-loader.js";
 import { parseDDSAsync, parseDDSHeader } from "./dds.js";
 import { baseName, classifyTextureName, isPropComponent } from "./eup.js";
-import { computePosedBoneMatrix, propAttachmentMatrix } from "./ped-pose.js";
+import { computePosedBoneMatrix, findBoneIndexByTag, propAttachmentMatrix } from "./ped-pose.js";
 
 const YDD_PARSE_OPTIONS = Object.freeze({
   resourceType: "ydd",
@@ -40,6 +40,7 @@ function throwIfAborted(signal) {
 function toArrayBuffer(bytes) {
   if (bytes instanceof ArrayBuffer) return bytes;
   if (ArrayBuffer.isView(bytes)) {
+    if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) return bytes.buffer;
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
   throw new Error("Unsupported byte source");
@@ -150,6 +151,7 @@ export function getTextureCacheSize() {
 export function clearPedAssetCaches() {
   drawableCache.clear();
   for (const entry of textureCache.values()) {
+    entry.refs = 0;
     if (entry.texture) entry.texture.dispose();
   }
   textureCache.clear();
@@ -284,16 +286,31 @@ function createBones(skeleton) {
     bone.name = `bone_${data.tag.toString(16)}`;
     bone.position.set(data.tx, data.ty, data.tz);
     bone.quaternion.set(data.qx, data.qy, data.qz, data.qw).normalize();
+    bone.updateMatrix();
+    bone.matrixAutoUpdate = false;
     bone.userData.tag = data.tag;
     bone.userData.bindQuaternion = bone.quaternion.clone();
     bone.userData.bindPosition = bone.position.clone();
     return bone;
   });
   const roots = [];
+  const createsCycle = (childIndex, parentIndex) => {
+    let cur = parentIndex;
+    let guard = 0;
+    while (Number.isInteger(cur) && cur >= 0 && cur < bones.length && guard < bones.length) {
+      if (cur === childIndex) return true;
+      cur = skeleton.bones[cur]?.parentIndex;
+      guard += 1;
+    }
+    return false;
+  };
   skeleton.bones.forEach((data, index) => {
     const parent = data.parentIndex;
-    if (parent < bones.length && parent !== index) bones[parent].add(bones[index]);
-    else roots.push(bones[index]);
+    if (Number.isInteger(parent) && parent >= 0 && parent < bones.length && parent !== index && !createsCycle(index, parent)) {
+      bones[parent].add(bones[index]);
+    } else {
+      roots.push(bones[index]);
+    }
   });
   return { bones, roots };
 }
@@ -321,10 +338,12 @@ export function buildDrawableGroup(drawable, { component = "", textures = {}, sk
       rig = { bones, skeleton: new THREE.Skeleton(bones) };
       root.userData.bones = bones;
       root.userData.rig = rig.skeleton;
+      root.userData.rigSkeleton = skeleton;
     }
     return rig;
   };
 
+  const skinnedMeshes = [];
   for (const model of drawable?.models || []) {
     for (const mesh of model.meshes || []) {
       if (!mesh?.positions || mesh.positions.length === 0) continue;
@@ -351,16 +370,18 @@ export function buildDrawableGroup(drawable, { component = "", textures = {}, sk
         // Skinned bounds cost a CPU skin pass; the ped is always framed, so
         // skip culling rather than recompute them every animated frame.
         threeMesh.frustumCulled = false;
+        skinnedMeshes.push(threeMesh);
       } else {
         threeMesh = new THREE.Mesh(geometry, material);
+        threeMesh.frustumCulled = true;
       }
       threeMesh.name = mesh.name || material.name;
       threeMesh.userData.materialName = mesh.materialName || "";
       threeMesh.userData.textureRefs = mesh.textureRefs || {};
-      threeMesh.frustumCulled = true;
       root.add(threeMesh);
     }
   }
+  root.userData.skinnedMeshes = skinnedMeshes;
 
   return root;
 }
@@ -443,9 +464,9 @@ export async function buildSlotGroup({
     const textureJobs = Object.entries(roles)
       .filter(([role, path]) => path && role !== "specular")
       .map(async ([role, path]) => {
-        acquired.push(path);
         try {
           textures[role] = await acquireTexture(path, { readFile, renderer });
+          acquired.push(path);
         } catch (error) {
           // A broken texture should not hide the drawable; keep the slot
           // visible with the neutral material and report the texture error.
@@ -544,6 +565,8 @@ function hasPose(pose) {
   return (rotations?.size || 0) + (translations?.size || 0) > 0;
 }
 
+const TMP_PROP_SCALE = new THREE.Vector3();
+
 // Places a prop group on its anchor bone. Returns false when the skeleton has
 // no matching bone, in which case the group is left untouched. With a `pose`
 // (`{ rotations, translations }` or a rotation Map) the prop follows the posed
@@ -551,11 +574,11 @@ function hasPose(pose) {
 export function applyPropAttachment(group, skeleton, pose = null) {
   const tag = PROP_BONES[group?.name];
   if (tag === undefined) return false;
-  const index = skeleton?.bones?.findIndex((item) => item.tag === tag) ?? -1;
+  const index = findBoneIndexByTag(skeleton, tag);
   if (index < 0) return false;
   if (hasPose(pose)) {
     const matrix = computePosedBoneMatrix(skeleton, pose, index);
-    matrix.decompose(group.position, group.quaternion, new THREE.Vector3());
+    matrix.decompose(group.position, group.quaternion, TMP_PROP_SCALE);
     return true;
   }
   const bone = skeleton.bones[index];
@@ -588,33 +611,112 @@ function rootHairCrush(root) {
 }
 
 function applyHatHair(bones, { hair, hat }) {
-  for (const bone of bones) {
-    if (bone.userData.tag === HAIR_SCALE_TAG) {
+  for (let i = 0, n = bones.length; i < n; i += 1) {
+    const bone = bones[i];
+    const tag = bone.userData.tag;
+    if (tag === HAIR_SCALE_TAG) {
       bone.scale.setScalar(1 + hair);
-    } else if (bone.userData.tag === HAIR_CROWN_TAG) {
+      bone.updateMatrix();
+    } else if (tag === HAIR_CROWN_TAG) {
       bone.position.x += 0.05 * (hair + hat);
       bone.scale.set(1, 1 + 0.5 * (hair + hat), 1 + 0.5 * (hair + hat));
+      bone.updateMatrix();
     }
   }
 }
 
-export function setGroupPose(group, pose) {
+function clearSkinnedBounds(group) {
+  const skinned = group.userData.skinnedMeshes;
+  if (Array.isArray(skinned)) {
+    for (let i = 0; i < skinned.length; i += 1) {
+      skinned[i].boundingBox = null;
+      skinned[i].boundingSphere = null;
+    }
+  } else {
+    group.traverse((child) => {
+      if (!child.isSkinnedMesh) return;
+      child.boundingBox = null;
+      child.boundingSphere = null;
+    });
+  }
+}
+
+function isIdentityTransform(obj) {
+  const p = obj.position;
+  const q = obj.quaternion;
+  const s = obj.scale;
+  return (
+    p.x === 0 && p.y === 0 && p.z === 0
+    && q.x === 0 && q.y === 0 && q.z === 0 && q.w === 1
+    && s.x === 1 && s.y === 1 && s.z === 1
+  );
+}
+
+function copyCanonicalRig(group, canonical, rootMatrixWorld) {
+  const dstBones = group.userData.bones;
+  const srcBones = canonical.userData.bones;
+  group.matrix.identity();
+  group.matrixWorld.copy(rootMatrixWorld);
+  group.matrixWorldNeedsUpdate = false;
+  for (let i = 0, n = dstBones.length; i < n; i += 1) {
+    const dst = dstBones[i];
+    const src = srcBones[i];
+    dst.quaternion.copy(src.quaternion);
+    dst.position.copy(src.position);
+    dst.scale.copy(src.scale);
+    dst.matrix.copy(src.matrix);
+    dst.matrixWorld.copy(src.matrixWorld);
+    dst.matrixWorldNeedsUpdate = false;
+  }
+  const skinned = group.userData.skinnedMeshes;
+  if (Array.isArray(skinned)) {
+    for (let i = 0; i < skinned.length; i += 1) {
+      const mesh = skinned[i];
+      if (isIdentityTransform(mesh)) {
+        mesh.matrix.identity();
+        mesh.matrixWorld.copy(rootMatrixWorld);
+        mesh.matrixWorldNeedsUpdate = false;
+      } else {
+        mesh.updateMatrixWorld(true);
+      }
+      mesh.boundingBox = null;
+      mesh.boundingSphere = null;
+    }
+  } else {
+    clearSkinnedBounds(group);
+  }
+}
+
+export function setGroupPose(group, pose, { updateWorld = true } = {}) {
   const bones = group?.userData?.bones;
   if (!bones) return false;
   const { rotations, translations } = poseParts(pose);
-  bones.forEach((bone, index) => {
-    bone.quaternion.copy(rotations?.get(index) || bone.userData.bindQuaternion);
-    bone.position.copy(translations?.get(index) || bone.userData.bindPosition);
-    bone.scale.set(1, 1, 1);
-  });
+  for (let index = 0, n = bones.length; index < n; index += 1) {
+    const bone = bones[index];
+    const q = rotations?.get(index) || bone.userData.bindQuaternion;
+    const p = translations?.get(index) || bone.userData.bindPosition;
+    const bq = bone.quaternion;
+    const bp = bone.position;
+    const bs = bone.scale;
+    let dirty = false;
+    if (bq.x !== q.x || bq.y !== q.y || bq.z !== q.z || bq.w !== q.w) {
+      bq.copy(q);
+      dirty = true;
+    }
+    if (bp.x !== p.x || bp.y !== p.y || bp.z !== p.z) {
+      bp.copy(p);
+      dirty = true;
+    }
+    if (bs.x !== 1 || bs.y !== 1 || bs.z !== 1) {
+      bs.set(1, 1, 1);
+      dirty = true;
+    }
+    if (dirty) bone.updateMatrix();
+  }
   if (group.userData.hatHair) applyHatHair(bones, group.userData.hatHairCrush || HAT_HAIR_CRUSH);
-  group.updateMatrixWorld(true);
+  if (updateWorld) group.updateMatrixWorld(true);
   // Skinned bounds are computed from the current pose; drop the cached ones.
-  group.traverse((child) => {
-    if (!child.isSkinnedMesh) return;
-    child.boundingBox = null;
-    child.boundingSphere = null;
-  });
+  clearSkinnedBounds(group);
   return true;
 }
 
@@ -643,8 +745,30 @@ export function setPedPose(root, skeleton, pose) {
   if (!root) return;
   root.userData.poseSkeleton = skeleton || null;
   root.userData.pose = pose || null;
-  for (const group of root.children) setGroupPose(group, pose);
-  updatePedPropAttachments(root);
+  // Compute root's world matrix once, pose the first skinned slot once, then
+  // mirror its solved bone matrices across sibling clothing slots that share
+  // the exact same skeleton and local transform (avoiding 8x-12x bone math).
+  root.updateWorldMatrix(true, false);
+  const children = root.children;
+  let canonical = null;
+  for (let i = 0, n = children.length; i < n; i += 1) {
+    const group = children[i];
+    const bones = group.userData?.bones;
+    if (!bones) continue;
+    if (
+      canonical
+      && bones.length === canonical.userData.bones.length
+      && group.userData.rigSkeleton === canonical.userData.rigSkeleton
+      && (group.userData.hatHairKey || "") === (canonical.userData.hatHairKey || "")
+      && isIdentityTransform(group)
+    ) {
+      copyCanonicalRig(group, canonical, root.matrixWorld);
+      continue;
+    }
+    setGroupPose(group, pose, { updateWorld: true });
+    if (!canonical && isIdentityTransform(group)) canonical = group;
+  }
+  updatePedPropAttachments(root, { updateRootWorld: false });
 }
 
 function applySlotVisibility(group) {
@@ -664,9 +788,19 @@ export function setSlotHidden(group, hidden) {
 
 /** Crushes the hair while a hat is shown, and restores it when the hat goes. */
 export function updatePedHatHair(root) {
-  const crush = root.children.some((group) => group.name === "p_head" && group.visible) ? rootHairCrush(root) : null;
+  const children = root.children;
+  let hasHat = false;
+  for (let i = 0, n = children.length; i < n; i += 1) {
+    const group = children[i];
+    if (group.name === "p_head" && group.visible) {
+      hasHat = true;
+      break;
+    }
+  }
+  const crush = hasHat ? rootHairCrush(root) : null;
   const key = crush ? `${crush.hair}|${crush.hat}` : "";
-  for (const group of root.children) {
+  for (let i = 0, n = children.length; i < n; i += 1) {
+    const group = children[i];
     if (PROP_BONES[group.name] !== undefined || (group.userData.hatHairKey || "") === key) continue;
     group.userData.hatHair = Boolean(crush);
     group.userData.hatHairCrush = crush;
@@ -682,20 +816,24 @@ export function setPedHairCrush(root, crush) {
 
 // Props contain bone-local vertices. Reapply attachments when any slot loads,
 // since the ped's skeleton and its props may finish loading in either order.
-export function updatePedPropAttachments(root) {
+export function updatePedPropAttachments(root, { updateRootWorld = true } = {}) {
   const skeleton = root.userData.poseSkeleton || findPedSkeleton(root);
   const pose = root.userData.poseSkeleton ? root.userData.pose : null;
-  for (const group of root.children) {
+  const children = root.children;
+  for (let i = 0, n = children.length; i < n; i += 1) {
+    const group = children[i];
     if (group.userData.heldProp) {
       applyHeldProp(group, skeleton, pose);
+      if (!updateRootWorld) group.updateMatrixWorld(true);
       continue;
     }
     if (PROP_BONES[group.name] === undefined) continue;
     group.userData.attached = applyPropAttachment(group, skeleton, pose);
     applySlotVisibility(group);
+    if (!updateRootWorld) group.updateMatrixWorld(true);
   }
   updatePedHatHair(root);
-  root.updateMatrixWorld(true);
+  if (updateRootWorld) root.updateMatrixWorld(true);
 }
 
 export function computeGroupStats(group) {

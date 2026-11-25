@@ -20,6 +20,24 @@ Work directly with vehicle and EUP models, watch texture edits update in real ti
 
 </div>
 
+## More from Cortex
+
+[![Cortex PolCam following a car from the police helicopter camera](https://raw.githubusercontent.com/IEver3st/gsd-tebex-media/main/forum/polcam/tracking-v2.webp)](https://gsdmods.com/scripts/cortex-polcam?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs)
+
+Cortex Studio is free. GSD Modifications also makes the Cortex scripts for FiveM servers, and the paid ones pay for the free ones.
+
+| Police | Interface | Driving and freeroam |
+| --- | --- | --- |
+| [PolCam](https://gsdmods.com/scripts/cortex-polcam?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): FLIR helicopter camera with target tracking | [HUD](https://gsdmods.com/scripts/cortex-hud?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): vitals, vehicle, aircraft, weapon and radar | [Handling](https://gsdmods.com/scripts/cortex-handling?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): tune handling from the driver's seat |
+| [Arges](https://gsdmods.com/scripts/cortex-arges?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): remote spotlight for patrol cars | [Chat](https://gsdmods.com/scripts/cortex-chat?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): chat replacement with roleplay actions | [Rewind](https://gsdmods.com/scripts/cortex-rewind?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): rewind a missed corner or a bad landing |
+| [Radio](https://gsdmods.com/scripts/cortex-radio?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): handheld radio for pma-voice | [Spawn](https://gsdmods.com/scripts/cortex-spawn?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): pick your spawn from a live view of the city | [Emote Studio](https://gsdmods.com/scripts/cortex-emote-studio?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): preview, fit and pair emotes |
+| [Flashlight](https://gsdmods.com/scripts/cortex-flashlight?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): weapon, vest and UV forensic torches | [Multicharacter](https://gsdmods.com/scripts/cortex-multicharacter?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): character selection and creation for Qbox | |
+| [Binoculars](https://gsdmods.com/scripts/cortex-binoculars?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): zoom, rangefinder, night and thermal vision | [Loading Screen](https://gsdmods.com/scripts/cortex-loading-screen?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): cinematic arrival screen | |
+
+**[Browse every Cortex script](https://gsdmods.com/scripts?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs)** · [LEO Kit](https://gsdmods.com/scripts/cortex-leo-kit?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): PolCam, Arges, Binoculars and Flashlight in one purchase · [All-Access](https://gsdmods.com/scripts/cortex-all-access?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs): every paid script for one monthly price
+
+Also free: [Admin](https://gsdmods.com/scripts/cortex-admin?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs) · [Drone](https://gsdmods.com/scripts/cortex-drone?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs) · [Drone Races](https://gsdmods.com/scripts/cortex-drone-races?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs) · [Gunsmith](https://gsdmods.com/scripts/cortex-gunsmith?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs) · [Megaphone](https://gsdmods.com/scripts/cortex-megaphone?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs) · [Minigames](https://gsdmods.com/scripts/cortex-minigames?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs) · [Thrusters](https://gsdmods.com/scripts/cortex-thrusters?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs) · [Library](https://gsdmods.com/scripts/cortex-library?utm_source=github&utm_medium=readme&utm_campaign=cortex-labs)
+
 ## Overview
 
 Cortex Studio is a Windows-first livery development environment for GTA V and FiveM. It combines a React workflow UI, real-time Three.js previews, native Rust file integration, and a CodeWalker bridge for supported game assets.
@@ -47,12 +65,13 @@ Livery work is iterative, but repeated in-game testing turns small visual decisi
 | Workspace | Purpose |
 | --- | --- |
 | **Vehicle** | Liveries on the detected paint, or any texture on all or chosen meshes, with the vehicle's own textures, paint, mod kits and livery writing in one place. Listing Shoot makes a store media kit (hero stills, 16:9, 1:1 and 4:5 formats, a livery lineup, a turntable video and a night lights clip) in one run. |
-| **EUP** | Preview clothing and Emergency Uniform Pack assets from `.ydd` models. |
+| **EUP** | Preview standalone clothing and Emergency Uniform Pack assets from `.ydd` models with live texture writing. |
+| **EUP Studio** | Dress GTA V freemode and custom peds with clothing packs, addon pieces, animations, Animation Critique QA, Upper-Body Mask (`Upper + Idle` / `Upper + Walk`), held/set props, addon pack building, and stills/videos/thumbnails. |
 | **Multi-Model** | Line up to six vehicles in one scene, each with its own model, livery, glass design and paint. |
 | **Sirens** | Build and edit a vehicle's carcols.meta siren setting, or its ELS VCF, while it runs on the full textured model, in the workbench or the showroom. |
-| **Prop Studio** | Preview `.ydr`, `.ydd` and `.yft` props with their textures, emissives and authored lights, in a workbench or a showroom scaled to the prop, read live mesh stats and collision bounds, and export transparent PNGs. |
+| **Prop Studio** | Preview `.ydr`, `.ydd`, `.yft`, and self-contained `.glb`/`.gltf` props with textures, channel inspection (`RGB / R / G / B / A`), emissives and authored lights, run Prop Doctor QA, Texture VRAM breakdowns, whole-script audits and `.ytyp.xml` generation, inspect backfaces/vertex colours/collisions and 1:1 scale ghosts, fit ped bone attachments with a 3D gizmo (`G`/`R`) and FiveM Lua export, auto-detect FiveM script `stream/` folders, and export icons, contact sheets, batch inventory PNGs and 30 fps turntable videos. |
 | **Sound Studio** | Rev engine sound mods on a dyno, run siren tones through an LVC-style controller with drive-bys and horn, build server-side LVC siren resources from downloaded or your own tones, and install sounds to a FiveM server or as single-player `.oiv` packs. |
-| **Photo Mode** | Stage game vehicles, freemode peds and game props (or your own models) on one set, open doors, set paint and poses from the game's animations, and save framed PNGs up to 4K. |
+| **Photo Mode** | Stage game vehicles, freemode peds and game props (or drag-and-drop your own `.yft`/`.ydr`/`.ydd`/self-contained `.glb`/`.gltf` models and `.ycd` animations) on one set, switch lighting with Studio looks, open doors, batch-export all saved views or record 30 fps camera dolly clips, and save framed PNGs up to 4K. |
 | **Template Generator** | Turn supported `.yft` and `.ydd` geometry into layered PSD or PNG templates. |
 | **PSD Variant Builder** | Toggle PSD layers, manage visual variants, and batch-export finished PNGs. |
 
@@ -85,7 +104,7 @@ Variants can be previewed on the model and exported together as high-resolution 
 
 ### Native material preview
 
-Experimental Native Materials resolves available embedded, sibling, resource, and supported shared-game YTD textures for `.yft` assets. The system chooses the highest available LOD, deduplicates DDS work, and reports progress while loading.
+Native Materials resolves available embedded, sibling, resource, and supported shared-game YTD textures for `.yft` assets. The system chooses the highest available LOD, deduplicates DDS work, reuses uploaded GPU textures across toggles, and reports progress while loading.
 
 This is a best-effort preview of GTA materials, not full shader parity. Manual texture selections always remain the final override on targeted meshes.
 
@@ -118,7 +137,7 @@ Export clean presentation images from front, back, side, three-quarter, and top 
 
 ### Workspace continuity
 
-Cortex Studio remembers recent projects, pinned workspaces, model and texture paths, colors, camera positions, and interface preferences. Adjustable UI scale, custom hotkeys, light and dark themes, and 12 appearance presets keep the desktop comfortable across different displays and workflows.
+Cortex Studio remembers recent projects, pinned workspaces, model and texture paths, colours, camera positions, and interface preferences. Adjustable UI scale, custom hotkeys, light and dark themes, and 13 appearance presets keep the desktop comfortable across different displays and workflows.
 
 ## Supported files
 
@@ -129,6 +148,7 @@ Cortex Studio remembers recent projects, pinned workspaces, model and texture pa
 | `.yft` | GTA V and FiveM vehicle models |
 | `.ydd` | GTA V clothing and EUP drawable dictionaries; props in Prop Studio |
 | `.ydr` | GTA V and FiveM props and other single drawables (Prop Studio) |
+| `.glb` / `.gltf` | Self-contained glTF 2.0 models (`.glb` or `.gltf` with embedded buffers/textures) in Prop Studio and Photo Mode |
 | `.dff` | Legacy model support |
 | `.clmesh` | Cortex Studio's internal binary mesh cache |
 
@@ -145,16 +165,11 @@ Cortex Studio remembers recent projects, pinned workspaces, model and texture pa
 
 DDS support includes DXT1, DXT3, DXT5, BC4, BC5, BC7, and supported uncompressed layouts.
 
-## What is new in 4.1 — PRISM
+## What is new in 6.5.0
 
-PRISM sharpens the entire edit-preview-export loop:
-
-- **Appearance presets** — 12 complete workbench palettes with independent System, Light, and Dark choices.
-- **EUP templates** — generate templates from `.ydd` assets with drawable-aware exports.
-- **Rebuilt Template Generator** — switch between Model, Template, and Split views with tighter marker and camera controls.
-- **Native materials** — preview supported game textures while retaining manual overrides.
-- **Integrated feedback** — submit structured bug reports or feature requests from the app.
-- **Clearer desktop workflows** — refined onboarding, Settings, viewer controls, lighting, sidebars, updates, and What's New.
+- **Prop Studio 2.0** — Built-in Prop Doctor QA, Texture VRAM breakdowns, whole-script audits, `.ytyp.xml` & `fxmanifest.lua` generation, Ped Bone Attachment Studio with 3D Move/Rotate gizmo and FiveM Lua export, direct `.glb`/`.gltf` preview, Channel Inspector, diagnostic shading, Auto-LOD, 1:1 scale ghosts, click-to-inspect texture overrides, FiveM script `stream/` browser, and batch icon / contact sheet / 30 fps turntable video export.
+- **Animation Critique & Photo Mode upgrades** — Motion QA (loop seams, velocity pops, root drift, foot dips), EUP Studio Upper-Body Mask (`Upper + Idle` / `Upper + Walk`) and 8-frame filmstrips, local `.ycd` loading in Photo Mode, **Shoot all** views, 30 fps **Dolly clip** recording, drag-and-drop models, and one-click **Studio looks**.
+- **Studio-wide performance & polish pass** — Faster DDS decoding and `.clmesh`/`.ytd` loading, cached GPU texture reuse for Model's own textures, faster Showroom reflections and resizing, smooth camera glides and pose cross-fades, and UI-scale / multi-tab stability fixes.
 
 See the [complete changelog](./CHANGELOG.md) for release history and implementation details.
 

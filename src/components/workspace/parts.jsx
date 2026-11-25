@@ -68,10 +68,10 @@ export function withShortcut(label, hotkey) {
 
 /* ─── Small controls ─── */
 
-export function Slider({ label, value, min, max, step, format, onChange, id }) {
+export function Slider({ label, value, min, max, step, format, onChange, id, disabled = false }) {
   const fill = `${((value - min) / (max - min)) * 100}%`;
   return (
-    <label className="lv-slider" htmlFor={id}>
+    <label className={`lv-slider ${disabled ? "is-disabled" : ""}`.trim()} htmlFor={id}>
       <span className="lv-slider-head">
         <span className="lv-slider-label">{label}</span>
         <output className="lv-slider-value" htmlFor={id}>{format(value)}</output>
@@ -83,6 +83,7 @@ export function Slider({ label, value, min, max, step, format, onChange, id }) {
         max={max}
         step={step}
         value={value}
+        disabled={disabled}
         style={{ "--fill": fill }}
         onChange={(event) => onChange(Number.parseFloat(event.target.value))}
       />
@@ -92,8 +93,14 @@ export function Slider({ label, value, min, max, step, format, onChange, id }) {
 
 function HexInput({ value, onCommit, label }) {
   const [draft, setDraft] = useState(value);
+  const cancellingRef = useRef(false);
   useEffect(() => setDraft(value), [value]);
   const commit = () => {
+    if (cancellingRef.current) {
+      cancellingRef.current = false;
+      setDraft(value);
+      return;
+    }
     const next = draft.startsWith("#") ? draft : `#${draft}`;
     if (HEX_RE.test(next)) onCommit(next.toLowerCase());
     else setDraft(value);
@@ -110,6 +117,7 @@ function HexInput({ value, onCommit, label }) {
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();
         if (event.key === "Escape") {
+          cancellingRef.current = true;
           setDraft(value);
           event.currentTarget.blur();
         }
@@ -604,6 +612,25 @@ export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, v
   const [guides, setGuides] = useState(false);
   const [popover, setPopover] = useState(null);
   const helpOpen = popover === "help";
+  const helpWrapRef = useRef(null);
+  useEffect(() => {
+    if (!helpOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (!helpWrapRef.current?.contains(event.target)) setPopover(null);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPopover(null);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [helpOpen]);
   const hk = s.hotkeys || {};
   const showroom = s.stage === "showroom";
   const capturing = Boolean(progress);
@@ -744,12 +771,12 @@ export function Viewfinder({ s, viewer, hasModel, alerts, dropHint, deckStart, v
               open={popover === "view"}
               onOpenChange={(next) => setPopover(next ? "view" : null)}
             />
-            <div className="lv-deck-group">
+            <div className="lv-deck-group" ref={helpWrapRef}>
               <DeckButton active={helpOpen} onClick={() => setPopover((open) => (open === "help" ? null : "help"))} title="Mouse and keyboard controls" className="is-icon">
                 <CircleHelp aria-hidden="true" />
               </DeckButton>
+              {helpOpen ? <HelpPopover /> : null}
             </div>
-            {helpOpen ? <HelpPopover /> : null}
           </div>
         ) : null}
 
@@ -885,8 +912,9 @@ export function InspectorTabs({ tabs, active, onChange }) {
     if (!tab || list.scrollWidth <= list.clientWidth) return;
     const bounds = list.getBoundingClientRect();
     const rect = tab.getBoundingClientRect();
-    if (rect.left < bounds.left) list.scrollLeft -= bounds.left - rect.left + 12;
-    else if (rect.right > bounds.right) list.scrollLeft += rect.right - bounds.right + 12;
+    const zoom = list.offsetWidth ? bounds.width / list.offsetWidth || 1 : 1;
+    if (rect.left < bounds.left) list.scrollLeft -= (bounds.left - rect.left) / zoom + 12;
+    else if (rect.right > bounds.right) list.scrollLeft += (rect.right - bounds.right) / zoom + 12;
   }, [active]);
   const labels = tabs.map((tab) => tab.label).join("|");
   useLayoutEffect(() => {

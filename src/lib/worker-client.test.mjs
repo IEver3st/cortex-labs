@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createWorkerClient, WORKER_TIMEOUT } from "./worker-client.js";
+import { createWorkerClient, createWorkerPool, WORKER_TIMEOUT } from "./worker-client.js";
 
 function fakeWorkerFactory(handler) {
   const created = [];
@@ -135,4 +135,29 @@ test("a worker crash fails only the running request; queued ones still run", asy
   await assert.rejects(crashing, /crashed/);
   assert.equal((await queued).ok, true);
   assert.equal(created.length, 2);
+});
+
+test("worker pool spawns lazily up to size and runs concurrent requests in parallel", async () => {
+  const inFlight = new Set();
+  let peakConcurrency = 0;
+  const { factory, created } = fakeWorkerFactory((message, worker) => {
+    inFlight.add(message.value);
+    peakConcurrency = Math.max(peakConcurrency, inFlight.size);
+    setTimeout(() => {
+      inFlight.delete(message.value);
+      worker.onmessage({ data: { id: message.id, echo: message.value } });
+    }, 10);
+  });
+  const pool = createWorkerPool(factory, { size: 3, label: "pool" });
+  const first = await pool.request({ value: 0 });
+  assert.equal(first.echo, 0);
+  assert.equal(created.length, 1, "single request uses one worker");
+
+  const results = await Promise.all([1, 2, 3, 4, 5].map((value) => pool.request({ value })));
+  assert.deepEqual(results.map((entry) => entry.echo), [1, 2, 3, 4, 5]);
+  assert.equal(created.length, 3, "pool caps worker count at size");
+  assert.equal(peakConcurrency, 3, "all three workers ran concurrently");
+
+  pool.terminate();
+  assert.ok(created.every((worker) => worker.terminated));
 });

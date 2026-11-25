@@ -451,6 +451,126 @@
   box-shadow: inset 0 0 0 2px var(--mg-primary);
 }
 
+.pm-shot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pm-shot-actions svg {
+  width: 13px;
+  height: 13px;
+}
+
+.pm-ycd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pm-ycd-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-hud);
+  font-size: var(--cx-fs-meta);
+  color: var(--mg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pm-clip-qa-box {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--cx-rule);
+}
+
+.pm-clip-qa {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pm-clip-qa-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pm-clip-qa-toggle svg {
+  width: 13px;
+  height: 13px;
+  color: var(--mg-muted);
+  transform: rotate(-90deg);
+  transition: transform 140ms var(--cx-ease);
+}
+
+.pm-clip-qa-toggle svg.is-open {
+  transform: rotate(0deg);
+}
+
+.pm-clip-qa-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--cx-focus);
+  border-radius: 4px;
+}
+
+.pm-clip-qa-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--cx-rule);
+  border-radius: 6px;
+  background: var(--mg-input-bg);
+  list-style: none;
+}
+
+.pm-clip-qa-item {
+  display: grid;
+  gap: 2px;
+  font-size: var(--cx-fs-body);
+  line-height: 1.4;
+}
+
+.pm-clip-qa-item strong {
+  font-weight: 600;
+  color: var(--mg-fg);
+}
+
+.pm-clip-qa-item.is-warn strong {
+  color: var(--cx-caution);
+}
+
+.pm-clip-qa-item.is-error strong {
+  color: var(--mg-destructive);
+}
+
+.pm-clip-qa-item span {
+  color: var(--mg-muted);
+}
+
+.pm-clip-qa-meta {
+  font-family: var(--font-hud);
+  font-size: var(--cx-fs-meta);
+  color: var(--mg-muted);
+}
+
+.pm-inline-icon {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
 /* ── Search field (dialog and custom pose) ── */
 .pm-search {
   display: flex;

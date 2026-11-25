@@ -43,6 +43,7 @@ export default function LightDome({
     const field = fieldRef.current;
     if (!field) return;
     const rect = field.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
     const pointX = ((clientX - rect.left) / rect.width) * 100;
     const pointY = ((clientY - rect.top) / rect.height) * 100;
     const next = lightDirectionFromPoint(pointX, pointY);
@@ -50,7 +51,9 @@ export default function LightDome({
   }, [updateDirection]);
 
   const handlePointerDown = useCallback((event) => {
+    if (event.button !== 0) return;
     event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
     draggingRef.current = true;
     event.currentTarget.setPointerCapture(event.pointerId);
     updateFromPointer(event.clientX, event.clientY);
@@ -63,7 +66,7 @@ export default function LightDome({
 
   const stopDragging = useCallback((event) => {
     draggingRef.current = false;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   }, []);
@@ -97,6 +100,7 @@ export default function LightDome({
           onPointerMove={handlePointerMove}
           onPointerUp={stopDragging}
           onPointerCancel={stopDragging}
+          onLostPointerCapture={stopDragging}
           onKeyDown={handleKeyDown}
         >
           <span id={instructionId} className="sr-only">

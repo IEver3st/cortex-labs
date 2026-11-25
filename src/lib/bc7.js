@@ -1,6 +1,6 @@
-const W2 = [0, 21, 43, 64];
-const W3 = [0, 9, 18, 27, 37, 46, 55, 64];
-const W4 = [0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64];
+const W2 = new Uint8Array([0, 21, 43, 64]);
+const W3 = new Uint8Array([0, 9, 18, 27, 37, 46, 55, 64]);
+const W4 = new Uint8Array([0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64]);
 
 /* eslint-disable */
 const P2 = new Uint8Array([
@@ -106,13 +106,20 @@ const MODES = [
   { ns:2, pb:6, rb:0, isb:0, cb:5, ab:5, epb:1, spb:0, ib:2, ib2:0 },
 ];
 
-function readBits(block, pos, count) {
-  let val = 0;
-  for (let i = 0; i < count; i++) {
-    const b = pos + i;
-    val |= ((block[b >> 3] >>> (b & 7)) & 1) << i;
-  }
-  return val;
+// Reusable flat scratch buffers — avoids ~10 heap allocations per 4x4 block.
+const _ep = new Uint8Array(24);
+const _pbits = new Uint8Array(6);
+const _idx1 = new Uint8Array(16);
+const _idx2 = new Uint8Array(16);
+
+// Reads 0..8 bits starting at bit `pos` relative to byte `base` in `block`.
+function readBits(block, base, pos, count) {
+  if (count === 0) return 0;
+  const byte = base + (pos >> 3);
+  const shift = pos & 7;
+  let word = block[byte];
+  if (shift + count > 8) word |= block[byte + 1] << 8;
+  return (word >>> shift) & ((1 << count) - 1);
 }
 
 function dequant(val, pbit, totalBits) {
@@ -128,19 +135,21 @@ function dequantNoPbit(val, bits) {
   return val & 0xFF;
 }
 
-function interp(l, h, w) {
-  return (l * (64 - w) + h * w + 32) >> 6;
-}
-
-export function decodeBC7Block(block, bx, by, width, height, rgba) {
+export function decodeBC7Block(block, bx, by, width, height, rgba, base = 0) {
+  const b0 = block[base];
   let mode = 0;
-  while (mode < 8 && ((block[0] >> mode) & 1) === 0) mode++;
+  while (mode < 8 && ((b0 >> mode) & 1) === 0) mode += 1;
+  const x0 = bx << 2;
+  const y0 = by << 2;
   if (mode >= 8) {
-    for (let py = 0; py < 4; py++) for (let px = 0; px < 4; px++) {
-      const x = bx*4+px, y = by*4+py;
-      if (x >= width || y >= height) continue;
-      const o = (y*width+x)*4;
-      rgba[o] = rgba[o+1] = rgba[o+2] = 0; rgba[o+3] = 255;
+    const pyMax = Math.min(4, height - y0);
+    const pxMax = Math.min(4, width - x0);
+    for (let py = 0; py < pyMax; py += 1) {
+      let o = ((y0 + py) * width + x0) << 2;
+      for (let px = 0; px < pxMax; px += 1) {
+        rgba[o] = 0; rgba[o + 1] = 0; rgba[o + 2] = 0; rgba[o + 3] = 255;
+        o += 4;
+      }
     }
     return;
   }
@@ -148,100 +157,123 @@ export function decodeBC7Block(block, bx, by, width, height, rgba) {
   const m = MODES[mode];
   let bp = mode + 1;
 
-  const part = readBits(block, bp, m.pb); bp += m.pb;
-  const rot = readBits(block, bp, m.rb); bp += m.rb;
-  const idxSel = readBits(block, bp, m.isb); bp += m.isb;
+  const part = m.pb ? readBits(block, base, bp, m.pb) : 0; bp += m.pb;
+  const rot = m.rb ? readBits(block, base, bp, m.rb) : 0; bp += m.rb;
+  const idxSel = m.isb ? readBits(block, base, bp, m.isb) : 0; bp += m.isb;
 
-  const numEP = m.ns * 2;
-  const ep = new Array(numEP);
-  for (let i = 0; i < numEP; i++) ep[i] = [0, 0, 0, 255];
-
-  for (let c = 0; c < 3; c++)
-    for (let e = 0; e < numEP; e++) {
-      ep[e][c] = readBits(block, bp, m.cb); bp += m.cb;
+  const numEP = m.ns << 1;
+  const cb = m.cb;
+  const ab = m.ab;
+  for (let e = 0; e < numEP; e += 1) _ep[(e << 2) + 3] = 255;
+  for (let c = 0; c < 3; c += 1) {
+    for (let e = 0; e < numEP; e += 1) {
+      _ep[(e << 2) + c] = readBits(block, base, bp, cb);
+      bp += cb;
     }
-  if (m.ab > 0)
-    for (let e = 0; e < numEP; e++) {
-      ep[e][3] = readBits(block, bp, m.ab); bp += m.ab;
+  }
+  if (ab > 0) {
+    for (let e = 0; e < numEP; e += 1) {
+      _ep[(e << 2) + 3] = readBits(block, base, bp, ab);
+      bp += ab;
     }
+  }
 
   const numPBits = m.epb ? numEP : (m.spb ? m.ns : 0);
-  const pbits = new Uint8Array(numPBits);
-  for (let i = 0; i < numPBits; i++) {
-    pbits[i] = readBits(block, bp, 1); bp += 1;
+  for (let i = 0; i < numPBits; i += 1) {
+    _pbits[i] = readBits(block, base, bp, 1);
+    bp += 1;
   }
 
-  const hasPBit = m.epb > 0 || m.spb > 0;
-  const cBits = m.cb + (hasPBit ? 1 : 0);
-  const aBits = m.ab > 0 ? m.ab + (hasPBit ? 1 : 0) : 0;
+  const hasPBit = numPBits > 0;
+  const cBits = cb + (hasPBit ? 1 : 0);
+  const aBits = ab > 0 ? ab + (hasPBit ? 1 : 0) : 0;
 
-  for (let e = 0; e < numEP; e++) {
-    const pb = m.epb ? pbits[e] : (m.spb ? pbits[e >> 1] : 0);
-    for (let c = 0; c < 3; c++) {
-      ep[e][c] = hasPBit ? dequant(ep[e][c], pb, cBits) : dequantNoPbit(ep[e][c], m.cb);
-    }
-    if (m.ab > 0) {
-      ep[e][3] = hasPBit ? dequant(ep[e][3], pb, aBits) : dequantNoPbit(ep[e][3], m.ab);
-    }
-  }
-
-  const wt1 = m.ib === 2 ? W2 : m.ib === 3 ? W3 : W4;
-  const wt2 = m.ib2 === 0 ? null : m.ib2 === 2 ? W2 : W3;
-
-  const idx1 = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    let anchor = false;
-    if (i === 0) anchor = true;
-    else if (m.ns === 2 && i === ANCHOR2[part]) anchor = true;
-    else if (m.ns === 3 && (i === ANCHOR3A[part] || i === ANCHOR3B[part])) anchor = true;
-    const bits = anchor ? m.ib - 1 : m.ib;
-    idx1[i] = readBits(block, bp, bits); bp += bits;
-  }
-
-  const idx2 = new Uint8Array(16);
-  if (m.ib2 > 0) {
-    for (let i = 0; i < 16; i++) {
-      const bits = (i === 0) ? m.ib2 - 1 : m.ib2;
-      idx2[i] = readBits(block, bp, bits); bp += bits;
-    }
-  }
-
-  const ptable = m.ns === 3 ? P3 : P2;
-  const poff = part * 16;
-
-  for (let py = 0; py < 4; py++) for (let px = 0; px < 4; px++) {
-    const x = bx*4+px, y = by*4+py;
-    if (x >= width || y >= height) continue;
-
-    const pi = py*4+px;
-    const subset = m.ns === 1 ? 0 : ptable[poff + pi];
-    const e0 = ep[subset * 2];
-    const e1 = ep[subset * 2 + 1];
-
-    let r, g, b, a;
-    if (m.ib2 === 0) {
-      const w = wt1[idx1[pi]];
-      r = interp(e0[0], e1[0], w);
-      g = interp(e0[1], e1[1], w);
-      b = interp(e0[2], e1[2], w);
-      a = m.ab > 0 ? interp(e0[3], e1[3], w) : 255;
+  for (let e = 0; e < numEP; e += 1) {
+    const eo = e << 2;
+    if (hasPBit) {
+      const pb = m.epb ? _pbits[e] : _pbits[e >> 1];
+      _ep[eo] = dequant(_ep[eo], pb, cBits);
+      _ep[eo + 1] = dequant(_ep[eo + 1], pb, cBits);
+      _ep[eo + 2] = dequant(_ep[eo + 2], pb, cBits);
+      if (ab > 0) _ep[eo + 3] = dequant(_ep[eo + 3], pb, aBits);
     } else {
-      const w1 = wt1[idx1[pi]];
-      const w2 = wt2[idx2[pi]];
-      if (idxSel === 0) {
-        r = interp(e0[0], e1[0], w1); g = interp(e0[1], e1[1], w1);
-        b = interp(e0[2], e1[2], w1); a = interp(e0[3], e1[3], w2);
-      } else {
-        r = interp(e0[0], e1[0], w2); g = interp(e0[1], e1[1], w2);
-        b = interp(e0[2], e1[2], w2); a = interp(e0[3], e1[3], w1);
-      }
+      _ep[eo] = dequantNoPbit(_ep[eo], cb);
+      _ep[eo + 1] = dequantNoPbit(_ep[eo + 1], cb);
+      _ep[eo + 2] = dequantNoPbit(_ep[eo + 2], cb);
+      if (ab > 0) _ep[eo + 3] = dequantNoPbit(_ep[eo + 3], ab);
     }
+  }
 
-    if (rot === 1) { const t = a; a = r; r = t; }
-    else if (rot === 2) { const t = a; a = g; g = t; }
-    else if (rot === 3) { const t = a; a = b; b = t; }
+  const ib = m.ib;
+  const ib2 = m.ib2;
+  const wt1 = ib === 2 ? W2 : ib === 3 ? W3 : W4;
+  const wt2 = ib2 === 0 ? null : ib2 === 2 ? W2 : W3;
 
-    const o = (y*width+x)*4;
-    rgba[o] = r; rgba[o+1] = g; rgba[o+2] = b; rgba[o+3] = a;
+  const a2 = m.ns === 2 ? ANCHOR2[part] : -1;
+  const a3a = m.ns === 3 ? ANCHOR3A[part] : -1;
+  const a3b = m.ns === 3 ? ANCHOR3B[part] : -1;
+  for (let i = 0; i < 16; i += 1) {
+    const bits = (i === 0 || i === a2 || i === a3a || i === a3b) ? ib - 1 : ib;
+    _idx1[i] = readBits(block, base, bp, bits);
+    bp += bits;
+  }
+
+  if (ib2 > 0) {
+    _idx2[0] = readBits(block, base, bp, ib2 - 1);
+    bp += ib2 - 1;
+    for (let i = 1; i < 16; i += 1) {
+      _idx2[i] = readBits(block, base, bp, ib2);
+      bp += ib2;
+    }
+  }
+
+  const ns = m.ns;
+  const ptable = ns === 3 ? P3 : P2;
+  const poff = part << 4;
+  const pyMax = Math.min(4, height - y0);
+  const pxMax = Math.min(4, width - x0);
+  const w4 = width << 2;
+
+  for (let py = 0; py < pyMax; py += 1) {
+    let o = (y0 + py) * w4 + (x0 << 2);
+    const piRow = py << 2;
+    for (let px = 0; px < pxMax; px += 1) {
+      const pi = piRow + px;
+      const eo0 = (ns === 1 ? 0 : ptable[poff + pi]) << 3;
+      const eo1 = eo0 + 4;
+
+      let r, g, b, a;
+      if (ib2 === 0) {
+        const w = wt1[_idx1[pi]];
+        const iw = 64 - w;
+        r = (_ep[eo0] * iw + _ep[eo1] * w + 32) >> 6;
+        g = (_ep[eo0 + 1] * iw + _ep[eo1 + 1] * w + 32) >> 6;
+        b = (_ep[eo0 + 2] * iw + _ep[eo1 + 2] * w + 32) >> 6;
+        a = ab > 0 ? ((_ep[eo0 + 3] * iw + _ep[eo1 + 3] * w + 32) >> 6) : 255;
+      } else {
+        const w1 = wt1[_idx1[pi]];
+        const w2 = wt2[_idx2[pi]];
+        if (idxSel === 0) {
+          const iw1 = 64 - w1;
+          r = (_ep[eo0] * iw1 + _ep[eo1] * w1 + 32) >> 6;
+          g = (_ep[eo0 + 1] * iw1 + _ep[eo1 + 1] * w1 + 32) >> 6;
+          b = (_ep[eo0 + 2] * iw1 + _ep[eo1 + 2] * w1 + 32) >> 6;
+          a = (_ep[eo0 + 3] * (64 - w2) + _ep[eo1 + 3] * w2 + 32) >> 6;
+        } else {
+          const iw2 = 64 - w2;
+          r = (_ep[eo0] * iw2 + _ep[eo1] * w2 + 32) >> 6;
+          g = (_ep[eo0 + 1] * iw2 + _ep[eo1 + 1] * w2 + 32) >> 6;
+          b = (_ep[eo0 + 2] * iw2 + _ep[eo1 + 2] * w2 + 32) >> 6;
+          a = (_ep[eo0 + 3] * (64 - w1) + _ep[eo1 + 3] * w1 + 32) >> 6;
+        }
+      }
+
+      if (rot === 1) { const t = a; a = r; r = t; }
+      else if (rot === 2) { const t = a; a = g; g = t; }
+      else if (rot === 3) { const t = a; a = b; b = t; }
+
+      rgba[o] = r; rgba[o + 1] = g; rgba[o + 2] = b; rgba[o + 3] = a;
+      o += 4;
+    }
   }
 }

@@ -24,11 +24,13 @@ import {
   DEFAULT_CAMERA_PRESET,
 } from "../lib/camera-framing.js";
 import { rescaleViewerCameraPose, syncViewerCameraPose } from "../lib/camera-state.js";
+import { createCameraGlide } from "../lib/camera-glide.js";
 import { createViewerStage } from "../lib/viewer-stage.js";
 import {
   applyShadowFlags,
   configureShadowLight,
   createAoPipeline,
+  createShadowMapCache,
   createSolidWireMaterial,
   disposeAoPipeline,
   renderWithEffects,
@@ -39,7 +41,7 @@ import { stabilizeObjectForWorld } from "../lib/model-normalization.js";
 import { countDrawnGeometry, summarizeMeshStats } from "../lib/mesh-stats.js";
 import { LINEUP_GAP, PAINT_KEYS, lineUpOffsets, normalizeYaw, pathKey } from "../lib/multi-lineup.js";
 import { loadPropAsset } from "../lib/prop-model.js";
-import { loadNativeMaterialView } from "../lib/native-materials.js";
+import { clearNativeTextureCache, loadNativeMaterialView } from "../lib/native-materials.js";
 import { getModelExtras } from "../lib/vehicle-mod-parts.js";
 import { TURNTABLE_DEFAULT_SPEED, stepTurntable, withTurntableAtRest } from "../lib/turntable.js";
 import { onViewerControlsChange, previewPixelRatio, readViewerControls } from "../lib/preview-detail.js";
@@ -162,6 +164,7 @@ function MultiModelViewer({
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
+  const cameraGlideRef = useRef(null);
   const gizmoRef = useRef(null);
   const requestRenderRef = useRef(null);
   const lightsRef = useRef({ ambient: null, key: null, rim: null });
@@ -322,6 +325,7 @@ function MultiModelViewer({
   const refitCamera = useCallback((
     presetKey = cameraStateRef.current.presetKey || DEFAULT_CAMERA_PRESET,
     zoomFactor = cameraStateRef.current.zoomFactor || 1,
+    { animate = false } = {},
   ) => {
     const visible = loadedObjects(true);
     const objects = visible.length > 0 ? visible : loadedObjects(false);
@@ -341,6 +345,8 @@ function MultiModelViewer({
     if (camera && controls) {
       const { clientWidth = 1, clientHeight = 1 } = containerRef.current || {};
       const framing = buildCameraFraming({ bounds, aspect: clientWidth / clientHeight, fov: camera.fov, presetKey, zoomFactor });
+      const minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
+      const maxDistance = Math.max(framing.baseDistance * 10, 10);
       fitRef.current = {
         ...fitRef.current,
         center: framing.target.clone(),
@@ -351,17 +357,31 @@ function MultiModelViewer({
       };
       cameraUserOwnedRef.current = false;
       resizeZoomRatioRef.current = null;
-      syncViewerCameraPose({
-        camera,
-        controls,
-        position: framing.position,
-        target: framing.target,
-        up: framing.up,
-        near: framing.near,
-        far: framing.far,
-        minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
-        maxDistance: Math.max(framing.baseDistance * 10, 10),
-      });
+      if (animate && cameraGlideRef.current) {
+        camera.up.copy(framing.up);
+        controls.minDistance = minDistance;
+        controls.maxDistance = maxDistance;
+        cameraGlideRef.current.to({
+          position: framing.position,
+          target: framing.target,
+          near: framing.near,
+          far: framing.far,
+          instant: false,
+        });
+      } else {
+        cameraGlideRef.current?.cancel();
+        syncViewerCameraPose({
+          camera,
+          controls,
+          position: framing.position,
+          target: framing.target,
+          up: framing.up,
+          near: framing.near,
+          far: framing.far,
+          minDistance,
+          maxDistance,
+        });
+      }
     }
     requestRender();
   }, [atRest, loadedObjects, requestRender]);
@@ -382,6 +402,10 @@ function MultiModelViewer({
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = Boolean(shadowsEnabled);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const shadowMapCache = createShadowMapCache(renderer);
+    scene.onBeforeRender = (_renderer, _scene, _camera, target) => {
+      if (!target) shadowMapCache.update(scene);
+    };
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
     camera.position.set(4, 2, 6);
@@ -396,6 +420,12 @@ function MultiModelViewer({
 
     const wheelWhileDragging = setupWheelWhileDragging(controls, requestRenderRef);
     renderer.domElement.addEventListener("wheel", wheelWhileDragging, { passive: false });
+
+    const cameraGlide = createCameraGlide({ camera, controls });
+    cameraGlideRef.current = cameraGlide;
+    const cancelGlide = () => cameraGlide.cancel();
+    renderer.domElement.addEventListener("pointerdown", cancelGlide, { passive: true });
+    renderer.domElement.addEventListener("wheel", cancelGlide, { passive: true });
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.5 * lightIntensity);
     const key = new THREE.DirectionalLight(0xffffff, 0.9 * lightIntensity);
@@ -472,7 +502,7 @@ function MultiModelViewer({
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
 
-    const applyCameraFrame = (presetKey, zoomFactor, shouldRender = true) => {
+    const applyCameraFrame = (presetKey, zoomFactor, shouldRender = true, { animate = false } = {}) => {
       if (!fitRef.current?.bounds) return;
       const { clientWidth, clientHeight } = container;
       if (!clientWidth || !clientHeight) return;
@@ -483,17 +513,33 @@ function MultiModelViewer({
         presetKey,
         zoomFactor,
       });
-      syncViewerCameraPose({
-        camera,
-        controls,
-        position: framing.position,
-        target: framing.target,
-        up: framing.up,
-        near: framing.near,
-        far: framing.far,
-        minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
-        maxDistance: Math.max(framing.baseDistance * 10, 10),
-      });
+      const minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
+      const maxDistance = Math.max(framing.baseDistance * 10, 10);
+      if (animate) {
+        camera.up.copy(framing.up);
+        controls.minDistance = minDistance;
+        controls.maxDistance = maxDistance;
+        cameraGlide.to({
+          position: framing.position,
+          target: framing.target,
+          near: framing.near,
+          far: framing.far,
+          instant: false,
+        });
+      } else {
+        cameraGlide.cancel();
+        syncViewerCameraPose({
+          camera,
+          controls,
+          position: framing.position,
+          target: framing.target,
+          up: framing.up,
+          near: framing.near,
+          far: framing.far,
+          minDistance,
+          maxDistance,
+        });
+      }
       fitRef.current = {
         ...fitRef.current,
         center: framing.target.clone(),
@@ -508,6 +554,7 @@ function MultiModelViewer({
       if (shouldRender) requestRenderRef.current?.();
     };
     const rescaleCameraFrame = () => {
+      cameraGlide.cancel();
       if (!fitRef.current?.bounds) return;
       const { clientWidth, clientHeight } = container;
       if (!clientWidth || !clientHeight) return;
@@ -570,6 +617,7 @@ function MultiModelViewer({
       // Each visible vehicle is its own showroom bay.
       stageRef.current?.fit(fitRef.current?.bounds, visible, { bays: true, atRest });
       stageRef.current?.constrainControls(controls);
+      const gliding = cameraGlide.step(performance.now());
       const needsUpdate = controls.update();
       const wantAo = Boolean(ambientOcclusionRef.current);
       if (wantAo && !aoRef.current) {
@@ -592,7 +640,7 @@ function MultiModelViewer({
       }
       renderWithEffects({ renderer, scene, camera, ao: aoRef.current, wire: solidWirePass(visible) });
       reportMeshStats(visible);
-      if (renderRequested || needsUpdate || turning) {
+      if (renderRequested || needsUpdate || gliding || turning) {
         renderRequested = false;
         frameId = requestAnimationFrame(renderFrame);
       } else {
@@ -601,8 +649,9 @@ function MultiModelViewer({
     };
 
     let resizePending = false;
+    const lastViewport = { width: 0, height: 0, pixelRatio: 0 };
     const requestRenderFrame = () => {
-      if (resizePending && isActiveRef.current) resize();
+      if (resizePending && isActiveRef.current) resize({ defer: false });
       if (!canRenderFrame()) return;
       renderRequested = true;
       if (isRendering) return;
@@ -611,18 +660,37 @@ function MultiModelViewer({
     };
     requestRenderRef.current = requestRenderFrame;
 
-    const resizeBuffers = () => {
+    const resizeBuffers = ({ defer = false } = {}) => {
       const { clientWidth, clientHeight } = container;
       if (clientWidth === 0 || clientHeight === 0) return false;
-      renderer.setPixelRatio(previewPixelRatio(viewerControls.detail));
-      renderer.setSize(clientWidth, clientHeight);
-      resizeAoPipeline(aoRef.current, clientWidth, clientHeight, renderer.getPixelRatio());
-      stageRef.current?.resize();
+      const pixelRatio = previewPixelRatio(viewerControls.detail);
+      const sizeChanged = clientWidth !== lastViewport.width || clientHeight !== lastViewport.height;
+      const pixelRatioChanged = pixelRatio !== lastViewport.pixelRatio;
+      if (!sizeChanged && !pixelRatioChanged) {
+        if (!defer) {
+          resizeAoPipeline(aoRef.current, clientWidth, clientHeight, pixelRatio, { defer: false });
+          stageRef.current?.resize({ defer: false });
+        }
+        return false;
+      }
+      const hadViewportBefore = lastViewport.width > 0 && lastViewport.height > 0;
+      lastViewport.width = clientWidth;
+      lastViewport.height = clientHeight;
+      if (pixelRatioChanged) {
+        lastViewport.pixelRatio = pixelRatio;
+        renderer.setPixelRatio(pixelRatio);
+      }
+      const offscreenOpts = defer && hadViewportBefore && !pixelRatioChanged
+        ? { defer: true, onSettled: requestRenderFrame }
+        : { defer: false };
+      renderer.setSize(clientWidth, clientHeight, false);
+      resizeAoPipeline(aoRef.current, clientWidth, clientHeight, pixelRatio, offscreenOpts);
+      stageRef.current?.resize(offscreenOpts);
       return true;
     };
-    const resize = () => {
+    const resize = ({ defer = true } = {}) => {
       resizePending = !isActiveRef.current;
-      if (resizePending || !resizeBuffers()) return;
+      if (resizePending || !resizeBuffers({ defer })) return;
       const { clientWidth, clientHeight } = container;
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
@@ -632,18 +700,19 @@ function MultiModelViewer({
       }
       requestRenderFrame();
     };
-    const resizeObserver = new ResizeObserver(resize);
+    const resizeObserver = new ResizeObserver(() => resize({ defer: true }));
     resizeObserver.observe(container);
-    resize();
+    resize({ defer: false });
     const stopViewerControls = onViewerControlsChange(viewerControls, (next) => {
       viewerControls = next;
       controls.zoomToCursor = next.zoomToCursor;
-      if (resizeBuffers()) requestRenderFrame();
+      if (resizeBuffers({ defer: false })) requestRenderFrame();
     });
 
     let cameraInteracting = false;
     let interactionDistance = 0;
     const handleControlsStart = () => {
+      cameraGlide.cancel();
       cameraInteracting = true;
       interactionDistance = camera.position.distanceTo(controls.target);
       requestRenderFrame();
@@ -672,6 +741,7 @@ function MultiModelViewer({
     // viewfinder never shows the capture frame.
     const captureLiveFrame = (read) => {
       if (!canRenderFrame()) return null;
+      resizeBuffers({ defer: false });
       const helper = gizmo.getHelper();
       const helperVisible = helper.visible;
       helper.visible = false;
@@ -694,9 +764,9 @@ function MultiModelViewer({
       captureScreenshot: () => captureLiveFrame(encodePng),
       captureFrame: ({ presetKey = null } = {}) => (presetKey ? null : captureLiveFrame(encodePng)),
       captureFrameBlob: ({ presetKey = null } = {}) => (presetKey ? null : captureLiveFrame(blobPng)) || Promise.resolve(null),
-      setPreset: (presetKey) => applyCameraFrame(presetKey, cameraStateRef.current.zoomFactor),
-      setZoom: (zoomFactor) => applyCameraFrame(cameraStateRef.current.presetKey, zoomFactor),
-      reset: () => refitRef.current(DEFAULT_CAMERA_PRESET, 1),
+      setPreset: (presetKey) => applyCameraFrame(presetKey, cameraStateRef.current.zoomFactor, true, { animate: true }),
+      setZoom: (zoomFactor) => applyCameraFrame(cameraStateRef.current.presetKey, zoomFactor, true, { animate: true }),
+      reset: () => refitRef.current(DEFAULT_CAMERA_PRESET, 1, { animate: true }),
       // Side by side, in lineup order, one gap apart; hidden vehicles keep
       // their place.
       lineUp: (ids) => {
@@ -729,6 +799,10 @@ function MultiModelViewer({
       controls.removeEventListener("end", handleControlsEnd);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointerdown", cancelGlide);
+      renderer.domElement.removeEventListener("wheel", cancelGlide);
+      cameraGlide.cancel();
+      cameraGlideRef.current = null;
       renderer.domElement.removeEventListener("contextmenu", preventContextMenu);
       renderer.domElement.removeEventListener("wheel", wheelWhileDragging);
       disposeAoPipeline(aoRef.current);
@@ -754,6 +828,7 @@ function MultiModelViewer({
       gizmo.dispose();
       gizmoRef.current = null;
       controls.dispose();
+      clearNativeTextureCache(renderer);
       renderer.dispose();
       // dispose() frees three's bookkeeping; drop the GL context explicitly too.
       renderer.forceContextLoss();
@@ -1202,6 +1277,7 @@ function MultiModelViewer({
       domElement: rendererRef.current?.domElement,
       isActiveRef,
       onUserMove: ({ distanceChanged }) => {
+        cameraGlideRef.current?.cancel();
         cameraUserOwnedRef.current = true;
         if (distanceChanged) resizeZoomRatioRef.current = null;
       },

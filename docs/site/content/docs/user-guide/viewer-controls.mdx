@@ -22,7 +22,7 @@ YFT vehicles opened in the desktop app can open their moving parts.
 - The **Meta** tab lists every moving part with a slider, plus **Open all** / **Close all**. Two-sided joints such as turrets rest centred and are left out of Open all.
 - A convertible whose `vehicles.meta` entry sets `animConvRoofDictName` and `animConvRoofName` gets **Up** / **Down** controls that play the roof clip at game speed and a slider to scrub it. Clicking the roof also plays it. The app reads `<dict>.ycd` from the vehicle's resource first, then from your GTA V files.
 
-Parts follow the hinge axes and limits authored in the model's skeleton; a part without a joint limit does not move. Mod kit parts loaded from the Mods tab stay in place.
+Parts follow the hinge axes and limits authored in the model's skeleton; a part without a joint limit does not move. Mod kit parts mounted to a door, bonnet, or boot in carcols (`<bone>`) move with it; parts on `chassis` stay put, as in game.
 
 ## Presets and reset
 

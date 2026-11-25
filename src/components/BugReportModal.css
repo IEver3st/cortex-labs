@@ -4,8 +4,9 @@
   position: fixed;
   inset: 0;
   z-index: 400;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: calc(24 * var(--u));
   background: rgba(8, 9, 11, 0.6);
 }
@@ -13,8 +14,8 @@
 .fb-dialog {
   display: flex;
   flex-direction: column;
-  width: min(calc(880 * var(--u)), 94vw);
-  max-height: min(calc(780 * var(--u)), calc(100dvh - 48 * var(--u)));
+  width: min(calc(880 * var(--u)), 100%);
+  max-height: min(calc(780 * var(--u)), 100%);
   min-height: 0;
   border: 1px solid var(--mg-border);
   border-radius: calc(8 * var(--u));
@@ -646,7 +647,7 @@
   }
   .fb-dialog {
     width: 100%;
-    max-height: calc(100dvh - 24 * var(--u));
+    max-height: 100%;
   }
   .fb-body {
     grid-template-columns: minmax(0, 1fr);

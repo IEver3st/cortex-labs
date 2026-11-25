@@ -372,6 +372,42 @@ test("skinned slots follow the pose and props stay on their posed bone", () => {
   assert.equal(disposed, true, "the slot's skeleton is disposed with it");
 });
 
+test("skinned meshes skip frustum culling and sibling slots mirror posed bone matrices", () => {
+  const root = createPedRoot();
+  const slotA = buildDrawableGroup(FOREARM_DRAWABLE, { component: "uppr", skeleton: ARM_SKELETON });
+  const slotB = buildDrawableGroup(FOREARM_DRAWABLE, { component: "jbib", skeleton: ARM_SKELETON });
+  root.add(slotA, slotB);
+
+  const meshA = slotA.children.find((child) => child.isSkinnedMesh);
+  const meshB = slotB.children.find((child) => child.isSkinnedMesh);
+  assert.equal(meshA.frustumCulled, false, "skinned meshes must not be frustum-culled by bind bounds");
+  assert.equal(meshB.frustumCulled, false);
+
+  root.position.set(1.25, 0.4, -0.5);
+  const rotations = computeBoneRotations(ARM_SKELETON, [{ bone: "lUpperArm", axis: [0, 1, 0], deg: 32 }]);
+  setPedPose(root, ARM_SKELETON, rotations);
+
+  for (let i = 0; i < ARM_SKELETON.bones.length; i += 1) {
+    const a = slotA.userData.bones[i].matrixWorld.elements;
+    const b = slotB.userData.bones[i].matrixWorld.elements;
+    for (let k = 0; k < 16; k += 1) {
+      assert.ok(Math.abs(a[k] - b[k]) < 1e-6, `bone ${i} element ${k} matches`);
+    }
+  }
+  // Moving the ped root afterwards still propagates cleanly through copied local matrices.
+  root.position.set(-2, 0.1, 0.75);
+  root.updateMatrixWorld(true);
+  for (let i = 0; i < ARM_SKELETON.bones.length; i += 1) {
+    const a = slotA.userData.bones[i].matrixWorld.elements;
+    const b = slotB.userData.bones[i].matrixWorld.elements;
+    for (let k = 0; k < 16; k += 1) {
+      assert.ok(Math.abs(a[k] - b[k]) < 1e-6, `moved root bone ${i} element ${k} matches`);
+    }
+  }
+  disposeSlotGroup(slotA);
+  disposeSlotGroup(slotB);
+});
+
 test("slots stay rigid without a shared skeleton or when bone indices do not fit it", () => {
   assert.ok(!buildDrawableGroup(FOREARM_DRAWABLE, { component: "uppr" }).children.some((child) => child.isSkinnedMesh));
   const short = { bones: ARM_SKELETON.bones.slice(0, 2) };

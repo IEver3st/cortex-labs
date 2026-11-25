@@ -3,6 +3,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls";
 import { createViewerStage } from "../../lib/viewer-stage.js";
+import { createCameraGlide } from "../../lib/camera-glide.js";
+import { clearNativeTextureCache } from "../../lib/native-materials.js";
 import {
   BLOOM_STRENGTH,
   FLOOR_LIGHT_LAYER,
@@ -11,6 +13,7 @@ import {
   configureShadowLight,
   createAoPipeline,
   createBloomPipeline,
+  createShadowMapCache,
   disposeAoPipeline,
   disposeBloomPipeline,
   renderWithEffects,
@@ -19,6 +22,8 @@ import {
   setAoBounds,
 } from "../../lib/viewer-render-effects.js";
 import { lensToFov, litObjectIds } from "../../lib/photo-mode.js";
+import { pickVideoType } from "../../lib/eup-export.js";
+import { normalizeRecordingSize } from "../../lib/viewer-recording.js";
 import { onViewerControlsChange, previewPixelRatio, readViewerControls } from "../../lib/preview-detail.js";
 
 // Pointer travel (px) under which a press and release counts as a click.
@@ -105,6 +110,8 @@ const PhotoViewport = forwardRef(function PhotoViewport(
   glowRef.current = lightGlow;
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
+  const aoWantRef = useRef(Boolean(ambientOcclusion));
+  aoWantRef.current = Boolean(ambientOcclusion);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -117,8 +124,12 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const shadowMapCache = createShadowMapCache(renderer);
 
     const scene = new THREE.Scene();
+    scene.onBeforeRender = (_renderer, _scene, _camera, target) => {
+      if (!target) shadowMapCache.update(scene);
+    };
     const camera = new THREE.PerspectiveCamera(lensToFov(lens), 1, 0.05, 500);
     camera.position.set(5, 2.2, -6);
     // Vehicle light glow and the light pool their sirens throw on the floor.
@@ -132,6 +143,8 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     controls.minDistance = 0.2;
     controls.zoomToCursor = viewerControls.zoomToCursor;
     controls.maxDistance = 120;
+    const cameraGlide = createCameraGlide({ camera, controls });
+    const cancelGlide = () => cameraGlide.cancel();
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.5);
     const key = new THREE.DirectionalLight(0xffffff, 0.95);
@@ -144,7 +157,6 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     stageApi.setBackgroundColor(backgroundColor);
     // Every object gets its own showroom spotlight; none lit means no spot.
     stageApi.setShowroom({ bayMinimum: 0 });
-    const aoPipeline = createAoPipeline({ renderer, scene, camera, width: 1, height: 1 });
 
     const gizmo = new TransformControls(camera, renderer.domElement);
     gizmo.setSize(0.85);
@@ -159,20 +171,46 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       scene,
       camera,
       controls,
+      cameraGlide,
       gizmo,
       gizmoHelper,
       lights: { ambient, key, rim },
       stage: stageApi,
-      ao: aoPipeline,
+      shadowMapCache,
+      ao: null,
+      bloom: null,
       attached: new Map(),
       frameId: 0,
       lastTime: 0,
       pendingWhileInactive: false,
       disposed: false,
+      recording: false,
       size: { width: 1, height: 1 },
       aoBounds: { clip: null, radius: null },
     };
     stateRef.current = state;
+
+    const ensureAo = () => {
+      if (!state.ao) {
+        state.ao = createAoPipeline({
+          renderer,
+          scene,
+          camera,
+          width: state.size.width,
+          height: state.size.height,
+        });
+      }
+      return state.ao;
+    };
+    state.ensureAo = ensureAo;
+
+    const syncShadowFlags = () => {
+      for (const entry of objectsRef.current || []) {
+        if (entry.controller) applyShadowFlags(entry.controller.holder, stageApi.castsShadows);
+      }
+      shadowMapCache.invalidate();
+    };
+    state.syncShadowFlags = syncShadowFlags;
 
     const sceneBounds = () => {
       const bounds = new THREE.Box3();
@@ -191,13 +229,17 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       const now = performance.now();
       for (const entry of objectsRef.current || []) {
         if (!entry.controller) continue;
-        applyShadowFlags(entry.controller.holder, stageApi.castsShadows);
         entry.controller.beforeRender?.();
         if (entry.controller.updateLights?.(camera, now)) lightsAnimating = true;
         if (entry.controller.lightsActive) lightsLit = true;
       }
-      // Bounds are measured on refit, not per frame: a posed ped's bounds cost a CPU skin pass.
-      if (aoPipeline?.enabled) setAoBounds(aoPipeline, state.aoBounds.clip, { radiusBounds: state.aoBounds.radius });
+      // Lazy AO pipeline: only allocate depth/normal targets when AO is turned on.
+      const wantAo = aoWantRef.current;
+      const aoPipeline = wantAo ? ensureAo() : state.ao;
+      if (aoPipeline) {
+        aoPipeline.enabled = wantAo;
+        if (wantAo) setAoBounds(aoPipeline, state.aoBounds.clip, { radiusBounds: state.aoBounds.radius });
+      }
       // Lit lamps glow through the bloom pass, built the first time one is on.
       if (lightsLit && !state.bloom) {
         state.bloom = createBloomPipeline({ renderer, scene, camera, width: state.size.width, height: state.size.height });
@@ -211,32 +253,49 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     };
     state.draw = draw;
 
-    const resize = () => {
+    const resize = ({ defer = false } = {}) => {
+      if (state.recording) return false;
       const width = container.clientWidth;
       const height = container.clientHeight;
       if (!width || !height) return false;
+      const ratio = renderer.getPixelRatio();
+      const unchanged = width === state.size.width && height === state.size.height && ratio === state.lastPixelRatio;
+      if (unchanged) {
+        if (!defer) {
+          if (state.ao) resizeAoPipeline(state.ao, width, height, ratio, { defer: false });
+          if (state.bloom) resizeBloomPipeline(state.bloom, width, height, ratio, { defer: false });
+          stageApi.resize({ defer: false });
+        }
+        return false;
+      }
+      const hadViewport = state.size.width > 1 || state.size.height > 1;
+      const ratioChanged = ratio !== state.lastPixelRatio;
       state.size = { width, height };
+      state.lastPixelRatio = ratio;
       callbacksRef.current.onResize?.({ width, height });
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      resizeAoPipeline(aoPipeline, width, height, renderer.getPixelRatio());
-      resizeBloomPipeline(state.bloom, width, height, renderer.getPixelRatio());
-      stageApi.resize();
+      const opts = defer && hadViewport && !ratioChanged ? { defer: true, onSettled: requestRender } : { defer: false };
+      if (state.ao) resizeAoPipeline(state.ao, width, height, ratio, opts);
+      if (state.bloom) resizeBloomPipeline(state.bloom, width, height, ratio, opts);
+      stageApi.resize(opts);
       return true;
     };
+    state.resize = resize;
 
     const tick = (now) => {
-      if (state.disposed) return;
+      if (state.disposed || state.recording) return;
       state.frameId = 0;
       const dt = state.lastTime ? Math.min((now - state.lastTime) / 1000, 0.1) : 0;
       const moving = Boolean(callbacksRef.current.onStep?.(dt, now));
       const animate = moving || playingRef.current;
+      const gliding = cameraGlide.step(now);
       const orbiting = controls.update();
-      if (moving) renderer.shadowMap.needsUpdate = true;
+      if (moving) shadowMapCache.invalidate();
       const flashing = draw();
       state.lastTime = animate || flashing ? now : 0;
-      if (orbiting || animate || flashing) requestRender();
+      if (orbiting || gliding || animate || flashing) requestRender();
     };
 
     const requestRender = () => {
@@ -274,7 +333,7 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       // The gizmo only turns about Y; keep the holder upright whatever it reports.
       const yaw = yawDegrees(holder);
       holder.rotation.set(0, THREE.MathUtils.degToRad(yaw), 0);
-      renderer.shadowMap.needsUpdate = true;
+      shadowMapCache.invalidate();
       callbacksRef.current.onTransform?.(entry.id, {
         position: holder.position.toArray().map((value) => Number(value.toFixed(3))),
         yaw,
@@ -321,19 +380,21 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     };
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
     renderer.domElement.addEventListener("pointerup", handlePointerUp);
+    renderer.domElement.addEventListener("pointerdown", cancelGlide, { passive: true });
+    renderer.domElement.addEventListener("wheel", cancelGlide, { passive: true });
 
     const observer = new ResizeObserver(() => {
-      if (resize()) renderNow();
+      if (resize({ defer: true })) renderNow();
       else requestRender();
     });
     observer.observe(container);
-    resize();
+    resize({ defer: false });
     requestRender();
     const stopViewerControls = onViewerControlsChange(viewerControls, (next) => {
       viewerControls = next;
       controls.zoomToCursor = next.zoomToCursor;
       renderer.setPixelRatio(previewPixelRatio(next.detail));
-      if (resize()) renderNow();
+      if (resize({ defer: false })) renderNow();
       else requestRender();
     });
 
@@ -345,6 +406,9 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       controls.removeEventListener("change", handleControlsChange);
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
       renderer.domElement.removeEventListener("pointerup", handlePointerUp);
+      renderer.domElement.removeEventListener("pointerdown", cancelGlide);
+      renderer.domElement.removeEventListener("wheel", cancelGlide);
+      cameraGlide.cancel();
       if (state.frameId) cancelAnimationFrame(state.frameId);
       gizmo.detach();
       gizmo.dispose();
@@ -352,10 +416,11 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       controls.dispose();
       for (const holder of state.attached.values()) holder.removeFromParent();
       state.attached.clear();
-      disposeAoPipeline(aoPipeline);
-      disposeBloomPipeline(state.bloom);
+      if (state.ao) disposeAoPipeline(state.ao);
+      if (state.bloom) disposeBloomPipeline(state.bloom);
       stageApi.dispose();
       key.shadow.map?.dispose?.();
+      clearNativeTextureCache(renderer);
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();
@@ -395,7 +460,7 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       });
       state.stage.constrainControls(state.controls);
     }
-    state.renderer.shadowMap.needsUpdate = true;
+    state.syncShadowFlags();
     state.requestRender();
   };
 
@@ -450,9 +515,11 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     state.requestRender();
   }, [objects, selectedId, gizmoMode, gizmoVisible]);
 
+  const lensRef = useRef(lens);
+  lensRef.current = lens;
   useEffect(() => {
     const state = stateRef.current;
-    if (!state) return;
+    if (!state || state.cameraGlide.active) return;
     state.camera.fov = lensToFov(lens);
     state.camera.updateProjectionMatrix();
     state.requestRender();
@@ -482,7 +549,7 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     state.lights.key.intensity = levels.key * lightIntensity * night;
     state.lights.rim.intensity = levels.rim * lightIntensity * night;
     state.stage.constrainControls(state.controls);
-    state.renderer.shadowMap.needsUpdate = true;
+    state.syncShadowFlags();
     state.requestRender();
   }, [stage, showGrid, showShadows, lightIntensity, dark]);
 
@@ -490,7 +557,7 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     const state = stateRef.current;
     if (!state || !showroom) return;
     state.stage.setShowroom(showroom);
-    state.renderer.shadowMap.needsUpdate = true;
+    state.shadowMapCache.invalidate();
     state.requestRender();
   }, [showroom]);
 
@@ -513,11 +580,17 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     state.requestRender();
   }, [isActive]);
 
+  const croppedOutputFov = (baseFov, viewAspect, outAspect) => {
+    if (outAspect <= viewAspect || !(viewAspect > 0) || !(outAspect > 0)) return baseFov;
+    const halfVertical = THREE.MathUtils.degToRad(baseFov) / 2;
+    return THREE.MathUtils.radToDeg(2 * Math.atan((Math.tan(halfVertical) * viewAspect) / outAspect));
+  };
+
   /** Points the camera at `bounds` from a preset direction, filling the frame. */
-  const frameBounds = (bounds, presetKey = "angle") => {
+  const frameBounds = (bounds, presetKey = "angle", { instant = false } = {}) => {
     const state = stateRef.current;
     if (!state || !bounds) return;
-    const { camera, controls } = state;
+    const { camera } = state;
     const sphere = bounds.getBoundingSphere(new THREE.Sphere());
     const radius = Math.max(sphere.radius, 0.1);
     const vertical = THREE.MathUtils.degToRad(camera.fov);
@@ -525,14 +598,23 @@ const PhotoViewport = forwardRef(function PhotoViewport(
     const limiting = Math.min(vertical, horizontal);
     const distance = (radius * FIT_PADDING) / Math.sin(limiting / 2);
     const direction = PRESET_DIRECTIONS[presetKey] || PRESET_DIRECTIONS.angle;
-    controls.target.copy(sphere.center);
-    camera.position.copy(sphere.center).addScaledVector(direction, distance);
-    camera.near = Math.max(0.02, distance * 0.01);
-    camera.far = Math.max(distance * 30, 200);
-    camera.updateProjectionMatrix();
-    controls.update();
+    state.cameraGlide.to({
+      position: sphere.center.clone().addScaledVector(direction, distance),
+      target: sphere.center,
+      near: Math.max(0.02, distance * 0.01),
+      far: Math.max(distance * 30, 200),
+      instant,
+      onDone: () => {
+        const wantFov = lensToFov(lensRef.current);
+        if (Math.abs(camera.fov - wantFov) > 0.01) {
+          camera.fov = wantFov;
+          camera.updateProjectionMatrix();
+          state.requestRender();
+        }
+        callbacksRef.current.onCameraChange?.();
+      },
+    });
     state.requestRender();
-    callbacksRef.current.onCameraChange?.();
   };
 
   /**
@@ -545,8 +627,10 @@ const PhotoViewport = forwardRef(function PhotoViewport(
   const capture = async ({ width, height, transparent = false }) => {
     const state = stateRef.current;
     if (!state) throw new Error("The viewfinder isn't ready yet.");
-    const { renderer, camera, controls, gizmoHelper, stage: stageApi, ao } = state;
+    const { renderer, camera, controls, gizmoHelper, stage: stageApi } = state;
+    state.cameraGlide.cancel();
     controls.update();
+    if (aoWantRef.current) state.ensureAo();
     const previousRatio = renderer.getPixelRatio();
     const previousSize = renderer.getSize(new THREE.Vector2());
     const previousAspect = camera.aspect;
@@ -569,14 +653,11 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       camera.aspect = outAspect;
       // A wider output than the viewfinder keeps the viewfinder's width and
       // crops height, instead of showing more than the guide.
-      if (outAspect > viewAspect) {
-        const halfVertical = THREE.MathUtils.degToRad(previousFov) / 2;
-        camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan((Math.tan(halfVertical) * viewAspect) / outAspect));
-      }
+      camera.fov = croppedOutputFov(previousFov, viewAspect, outAspect);
       camera.updateProjectionMatrix();
       stageApi.resize();
-      resizeAoPipeline(ao, width, height, 1);
-      resizeBloomPipeline(state.bloom, width, height, 1);
+      if (state.ao) resizeAoPipeline(state.ao, width, height, 1);
+      if (state.bloom) resizeBloomPipeline(state.bloom, width, height, 1);
       if (transparent) {
         if (stageRoot) stageRoot.visible = false;
         renderer.setClearColor(0x000000, 0);
@@ -595,21 +676,156 @@ const PhotoViewport = forwardRef(function PhotoViewport(
       camera.fov = previousFov;
       camera.updateProjectionMatrix();
       stageApi.resize();
-      resizeAoPipeline(ao, previousSize.x, previousSize.y, previousRatio);
-      resizeBloomPipeline(state.bloom, previousSize.x, previousSize.y, previousRatio);
+      if (state.ao) resizeAoPipeline(state.ao, previousSize.x, previousSize.y, previousRatio);
+      if (state.bloom) resizeBloomPipeline(state.bloom, previousSize.x, previousSize.y, previousRatio);
       state.draw();
     }
     return canvasToPngBytes(canvas);
+  };
+
+  /**
+   * Records a smooth 30 fps camera dolly video gliding through 2+ saved shots.
+   */
+  const recordDollyVideo = async ({ shots, width = 1920, height = 1080, seconds = 6, fps = 30, signal, onProgress } = {}) => {
+    const state = stateRef.current;
+    if (!state) throw new Error("The viewfinder isn't ready yet.");
+    if (!Array.isArray(shots) || shots.length < 2) throw new Error("Save at least two views for a camera dolly clip.");
+    if (typeof MediaRecorder === "undefined" || typeof HTMLCanvasElement.prototype.captureStream !== "function") {
+      throw new Error("Video recording isn't supported in this runtime.");
+    }
+    const format = pickVideoType((type) => MediaRecorder.isTypeSupported(type));
+    if (!format) throw new Error("No supported video encoder is available.");
+    const size = normalizeRecordingSize(width, height);
+    if (!size) throw new Error("Invalid video size.");
+
+    const { renderer, camera, controls, gizmoHelper } = state;
+    if (aoWantRef.current) state.ensureAo();
+    const prevPos = camera.position.clone();
+    const prevTarget = controls.target.clone();
+    const prevFov = camera.fov;
+    const prevAspect = camera.aspect;
+    const viewAspect = state.size.width / Math.max(1, state.size.height);
+    const outAspect = size.width / size.height;
+    const prevRatio = renderer.getPixelRatio();
+    const prevSize = renderer.getSize(new THREE.Vector2());
+    const gizmoWasVisible = gizmoHelper.visible;
+
+    const totalFrames = Math.max(2, Math.round(seconds * fps));
+    const segments = shots.length - 1;
+    const vPosA = new THREE.Vector3();
+    const vPosB = new THREE.Vector3();
+    const vTgtA = new THREE.Vector3();
+    const vTgtB = new THREE.Vector3();
+
+    state.cameraGlide.cancel();
+    state.recording = true;
+    gizmoHelper.visible = false;
+    if (state.frameId) {
+      cancelAnimationFrame(state.frameId);
+      state.frameId = 0;
+    }
+
+    const chunks = [];
+    let recorderError = null;
+    try {
+      renderer.setPixelRatio(1);
+      renderer.setSize(size.width, size.height, false);
+      camera.aspect = size.width / size.height;
+      camera.updateProjectionMatrix();
+      if (state.ao) resizeAoPipeline(state.ao, size.width, size.height, 1);
+      if (state.bloom) resizeBloomPipeline(state.bloom, size.width, size.height, 1);
+      state.stage.resize();
+
+      const stream = renderer.domElement.captureStream(0);
+      const track = stream.getVideoTracks()[0];
+      const recorder = new MediaRecorder(stream, {
+        mimeType: format.mimeType,
+        videoBitsPerSecond: Math.round(size.width * size.height * fps * 0.25),
+      });
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) chunks.push(event.data);
+      };
+      recorder.onerror = (event) => {
+        recorderError = event.error || new Error("Video recorder failed.");
+      };
+      const stopped = new Promise((resolve) => {
+        recorder.onstop = resolve;
+      });
+      recorder.start(250);
+
+      try {
+        for (let i = 0; i < totalFrames; i += 1) {
+          if (signal?.aborted || recorderError) break;
+          const u = i / (totalFrames - 1);
+          const scaled = u * segments;
+          const seg = Math.min(segments - 1, Math.floor(scaled));
+          const localT = scaled - seg;
+          const eased = localT * localT * (3 - 2 * localT);
+          const a = shots[seg];
+          const b = shots[seg + 1];
+          vPosA.fromArray(a.position);
+          vPosB.fromArray(b.position);
+          vTgtA.fromArray(a.target);
+          vTgtB.fromArray(b.target);
+          camera.position.lerpVectors(vPosA, vPosB, eased);
+          controls.target.lerpVectors(vTgtA, vTgtB, eased);
+          const lensA = Number(a.lens) || 35;
+          const lensB = Number(b.lens) || 35;
+          camera.fov = croppedOutputFov(lensToFov(lensA + (lensB - lensA) * eased), viewAspect, outAspect);
+          camera.updateProjectionMatrix();
+          controls.update();
+          if (i > 0 && callbacksRef.current.onStep?.(1 / fps, performance.now())) {
+            state.shadowMapCache.invalidate();
+          }
+          state.draw();
+          track?.requestFrame?.();
+          onProgress?.({ current: i + 1, total: totalFrames });
+          await new Promise((resolve) => setTimeout(resolve, Math.max(8, Math.round(1000 / fps))));
+        }
+      } finally {
+        if (recorder.state !== "inactive") recorder.stop();
+        await stopped;
+        stream.getTracks().forEach((t) => t.stop());
+      }
+      if (signal?.aborted) {
+        const err = new Error("Dolly clip cancelled.");
+        err.name = "AbortError";
+        throw err;
+      }
+      if (recorderError) throw recorderError;
+      const blob = new Blob(chunks, { type: format.mimeType });
+      if (!blob.size) throw new Error("The video recorder produced no data.");
+      return { bytes: new Uint8Array(await blob.arrayBuffer()), extension: format.extension };
+    } finally {
+      state.recording = false;
+      if (state.disposed) return;
+      gizmoHelper.visible = gizmoWasVisible;
+      camera.position.copy(prevPos);
+      controls.target.copy(prevTarget);
+      camera.fov = prevFov;
+      camera.aspect = prevAspect;
+      camera.updateProjectionMatrix();
+      controls.update();
+      renderer.setPixelRatio(prevRatio);
+      if (!state.resize({ defer: false })) {
+        renderer.setSize(prevSize.x, prevSize.y, false);
+        if (state.ao) resizeAoPipeline(state.ao, prevSize.x, prevSize.y, prevRatio, { defer: false });
+        if (state.bloom) resizeBloomPipeline(state.bloom, prevSize.x, prevSize.y, prevRatio, { defer: false });
+        state.stage.resize({ defer: false });
+      }
+      state.shadowMapCache.invalidate();
+      state.requestRender();
+    }
   };
 
   useImperativeHandle(ref, () => ({
     requestRender: () => stateRef.current?.requestRender?.(),
     getRenderer: () => stateRef.current?.renderer || null,
     refit,
-    frameAll: (presetKey) => frameBounds(stateRef.current?.sceneBounds(), presetKey),
-    frameObject: (id, presetKey) => {
+    frameAll: (presetKey, options) => frameBounds(stateRef.current?.sceneBounds(), presetKey, options),
+    frameObject: (id, presetKey, options) => {
       const entry = (objectsRef.current || []).find((item) => item.id === id && item.controller);
-      if (entry) frameBounds(new THREE.Box3().setFromObject(entry.controller.holder), presetKey);
+      if (entry) frameBounds(new THREE.Box3().setFromObject(entry.controller.holder), presetKey, options);
     },
     /** The live camera as { position, target } arrays. */
     getCamera: () => {
@@ -620,15 +836,19 @@ const PhotoViewport = forwardRef(function PhotoViewport(
         target: state.controls.target.toArray().map((value) => Number(value.toFixed(3))),
       };
     },
-    setCamera: ({ position, target }) => {
+    setCamera: ({ position, target, lens: nextLens }, { instant = false } = {}) => {
       const state = stateRef.current;
       if (!state || !position || !target) return;
-      state.camera.position.fromArray(position);
-      state.controls.target.fromArray(target);
-      state.controls.update();
+      state.cameraGlide.to({
+        position,
+        target,
+        fov: Number.isFinite(nextLens) ? lensToFov(nextLens) : null,
+        instant,
+      });
       state.requestRender();
     },
     capture,
+    recordDollyVideo,
   }));
 
   return <div className="pm-viewport" ref={containerRef} />;

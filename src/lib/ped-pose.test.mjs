@@ -14,8 +14,10 @@ import {
   normalizeHeldProps,
   parseEmoteSnippet,
   propAttachmentMatrix,
+  blendPoses,
   computeBoneRotations,
   computePosedBoneMatrix,
+  findBoneIndexByTag,
   isValidClip,
   normalizePoseId,
   poseClip,
@@ -164,6 +166,15 @@ test("emote lines yield the clip and its props", () => {
   assert.equal(native.clip, "cellphone_text_read_base");
   assert.deepEqual(native.props[0], { source: "game", name: "prop_npc_phone_02", bone: 28422, position: [0, -0.01, 0.02], rotation: [10, 0, 90] });
 
+  const nestedPed = parseEmoteSnippet(`
+    local obj = CreateObject(GetHashKey("prop_notepad_01"), 0, 0, 0, true, true, true)
+    AttachEntityToEntity(obj, PlayerPedId(), GetPedBoneIndex(PlayerPedId(), 28422), 0.1, 0.2, 0.3, 15.0, -25.0, 45.0, true, true, false, true, 2, true)
+    TaskPlayAnim(GetPlayerPed(-1), "cellphone@", "cellphone_text_in", 8.0, -8.0, -1, 49, 0, false, false, false)
+  `);
+  assert.equal(nestedPed.dict, "cellphone@");
+  assert.equal(nestedPed.clip, "cellphone_text_in");
+  assert.deepEqual(nestedPed.props[0], { source: "game", name: "prop_notepad_01", bone: 28422, position: [0.1, 0.2, 0.3], rotation: [15, -25, 45] });
+
   assert.equal(parseEmoteSnippet("hello there"), null);
   assert.equal(parseEmoteSnippet(""), null);
 });
@@ -182,4 +193,31 @@ test("a held prop follows its bone with the offset in bone space", () => {
   const raised = new THREE.Vector3().setFromMatrixPosition(posed);
   assert.ok(raised.z > 0.95, "the prop rises with the posed hand");
   assert.equal(propAttachmentMatrix(SKELETON, null, { ...hand, bone: 12345 }), null, "missing bones attach nothing");
+});
+
+test("blendPoses smoothly interpolates rotations, translations and bind fallbacks", () => {
+  const poseA = sampleClipPose(SKELETON, CLIP, 0);
+  const poseB = {
+    rotations: new Map([[0, new THREE.Quaternion(0, 0, 1, 0)], [2, HALF_X.clone()]]),
+    translations: new Map([[0, new THREE.Vector3(-0.2, 0, 0)]]),
+  };
+
+  assert.equal(findBoneIndexByTag(SKELETON, PED_BONE_TAGS.lThigh), 2);
+  assert.equal(findBoneIndexByTag(SKELETON, 0x9999), -1);
+
+  assert.equal(blendPoses(poseA, poseB, 0, SKELETON), poseA);
+  assert.equal(blendPoses(poseA, poseB, 1, SKELETON), poseB);
+
+  const half = blendPoses(poseA, poseB, 0.5, SKELETON);
+  const expectedHalf = new THREE.Quaternion().slerp(HALF_X, 0.5);
+  assert.ok(half.rotations.get(2).angleTo(expectedHalf) < 1e-6);
+
+  // Blending from bind pose (null) to poseB interpolates from bind quaternion/position.
+  const fromBind = blendPoses(null, poseB, 0.5, SKELETON);
+  assert.ok(fromBind.rotations.get(2).angleTo(expectedHalf) < 1e-6);
+  assert.ok(fromBind.translations.get(0).distanceTo(new THREE.Vector3(-0.1, 0, 0)) < 1e-6);
+
+  // Blending from poseB back to bind pose (null) returns smoothly toward bind.
+  const toBind = blendPoses(poseB, null, 0.5, SKELETON);
+  assert.ok(toBind.rotations.get(2).angleTo(expectedHalf) < 1e-6);
 });

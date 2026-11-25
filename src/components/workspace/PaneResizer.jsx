@@ -99,24 +99,27 @@ export function usePreviewHeight(storageKey) {
       // A convenience; a full or blocked store only loses it.
     }
   }, [storageKey, height]);
+  const layoutHeight = (element) => (element ? element.offsetHeight || element.getBoundingClientRect().height : 0);
   const maxFor = (handle) => {
     const root = handle.closest(".lv-root");
-    return root ? root.getBoundingClientRect().height - PREVIEW_BELOW_MIN : Infinity;
+    return root ? layoutHeight(root) - PREVIEW_BELOW_MIN : Infinity;
   };
   const clamp = (value, max) => Math.round(Math.max(PREVIEW_MIN, Math.min(max, value)));
   const onPointerDown = (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
     const handle = event.currentTarget;
+    const pane = handle.parentElement;
     const startY = event.clientY;
-    const start = handle.parentElement.getBoundingClientRect().height;
+    const start = layoutHeight(pane);
+    const zoom = pane.offsetHeight ? pane.getBoundingClientRect().height / pane.offsetHeight || 1 : 1;
     const max = maxFor(handle);
     handle.setPointerCapture(event.pointerId);
     dragCssLength({
       handle,
       root: handle.closest(".lv-root"),
       property: "--sw-preview-h",
-      valueAt: (moveEvent) => clamp(start + moveEvent.clientY - startY, max),
+      valueAt: (moveEvent) => clamp(start + (moveEvent.clientY - startY) / zoom, max),
       commit: setHeight,
     });
   };
@@ -124,7 +127,7 @@ export function usePreviewHeight(storageKey) {
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
     event.preventDefault();
     const handle = event.currentTarget;
-    const current = handle.parentElement.getBoundingClientRect().height;
+    const current = layoutHeight(handle.parentElement);
     const step = event.shiftKey ? 64 : 24;
     setHeight(clamp(current + (event.key === "ArrowDown" ? step : -step), maxFor(handle)));
   };

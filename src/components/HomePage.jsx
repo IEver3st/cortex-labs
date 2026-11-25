@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Car,
@@ -358,15 +359,22 @@ export default function HomePage({
       );
   }, [refreshStale]);
 
-  // Close sort dropdown on outside click
+  // Close sort dropdown on outside click or Escape
   useEffect(() => {
     if (!showSortMenu) return;
     const handleClick = (e) => {
       if (sortWrapRef.current?.contains(e.target)) return;
       setShowSortMenu(false);
     };
+    const handleKey = (e) => {
+      if (e.key === "Escape") setShowSortMenu(false);
+    };
     window.addEventListener("mousedown", handleClick);
-    return () => window.removeEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
   }, [showSortMenu]);
 
   const togglePin = useCallback((wsId, e) => {
@@ -457,7 +465,7 @@ export default function HomePage({
   );
 
   const handleCreateProject = useCallback(() => {
-    const name = projectName.trim() || "Untitled Project";
+    const name = projectName.trim() || "Untitled project";
     if (selectedMode === "variants" || selectedMode === "templategen" || selectedMode === "eupstudio" || selectedMode === "propstudio" || selectedMode === "photo" || selectedMode === "sounds") {
       const id = createWorkspace(name, selectedMode);
       onNavigate(selectedMode, id);
@@ -577,6 +585,39 @@ export default function HomePage({
     },
     [onOpenWorkspace],
   );
+
+  // Page-level Enter opens the focused project when no control or dialog owns focus.
+  useEffect(() => {
+    if (!isActive || !showRecents || !focusEntry || selecting || showNewProject || pendingDelete || showSortMenu) {
+      return undefined;
+    }
+    const onKeyDown = (event) => {
+      if (event.key !== "Enter" || event.defaultPrevented || event.repeat) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]')) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('button, a, input, textarea, select, [role="button"], [role="menuitem"], [role="menuitemradio"], [contenteditable="true"]')) {
+        return;
+      }
+      event.preventDefault();
+      handleOpenRecent(focusEntry);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isActive, showRecents, focusEntry, selecting, showNewProject, pendingDelete, showSortMenu, handleOpenRecent]);
+
+  // Escape dismisses either Home modal even if focus hasn't moved inside it.
+  useEffect(() => {
+    if (!showNewProject && !pendingDelete) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (pendingDelete) setPendingDelete(null);
+      else if (showNewProject) setShowNewProject(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showNewProject, pendingDelete]);
 
   const openRecentSettings = useCallback(() => {
     window.dispatchEvent(new CustomEvent("cortex:open-settings"));
@@ -768,7 +809,7 @@ export default function HomePage({
           <div>
             <h2 className="hp-note-title">Recent projects are hidden</h2>
             <p className="hp-note-copy">
-              Turn on Session persistence in Settings to see your project history here.
+              Turn on Show projects in Settings to see your project history here.
             </p>
           </div>
           <button type="button" className="cx-btn" onClick={openRecentSettings}>
@@ -1171,181 +1212,187 @@ export default function HomePage({
         </button>
       </footer>
 
-      {/* ─── New Project ─── */}
-      <AnimatePresence>
-        {showNewProject && (
-          <motion.div
-            className="home-modal-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14 }}
-            onClick={() => setShowNewProject(false)}
-          >
-            <motion.div
-              className="home-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="home-modal-title"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
-              transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setShowNewProject(false);
-              }}
-            >
-              <div className="home-modal-header">
-                <h3 className="cx-display" id="home-modal-title">New project</h3>
-                <button
-                  type="button"
-                  className="cx-icon-btn"
-                  onClick={() => setShowNewProject(false)}
-                  aria-label="Close"
-                >
-                  <X aria-hidden="true" />
-                </button>
-              </div>
-              <div className="home-modal-body">
-                <label className="home-field">
-                  <span className="cx-label">Name</span>
-                  <input
-                    type="text"
-                    value={projectName}
-                    onChange={(e) => setProjectName(e.target.value)}
-                    placeholder="Untitled Project"
-                    autoFocus
-                    onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
-                  />
-                </label>
-                <fieldset className="home-field">
-                  <legend className="cx-label">Workspace</legend>
-                  <div className="home-mode-select">
-                    {MODES.map((mode) => (
-                      <button
-                        key={mode.id}
-                        type="button"
-                        className={`home-mode-option ${selectedMode === mode.id ? "is-selected" : ""}`}
-                        aria-pressed={selectedMode === mode.id}
-                        onClick={() => setSelectedMode(mode.id)}
-                      >
-                        <mode.icon aria-hidden="true" />
-                        <span>{mode.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </fieldset>
-              </div>
-              <div className="home-modal-footer">
-                <button
-                  type="button"
-                  className="cx-btn is-quiet"
-                  onClick={() => setShowNewProject(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="cx-btn is-primary"
-                  onClick={handleCreateProject}
-                >
-                  Create project
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ─── Delete confirmation ─── */}
-      <AnimatePresence>
-        {pendingDelete && (
-          <motion.div
-            className="home-modal-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14 }}
-            onClick={() => setPendingDelete(null)}
-          >
-            <motion.div
-              className="home-modal home-modal--confirm"
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby="home-delete-title"
-              aria-describedby="home-delete-desc"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
-              transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setPendingDelete(null);
-              }}
-            >
-              <div className="home-modal-header">
-                <h3 className="cx-display" id="home-delete-title">
-                  {pendingDelete.ids.length > 1 ? `Delete ${pendingDelete.ids.length} projects` : "Delete project"}
-                </h3>
-              </div>
-              <div className="home-modal-body">
-                {pendingDelete.ids.length > 1 ? (
-                  <>
-                    <p className="home-modal-copy" id="home-delete-desc">
-                      Remove these projects from Cortex Studio? Their saved workspace state is deleted.
-                      Your models, textures, and exports on disk are not touched.
-                    </p>
-                    <ul className="home-modal-names">
-                      {pendingDelete.names.slice(0, 6).map((name, index) => (
-                        <li key={pendingDelete.ids[index]}>{name}</li>
-                      ))}
-                      {pendingDelete.names.length > 6 ? (
-                        <li className="home-modal-names-more">and {pendingDelete.names.length - 6} more</li>
-                      ) : null}
-                    </ul>
-                  </>
-                ) : (
-                  <p className="home-modal-copy" id="home-delete-desc">
-                    Remove <strong>{pendingDelete.names[0]}</strong> from Cortex Studio? Its saved workspace
-                    state is deleted. Your models, textures, and exports on disk are not touched.
-                  </p>
+      {/* ─── New Project & Delete Modals (portalled above page chrome) ─── */}
+      {typeof document !== "undefined"
+        ? createPortal(
+            <>
+              <AnimatePresence>
+                {showNewProject && (
+                  <motion.div
+                    className="home-modal-overlay"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.14 }}
+                    onClick={() => setShowNewProject(false)}
+                  >
+                    <motion.div
+                      className="home-modal"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="home-modal-title"
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 6 }}
+                      transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setShowNewProject(false);
+                      }}
+                    >
+                      <div className="home-modal-header">
+                        <h3 className="cx-display" id="home-modal-title">New project</h3>
+                        <button
+                          type="button"
+                          className="cx-icon-btn"
+                          onClick={() => setShowNewProject(false)}
+                          aria-label="Close"
+                        >
+                          <X aria-hidden="true" />
+                        </button>
+                      </div>
+                      <div className="home-modal-body">
+                        <label className="home-field">
+                          <span className="cx-label">Name</span>
+                          <input
+                            type="text"
+                            value={projectName}
+                            onChange={(e) => setProjectName(e.target.value)}
+                            placeholder="Untitled project"
+                            autoFocus
+                            onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
+                          />
+                        </label>
+                        <fieldset className="home-field">
+                          <legend className="cx-label">Workspace</legend>
+                          <div className="home-mode-select">
+                            {MODES.map((mode) => (
+                              <button
+                                key={mode.id}
+                                type="button"
+                                className={`home-mode-option ${selectedMode === mode.id ? "is-selected" : ""}`}
+                                aria-pressed={selectedMode === mode.id}
+                                onClick={() => setSelectedMode(mode.id)}
+                              >
+                                <mode.icon aria-hidden="true" />
+                                <span>{mode.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </fieldset>
+                      </div>
+                      <div className="home-modal-footer">
+                        <button
+                          type="button"
+                          className="cx-btn is-quiet"
+                          onClick={() => setShowNewProject(false)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="cx-btn is-primary"
+                          onClick={handleCreateProject}
+                        >
+                          Create project
+                        </button>
+                      </div>
+                    </motion.div>
+                  </motion.div>
                 )}
-                {pendingDelete.failed ? (
-                  <p className="home-modal-error" role="alert">
-                    The project list could not be saved, so nothing was deleted. Storage may be full.
-                  </p>
-                ) : null}
-              </div>
-              <div className="home-modal-footer">
-                <button
-                  type="button"
-                  className="cx-btn is-quiet"
-                  onClick={() => setPendingDelete(null)}
-                  autoFocus
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="cx-btn is-danger"
-                  onClick={() => {
-                    if (performDeleteWorkspaces(pendingDelete.ids)) setPendingDelete(null);
-                    else setPendingDelete({ ...pendingDelete, failed: true });
-                  }}
-                >
-                  <Trash2 aria-hidden="true" />
-                  {pendingDelete.failed
-                    ? "Try again"
-                    : pendingDelete.ids.length > 1
-                      ? `Delete ${pendingDelete.ids.length} projects`
-                      : "Delete project"}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              </AnimatePresence>
+
+              <AnimatePresence>
+                {pendingDelete && (
+                  <motion.div
+                    className="home-modal-overlay"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.14 }}
+                    onClick={() => setPendingDelete(null)}
+                  >
+                    <motion.div
+                      className="home-modal home-modal--confirm"
+                      role="alertdialog"
+                      aria-modal="true"
+                      aria-labelledby="home-delete-title"
+                      aria-describedby="home-delete-desc"
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 6 }}
+                      transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setPendingDelete(null);
+                      }}
+                    >
+                      <div className="home-modal-header">
+                        <h3 className="cx-display" id="home-delete-title">
+                          {pendingDelete.ids.length > 1 ? `Delete ${pendingDelete.ids.length} projects` : "Delete project"}
+                        </h3>
+                      </div>
+                      <div className="home-modal-body">
+                        {pendingDelete.ids.length > 1 ? (
+                          <>
+                            <p className="home-modal-copy" id="home-delete-desc">
+                              Remove these projects from Cortex Studio? Their saved workspace state is deleted.
+                              Your models, textures, and exports on disk are not touched.
+                            </p>
+                            <ul className="home-modal-names">
+                              {pendingDelete.names.slice(0, 6).map((name, index) => (
+                                <li key={pendingDelete.ids[index]}>{name}</li>
+                              ))}
+                              {pendingDelete.names.length > 6 ? (
+                                <li className="home-modal-names-more">and {pendingDelete.names.length - 6} more</li>
+                              ) : null}
+                            </ul>
+                          </>
+                        ) : (
+                          <p className="home-modal-copy" id="home-delete-desc">
+                            Remove <strong>{pendingDelete.names[0]}</strong> from Cortex Studio? Its saved workspace
+                            state is deleted. Your models, textures, and exports on disk are not touched.
+                          </p>
+                        )}
+                        {pendingDelete.failed ? (
+                          <p className="home-modal-error" role="alert">
+                            The project list could not be saved, so nothing was deleted. Storage may be full.
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="home-modal-footer">
+                        <button
+                          type="button"
+                          className="cx-btn is-quiet"
+                          onClick={() => setPendingDelete(null)}
+                          autoFocus
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="cx-btn is-danger"
+                          onClick={() => {
+                            if (performDeleteWorkspaces(pendingDelete.ids)) setPendingDelete(null);
+                            else setPendingDelete({ ...pendingDelete, failed: true });
+                          }}
+                        >
+                          <Trash2 aria-hidden="true" />
+                          {pendingDelete.failed
+                            ? "Try again"
+                            : pendingDelete.ids.length > 1
+                              ? `Delete ${pendingDelete.ids.length} projects`
+                              : "Delete project"}
+                        </button>
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

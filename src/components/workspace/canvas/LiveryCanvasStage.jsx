@@ -70,10 +70,13 @@ function SheetView({ canvas }) {
   const { sheet, doc } = canvas;
   const items = doc?.items || [];
 
+  const hostZoom = (host) => (host?.offsetWidth ? host.getBoundingClientRect().width / host.offsetWidth || 1 : 1);
+
   const fit = useCallback(() => {
     const host = hostRef.current;
     if (!host) return;
-    const { width, height } = host.getBoundingClientRect();
+    const width = host.clientWidth || host.getBoundingClientRect().width;
+    const height = host.clientHeight || host.getBoundingClientRect().height;
     if (!width || !height) return;
     const scale = Math.min(width / sheet.width, height / sheet.height) * 0.94;
     setView({ scale, x: (width - sheet.width * scale) / 2, y: (height - sheet.height * scale) / 2 });
@@ -124,16 +127,21 @@ function SheetView({ canvas }) {
 
   const sheetPoint = useCallback((event) => {
     const host = hostRef.current;
+    const zoom = hostZoom(host);
     const rect = host.getBoundingClientRect();
-    return { x: (event.clientX - rect.left - view.x) / view.scale, y: (event.clientY - rect.top - view.y) / view.scale };
+    return {
+      x: ((event.clientX - rect.left) / zoom - view.x) / view.scale,
+      y: ((event.clientY - rect.top) / zoom - view.y) / view.scale,
+    };
   }, [view]);
 
   const onWheel = useCallback((event) => {
     if (!view.scale) return;
     const host = hostRef.current;
+    const zoom = hostZoom(host);
     const rect = host.getBoundingClientRect();
-    const px = event.clientX - rect.left;
-    const py = event.clientY - rect.top;
+    const px = (event.clientX - rect.left) / zoom;
+    const py = (event.clientY - rect.top) / zoom;
     const factor = Math.exp(-event.deltaY * 0.0015);
     setView((current) => {
       const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, current.scale * factor));
@@ -198,8 +206,9 @@ function SheetView({ canvas }) {
       return;
     }
     if (drag.kind === "pan") {
-      const dx = event.clientX - drag.startX;
-      const dy = event.clientY - drag.startY;
+      const zoom = hostZoom(hostRef.current);
+      const dx = (event.clientX - drag.startX) / zoom;
+      const dy = (event.clientY - drag.startY) / zoom;
       if (Math.hypot(dx, dy) > CLICK_SLOP_PX) drag.moved = true;
       if (drag.moved) setView({ ...drag.view, x: drag.view.x + dx, y: drag.view.y + dy });
       return;

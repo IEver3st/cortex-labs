@@ -4,7 +4,9 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls";
 import { computePedBounds } from "../../lib/ped-assembly";
 import { createViewerStage } from "../../lib/viewer-stage.js";
-import { applyShadowFlags, configureShadowLight, createSolidWireMaterial, renderSolidWire } from "../../lib/viewer-render-effects.js";
+import { createCameraGlide } from "../../lib/camera-glide.js";
+import { clearNativeTextureCache } from "../../lib/native-materials.js";
+import { applyShadowFlags, configureShadowLight, createShadowMapCache, createSolidWireMaterial, renderSolidWire } from "../../lib/viewer-render-effects.js";
 import { countDrawnGeometry, createMeshStatsReporter } from "../../lib/mesh-stats.js";
 import { shotFov } from "../../lib/eup-export.js";
 import { onViewerControlsChange, previewPixelRatio, readViewerControls } from "../../lib/preview-detail.js";
@@ -237,6 +239,7 @@ const EupViewport = forwardRef(function EupViewport(
   const solidWireRef = useRef({ on: showSolidWireframe, onStats: onMeshStats, material: null, reporter: createMeshStatsReporter() });
   solidWireRef.current.on = showSolidWireframe;
   solidWireRef.current.onStats = onMeshStats;
+  const presetMountedRef = useRef(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -248,8 +251,12 @@ const EupViewport = forwardRef(function EupViewport(
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(new THREE.Color(backgroundColor || "#141414"), 1);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const shadowMapCache = createShadowMapCache(renderer);
 
     const scene = new THREE.Scene();
+    scene.onBeforeRender = (_renderer, _scene, _camera, target) => {
+      if (!target) shadowMapCache.update(scene);
+    };
     const camera = new THREE.PerspectiveCamera(FOV, 1, 0.05, 200);
     camera.position.set(0, 1, 3.5);
 
@@ -261,6 +268,8 @@ const EupViewport = forwardRef(function EupViewport(
     controls.zoomToCursor = viewerControls.zoomToCursor;
     controls.maxDistance = 20;
     controls.target.set(0, 0.9, 0);
+    const cameraGlide = createCameraGlide({ camera, controls });
+    const cancelGlide = () => cameraGlide.cancel();
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.5 * lightIntensity);
     const key = new THREE.DirectionalLight(0xffffff, 0.9 * lightIntensity);
@@ -287,10 +296,12 @@ const EupViewport = forwardRef(function EupViewport(
       scene,
       camera,
       controls,
+      cameraGlide,
       gizmo: gizmoControls,
       gizmoHelper,
       lights: { ambient, key, rim },
       stage: stageApi,
+      shadowMapCache,
       frameId: 0,
       lastTime: 0,
       pendingWhileInactive: false,
@@ -307,18 +318,33 @@ const EupViewport = forwardRef(function EupViewport(
       state.shadowsDirty = false;
       if (pedRoot) applyShadowFlags(pedRoot, stageApi.castsShadows);
       if (setRoot) applyShadowFlags(setRoot, stageApi.castsShadows);
+      shadowMapCache.invalidate();
     };
 
-    const resize = () => {
+    let lastW = 0;
+    let lastH = 0;
+    let lastRatio = 0;
+    const resize = ({ defer = false } = {}) => {
       const width = container.clientWidth;
       const height = container.clientHeight;
       if (!width || !height) return false;
+      const ratio = renderer.getPixelRatio();
+      if (width === lastW && height === lastH && ratio === lastRatio) {
+        if (!defer) stageApi.resize({ defer: false });
+        return false;
+      }
+      const hadViewport = lastW > 0 && lastH > 0;
+      const ratioChanged = ratio !== lastRatio;
+      lastW = width;
+      lastH = height;
+      lastRatio = ratio;
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      stageApi.resize();
+      stageApi.resize(defer && hadViewport && !ratioChanged ? { defer: true, onSettled: requestRender } : { defer: false });
       return true;
     };
+    state.resize = resize;
 
     const tick = (now) => {
       if (state.disposed) return;
@@ -331,7 +357,9 @@ const EupViewport = forwardRef(function EupViewport(
         onAnimateRef.current?.(dt);
       }
       state.lastTime = animate ? now : 0;
+      const gliding = cameraGlide.step(now);
       const moved = controls.update();
+      if (animate || gizmoControls.dragging) shadowMapCache.invalidate();
       if (gizmoControls.object && !gizmoControls.object.parent) gizmoControls.detach();
       if (state.shadowsDirty) state.applyShadows();
       renderer.render(scene, camera);
@@ -345,7 +373,7 @@ const EupViewport = forwardRef(function EupViewport(
         const models = pedRoot.children.filter((figure) => countDrawnGeometry([figure]).meshes > 0).length;
         wire.onStats?.({ ...stats, models, size: models > 1 ? null : stats.size });
       });
-      if (moved || animate) requestRender();
+      if (moved || gliding || animate) requestRender();
     };
 
     const requestRender = () => {
@@ -429,20 +457,22 @@ const EupViewport = forwardRef(function EupViewport(
     };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointerdown", cancelGlide, { passive: true });
+    renderer.domElement.addEventListener("wheel", cancelGlide, { passive: true });
 
     const observer = new ResizeObserver(() => {
-      if (resize()) renderNow();
+      if (resize({ defer: true })) renderNow();
       else requestRender();
     });
     observer.observe(container);
-    resize();
+    resize({ defer: false });
     requestRender();
     const stopViewerControls = onViewerControlsChange(viewerControls, (next) => {
       viewerControls = next;
       controls.zoomToCursor = next.zoomToCursor;
       if (state.recording) return;
       renderer.setPixelRatio(previewPixelRatio(next.detail));
-      if (resize()) renderNow();
+      if (resize({ defer: false })) renderNow();
       else requestRender();
     });
 
@@ -453,6 +483,9 @@ const EupViewport = forwardRef(function EupViewport(
       controls.removeEventListener("change", requestRender);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointerdown", cancelGlide);
+      renderer.domElement.removeEventListener("wheel", cancelGlide);
+      cameraGlide.cancel();
       if (state.frameId) cancelAnimationFrame(state.frameId);
       gizmoControls.detach();
       gizmoControls.dispose();
@@ -465,6 +498,7 @@ const EupViewport = forwardRef(function EupViewport(
       solidWireRef.current.material?.dispose();
       solidWireRef.current.material = null;
       solidWireRef.current.reporter.reset();
+      clearNativeTextureCache(renderer);
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();
@@ -530,7 +564,7 @@ const EupViewport = forwardRef(function EupViewport(
     state.lights.key.intensity = levels.key * lightIntensity;
     state.lights.rim.intensity = levels.rim * lightIntensity;
     state.stage.constrainControls(state.controls);
-    state.renderer.shadowMap.needsUpdate = true;
+    state.shadowMapCache.invalidate();
     state.requestRender();
   }, [stage, showGrid, showShadows, lightIntensity, enabled]);
 
@@ -538,7 +572,7 @@ const EupViewport = forwardRef(function EupViewport(
     const state = stateRef.current;
     if (!state || !showroom) return;
     state.stage.setShowroom(showroom);
-    state.renderer.shadowMap.needsUpdate = true;
+    state.shadowMapCache.invalidate();
     state.requestRender();
   }, [showroom, enabled]);
 
@@ -587,20 +621,21 @@ const EupViewport = forwardRef(function EupViewport(
     };
   };
 
-  const frame = (presetKey = cameraPreset) => {
+  const frame = (presetKey = cameraPreset, { instant = false } = {}) => {
     const state = stateRef.current;
     if (!state) return;
     const { camera, controls } = state;
     const framing = framingFor(presetKey, camera.aspect);
-    camera.position.copy(framing.position);
-    camera.near = framing.near;
-    camera.far = framing.far;
-    camera.updateProjectionMatrix();
-    controls.target.copy(framing.target);
     controls.minDistance = framing.minDistance;
     controls.maxDistance = framing.maxDistance;
     refit();
-    controls.update();
+    state.cameraGlide.to({
+      position: framing.position,
+      target: framing.target,
+      near: framing.near,
+      far: framing.far,
+      instant,
+    });
     state.requestRender();
   };
 
@@ -614,12 +649,14 @@ const EupViewport = forwardRef(function EupViewport(
     padded.min.y = Math.min(bounds.min.y, 0);
     state.stage.fit(padded, []);
     state.stage.constrainControls(state.controls);
-    state.renderer.shadowMap.needsUpdate = true;
+    state.shadowMapCache.invalidate();
     state.requestRender();
   };
 
   useEffect(() => {
-    frame(cameraPreset);
+    const instant = !presetMountedRef.current;
+    presetMountedRef.current = true;
+    frame(cameraPreset, { instant });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraPreset]);
 
@@ -655,8 +692,9 @@ const EupViewport = forwardRef(function EupViewport(
     if (state.recording) throw new Error("A video is recording");
     const { renderer, scene, stage } = state;
     const shot = shotCamera(width, height, angle);
+    state.cameraGlide.cancel();
     state.applyShadows();
-    renderer.shadowMap.needsUpdate = true;
+    state.shadowMapCache.invalidate();
     if (transparent) {
       const target = new THREE.WebGLRenderTarget(width, height, { samples: 4, type: THREE.HalfFloatType });
       const previousTarget = renderer.getRenderTarget();
@@ -717,6 +755,7 @@ const EupViewport = forwardRef(function EupViewport(
     const offset = shot.position.clone().sub(pivot);
     const previousRatio = renderer.getPixelRatio();
     const previousSize = renderer.getSize(new THREE.Vector2());
+    state.cameraGlide.cancel();
     state.recording = true;
     if (state.frameId) {
       cancelAnimationFrame(state.frameId);
@@ -765,7 +804,10 @@ const EupViewport = forwardRef(function EupViewport(
           const elapsed = (now - start) / 1000;
           const dt = Math.min((now - last) / 1000, 0.1);
           last = now;
-          if (animatingRef.current) onAnimateRef.current?.(dt);
+          if (animatingRef.current) {
+            onAnimateRef.current?.(dt);
+            state.shadowMapCache.invalidate();
+          }
           if (cameraMode === "turntable") {
             shot.position.copy(pivot).add(offset.clone().applyAxisAngle(UP, (elapsed / seconds) * Math.PI * 2));
             shot.lookAt(pivot);
@@ -818,6 +860,7 @@ const EupViewport = forwardRef(function EupViewport(
       const state = stateRef.current;
       if (!state) return;
       state.shadowsDirty = true;
+      state.shadowMapCache.invalidate();
       state.requestRender();
     },
     frame,
@@ -827,6 +870,7 @@ const EupViewport = forwardRef(function EupViewport(
     captureScreenshot: () => {
       const state = stateRef.current;
       if (!state) return null;
+      state.resize?.({ defer: false });
       state.controls.update();
       const showGizmo = hideGizmo(state);
       try {

@@ -13,7 +13,7 @@ The page uses the viewer layout: what's on set on the left with **Take photo** p
 
 - **Vehicles** lists every vehicle your game files define, including DLC vehicles. Search by model name, display name or make, or filter by class. **Your own .yft…** adds a vehicle model from disk instead, with the textures found next to it and in its resource.
 - **People** adds the freemode male or female ped with a look (face, skin tone and hair) and a set of clothes. Both can change later in the inspector.
-- **Props** searches the game's drawables by name, for example `cone` or `barrier`. **Your own model…** adds a `.ydr`, `.yft` or `.ydd` from disk.
+- **Props** searches the game's drawables by name, for example `cone` or `barrier`. **Your own model…** adds a `.ydr`, `.yft`, `.ydd`, `.glb` or `.gltf` from disk. You can also drag and drop `.yft`, `.ydr`, `.ydd`, `.glb` or `.gltf` files directly onto the viewfinder to add them to the set.
 
 New objects line up side by side so nothing starts inside anything else. The first time you add a game vehicle or prop, Cortex extracts it into its own cache; your game files are only read.
 
@@ -43,7 +43,7 @@ Paint and lighting are a preview of the game's look, not an exact match.
 ## People
 
 - **Appearance**: switch between the male and female ped, and pick a look and clothes.
-- **Pose**: choose from 17 poses, from standing and walking to leaning, sitting, kneeling, hands up and cuffed, or **Any game animation…** to search the game's animation dictionaries and pick any clip in them.
+- **Pose**: choose from 17 poses, from standing and walking to leaning, sitting, kneeling, hands up and cuffed, or **Custom / .ycd animation…** to search the game's animation dictionaries or load your own `.ycd` file directly. When a clip is loaded, **Copy motion QA** copies loop-seam and motion findings.
 - **Frame** picks the moment of the animation the photo shows. The play button (or **Space**) plays it in place; pausing keeps the frame it stopped on.
 
 If an animation isn't in your game files, the Pose group says so and the person keeps their previous pose.
@@ -55,7 +55,7 @@ The deck frames the whole set from the **Front**, **Rear**, **Side**, **3/4**, *
 In the Camera tab:
 
 - **Lens** sets the focal length from 14 to 200 mm. Wide lenses exaggerate depth; 85 mm and longer flatten it.
-- **Saved views** keeps up to 12 camera positions with their lens, so you can return to a shot after rearranging the set.
+- **Saved views** keeps up to 12 camera positions with their lens, so you can return to a shot after rearranging the set. With 2 or more saved views, **Shoot all** renders every saved view into a folder as PNGs, and **Dolly clip** records a smooth 30 fps eased camera video gliding through every saved view.
 - **Photo** sets the size: 1920 × 1080, 2560 × 1440, 3840 × 2160, 2048 × 2048, 1080 × 1350 or 1080 × 1920. **Frame guide** shows that frame in the viewfinder with thirds and dims everything outside it.
 
 ## Taking the photo
@@ -70,7 +70,7 @@ In the showroom every object gets its own spotlight, set in the **Spotlight** gr
 
 ## Scene
 
-The Scene tab holds the stage: **Workbench** with your backdrop colour, grid and ground shadows, or **Showroom**, a dark studio with a reflective floor and one spotlight sized to everything on set. In the showroom the Scene tab sets the direction and strength every spotlight starts from, the floor's reflections, the beams and the floor finish. **Fill light** sets the overall light level, and **Dark room** dims the studio, spotlights included, so vehicle lights carry a night shot. **Vehicle lights** sets how strongly lit lamps glow, how much light they throw on their surroundings, and an optional haze along their beams.
+The Scene tab starts with **Studio looks** — one-click presets (**Showroom**, **Clean dark**, **Clean light**, **Moody rim**, **Night glow**, **Inspect**) that configure stage, lighting and backdrop together — followed by full manual controls. Choose **Workbench** with your backdrop colour, grid and ground shadows, or **Showroom**, a dark studio with a reflective floor and per-object spotlights (up to six at once). In the showroom the Scene tab sets the direction and strength every spotlight starts from, the floor's reflections, the beams and the floor finish. **Fill light** sets the overall light level, and **Dark room** dims the studio, spotlights included, so vehicle lights carry a night shot. **Vehicle lights** sets how strongly lit lamps glow, how much light they throw on their surroundings, and an optional haze along their beams.
 
 ## Saving your work
 

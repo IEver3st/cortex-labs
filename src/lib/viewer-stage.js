@@ -106,6 +106,14 @@ function isLightColor(color) {
   return c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722 > 0.45;
 }
 
+const FLOOR_SPIRAL_TAPS_GLSL = Array.from({ length: 12 }, (_, i) => {
+  const angle = i * 2.3999632;
+  const r = Math.sqrt((i + 0.5) / 12);
+  const dx = (Math.cos(angle) * r).toFixed(6);
+  const dy = (Math.sin(angle) * r).toFixed(6);
+  return `        accumTap(tDiffuse, uv, lod, blur, sc, ss, vec2(${dx}, ${dy}), reflection, weight);`;
+}).join("\n");
+
 /* Showroom floor, drawn by a Reflector so it owns the mirror render. The
    surface is lit analytically by the stage spot (the real spot still lights
    the vehicle and casts its shadow onto the catcher above), darkened under
@@ -125,8 +133,8 @@ const SHOWROOM_FLOOR_SHADER = {
       uAlbedo: { value: 0.3 },
       uCenter: { value: new THREE.Vector2() },
       uHalf: { value: new THREE.Vector2(1, 1) },
-      // Turntable yaw: every contact footprint turns about its own centre.
-      uSpin: { value: 0 },
+      // Turntable yaw: precomputed (cos, sin) so footprintEdge avoids per-pixel trig.
+      uSpinCS: { value: new THREE.Vector2(1, 0) },
       uRadius: { value: 2.5 },
       uSpotPos: { value: new THREE.Vector3(0, 5, 0) },
       uSpotDir: { value: new THREE.Vector3(0, -1, 0) },
@@ -174,7 +182,7 @@ const SHOWROOM_FLOOR_SHADER = {
     uniform float uAlbedo;
     uniform vec2 uCenter;
     uniform vec2 uHalf;
-    uniform float uSpin;
+    uniform vec2 uSpinCS;
     uniform float uRadius;
     uniform vec3 uSpotPos;
     uniform vec3 uSpotDir;
@@ -221,9 +229,7 @@ const SHOWROOM_FLOOR_SHADER = {
     float footprintEdge(vec2 p, vec2 center, vec2 halfSize) {
       // World xz back into the unspun footprint (a turn of uSpin about +Y).
       vec2 d = p - center;
-      float c = cos(uSpin);
-      float s = sin(uSpin);
-      vec2 q = abs(vec2(c * d.x - s * d.y, s * d.x + c * d.y)) - halfSize;
+      vec2 q = abs(vec2(uSpinCS.x * d.x - uSpinCS.y * d.y, uSpinCS.y * d.x + uSpinCS.x * d.y)) - halfSize;
       return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
     }
     float footprintContact(float edge, vec2 halfSize) {
@@ -269,196 +275,205 @@ const SHOWROOM_FLOOR_SHADER = {
       vec2 i = 2.0 * (abs(fract((q - 0.5 * w) * 0.5) - 0.5) - abs(fract((q + 0.5 * w) * 0.5) - 0.5)) / w;
       return 0.5 - 0.5 * i.x * i.y;
     }
+    void accumTap(sampler2D tex, vec2 uv, float lod, float blur, float sc, float ss, vec2 d, inout vec3 acc, inout float weight) {
+      vec2 offset = vec2(d.x * sc - d.y * ss, (d.x * ss + d.y * sc) * 2.4) * blur;
+      vec3 tap = textureLod(tex, uv + offset, lod).rgb;
+      // Lit emitters (sirens, lamps) are far above 1. Caught by only some
+      // taps under the per-pixel rotation, they stipple the floor, and the
+      // stipple crawls as the reflection moves. Weighting down the excess
+      // over 1 keeps them bright but stable; ordinary content is unchanged.
+      float w = 1.0 / (1.0 + max(dot(tap, vec3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0));
+      acc += tap * w;
+      weight += w;
+    }
 
     void main() {
       // p places the floor around the subject; t is the surface pattern, which
       // can scroll under a ped walking in place.
       vec2 p = vWorld.xz;
-      vec2 t = p * uPattern + uScroll;
-      float mottle = floorOctave(t, 0.32) * 0.55 + floorOctave(t + 7.1, 0.85) * 0.3 + floorOctave(t - 3.7, 2.4) * 0.15;
-      float grain = floorOctave(t, 24.0) * 0.5 + floorOctave(t + 1.3, 61.0) * 0.5;
-      // Per finish: lit colour, roughness, how the unlit floor reads against
-      // the void (shade), mirror strength (gloss) and reflection ripple (bump).
-      vec3 albedo = vec3(uAlbedo * clamp(1.0 + mottle * 0.5 + grain * 0.45, 0.4, 1.6));
-      float rough = clamp(0.55 + mottle * 0.7, 0.25, 1.0);
-      float shade = 1.0;
-      float gloss = 1.0;
-      float bumpScale = 1.0;
-      vec2 bumpExtra = vec2(0.0);
-      if (uStyle == FLOOR_POLISHED) {
-        // Polished screed: the same stone, ground smooth.
-        albedo = vec3(uAlbedo * clamp(0.85 + mottle * 0.4 + grain * 0.15, 0.4, 1.4));
-        rough = clamp(0.14 + mottle * 0.3, 0.05, 0.4);
-      } else if (uStyle == FLOOR_TILES) {
-        // Large-format tiles: per-tile tone, low roughness, dark grout lines.
-        vec2 cell = floor(t / uTile);
-        float grout = gridJoint(t, vec2(uTile), 0.003);
-        float tone = floorHash(cell + 17.0) - 0.5;
-        albedo = vec3(uAlbedo * clamp(1.0 + tone * 0.22 + grain * 0.12, 0.5, 1.5) * mix(1.0, 0.35, grout));
-        rough = mix(clamp(0.24 + tone * 0.2 + mottle * 0.2, 0.1, 0.5), 1.0, grout);
-      } else if (uStyle == FLOOR_MARBLE) {
-        // Pale polished marble in 1.2 m slabs. Veins are where domain-warped
-        // noise crosses zero, so they meander instead of banding.
-        vec2 slab = floor(t / 1.2);
-        vec2 w = t + slab * 7.3 + 1.6 * vec2(floorOctave(t, 0.35), floorOctave(t + 5.2, 0.35))
-          + 0.5 * vec2(floorOctave(t + 1.7, 1.1), floorOctave(t - 2.9, 1.1));
-        float n = floorNoise(w * 0.9) + 0.5 * floorNoise(w * 2.1 + 3.0);
-        float veins = (1.0 - smoothstep(0.0, 0.018 + fwidth(n), abs(n))) * patternDetail(w * 1.5);
-        float n2 = floorNoise(w * 3.7 + 9.0);
-        float fine = (1.0 - smoothstep(0.0, 0.02 + fwidth(n2), abs(n2))) * patternDetail(w * 3.7);
-        float tone = floorHash(slab + 5.0) - 0.5;
-        float seam = gridJoint(t, vec2(1.2), 0.0012);
-        float stone = clamp(1.0 + tone * 0.12 + mottle * 0.2, 0.75, 1.25) * (1.0 - veins * 0.35 - fine * 0.12) * mix(1.0, 0.7, seam);
-        albedo = uAlbedo * 1.9 * stone * vec3(1.0, 0.985, 0.96);
-        rough = clamp(0.07 + veins * 0.06 + mottle * 0.06, 0.04, 0.2);
-        shade = 1.0 + (stone - 1.0) * 0.6;
-        bumpScale = 0.35;
-      } else if (uStyle == FLOOR_CHECKER) {
-        // Black and white 0.45 m glazed tiles with fine grout.
-        vec2 q = t / 0.45;
-        float white = checker(q);
-        float tone = floorHash(floor(q) + 31.0) - 0.5;
-        float grout = gridJoint(t, vec2(0.45), 0.002);
-        albedo = vec3(uAlbedo * mix(0.12, 2.1, white) * clamp(1.0 + tone * 0.08 + grain * 0.08, 0.8, 1.2) * mix(1.0, 0.4, grout));
-        rough = mix(clamp(0.1 + tone * 0.06 + mottle * 0.08, 0.05, 0.25), 0.9, grout);
-        shade = mix(0.75, 1.35, white);
-        bumpScale = 0.4;
-      } else if (uStyle == FLOOR_EPOXY) {
-        // Garage epoxy: slate resin, near-mirror gloss, scattered flake.
-        vec2 q = t * 28.0;
-        vec2 cell = floor(q);
-        vec2 at = vec2(floorHash(cell + 11.0), floorHash(cell + 23.0)) * 0.5 + 0.25;
-        float flake = (1.0 - smoothstep(0.16, 0.26, length(fract(q) - at))) * step(0.45, floorHash(cell + 3.0)) * patternDetail(q);
-        float flakeTone = floorHash(cell + 41.0) < 0.5 ? 0.3 : 2.4;
-        float speck = floorOctave(t + 4.4, 90.0);
-        albedo = uAlbedo * 0.7 * clamp(1.0 + mottle * 0.15 + speck * 0.5, 0.7, 1.3) * mix(1.0, flakeTone, flake * 0.8) * vec3(0.84, 0.92, 1.06);
-        rough = clamp(0.05 + mottle * 0.04 + flake * 0.1, 0.03, 0.18);
-        gloss = 1.15;
-        bumpScale = 0.2;
-      } else if (uStyle == FLOOR_ASPHALT) {
-        // Asphalt: pale aggregate in black binder, barely reflective.
-        vec2 q = t * 30.0;
-        vec2 cell = floor(q);
-        vec2 at = vec2(floorHash(cell + 7.0), floorHash(cell + 19.0)) * 0.5 + 0.25;
-        float stone = (1.0 - smoothstep(0.15, 0.32, length(fract(q) - at))) * step(0.4, floorHash(cell + 2.0)) * patternDetail(q);
-        float stoneTone = 0.8 + floorHash(cell + 29.0) * 1.4;
-        albedo = vec3(uAlbedo * 0.6 * clamp(1.0 + mottle * 0.35 + grain * 0.6, 0.5, 1.6) * mix(1.0, stoneTone, stone));
-        rough = clamp(0.85 + grain * 0.2, 0.7, 1.0);
-        shade = 0.85;
-        gloss = 0.35;
-        bumpScale = 1.6;
-      } else if (uStyle == FLOOR_WOOD) {
-        // Lacquered oak boards, 0.2 m by 2.4 m, running front to back with
-        // staggered ends.
-        float board = floor(t.x / 0.2);
-        float along = t.y + floorHash(vec2(board, 3.0)) * 2.4;
-        vec2 id = vec2(board, floor(along / 2.4));
-        float tone = floorHash(id + 13.0) - 0.5;
-        float side = min(fract(t.x / 0.2), 1.0 - fract(t.x / 0.2)) * 0.2;
-        float end = min(fract(along / 2.4), 1.0 - fract(along / 2.4)) * 2.4;
-        float gap = min(side, end);
-        float joint = 1.0 - smoothstep(0.0012, 0.0012 + max(fwidth(gap) * 1.5, 0.0005), gap);
-        vec2 g = vec2(t.x * 9.0, t.y * 0.35) + id * 17.3;
-        float figure = floorOctave(g, 6.0) * 0.6 + floorOctave(g * vec2(1.0, 0.5) + 2.0, 21.0) * 0.4;
-        float wood = clamp(1.0 + tone * 0.35 + figure * 0.55, 0.5, 1.5) * mix(1.0, 0.3, joint);
-        albedo = uAlbedo * 1.15 * wood * vec3(1.0, 0.68, 0.42);
-        rough = mix(clamp(0.28 + tone * 0.12 + figure * 0.1, 0.15, 0.45), 0.9, joint);
-        shade = 1.0 + (wood - 1.0) * 0.5;
-        bumpScale = 0.5;
-      } else if (uStyle == FLOOR_TREAD) {
-        // Aluminium tread plate: raised lugs on a 6 cm grid, alternating
-        // 45 degrees, over a brushed sheet.
-        vec2 q = t / 0.06;
-        vec2 cell = floor(q);
-        vec2 f = fract(q) - 0.5;
-        vec2 axis = normalize(vec2(1.0, mod(cell.x + cell.y, 2.0) < 0.5 ? 1.0 : -1.0));
-        vec2 across = vec2(-axis.y, axis.x);
-        vec2 rs = vec2(dot(f, axis), dot(f, across)) / vec2(0.36, 0.075);
-        float d = length(rs);
-        float detail = patternDetail(q);
-        float lug = (1.0 - smoothstep(0.8, 1.0 + fwidth(d), d)) * detail;
-        // The lug's sloped rim tilts the reflection outward from its centre.
-        vec2 slope = rs.x / 0.36 * axis + rs.y / 0.075 * across;
-        float brushed = floorOctave(vec2(t.x * 0.2, t.y * 40.0), 8.0);
-        float rim = lug * (1.0 - lug) * 4.0;
-        albedo = uAlbedo * 1.2 * clamp(1.0 + brushed * 0.25 + mottle * 0.2, 0.7, 1.3) * mix(1.0, 1.5, lug) * (1.0 - rim * 0.35) * vec3(0.98, 0.99, 1.02);
-        rough = clamp(0.32 - lug * 0.12 + brushed * 0.08, 0.12, 0.45);
-        gloss = 1.2;
-        bumpScale = 0.5;
-        bumpExtra = normalize(slope + 1e-5) * rim * 0.006;
-      }
-
-      // A lineup gets one pool and one contact shadow per vehicle; a single
-      // subject keeps the one stage spot and footprint.
-      vec3 irradiance = vec3(0.0);
-      float edge = 1e6;
-      float contact = 1.0;
-      if (uBayCount > 0) {
-        for (int i = 0; i < BAY_LIMIT; i++) {
-          if (i >= uBayCount) break;
-          irradiance += spotPool(uBaySpot[i].xyz, uBayDir[i], uBayCone[i], uBaySpot[i].w) * uBayColor[i];
-          float bayEdge = footprintEdge(p, uBayBox[i].xy, uBayBox[i].zw);
-          edge = min(edge, bayEdge);
-          contact = min(contact, footprintContact(bayEdge, uBayBox[i].zw));
-        }
+      float distFromCenter = length(p - uCenter);
+      float voidFade = smoothstep(uFade.x, uFade.y, distFromCenter);
+      vec3 voidOut = linearToOutputTexel(vec4(uVoid, 1.0)).rgb;
+      if (voidFade >= 0.999) {
+        gl_FragColor = vec4(voidOut, 1.0);
       } else {
-        irradiance = spotPool(uSpotPos, uSpotDir, uSpotCone, uSpotPower);
-        edge = footprintEdge(p, uCenter, uHalf);
-        contact = footprintContact(edge, uHalf);
-      }
-      // Prop lights, attenuated as the scene lights them (decay 0, windowed by
-      // range, smoothstep cone) and brought to the spot term's scale by 1/pi.
-      for (int i = 0; i < ACCENT_LIMIT; i++) {
-        if (i >= uAccentCount) break;
-        vec3 toAccent = uAccentPos[i].xyz - vWorld;
-        float accentDist = max(length(toAccent), 1e-4);
-        vec3 La = toAccent / accentDist;
-        float range = uAccentPos[i].w;
-        float window = range > 0.0 ? pow2(saturate(1.0 - pow4(accentDist / range))) : 1.0;
-        float accentCone = uAccentDir[i].w < -1.5 ? 1.0 : smoothstep(uAccentDir[i].w, uAccentColor[i].w, dot(-La, uAccentDir[i].xyz));
-        irradiance += uAccentColor[i].rgb * (window * accentCone * max(La.y, 0.0) * RECIPROCAL_PI);
-      }
-
-      vec3 color = (uVoid * (1.0 + mottle * 0.6 + grain * 0.3) * shade + albedo * irradiance) * contact;
-
-      if (uReflect > 0.001) {
-        vec2 bump = vec2(floorOctave(t + 11.0, 9.0), floorOctave(t - 5.0, 9.0))
-          + 0.5 * vec2(floorOctave(t + 2.0, 31.0), floorOctave(t - 9.0, 31.0));
-        vec2 uv = vUv.xy / vUv.w + bump * 0.006 * bumpScale + bumpExtra;
-        float blur = (0.003 + max(edge, 0.0) / uRadius * 0.06) * rough;
-        // The mip matches the kernel's real footprint (2.4x taller than wide);
-        // a finer one leaves 12 taps too sparse and bright detail sparkles.
-        float lod = log2(max(blur * 1.55 * uTexSize.y * 0.5, 1.0));
-        float spin = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-        vec3 reflection = vec3(0.0);
-        float weight = 0.0;
-        for (int i = 0; i < 12; i++) {
-          float fi = float(i);
-          float angle = fi * 2.3999632 + spin;
-          vec2 offset = vec2(cos(angle), sin(angle) * 2.4) * sqrt((fi + 0.5) / 12.0) * blur;
-          vec3 tap = textureLod(tDiffuse, uv + offset, lod).rgb;
-          // Lit emitters (sirens, lamps) are far above 1. Caught by only some
-          // taps under the per-pixel rotation, they stipple the floor, and the
-          // stipple crawls as the reflection moves. Weighting down the excess
-          // over 1 keeps them bright but stable; ordinary content is unchanged.
-          float w = 1.0 / (1.0 + max(dot(tap, vec3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0));
-          reflection += tap * w;
-          weight += w;
+        vec2 t = p * uPattern + uScroll;
+        float mottle = floorOctave(t, 0.32) * 0.55 + floorOctave(t + 7.1, 0.85) * 0.3 + floorOctave(t - 3.7, 2.4) * 0.15;
+        float grain = floorOctave(t, 24.0) * 0.5 + floorOctave(t + 1.3, 61.0) * 0.5;
+        // Per finish: lit colour, roughness, how the unlit floor reads against
+        // the void (shade), mirror strength (gloss) and reflection ripple (bump).
+        vec3 albedo = vec3(uAlbedo * clamp(1.0 + mottle * 0.5 + grain * 0.45, 0.4, 1.6));
+        float rough = clamp(0.55 + mottle * 0.7, 0.25, 1.0);
+        float shade = 1.0;
+        float gloss = 1.0;
+        float bumpScale = 1.0;
+        vec2 bumpExtra = vec2(0.0);
+        if (uStyle == FLOOR_POLISHED) {
+          // Polished screed: the same stone, ground smooth.
+          albedo = vec3(uAlbedo * clamp(0.85 + mottle * 0.4 + grain * 0.15, 0.4, 1.4));
+          rough = clamp(0.14 + mottle * 0.3, 0.05, 0.4);
+        } else if (uStyle == FLOOR_TILES) {
+          // Large-format tiles: per-tile tone, low roughness, dark grout lines.
+          vec2 cell = floor(t / uTile);
+          float grout = gridJoint(t, vec2(uTile), 0.003);
+          float tone = floorHash(cell + 17.0) - 0.5;
+          albedo = vec3(uAlbedo * clamp(1.0 + tone * 0.22 + grain * 0.12, 0.5, 1.5) * mix(1.0, 0.35, grout));
+          rough = mix(clamp(0.24 + tone * 0.2 + mottle * 0.2, 0.1, 0.5), 1.0, grout);
+        } else if (uStyle == FLOOR_MARBLE) {
+          // Pale polished marble in 1.2 m slabs. Veins are where domain-warped
+          // noise crosses zero, so they meander instead of banding.
+          vec2 slab = floor(t / 1.2);
+          vec2 w = t + slab * 7.3 + 1.6 * vec2(floorOctave(t, 0.35), floorOctave(t + 5.2, 0.35))
+            + 0.5 * vec2(floorOctave(t + 1.7, 1.1), floorOctave(t - 2.9, 1.1));
+          float n = floorNoise(w * 0.9) + 0.5 * floorNoise(w * 2.1 + 3.0);
+          float veins = (1.0 - smoothstep(0.0, 0.018 + fwidth(n), abs(n))) * patternDetail(w * 1.5);
+          float n2 = floorNoise(w * 3.7 + 9.0);
+          float fine = (1.0 - smoothstep(0.0, 0.02 + fwidth(n2), abs(n2))) * patternDetail(w * 3.7);
+          float tone = floorHash(slab + 5.0) - 0.5;
+          float seam = gridJoint(t, vec2(1.2), 0.0012);
+          float stone = clamp(1.0 + tone * 0.12 + mottle * 0.2, 0.75, 1.25) * (1.0 - veins * 0.35 - fine * 0.12) * mix(1.0, 0.7, seam);
+          albedo = uAlbedo * 1.9 * stone * vec3(1.0, 0.985, 0.96);
+          rough = clamp(0.07 + veins * 0.06 + mottle * 0.06, 0.04, 0.2);
+          shade = 1.0 + (stone - 1.0) * 0.6;
+          bumpScale = 0.35;
+        } else if (uStyle == FLOOR_CHECKER) {
+          // Black and white 0.45 m glazed tiles with fine grout.
+          vec2 q = t / 0.45;
+          float white = checker(q);
+          float tone = floorHash(floor(q) + 31.0) - 0.5;
+          float grout = gridJoint(t, vec2(0.45), 0.002);
+          albedo = vec3(uAlbedo * mix(0.12, 2.1, white) * clamp(1.0 + tone * 0.08 + grain * 0.08, 0.8, 1.2) * mix(1.0, 0.4, grout));
+          rough = mix(clamp(0.1 + tone * 0.06 + mottle * 0.08, 0.05, 0.25), 0.9, grout);
+          shade = mix(0.75, 1.35, white);
+          bumpScale = 0.4;
+        } else if (uStyle == FLOOR_EPOXY) {
+          // Garage epoxy: slate resin, near-mirror gloss, scattered flake.
+          vec2 q = t * 28.0;
+          vec2 cell = floor(q);
+          vec2 at = vec2(floorHash(cell + 11.0), floorHash(cell + 23.0)) * 0.5 + 0.25;
+          float flake = (1.0 - smoothstep(0.16, 0.26, length(fract(q) - at))) * step(0.45, floorHash(cell + 3.0)) * patternDetail(q);
+          float flakeTone = floorHash(cell + 41.0) < 0.5 ? 0.3 : 2.4;
+          float speck = floorOctave(t + 4.4, 90.0);
+          albedo = uAlbedo * 0.7 * clamp(1.0 + mottle * 0.15 + speck * 0.5, 0.7, 1.3) * mix(1.0, flakeTone, flake * 0.8) * vec3(0.84, 0.92, 1.06);
+          rough = clamp(0.05 + mottle * 0.04 + flake * 0.1, 0.03, 0.18);
+          gloss = 1.15;
+          bumpScale = 0.2;
+        } else if (uStyle == FLOOR_ASPHALT) {
+          // Asphalt: pale aggregate in black binder, barely reflective.
+          vec2 q = t * 30.0;
+          vec2 cell = floor(q);
+          vec2 at = vec2(floorHash(cell + 7.0), floorHash(cell + 19.0)) * 0.5 + 0.25;
+          float stone = (1.0 - smoothstep(0.15, 0.32, length(fract(q) - at))) * step(0.4, floorHash(cell + 2.0)) * patternDetail(q);
+          float stoneTone = 0.8 + floorHash(cell + 29.0) * 1.4;
+          albedo = vec3(uAlbedo * 0.6 * clamp(1.0 + mottle * 0.35 + grain * 0.6, 0.5, 1.6) * mix(1.0, stoneTone, stone));
+          rough = clamp(0.85 + grain * 0.2, 0.7, 1.0);
+          shade = 0.85;
+          gloss = 0.35;
+          bumpScale = 1.6;
+        } else if (uStyle == FLOOR_WOOD) {
+          // Lacquered oak boards, 0.2 m by 2.4 m, running front to back with
+          // staggered ends.
+          float board = floor(t.x / 0.2);
+          float along = t.y + floorHash(vec2(board, 3.0)) * 2.4;
+          vec2 id = vec2(board, floor(along / 2.4));
+          float tone = floorHash(id + 13.0) - 0.5;
+          float side = min(fract(t.x / 0.2), 1.0 - fract(t.x / 0.2)) * 0.2;
+          float end = min(fract(along / 2.4), 1.0 - fract(along / 2.4)) * 2.4;
+          float gap = min(side, end);
+          float joint = 1.0 - smoothstep(0.0012, 0.0012 + max(fwidth(gap) * 1.5, 0.0005), gap);
+          vec2 g = vec2(t.x * 9.0, t.y * 0.35) + id * 17.3;
+          float figure = floorOctave(g, 6.0) * 0.6 + floorOctave(g * vec2(1.0, 0.5) + 2.0, 21.0) * 0.4;
+          float wood = clamp(1.0 + tone * 0.35 + figure * 0.55, 0.5, 1.5) * mix(1.0, 0.3, joint);
+          albedo = uAlbedo * 1.15 * wood * vec3(1.0, 0.68, 0.42);
+          rough = mix(clamp(0.28 + tone * 0.12 + figure * 0.1, 0.15, 0.45), 0.9, joint);
+          shade = 1.0 + (wood - 1.0) * 0.5;
+          bumpScale = 0.5;
+        } else if (uStyle == FLOOR_TREAD) {
+          // Aluminium tread plate: raised lugs on a 6 cm grid, alternating
+          // 45 degrees, over a brushed sheet.
+          vec2 q = t / 0.06;
+          vec2 cell = floor(q);
+          vec2 f = fract(q) - 0.5;
+          vec2 axis = normalize(vec2(1.0, mod(cell.x + cell.y, 2.0) < 0.5 ? 1.0 : -1.0));
+          vec2 across = vec2(-axis.y, axis.x);
+          vec2 rs = vec2(dot(f, axis), dot(f, across)) / vec2(0.36, 0.075);
+          float d = length(rs);
+          float detail = patternDetail(q);
+          float lug = (1.0 - smoothstep(0.8, 1.0 + fwidth(d), d)) * detail;
+          // The lug's sloped rim tilts the reflection outward from its centre.
+          vec2 slope = rs.x / 0.36 * axis + rs.y / 0.075 * across;
+          float brushed = floorOctave(vec2(t.x * 0.2, t.y * 40.0), 8.0);
+          float rim = lug * (1.0 - lug) * 4.0;
+          albedo = uAlbedo * 1.2 * clamp(1.0 + brushed * 0.25 + mottle * 0.2, 0.7, 1.3) * mix(1.0, 1.5, lug) * (1.0 - rim * 0.35) * vec3(0.98, 0.99, 1.02);
+          rough = clamp(0.32 - lug * 0.12 + brushed * 0.08, 0.12, 0.45);
+          gloss = 1.2;
+          bumpScale = 0.5;
+          bumpExtra = normalize(slope + 1e-5) * rim * 0.006;
         }
-        reflection /= weight;
-        vec3 viewDir = normalize(cameraPosition - vWorld);
-        float fresnel = 0.04 + 0.96 * pow(1.0 - max(viewDir.y, 0.0), 5.0);
-        float fade = 1.0 - smoothstep(uRadius * 1.2, uRadius * 4.0, length(p - uCenter));
-        color += reflection * uReflect * gloss * mix(0.3, 1.0, fresnel) * (1.25 - rough * 0.5) * fade * mix(0.5, 1.0, contact);
-      }
 
-      gl_FragColor = vec4(color, 1.0);
-      #include <tonemapping_fragment>
-      #include <colorspace_fragment>
-      // Fade after output conversion so the far floor is exactly the
-      // untone-mapped void dome's colour.
-      float voidFade = smoothstep(uFade.x, uFade.y, length(p - uCenter));
-      gl_FragColor.rgb = mix(gl_FragColor.rgb, linearToOutputTexel(vec4(uVoid, 1.0)).rgb, voidFade);
+        // A lineup gets one pool and one contact shadow per vehicle; a single
+        // subject keeps the one stage spot and footprint.
+        vec3 irradiance = vec3(0.0);
+        float edge = 1e6;
+        float contact = 1.0;
+        if (uBayCount > 0) {
+          for (int i = 0; i < BAY_LIMIT; i++) {
+            if (i >= uBayCount) break;
+            irradiance += spotPool(uBaySpot[i].xyz, uBayDir[i], uBayCone[i], uBaySpot[i].w) * uBayColor[i];
+            float bayEdge = footprintEdge(p, uBayBox[i].xy, uBayBox[i].zw);
+            edge = min(edge, bayEdge);
+            contact = min(contact, footprintContact(bayEdge, uBayBox[i].zw));
+          }
+        } else {
+          irradiance = spotPool(uSpotPos, uSpotDir, uSpotCone, uSpotPower);
+          edge = footprintEdge(p, uCenter, uHalf);
+          contact = footprintContact(edge, uHalf);
+        }
+        // Prop lights, attenuated as the scene lights them (decay 0, windowed by
+        // range, smoothstep cone) and brought to the spot term's scale by 1/pi.
+        for (int i = 0; i < ACCENT_LIMIT; i++) {
+          if (i >= uAccentCount) break;
+          vec3 toAccent = uAccentPos[i].xyz - vWorld;
+          float accentDist = max(length(toAccent), 1e-4);
+          vec3 La = toAccent / accentDist;
+          float range = uAccentPos[i].w;
+          float window = range > 0.0 ? pow2(saturate(1.0 - pow4(accentDist / range))) : 1.0;
+          float accentCone = uAccentDir[i].w < -1.5 ? 1.0 : smoothstep(uAccentDir[i].w, uAccentColor[i].w, dot(-La, uAccentDir[i].xyz));
+          irradiance += uAccentColor[i].rgb * (window * accentCone * max(La.y, 0.0) * RECIPROCAL_PI);
+        }
+
+        vec3 color = (uVoid * (1.0 + mottle * 0.6 + grain * 0.3) * shade + albedo * irradiance) * contact;
+
+        if (uReflect > 0.001) {
+          float reflFade = 1.0 - smoothstep(uRadius * 1.2, uRadius * 4.0, distFromCenter);
+          if (reflFade > 0.001) {
+            vec2 bump = vec2(floorOctave(t + 11.0, 9.0), floorOctave(t - 5.0, 9.0))
+              + 0.5 * vec2(floorOctave(t + 2.0, 31.0), floorOctave(t - 9.0, 31.0));
+            vec2 uv = vUv.xy / vUv.w + bump * 0.006 * bumpScale + bumpExtra;
+            float blur = (0.003 + max(edge, 0.0) / uRadius * 0.06) * rough;
+            // The mip matches the kernel's real footprint (2.4x taller than wide);
+            // a finer one leaves 12 taps too sparse and bright detail sparkles.
+            float lod = log2(max(blur * 1.55 * uTexSize.y * 0.5, 1.0));
+            float spin = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+            float sc = cos(spin);
+            float ss = sin(spin);
+            vec3 reflection = vec3(0.0);
+            float weight = 0.0;
+${FLOOR_SPIRAL_TAPS_GLSL}
+            reflection /= weight;
+            vec3 viewDir = normalize(cameraPosition - vWorld);
+            float fresnel = 0.04 + 0.96 * pow(1.0 - max(viewDir.y, 0.0), 5.0);
+            color += reflection * uReflect * gloss * mix(0.3, 1.0, fresnel) * (1.25 - rough * 0.5) * reflFade * mix(0.5, 1.0, contact);
+          }
+        }
+
+        gl_FragColor = vec4(color, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        // Fade after output conversion so the far floor is exactly the
+        // untone-mapped void dome's colour.
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, voidOut, voidFade);
+      }
       #include <dithering_fragment>
     }
   `,
@@ -582,7 +597,7 @@ function createShadowCatcherMaterial() {
    floor instead of being clipped by it, facets never show, and the mirrored
    camera of the reflection pass sees a correct reflection. It draws after the
    floor and before the vehicle with no depth test: the vehicle covers it. */
-const BEAM_STEPS = 24;
+const BEAM_STEPS = 16;
 
 export function createBeamMaterial() {
   return new THREE.ShaderMaterial({
@@ -647,12 +662,11 @@ export function createBeamMaterial() {
         float root = sqrt(disc);
         float s0 = max(-b - root, 0.0);
         float s1 = -b + root;
-        float toFloor = (uFloorY - cameraPosition.y) / ray.y;
         if (cameraPosition.y >= uFloorY) {
-          if (ray.y < 0.0) s1 = min(s1, toFloor);
+          if (ray.y < -1e-6) s1 = min(s1, (uFloorY - cameraPosition.y) / ray.y);
         } else {
-          if (ray.y <= 0.0) discard;
-          s0 = max(s0, toFloor);
+          if (ray.y <= 1e-6) discard;
+          s0 = max(s0, (uFloorY - cameraPosition.y) / ray.y);
         }
         if (s1 <= s0) discard;
 
@@ -672,7 +686,7 @@ export function createBeamMaterial() {
   });
 }
 
-const MIRROR_UNSYNCED = new Set(["_listeners", "version", "onBeforeCompile", "customProgramCacheKey"]);
+const MIRROR_UNSYNCED = new Set(["uuid", "_listeners", "version", "onBeforeCompile", "customProgramCacheKey"]);
 
 function mirrorKeys(source) {
   return Object.keys(source).filter((key) => !MIRROR_UNSYNCED.has(key));
@@ -685,8 +699,55 @@ function syncMirrorMaterial(standIn, source, keys) {
   }
 }
 
+// Fast monomorphic sync for properties that can mutate without bumping
+// `material.version`; full key sync only runs on creation or version change.
+export function syncMirrorRuntime(standIn, source) {
+  if (standIn.visible !== source.visible) standIn.visible = source.visible;
+  if (standIn.opacity !== source.opacity) standIn.opacity = source.opacity;
+  if (standIn.transparent !== source.transparent) standIn.transparent = source.transparent;
+  if (standIn.colorWrite !== source.colorWrite) standIn.colorWrite = source.colorWrite;
+  if (standIn.depthTest !== source.depthTest) standIn.depthTest = source.depthTest;
+  if (standIn.depthWrite !== source.depthWrite) standIn.depthWrite = source.depthWrite;
+  if (standIn.side !== source.side) standIn.side = source.side;
+  if (standIn.wireframe !== source.wireframe) standIn.wireframe = source.wireframe;
+  if (standIn.alphaTest !== source.alphaTest) standIn.alphaTest = source.alphaTest;
+  if (standIn.polygonOffset !== source.polygonOffset) standIn.polygonOffset = source.polygonOffset;
+  if (standIn.polygonOffsetFactor !== source.polygonOffsetFactor) standIn.polygonOffsetFactor = source.polygonOffsetFactor;
+  if (standIn.polygonOffsetUnits !== source.polygonOffsetUnits) standIn.polygonOffsetUnits = source.polygonOffsetUnits;
+  if (standIn.color !== source.color) standIn.color = source.color;
+  if (standIn.map !== source.map) standIn.map = source.map;
+  if (standIn.alphaMap !== source.alphaMap) standIn.alphaMap = source.alphaMap;
+  if (standIn.isMeshStandardMaterial) {
+    if (standIn.roughness !== source.roughness) standIn.roughness = source.roughness;
+    if (standIn.metalness !== source.metalness) standIn.metalness = source.metalness;
+    if (standIn.emissive !== source.emissive) standIn.emissive = source.emissive;
+    if (standIn.emissiveIntensity !== source.emissiveIntensity) standIn.emissiveIntensity = source.emissiveIntensity;
+    if (standIn.emissiveMap !== source.emissiveMap) standIn.emissiveMap = source.emissiveMap;
+    if (standIn.normalMap !== source.normalMap) standIn.normalMap = source.normalMap;
+    if (standIn.normalScale !== source.normalScale) standIn.normalScale = source.normalScale;
+    if (standIn.roughnessMap !== source.roughnessMap) standIn.roughnessMap = source.roughnessMap;
+    if (standIn.metalnessMap !== source.metalnessMap) standIn.metalnessMap = source.metalnessMap;
+    if (standIn.aoMap !== source.aoMap) standIn.aoMap = source.aoMap;
+    if (standIn.aoMapIntensity !== source.aoMapIntensity) standIn.aoMapIntensity = source.aoMapIntensity;
+    if (standIn.envMapIntensity !== source.envMapIntensity) standIn.envMapIntensity = source.envMapIntensity;
+    if (standIn.isMeshPhysicalMaterial) {
+      if (standIn.clearcoat !== source.clearcoat) standIn.clearcoat = source.clearcoat;
+      if (standIn.clearcoatRoughness !== source.clearcoatRoughness) standIn.clearcoatRoughness = source.clearcoatRoughness;
+      if (standIn.specularIntensity !== source.specularIntensity) standIn.specularIntensity = source.specularIntensity;
+      if (standIn.specularIntensityMap !== source.specularIntensityMap) standIn.specularIntensityMap = source.specularIntensityMap;
+      if (standIn.sheen !== source.sheen) standIn.sheen = source.sheen;
+      if (standIn.sheenRoughness !== source.sheenRoughness) standIn.sheenRoughness = source.sheenRoughness;
+      if (standIn.sheenColor !== source.sheenColor) standIn.sheenColor = source.sheenColor;
+      if (standIn.transmission !== source.transmission) standIn.transmission = source.transmission;
+      if (standIn.ior !== source.ior) standIn.ior = source.ior;
+      if (standIn.thickness !== source.thickness) standIn.thickness = source.thickness;
+    }
+  }
+}
+
 function createMirrorMaterials(renderer) {
   const entries = new WeakMap();
+  const arrayScratch = new WeakMap();
   const releases = new Set();
   const create = (source) => {
     const material = new source.constructor();
@@ -723,24 +784,37 @@ function createMirrorMaterials(renderer) {
     releases.add(release);
     return entry;
   };
-  return {
-    get(source) {
-      if (!source?.isMaterial || source.isShaderMaterial || source.constructor !== THREE[source.type]) return source;
-      const compiled = renderer.properties.get(source);
-      if (!compiled.currentProgram || compiled.__version !== source.version) return source;
-      let entry = entries.get(source);
-      if (!entry) {
-        entry = create(source);
-        entries.set(source, entry);
-        return entry.material;
-      }
-      if (entry.version !== source.version) {
-        entry.version = source.version;
-        entry.keys = mirrorKeys(source);
-        entry.material.needsUpdate = true;
-      }
-      syncMirrorMaterial(entry.material, source, entry.keys);
+  const getOne = (source) => {
+    if (!source?.isMaterial || source.isShaderMaterial || source.constructor !== THREE[source.type]) return source;
+    const compiled = renderer.properties.get(source);
+    if (!compiled.currentProgram || compiled.__version !== source.version) return source;
+    let entry = entries.get(source);
+    if (!entry) {
+      entry = create(source);
+      entries.set(source, entry);
       return entry.material;
+    }
+    if (entry.version !== source.version) {
+      entry.version = source.version;
+      entry.keys = mirrorKeys(source);
+      entry.material.needsUpdate = true;
+      syncMirrorMaterial(entry.material, source, entry.keys);
+    } else {
+      syncMirrorRuntime(entry.material, source);
+    }
+    return entry.material;
+  };
+  return {
+    get: getOne,
+    getFor(material) {
+      if (!Array.isArray(material)) return getOne(material);
+      let out = arrayScratch.get(material);
+      if (!out || out.length !== material.length) {
+        out = new Array(material.length);
+        arrayScratch.set(material, out);
+      }
+      for (let i = 0; i < material.length; i += 1) out[i] = getOne(material[i]);
+      return out;
     },
     dispose() {
       for (const release of [...releases]) release();
@@ -800,6 +874,9 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     bayMinimum: 2,
     // Per-bay settings by model id: { strength, from, color, beam }.
     bayOverrides: new Map(),
+    spin: 0,
+    scrollX: 0,
+    scrollZ: 0,
   };
 
   /* ── Workbench ── */
@@ -825,12 +902,45 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
 
   // The floor is the Reflector itself; built on first entry to the showroom.
   let floor = null;
+  const MAX_REFLECTION_DIM = 1024;
+  const RESIZE_SETTLE_MS = 120;
+  const drawingSize = new THREE.Vector2();
+  let floorAppliedWidth = 0;
+  let floorAppliedHeight = 0;
+  let floorResizeDirty = false;
+  let floorResizeTimer = 0;
   const reflectionSize = () => {
-    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    return [Math.max(256, Math.round(size.x * 0.5)), Math.max(256, Math.round(size.y * 0.5))];
+    renderer.getDrawingBufferSize(drawingSize);
+    let width = Math.max(256, Math.round(drawingSize.x * 0.5));
+    let height = Math.max(256, Math.round(drawingSize.y * 0.5));
+    const longest = Math.max(width, height);
+    if (longest > MAX_REFLECTION_DIM) {
+      const scale = MAX_REFLECTION_DIM / longest;
+      width = Math.max(256, Math.round(width * scale));
+      height = Math.max(256, Math.round(height * scale));
+    }
+    return [width, height];
+  };
+  const applyFloorResize = () => {
+    if (floorResizeTimer) {
+      clearTimeout(floorResizeTimer);
+      floorResizeTimer = 0;
+    }
+    if (!floor) return false;
+    const [width, height] = reflectionSize();
+    floorResizeDirty = false;
+    if (width === floorAppliedWidth && height === floorAppliedHeight) return false;
+    floorAppliedWidth = width;
+    floorAppliedHeight = height;
+    floor.getRenderTarget().setSize(width, height);
+    floor.material.uniforms.uTexSize.value.set(width, height);
+    return true;
   };
   const buildFloor = () => {
     const [width, height] = reflectionSize();
+    floorAppliedWidth = width;
+    floorAppliedHeight = height;
+    floorResizeDirty = false;
     const next = new Reflector(new THREE.PlaneGeometry(1, 1), {
       clipBias: 0.003,
       textureWidth: width,
@@ -858,24 +968,28 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     const mirrorMaterials = createMirrorMaterials(renderer);
     next.userData.mirrorMaterials = mirrorMaterials;
     const mirrorLayers = next.camera.layers;
+    const swapped = [];
     let mirrorFrame = -1;
     let mirrorCamera = null;
     next.onBeforeRender = (renderer, scene, camera, ...rest) => {
       if (state.reflect <= 0.01) return;
       const reusable = renderer.shadowMap.autoUpdate;
       if (reusable && camera === mirrorCamera && renderer.info.render.frame === mirrorFrame) return;
-      const swapped = [];
+      swapped.length = 0;
       scene.traverseVisible((object) => {
         if (!object.material || object === next || !object.layers.test(mirrorLayers)) return;
         const material = object.material;
-        const standIn = Array.isArray(material) ? material.map(mirrorMaterials.get) : mirrorMaterials.get(material);
-        swapped.push(object, material);
-        object.material = standIn;
+        const standIn = mirrorMaterials.getFor(material);
+        if (standIn !== material) {
+          swapped.push(object, material);
+          object.material = standIn;
+        }
       });
       try {
         renderMirror(renderer, scene, camera, ...rest);
       } finally {
         for (let index = 0; index < swapped.length; index += 2) swapped[index].material = swapped[index + 1];
+        swapped.length = 0;
       }
       mirrorFrame = renderer.info.render.frame;
       mirrorCamera = camera;
@@ -966,20 +1080,19 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     return distance;
   };
 
-  let environment = null;
-  let environmentLight = "";
+  const environmentCache = new Map();
   let savedBackground;
   const voidColor = SHOWROOM_VOID.clone();
 
   const applyEnvironment = () => {
     if (state.mode !== "showroom") return;
     const key = `${state.light}:${state.tone}`;
-    if (!environment || environmentLight !== key) {
-      environment?.dispose?.();
-      environment = buildStudioEnvironment(renderer, lightDirection(state.light), state.tone === "light");
-      environmentLight = key;
+    let target = environmentCache.get(key);
+    if (!target) {
+      target = buildStudioEnvironment(renderer, lightDirection(state.light), state.tone === "light");
+      environmentCache.set(key, target);
     }
-    scene.environment = environment.texture;
+    scene.environment = target.texture;
   };
 
   const applyTone = () => {
@@ -1174,8 +1287,12 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
       if (!floor) {
         floor = buildFloor();
         floor.material.uniforms.uVoid.value.copy(voidColor);
+        floor.material.uniforms.uSpinCS.value.set(Math.cos(state.spin), Math.sin(state.spin));
+        floor.material.uniforms.uScroll.value.set(state.scrollX, state.scrollZ);
         showroom.add(floor);
         applyAccents();
+      } else if (floorResizeDirty && state.reflect > 0.01) {
+        applyFloorResize();
       }
       applyEnvironment();
       scene.environmentIntensity = state.night;
@@ -1251,7 +1368,10 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
       if (Number.isFinite(spot)) state.spot = Math.max(0, spot);
       if (typeof bayLights === "boolean") state.bayLights = bayLights;
       if (Number.isInteger(bayMinimum) && bayMinimum >= 0) state.bayMinimum = bayMinimum;
-      if (Number.isFinite(reflect)) state.reflect = Math.max(0, Math.min(1, reflect));
+      if (Number.isFinite(reflect)) {
+        state.reflect = Math.max(0, Math.min(1, reflect));
+        if (state.mode === "showroom" && state.reflect > 0.01 && floorResizeDirty) applyFloorResize();
+      }
       if (typeof beam === "boolean") state.beam = beam;
       if (Number.isFinite(rim)) state.rim = Math.max(0, rim);
       if (SHOWROOM_FLOORS.includes(floor)) state.floor = floor;
@@ -1280,13 +1400,47 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
      */
     fit(bounds, models, { bays = false, bayModels = null, atRest = null } = {}) {
       if (!bounds?.isBox3 || bounds.isEmpty()) return;
-      const visible = collectVisibleMeshes(models);
+      // Fast per-frame fingerprint without allocating strings or arrays on unchanged frames.
+      const mix = (hash, value) => (Math.imul(hash ^ (value | 0), 16777619) >>> 0);
+      const mixFloat = (hash, value) => mix(hash, Math.round(value * 1000));
+      let hash = 2166136261;
+      hash = mixFloat(hash, bounds.min.x);
+      hash = mixFloat(hash, bounds.min.y);
+      hash = mixFloat(hash, bounds.min.z);
+      hash = mixFloat(hash, bounds.max.x);
+      hash = mixFloat(hash, bounds.max.y);
+      hash = mixFloat(hash, bounds.max.z);
+      let visibleCount = 0;
+      const modelList = Array.isArray(models) ? models : [models];
+      for (const model of modelList) {
+        model?.traverseVisible?.((child) => {
+          if (child.isMesh && child.geometry) {
+            visibleCount += 1;
+            hash = mix(hash, child.id);
+          }
+        });
+      }
+      hash = mix(hash, visibleCount);
+      let bayCount = 0;
       const lineupSource = bayModels ?? models;
+      if (bays) {
+        const lineupList = Array.isArray(lineupSource) ? lineupSource : [lineupSource];
+        for (const model of lineupList) {
+          if (!model?.visible) continue;
+          bayCount += 1;
+          hash = mix(hash, model.id);
+          hash = mixFloat(hash, model.position.x);
+          hash = mixFloat(hash, model.position.y);
+          hash = mixFloat(hash, model.position.z);
+          hash = mixFloat(hash, model.rotation.y);
+        }
+      }
+      hash = mix(hash, bayCount);
+      const fitKey = `${hash}:${visibleCount}:${bayCount}`;
+      if (fitKey === state.fitKey) return;
+      state.fitKey = fitKey;
+      const visible = collectVisibleMeshes(models);
       const lineup = bays ? (Array.isArray(lineupSource) ? lineupSource : [lineupSource]).filter((model) => model?.visible) : [];
-      const bayKey = lineup.map((model) => `${model.id}@${model.position.toArray().map((n) => n.toFixed(3)).join(",")}/${model.rotation.y.toFixed(3)}`).join(";");
-      const key = `${bounds.min.toArray().join(",")}|${bounds.max.toArray().join(",")}|${visible.map((mesh) => mesh.id).join(",")}|${bayKey}`;
-      if (key === state.fitKey) return;
-      state.fitKey = key;
       const measure = typeof atRest === "function" ? atRest : (run) => run();
       let ground = null;
       measure(() => {
@@ -1325,7 +1479,10 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
      */
     /** Turns the contact footprints with a vehicle turntable (radians about +Y). */
     setSpin(yaw) {
-      if (floor) floor.material.uniforms.uSpin.value = Number.isFinite(yaw) ? yaw : 0;
+      const angle = Number.isFinite(yaw) ? yaw : 0;
+      state.spin = angle;
+      if (!floor) return;
+      floor.material.uniforms.uSpinCS.value.set(Math.cos(angle), Math.sin(angle));
     },
     setBayOverrides(overrides) {
       state.bayOverrides = overrides instanceof Map ? overrides : new Map();
@@ -1362,14 +1519,42 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     },
     /** Offsets the floor pattern (grid and showroom floor) without moving the floor. */
     setScroll(x = 0, z = 0) {
-      gridMaterial.uniforms.uScroll.value.set(x, z);
-      floor?.material.uniforms.uScroll.value.set(x, z);
+      state.scrollX = Number.isFinite(x) ? x : 0;
+      state.scrollZ = Number.isFinite(z) ? z : 0;
+      gridMaterial.uniforms.uScroll.value.set(state.scrollX, state.scrollZ);
+      floor?.material.uniforms.uScroll.value.set(state.scrollX, state.scrollZ);
     },
-    resize() {
+    resize({ defer = false, onSettled = null } = {}) {
       if (!floor) return;
+      if (state.mode !== "showroom" || state.reflect <= 0.01) {
+        if (floorResizeTimer) {
+          clearTimeout(floorResizeTimer);
+          floorResizeTimer = 0;
+        }
+        floorResizeDirty = true;
+        return;
+      }
       const [width, height] = reflectionSize();
-      floor.getRenderTarget().setSize(width, height);
-      floor.material.uniforms.uTexSize.value.set(width, height);
+      if (width === floorAppliedWidth && height === floorAppliedHeight) {
+        if (floorResizeTimer) {
+          clearTimeout(floorResizeTimer);
+          floorResizeTimer = 0;
+        }
+        floorResizeDirty = false;
+        return;
+      }
+      if (defer) {
+        floorResizeDirty = true;
+        if (floorResizeTimer) clearTimeout(floorResizeTimer);
+        floorResizeTimer = setTimeout(() => {
+          floorResizeTimer = 0;
+          if (state.mode === "showroom" && state.reflect > 0.01 && applyFloorResize()) {
+            onSettled?.();
+          }
+        }, RESIZE_SETTLE_MS);
+        return;
+      }
+      applyFloorResize();
     },
     setTone(tone) {
       const next = tone === "light" ? "light" : "dark";
@@ -1379,6 +1564,10 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
     },
     dispose() {
       stopTone?.();
+      if (floorResizeTimer) {
+        clearTimeout(floorResizeTimer);
+        floorResizeTimer = 0;
+      }
       if (state.mode === "showroom") {
         scene.environment = null;
         if (savedBackground !== undefined) scene.background = savedBackground;
@@ -1394,7 +1583,8 @@ export function createViewerStage({ renderer, scene, keyLight, subject = "vehicl
       floor?.userData.mirrorMaterials?.dispose();
       floor?.dispose?.();
       floor?.geometry?.dispose?.();
-      environment?.dispose?.();
+      for (const target of environmentCache.values()) target?.dispose?.();
+      environmentCache.clear();
       spot.shadow.map?.dispose?.();
       spot.dispose?.();
       rimLight.dispose?.();

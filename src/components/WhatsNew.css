@@ -37,20 +37,25 @@
 .wn-center {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
-  padding: calc(16 * var(--u));
+  /* Flex, not grid: keeps 100% width/height bound to the zoomed viewport
+     instead of letting vw/vh or an implicit grid track overflow under UI scale. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(calc(16 * var(--u)), 3.5%, calc(32 * var(--u)));
   pointer-events: none;
 }
 
 .wn-dialog {
   --wn-rail: color-mix(in srgb, var(--cx-raised) 40%, var(--cx-frame));
-  container: wn / inline-size;
+  container: wn / size;
   display: grid;
   grid-template-columns: clamp(calc(212 * var(--u)), 28%, calc(296 * var(--u))) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
-  width: min(calc(1080 * var(--u)), 92vw);
-  height: min(calc(760 * var(--u)), 88vh);
+  width: min(calc(1080 * var(--u)), 100%);
+  height: min(calc(760 * var(--u)), 100%);
+  max-width: 100%;
+  max-height: 100%;
   overflow: hidden;
   border: 1px solid var(--mg-border);
   border-radius: calc(8 * var(--u));
@@ -60,8 +65,9 @@
 }
 
 .wn-dialog.is-empty {
+  container-type: inline-size;
   grid-template-columns: minmax(0, 1fr);
-  width: min(calc(560 * var(--u)), 92vw);
+  width: min(calc(560 * var(--u)), 100%);
   height: auto;
 }
 
@@ -687,6 +693,19 @@
   .wn-body {
     padding-right: calc(24 * var(--u));
     padding-left: calc(24 * var(--u));
+  }
+}
+
+@container wn (max-height: 620px) {
+  .wn-head {
+    padding-top: calc(20 * var(--u));
+  }
+  .wn-title {
+    font-size: calc(32 * var(--u));
+    -webkit-line-clamp: 1;
+  }
+  .wn-summary {
+    -webkit-line-clamp: 2;
   }
 }
 

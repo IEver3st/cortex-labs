@@ -8,9 +8,14 @@ const EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
 function release(pane) {
   delete pane.dataset.sliding;
   pane.style.removeProperty("width");
-  pane.style.removeProperty("height");
   pane.style.removeProperty("justify-self");
-  pane.style.removeProperty("align-self");
+}
+
+function layoutSize(pane) {
+  // offsetWidth/offsetHeight stay in CSS layout pixels even when body `zoom`
+  // scales UI chrome, whereas getBoundingClientRect() returns zoomed viewport
+  // pixels that would double-scale the pane during the slide.
+  return { width: pane.offsetWidth, height: pane.offsetHeight };
 }
 
 function currentOffset(pane) {
@@ -34,7 +39,7 @@ export function usePaneMotion(rootRef, layoutKey) {
         for (const entry of entries) {
           const pane = entry.target;
           if (pane.dataset.sliding !== undefined) continue;
-          const { width, height } = pane.getBoundingClientRect();
+          const { width, height } = layoutSize(pane);
           const open = width > 0 && height > 0;
           const known = panesRef.current.get(pane);
           panesRef.current.set(pane, open ? { open, width, height } : { ...known, open });
@@ -77,10 +82,10 @@ export function usePaneMotion(rootRef, layoutKey) {
     const animate = !prefersReducedMotion();
     for (const pane of root.querySelectorAll(PANES)) {
       const before = panesRef.current.get(pane);
-      const rect = pane.getBoundingClientRect();
-      const open = rect.width > 0 && rect.height > 0;
-      const width = open ? rect.width : before?.width ?? 0;
-      const height = open ? rect.height : before?.height ?? 0;
+      const size = layoutSize(pane);
+      const open = size.width > 0 && size.height > 0;
+      const width = open ? size.width : before?.width ?? 0;
+      const height = open ? size.height : before?.height ?? 0;
       panesRef.current.set(pane, { open, width, height });
       const interrupted = offsets.has(pane);
       if (!animate || !before || (before.open === open && !interrupted)) continue;
@@ -92,9 +97,7 @@ export function usePaneMotion(rootRef, layoutKey) {
       if (from === to) continue;
       pane.dataset.sliding = "";
       pane.style.width = `${width}px`;
-      pane.style.height = `${height}px`;
       pane.style.justifySelf = isDock ? "unsafe start" : "unsafe end";
-      pane.style.alignSelf = "unsafe end";
       const animation = pane.animate(
         [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
         { duration: DURATION, easing: EASING },

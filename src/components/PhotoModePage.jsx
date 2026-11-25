@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { AnimatePresence, motion } from "motion/react";
 import {
   AlertTriangle,
@@ -11,6 +12,7 @@ import {
   Check,
   CircleHelp,
   Contrast,
+  Copy,
   Crosshair,
   Eye,
   EyeOff,
@@ -102,6 +104,10 @@ function isEditableTarget(target) {
   return Boolean(target?.closest?.("input, textarea, select, [contenteditable='true'], [role='listbox']"));
 }
 
+function isInteractiveTarget(target) {
+  return Boolean(target?.closest?.("button, a[href], [role='switch'], [role='radio'], [role='tab'], [role='menuitem'], summary"));
+}
+
 /** What a reload depends on; pose, paint, doors and placement apply in place. */
 function loadKeyOf(object) {
   if (object.kind === "ped") return `ped|${object.ped.gender}|${object.ped.body}|${object.ped.outfit}`;
@@ -110,7 +116,7 @@ function loadKeyOf(object) {
 
 function poseKeyOf(object) {
   const ped = object.ped;
-  return ped.pose === "custom" ? `custom|${ped.dict}|${ped.clip}` : `${ped.pose}|${ped.gender}`;
+  return ped.pose === "custom" ? `custom|${ped.ycdPath || ""}|${ped.dict}|${ped.clip}` : `${ped.pose}|${ped.gender}`;
 }
 
 function objectMeta(object) {
@@ -180,13 +186,18 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
   const [adding, setAdding] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [notice, setNotice] = useState(null);
+  const [undoItem, setUndoItem] = useState(null);
   const [capturing, setCapturing] = useState(false);
+  const [dollyProgress, setDollyProgress] = useState(null);
   const [viewSize, setViewSize] = useState(null);
 
   const viewportRef = useRef(null);
   const runtimeRef = useRef(new Map());
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const capturingRef = useRef(false);
+  const dollyAbortRef = useRef(null);
+  const helpWrapRef = useRef(null);
   // The camera is restored (or the set framed) once the first object is on
   // set; until then the viewport's default camera must not be saved.
   const cameraSettledRef = useRef(false);
@@ -215,6 +226,21 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
     const timer = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    if (!undoItem) return undefined;
+    const timer = setTimeout(() => setUndoItem(null), 6000);
+    return () => clearTimeout(timer);
+  }, [undoItem]);
+
+  useEffect(() => {
+    if (!helpOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (!helpWrapRef.current?.contains(event.target)) setHelpOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [helpOpen]);
 
   const updateObject = useCallback((id, patch) => {
     setSettings((prev) => ({
@@ -334,6 +360,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
     for (const [id, entry] of runtimeRef.current) {
       if (live.has(id)) continue;
       entry.abort.abort();
+      entry.poseAbort?.abort();
       entry.controller?.dispose();
       runtimeRef.current.delete(id);
       const drop = (prev) => {
@@ -348,8 +375,10 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
   }, [isTauriRuntime, loadSignature, reloadToken, patchRuntime]);
 
   useEffect(() => () => {
+    dollyAbortRef.current?.abort();
     for (const entry of runtimeRef.current.values()) {
       entry.abort.abort();
+      entry.poseAbort?.abort();
       entry.controller?.dispose();
     }
     runtimeRef.current.clear();
@@ -363,8 +392,8 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
       const viewport = viewportRef.current;
       const saved = settingsRef.current.camera;
       viewport?.refit();
-      if (saved) viewport?.setCamera(saved);
-      else viewport?.frameAll("angle");
+      if (saved) viewport?.setCamera(saved, { instant: true });
+      else viewport?.frameAll("angle", { instant: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [readyCount]);
@@ -401,12 +430,14 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
       entry.applied.plate = plateKey;
       buildPlateImage(vehicle.plate, { invoke, readFile }).then(
         (image) => {
-          if (entry.applied.plate !== plateKey) return;
+          if (entry.abort.signal.aborted || entry.applied.plate !== plateKey) return;
           controller.setPlateImage(image);
           patchRuntime(id, { plate: { ok: true } });
           render();
         },
-        (error) => patchRuntime(id, { plate: { ok: false, error: errorMessage(error) } }),
+        (error) => {
+          if (!entry.abort.signal.aborted) patchRuntime(id, { plate: { ok: false, error: errorMessage(error) } });
+        },
       );
     }
 
@@ -526,7 +557,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
       const controller = runtimeRef.current.get(object.id)?.controller;
       if (!controller) continue;
       if (object.kind === "ped") {
-        if (object.ped.playing) controller.step(dt);
+        if (controller.step(object.ped.playing ? dt : 0, now)) moving = true;
       } else if (controller.step(dt, now)) {
         moving = true;
       }
@@ -559,12 +590,13 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
 
   /* ── Set dressing ── */
   const addObject = useCallback((partial) => {
-    let refused = false;
+    if (settingsRef.current.objects.length >= PHOTO_OBJECT_LIMIT) {
+      raiseAlert("limit", "The set is full", `Photo Mode holds up to ${PHOTO_OBJECT_LIMIT} objects. Remove one to add another.`);
+      setAdding(null);
+      return;
+    }
     setSettings((prev) => {
-      if (prev.objects.length >= PHOTO_OBJECT_LIMIT) {
-        refused = true;
-        return prev;
-      }
+      if (prev.objects.length >= PHOTO_OBJECT_LIMIT) return prev;
       const object = normalizePhotoObject({
         ...partial,
         id: newObjectId(),
@@ -573,12 +605,33 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
       if (!object) return prev;
       return { ...prev, objects: [...prev.objects, object], selectedId: object.id };
     });
-    if (refused) raiseAlert("limit", "The set is full", `Photo Mode holds up to ${PHOTO_OBJECT_LIMIT} objects. Remove one to add another.`);
     setAdding(null);
     setInspectorTab(partial.kind === "vehicle" ? "vehicle" : "object");
   }, [raiseAlert]);
 
+  const duplicateObject = useCallback((id) => {
+    const source = settingsRef.current.objects.find((object) => object.id === id);
+    if (!source) return;
+    if (settingsRef.current.objects.length >= PHOTO_OBJECT_LIMIT) {
+      raiseAlert("limit", "The set is full", `Photo Mode holds up to ${PHOTO_OBJECT_LIMIT} objects. Remove one to duplicate this one.`);
+      return;
+    }
+    const copy = typeof structuredClone === "function" ? structuredClone(source) : JSON.parse(JSON.stringify(source));
+    setSettings((prev) => {
+      if (prev.objects.length >= PHOTO_OBJECT_LIMIT) return prev;
+      const object = normalizePhotoObject({
+        ...copy,
+        id: newObjectId(),
+        position: placeNewObject(prev.objects, copy.kind),
+      });
+      if (!object) return prev;
+      return { ...prev, objects: [...prev.objects, object], selectedId: object.id };
+    });
+  }, [raiseAlert]);
+
   const removeObject = useCallback((id) => {
+    const removed = settingsRef.current.objects.find((object) => object.id === id);
+    if (removed) setUndoItem({ id: Date.now(), object: removed });
     setSettings((prev) => {
       const index = prev.objects.findIndex((object) => object.id === id);
       if (index < 0) return prev;
@@ -587,6 +640,17 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
       return { ...prev, objects: next, selectedId: selectedNext };
     });
   }, []);
+
+  const undoRemove = useCallback(() => {
+    if (!undoItem?.object) return;
+    const restored = undoItem.object;
+    setUndoItem(null);
+    setSettings((prev) => {
+      if (prev.objects.length >= PHOTO_OBJECT_LIMIT) return prev;
+      if (prev.objects.some((item) => item.id === restored.id)) return prev;
+      return { ...prev, objects: [...prev.objects, restored], selectedId: restored.id };
+    });
+  }, [undoItem]);
 
   const toggleHidden = useCallback((id) => {
     const object = settingsRef.current.objects.find((item) => item.id === id);
@@ -633,7 +697,8 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
   const takePhoto = useCallback(async () => {
     const viewport = viewportRef.current;
     const current = settingsRef.current;
-    if (!viewport || !isTauriRuntime || capturing) return;
+    if (!viewport || !isTauriRuntime || capturingRef.current) return;
+    capturingRef.current = true;
     const { width, height } = outputSize(current.output);
     const transparent = current.output.transparent && current.scene.stage !== "showroom";
     try {
@@ -652,24 +717,160 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
     } catch (error) {
       raiseAlert("capture", "Photo not saved", errorMessage(error));
     } finally {
+      capturingRef.current = false;
       setCapturing(false);
     }
-  }, [capturing, dismissAlert, isTauriRuntime, raiseAlert]);
+  }, [dismissAlert, isTauriRuntime, raiseAlert]);
 
   const showSavedPhoto = useCallback(async (path) => {
-    const { folder } = splitPath(path);
+    const folder = /\.(png|mp4|webm)$/i.test(path) ? splitPath(path).folder : path;
     if (await openFolderPath(folder)) return;
-    raiseAlert("open-folder", "Folder not opened", `Windows couldn't open ${folder}. The photo is saved there.`);
+    raiseAlert("open-folder", "Folder not opened", `Windows couldn't open ${folder}. The files are saved there.`);
   }, [raiseAlert]);
+
+  const shootAllViews = useCallback(async () => {
+    const viewport = viewportRef.current;
+    const current = settingsRef.current;
+    if (!viewport || !isTauriRuntime || capturingRef.current || current.shots.length < 2) return;
+    capturingRef.current = true;
+    let written = 0;
+    const prevCamera = viewport.getCamera();
+    const prevLens = current.lens;
+    let restoredNeeded = false;
+    try {
+      const destination = await open({ directory: true, multiple: false, title: "Choose folder for all saved views" });
+      if (typeof destination !== "string" || !destination) return;
+      const { width, height } = outputSize(current.output);
+      const transparent = current.output.transparent && current.scene.stage !== "showroom";
+      const watermark = loadPrefs()?.defaults?.watermark;
+      const sep = destination.includes("\\") ? "\\" : "/";
+      const baseStem = photoFileName(current.objects.map((o) => ({ ...o, name: objectLabel(o) }))).replace(/\.png$/i, "");
+      setCapturing(true);
+      restoredNeeded = true;
+      for (let i = 0; i < current.shots.length; i += 1) {
+        const shot = current.shots[i];
+        viewport.setCamera(shot, { instant: true });
+        const bytes = await viewport.capture({ width, height, transparent });
+        const slug = String(shot.name || `view_${i + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || `view_${i + 1}`;
+        const outPath = `${destination.replace(/[\\/]+$/, "")}${sep}${baseStem}_${String(i + 1).padStart(2, "0")}_${slug}.png`;
+        await writeFile(outPath, await applyWatermarkToPngBytes(bytes, watermark));
+        written += 1;
+      }
+      if (written > 0) trackUsage("photo", written);
+      dismissAlert("capture");
+      setNotice({ id: Date.now(), path: destination });
+    } catch (error) {
+      const prefix = written > 0 ? `Saved ${written} of ${current.shots.length} views before failing: ` : "";
+      raiseAlert("capture", "Saved views export failed", `${prefix}${errorMessage(error)}`);
+    } finally {
+      if (restoredNeeded && prevCamera) viewport.setCamera({ ...prevCamera, lens: prevLens }, { instant: true });
+      capturingRef.current = false;
+      setCapturing(false);
+    }
+  }, [dismissAlert, isTauriRuntime, raiseAlert]);
+
+  const stopDollyClip = useCallback(() => {
+    dollyAbortRef.current?.abort();
+  }, []);
+
+  const recordDollyClip = useCallback(async () => {
+    const viewport = viewportRef.current;
+    const current = settingsRef.current;
+    if (!viewport || !isTauriRuntime || capturingRef.current || current.shots.length < 2) return;
+    capturingRef.current = true;
+    const controller = new AbortController();
+    dollyAbortRef.current = controller;
+    const { width, height } = outputSize(current.output);
+    const clipW = Math.min(1920, width);
+    const clipH = Math.min(1920, Math.round((clipW * height) / Math.max(1, width)));
+    const seconds = Math.min(16, Math.max(4, (current.shots.length - 1) * 4));
+    setCapturing(true);
+    setDollyProgress({ current: 0, total: Math.max(2, Math.round(seconds * 30)) });
+    try {
+      const result = await viewport.recordDollyVideo({
+        shots: current.shots,
+        width: clipW,
+        height: clipH,
+        seconds,
+        fps: 30,
+        signal: controller.signal,
+        onProgress: setDollyProgress,
+      });
+      const baseStem = photoFileName(current.objects.map((o) => ({ ...o, name: objectLabel(o) }))).replace(/\.png$/i, "");
+      const target = await save({
+        defaultPath: `${baseStem}_dolly.${result.extension}`,
+        filters: [{ name: `${result.extension.toUpperCase()} video`, extensions: [result.extension] }],
+        title: "Save camera dolly clip",
+      });
+      if (!target) return;
+      await writeFile(target, result.bytes);
+      trackUsage("photo");
+      dismissAlert("capture");
+      setNotice({ id: Date.now(), path: target });
+    } catch (error) {
+      if (error?.name !== "AbortError") raiseAlert("capture", "Dolly clip failed", errorMessage(error));
+    } finally {
+      dollyAbortRef.current = null;
+      capturingRef.current = false;
+      setDollyProgress(null);
+      setCapturing(false);
+    }
+  }, [dismissAlert, isTauriRuntime, raiseAlert]);
+
+  /* ── Drag and drop (.yft -> vehicle, .ydr/.ydd/.glb/.gltf -> prop) ── */
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    if (!isTauriRuntime) return undefined;
+    let unlisten = null;
+    let disposed = false;
+    const isDropModel = (path) => /\.(yft|ydr|ydd|glb|gltf)$/i.test(String(path || ""));
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (!isActiveRef.current) return;
+        const { type, paths } = event.payload || {};
+        if (type === "enter") setDragging((paths || []).some(isDropModel));
+        else if (type === "leave") setDragging(false);
+        else if (type === "drop") {
+          setDragging(false);
+          for (const path of (paths || []).filter(isDropModel)) {
+            invoke("allow_model_resource", { path }).catch(() => {});
+            const kind = /\.yft$/i.test(path) ? "vehicle" : "prop";
+            addObject({ kind, source: "file", path });
+          }
+        }
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [addObject, isTauriRuntime]);
 
   /* ── Keyboard ── */
   useEffect(() => {
     if (!isActive || adding) return undefined;
     const onKeyDown = (event) => {
-      if (event.ctrlKey || event.altKey || event.metaKey || isEditableTarget(event.target)) return;
+      if (isEditableTarget(event.target)) return;
       const key = event.key.toLowerCase();
       const current = settingsRef.current;
       const id = current.selectedId;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && key === "d" && id) {
+        event.preventDefault();
+        duplicateObject(id);
+        return;
+      }
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      if (key === "escape" && helpOpen) {
+        event.preventDefault();
+        setHelpOpen(false);
+        return;
+      }
       if (key === "g") setSettings((prev) => ({ ...prev, gizmo: "translate" }));
       else if (key === "r") setSettings((prev) => ({ ...prev, gizmo: "rotate" }));
       else if (key === "f") {
@@ -677,15 +878,18 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
         else viewportRef.current?.frameAll("angle");
       } else if (key === "h" && id) toggleHidden(id);
       else if (key === "delete" && id) removeObject(id);
-      else if (key === " " && id) togglePlay(id);
-      else if (key === "p") takePhoto();
+      else if (key === " " && id && !isInteractiveTarget(event.target)) {
+        const sel = current.objects.find((item) => item.id === id);
+        if (sel?.kind !== "ped") return;
+        togglePlay(id);
+      } else if (key === "p") takePhoto();
       else if (key === "escape" && id) select(null);
       else return;
       event.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [adding, isActive, removeObject, select, takePhoto, toggleHidden, togglePlay]);
+  }, [adding, duplicateObject, helpOpen, isActive, removeObject, select, takePhoto, toggleHidden, togglePlay]);
 
   /* ── Keyboard: the customizable view and camera shortcuts ── */
   // The shots frame the whole set, like the deck; Reset View frames as F does.
@@ -822,6 +1026,16 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
                       <button
                         type="button"
                         className="cx-icon-btn"
+                        onClick={() => duplicateObject(object.id)}
+                        disabled={objects.length >= PHOTO_OBJECT_LIMIT}
+                        aria-label={`Duplicate ${objectLabel(object)}`}
+                        title="Duplicate (Ctrl+D)"
+                      >
+                        <Copy aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="cx-icon-btn"
                         onClick={() => toggleHidden(object.id)}
                         aria-label={object.hidden ? `Show ${objectLabel(object)}` : `Hide ${objectLabel(object)}`}
                         title={object.hidden ? "Show (H)" : "Hide (H)"}
@@ -866,7 +1080,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
       </aside>
 
       {/* ──── Viewfinder ──── */}
-      <section className="lv-finder" aria-label="Viewfinder">
+      <section className={`lv-finder ${dragging ? "is-dragging" : ""}`} aria-label="Viewfinder">
         <div className="lv-stage">
           {isTauriRuntime ? (
             <PhotoViewport
@@ -905,7 +1119,7 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
             />
           )}
           {isTauriRuntime && objects.length === 0 ? (
-            <StageEmpty icon={Aperture} title="The set is empty" line="Add a vehicle, a person or props from the game, then frame your shot.">
+            <StageEmpty icon={Aperture} title="The set is empty" line="Add a vehicle, a person or props from the game, or drop a .yft, .ydr, .ydd, .glb or .gltf file here.">
               <button type="button" className="cx-btn is-primary" onClick={() => setAdding("vehicle")}>
                 <Plus aria-hidden="true" />
                 Add to set
@@ -925,7 +1139,13 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
             <StageToggle showroom={showroomOn} onChange={(on) => updateScene({ stage: on ? "showroom" : "workbench" })} title="A dark studio with a reflective floor and a spotlight you can aim" />
           ) : null}
 
-          {loadingCount > 0 ? (
+          {dollyProgress ? (
+            <div className="lv-slip pm-status" role="status" aria-live="polite">
+              <Loader2 className="pm-spin" aria-hidden="true" />
+              <span>Recording dolly frame {dollyProgress.current} of {dollyProgress.total}…</span>
+              <button type="button" className="lv-link" onClick={stopDollyClip}>Stop</button>
+            </div>
+          ) : loadingCount > 0 ? (
             <div className="lv-slip pm-status" role="status" aria-live="polite">
               <Loader2 className="pm-spin" aria-hidden="true" />
               <span>{loadingCount === 1 ? "Loading 1 object…" : `Loading ${loadingCount} objects…`}</span>
@@ -951,6 +1171,12 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
 
           <div className="lv-toasts">
             <AnimatePresence>
+              {undoItem ? (
+                <motion.div key={undoItem.id} className="lv-toast pm-saved" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} transition={{ duration: 0.18 }}>
+                  <span className="pm-saved-path">Removed {objectLabel(undoItem.object)}</span>
+                  <button type="button" className="lv-link" onClick={undoRemove}>Undo</button>
+                </motion.div>
+              ) : null}
               {notice ? (
                 <motion.div key={notice.id} className="lv-toast pm-saved" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} transition={{ duration: 0.18 }}>
                   <Check aria-hidden="true" />
@@ -960,6 +1186,13 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
               ) : null}
             </AnimatePresence>
           </div>
+
+          {dragging ? (
+            <div className="lv-dropzone" aria-hidden="true">
+              <span className="cx-display">Release to add to set</span>
+              <span>Drop a .yft vehicle or a .ydr, .ydd, .glb or .gltf prop.</span>
+            </div>
+          ) : null}
 
           {hasReady ? (
             <div className="lv-deck" role="toolbar" aria-label="Camera and set">
@@ -1008,12 +1241,12 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
                   </>,
                 )]}
               />
-              <div className="lv-deck-group">
+              <div className="lv-deck-group" ref={helpWrapRef}>
                 <DeckButton active={helpOpen} onClick={() => setHelpOpen((value) => !value)} title="Mouse and keyboard controls" className="is-icon">
                   <CircleHelp aria-hidden="true" />
                 </DeckButton>
+                {helpOpen ? <PhotoHelp /> : null}
               </div>
-              {helpOpen ? <PhotoHelp /> : null}
             </div>
           ) : null}
         </div>
@@ -1036,6 +1269,11 @@ export default function PhotoModePage({ workspaceState, onStateChange, isActive,
         onSaveShot={saveShot}
         onUseShot={useShot}
         onDeleteShot={(id) => setSettings((prev) => ({ ...prev, shots: prev.shots.filter((shot) => shot.id !== id) }))}
+        onShootAllShots={shootAllViews}
+        onRecordDolly={recordDollyClip}
+        onStopDolly={stopDollyClip}
+        dollyProgress={dollyProgress}
+        busy={capturing}
         onOutput={(patch) => setSettings((prev) => ({ ...prev, output: { ...prev.output, ...patch } }))}
       />
 

@@ -13,14 +13,15 @@ function yFor(hz, height) {
 
 function fitCanvas(canvas) {
   const box = canvas.getBoundingClientRect();
-  const ratio = window.devicePixelRatio || 1;
-  const width = Math.max(1, Math.round(box.width * ratio));
-  const height = Math.max(1, Math.round(box.height * ratio));
+  const uiZoom = canvas.clientWidth ? box.width / canvas.clientWidth || 1 : 1;
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.round(box.width * dpr));
+  const height = Math.max(1, Math.round(box.height * dpr));
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
   }
-  return { width, height, ratio };
+  return { width, height, ratio: dpr * uiZoom };
 }
 
 const SirenScope = forwardRef(function SirenScope({ label, sub, state, roleText, coach }, ref) {
@@ -40,7 +41,7 @@ const SirenScope = forwardRef(function SirenScope({ label, sub, state, roleText,
     const line = styles.getPropertyValue("--es-trace-line").trim() || "#ccc";
     context.clearRect(0, 0, width, height);
     context.strokeStyle = line;
-    context.lineWidth = 1;
+    context.lineWidth = Math.max(1, Math.round(ratio));
     for (const hz of GRID) {
       const y = Math.round(yFor(hz, height)) + 0.5;
       context.beginPath();

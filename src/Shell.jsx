@@ -177,6 +177,7 @@ function feedbackAreaForTab(tab, settingsOpen) {
   if (settingsOpen || !tab || tab.type === "home") return "home-settings";
   if (tab.type === "eupstudio") return "eup-studio";
   if (tab.type === "propstudio") return "prop-studio";
+  if (tab.type === "photo") return "photo-mode";
   if (tab.type === "sounds") return "sound-studio";
   if (tab.type === "variants") return "variant-builder";
   if (tab.type === "templategen") return "template-generator";
@@ -392,8 +393,8 @@ export default function Shell() {
           : type === "sounds"
             ? "Sound Studio"
           : type === "templategen"
-            ? "Template Gen"
-            : "Variants";
+            ? "Template Generator"
+            : "Variant Builder";
       const newTab = {
         id: generateTabId(),
         type,
@@ -897,11 +898,13 @@ export default function Shell() {
   }, [activeTabId]);
 
   // Global hotkeys for opening new mode tabs. They wait while the first-run
-  // screen is up; with Settings open they close it, as the new-tab menu does.
+  // screen or another modal dialog is up; with Settings open they close it, as the new-tab menu does.
   useEffect(() => {
     if (showOnboarding || pendingClose) return undefined;
     const handleKeyDown = (event) => {
       if (event.repeat) return;
+      const modal = document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]');
+      if (modal && !modal.classList.contains("settings-dialog")) return;
       const target = event.target;
       if (target instanceof Element) {
         const tag = target.tagName;
@@ -1168,8 +1171,13 @@ export default function Shell() {
       <AnimatePresence>{!booted ? <AppLoader /> : null}</AnimatePresence>
 
       <Suspense fallback={null}>
-        {booted && <WhatsNew />}
-        {whatsNewManual && <WhatsNew forceOpen isManual onClose={handleCloseWhatsNew} />}
+        {(booted || whatsNewManual) && (
+          <WhatsNew
+            forceOpen={whatsNewManual}
+            isManual={whatsNewManual}
+            onClose={handleCloseWhatsNew}
+          />
+        )}
         {bugReportLoaded && (
           <BugReportModal
             open={isBugReportOpen}
@@ -1447,7 +1455,7 @@ export default function Shell() {
                 type="button"
                 className="shell-wc-btn shell-wc-min"
                 onClick={handleMinimize}
-                aria-label="Minimize"
+                aria-label="Minimise"
                 data-tauri-drag-region="false"
               >
                 <Minus className="shell-wc-icon" />
@@ -1456,7 +1464,7 @@ export default function Shell() {
                 type="button"
                 className="shell-wc-btn shell-wc-max"
                 onClick={handleMaximize}
-                aria-label="Maximize"
+                aria-label="Maximise"
                 data-tauri-drag-region="false"
               >
                 <Square className="shell-wc-icon" />

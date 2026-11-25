@@ -72,9 +72,11 @@ const EngineDyno = forwardRef(function EngineDyno({ range, label, sublabel, coac
     const canvas = canvasRef.current;
     if (!canvas) return;
     const box = canvas.getBoundingClientRect();
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.max(1, Math.round(box.width * ratio));
-    const height = Math.max(1, Math.round(box.height * ratio));
+    const uiZoom = canvas.clientWidth ? box.width / canvas.clientWidth || 1 : 1;
+    const dpr = window.devicePixelRatio || 1;
+    const ratio = dpr * uiZoom;
+    const width = Math.max(1, Math.round(box.width * dpr));
+    const height = Math.max(1, Math.round(box.height * dpr));
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;

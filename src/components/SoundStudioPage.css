@@ -91,6 +91,7 @@
 }
 
 .es-entry:hover .es-entry-remove,
+.es-entry:focus-within .es-entry-remove,
 .es-entry-remove:focus-visible {
   opacity: 1;
 }
@@ -173,8 +174,8 @@
 }
 
 .es-pick:focus-visible {
-  outline: 2px solid var(--cx-focus);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--cx-focus);
 }
 
 .es-engines {
@@ -212,8 +213,8 @@
 }
 
 .es-engine:focus-visible {
-  outline: 2px solid var(--cx-focus);
-  outline-offset: -2px;
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mg-primary);
 }
 
 .es-engine:disabled {
@@ -961,8 +962,8 @@
 
 .sn-pack-num:focus-visible,
 .sn-pack-main:focus-visible {
-  outline: 2px solid var(--cx-focus);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--cx-focus);
 }
 
 .sn-sp {
@@ -1002,8 +1003,8 @@
 
 .sn-text:focus-visible {
   border-color: var(--mg-primary);
-  outline: 2px solid var(--cx-focus);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--cx-focus);
 }
 
 .sn-bench {
@@ -1148,8 +1149,8 @@
 }
 
 .sn-pad:focus-visible {
-  outline: 2px solid var(--cx-focus);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--cx-focus);
 }
 
 .sn-pad.is-on {

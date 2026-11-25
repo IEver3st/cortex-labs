@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { parseDDSAsync } from "./dds";
+import { parseDDSAsync } from "./dds.js";
 import { describeDdsPixelFormat } from "./dds-decode.js";
 import {
   createBptcDdsTexture,
@@ -16,13 +16,180 @@ import {
   usesNativeAlphaBlending,
 } from "./native-material-plan.js";
 import { hasEmissiveDim, patchNativeShader } from "./native-shader.js";
+import { formatLabelForDds } from "./texture-vram.js";
 import { isLampBlocker, makeDepthOnlyOccluder, releaseDepthOnlyOccluder } from "./native-occluder.js";
 import { applyMaterialDrawOrder, releaseMaterialDrawOrder } from "./native-draw-order.js";
 
 const DXT_FORMATS = new Set(["DXT1", "DXT3", "DXT5"]);
 const BC7_FORMATS = new Set([98, 99]);
-const LOAD_CONCURRENCY = 3;
+const LOAD_CONCURRENCY = 16;
 const PROGRESS_RENDER_INTERVAL_MS = 120;
+const CACHED_TEXTURE_LRU_LIMIT = 200;
+
+// Per-WebGLRenderer cache for active source textures plus a bounded LRU for
+// bridge-extracted DDS files (`.shared-textures/<sha256>.dds` and `yft-cache`).
+// Configured GPU texture variants live on each entry so cache hits reuse the
+// already-uploaded WebGLTexture instead of cloning and re-uploading on toggle.
+// Isolated per renderer so WebGL textures never cross contexts.
+const rendererTextureCaches = new WeakMap();
+
+function isContentAddressedSharedPath(path) {
+  const normalized = String(path || "").replace(/\\/g, "/").toLowerCase();
+  return normalized.includes("/.shared-textures/") && normalized.endsWith(".dds");
+}
+
+function isCacheableNativePath(path) {
+  const normalized = String(path || "").replace(/\\/g, "/").toLowerCase();
+  return (normalized.includes("/.shared-textures/") || normalized.includes("/yft-cache/")) && normalized.endsWith(".dds");
+}
+
+function getRendererCache(renderer) {
+  if (!renderer || typeof renderer !== "object") return null;
+  let cache = rendererTextureCaches.get(renderer);
+  if (!cache) {
+    cache = new Map();
+    rendererTextureCaches.set(renderer, cache);
+  }
+  return cache;
+}
+
+function disposeCacheEntry(entry) {
+  const disposed = new Set();
+  if (entry.variants) {
+    for (const variant of entry.variants.values()) {
+      if (variant && !disposed.has(variant)) {
+        disposed.add(variant);
+        variant.dispose?.();
+      }
+    }
+    entry.variants.clear();
+  }
+  if (entry.texture && !disposed.has(entry.texture)) {
+    entry.texture.dispose?.();
+  }
+  entry.texture = null;
+}
+
+function evictTextureLru(cache) {
+  let idleCached = 0;
+  for (const entry of cache.values()) {
+    if (entry.refs === 0 && entry.cacheable && !entry.stale) idleCached += 1;
+  }
+  if (idleCached <= CACHED_TEXTURE_LRU_LIMIT) return;
+  for (const [key, entry] of cache) {
+    if (entry.refs > 0 || !entry.cacheable || entry.stale) continue;
+    cache.delete(key);
+    disposeCacheEntry(entry);
+    idleCached -= 1;
+    if (idleCached <= CACHED_TEXTURE_LRU_LIMIT) break;
+  }
+}
+
+export function clearNativeTextureCache(renderer = null, { onlyMutable = false } = {}) {
+  const cache = renderer ? rendererTextureCaches.get(renderer) : null;
+  if (!cache) return;
+  for (const [key, entry] of cache) {
+    if (onlyMutable && entry.immutable) continue;
+    if (entry.refs <= 0) {
+      cache.delete(key);
+      disposeCacheEntry(entry);
+    } else {
+      entry.stale = true;
+    }
+  }
+}
+
+function getOrCreateCachedVariant(entry, role, binding, renderer) {
+  const colorMode = role === "baseColor" || role === "overlay" || role === "emissive" ? "srgb" : "linear";
+  const uvSet = Number.isInteger(binding?.uvSet) && binding.uvSet >= 0 && binding.uvSet <= 3 ? binding.uvSet : 0;
+  const variantKey = `${colorMode}|${uvSet}`;
+  let texture = entry.variants.get(variantKey);
+  if (texture) return texture;
+  // Reuse the uploaded source texture directly for the first variant so normal
+  // single-role DDS files avoid cloning and re-uploading to WebGL.
+  if (entry.variants.size === 0) {
+    texture = entry.texture;
+  } else {
+    texture = entry.texture.clone();
+  }
+  texture.channel = uvSet;
+  texture.colorSpace = colorMode === "srgb" ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = renderer?.capabilities?.getMaxAnisotropy?.() || 1;
+  texture.needsUpdate = true;
+  entry.variants.set(variantKey, texture);
+  return texture;
+}
+
+async function acquireNativeTextureSource(path, renderer, signal, { checkTransparency = true } = {}) {
+  const cache = getRendererCache(renderer);
+  if (!cache) {
+    const texture = await loadNativeTextureSource(path, renderer, signal, { checkTransparency });
+    const uncached = { texture, variants: new Map() };
+    return {
+      texture,
+      getVariant: (role, binding) => getOrCreateCachedVariant(uncached, role, binding, renderer),
+      release: () => disposeCacheEntry(uncached),
+    };
+  }
+  const key = String(path || "").toLowerCase();
+  const immutable = isContentAddressedSharedPath(path);
+  const cacheable = isCacheableNativePath(path);
+  let entry = cache.get(key);
+  if (entry && entry.stale) {
+    entry = null;
+  }
+  if (entry) {
+    cache.delete(key);
+    cache.set(key, entry);
+    entry.refs += 1;
+  } else {
+    entry = { promise: null, texture: null, variants: new Map(), refs: 1, immutable, cacheable, stale: false };
+    entry.promise = loadNativeTextureSource(path, renderer, null, { checkTransparency }).then(
+      (texture) => {
+        entry.texture = texture;
+        if (entry.refs <= 0 && (!entry.cacheable || entry.stale)) {
+          disposeCacheEntry(entry);
+          if (cache.get(key) === entry) cache.delete(key);
+        } else if (entry.refs <= 0) {
+          evictTextureLru(cache);
+        }
+        return texture;
+      },
+      (error) => {
+        if (cache.get(key) === entry) cache.delete(key);
+        throw error;
+      },
+    );
+    cache.set(key, entry);
+  }
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    entry.refs = Math.max(0, entry.refs - 1);
+    if (entry.refs > 0) return;
+    if (!entry.cacheable || entry.stale) {
+      if (cache.get(key) === entry) cache.delete(key);
+      disposeCacheEntry(entry);
+    } else {
+      evictTextureLru(cache);
+    }
+  };
+  try {
+    const texture = await entry.promise;
+    if (signal?.aborted) throw makeAbortError();
+    return {
+      texture,
+      getVariant: (role, binding) => getOrCreateCachedVariant(entry, role, binding, renderer),
+      release,
+    };
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
 
 function createRenderBatcher(onRender, interval) {
   let last = 0;
@@ -87,19 +254,52 @@ function canUploadCompression(renderer, extension) {
   }
 }
 
+function extractTextureMeta(texture, path, { fourCc = "", dxgiFormat = 0, source = "" } = {}) {
+  const image = texture?.image;
+  const mip0 = Array.isArray(texture?.mipmaps) && texture.mipmaps.length > 0 ? texture.mipmaps[0] : null;
+  const width = Number(image?.width || mip0?.width || 0);
+  const height = Number(image?.height || mip0?.height || 0);
+  const mipmaps = Array.isArray(texture?.mipmaps) && texture.mipmaps.length > 0
+    ? texture.mipmaps.length
+    : texture?.generateMipmaps === false
+      ? 1
+      : width > 0 && height > 0
+        ? Math.floor(Math.log2(Math.max(width, height))) + 1
+        : 1;
+  const name = String(path || "").split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "texture";
+  return {
+    name,
+    path: path || "",
+    width,
+    height,
+    mipmaps,
+    format: formatLabelForDds({ fourCc, dxgiFormat, source }),
+  };
+}
+
 /** Loads a game DDS as a three.js texture (GPU-compressed when supported). */
-export async function loadNativeTextureSource(path, renderer, signal) {
+export async function loadNativeTextureSource(path, renderer, signal, { checkTransparency = true } = {}) {
   throwIfAborted(signal);
   const bytes = await readFile(path);
   throwIfAborted(signal);
-  const texture = await createNativeTextureSource(bytes, renderer);
-  if (isFullyTransparentDds(bytes)) texture.userData.fullyTransparent = true;
+  const ddsInfo = inspectDdsCompression(bytes);
+  // Probe transparency before transferring `bytes.buffer` to the decode worker,
+  // and only when the texture is bound as a baseColor diffuse map.
+  const fullyTransparent = checkTransparency ? isFullyTransparentDds(bytes) : false;
+  const texture = await createNativeTextureSource(bytes, renderer, ddsInfo);
+  if (fullyTransparent) texture.userData.fullyTransparent = true;
+  texture.userData.vramInfo = extractTextureMeta(texture, path, {
+    ...ddsInfo,
+    source: texture.userData?.nativeMaterialSource || "",
+  });
   return texture;
 }
 
-async function createNativeTextureSource(bytes, renderer) {
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  const { fourCc, dxgiFormat } = inspectDdsCompression(bytes);
+async function createNativeTextureSource(bytes, renderer, ddsInfo = null) {
+  const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+    ? bytes.buffer
+    : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const { fourCc, dxgiFormat } = ddsInfo || inspectDdsCompression(bytes);
 
   // GPU upload first; any failure there falls back to the CPU decoder.
   try {
@@ -124,8 +324,10 @@ async function createNativeTextureSource(bytes, renderer) {
 
   // Same orientation as the compressed uploads above: the game's UVs address
   // the file's top row at v = 0, so the decoder must not flip rows here.
-  const decoded = await parseDDSAsync(buffer, { log: false, flipY: false });
-  if (!decoded) throw new Error(`Unsupported texture format: ${describeDdsPixelFormat(bytes)}`);
+  // Capture format description before transferring `buffer` zero-copy to the worker.
+  const formatDesc = describeDdsPixelFormat(bytes);
+  const decoded = await parseDDSAsync(buffer, { log: false, flipY: false, transfer: true });
+  if (!decoded) throw new Error(`Unsupported texture format: ${formatDesc}`);
   decoded.userData = { ...(decoded.userData || {}), nativeMaterialSource: "dds-decoded" };
   return decoded;
 }
@@ -165,10 +367,15 @@ function restoreNativeUvChannels(geometry) {
   delete geometry.userData.nativeUvRestore;
 }
 
-function createNativeMaterial(mesh, nativeMaterial) {
+export function createNativeMaterial(mesh, nativeMaterial, selectedBindings = null) {
   const profile = classifyNativeShaderProfile(nativeMaterial);
   const settings = PROFILE_SETTINGS[profile] || PROFILE_SETTINGS.default;
-  const material = new THREE.MeshPhysicalMaterial({
+  // Paint, rubber and spec-mapped meshes need MeshPhysicalMaterial (clearcoat,
+  // sheen, specularIntensity/specularIntensityMap). Everything else compiles a
+  // much lighter MeshStandardMaterial program with identical visuals.
+  const needsPhysical = profile === "paint" || profile === "rubber" || Boolean(selectedBindings?.specular?.resolvedPath);
+  const MaterialClass = needsPhysical ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial;
+  const material = new MaterialClass({
     color: 0xffffff,
     emissive: profile === "emissive" && !isLightDrivenEmissive(nativeMaterial) ? 0xffffff : 0x000000,
     side: THREE.FrontSide,
@@ -210,36 +417,16 @@ function createNativeMaterial(mesh, nativeMaterial) {
   return material;
 }
 
-function textureVariantKey(path, role, uvSet) {
-  const colorMode = role === "baseColor" || role === "overlay" || role === "emissive" ? "srgb" : "linear";
-  return `${path.toLowerCase()}|${colorMode}|${Number.isInteger(uvSet) ? uvSet : 0}`;
-}
-
-function configureTextureVariant(source, role, binding, renderer) {
-  const texture = source.clone();
-  const uvSet = Number.isInteger(binding?.uvSet) && binding.uvSet >= 0 && binding.uvSet <= 3
-    ? binding.uvSet
-    : 0;
-  texture.channel = uvSet;
-  texture.colorSpace = role === "baseColor" || role === "overlay" || role === "emissive"
-    ? THREE.SRGBColorSpace
-    : THREE.NoColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.anisotropy = renderer?.capabilities?.getMaxAnisotropy?.() || 1;
-  texture.needsUpdate = true;
-  return texture;
-}
-
 function configureOverlayShader(material, texture, geometry, binding) {
   const uvSet = Number.isInteger(binding?.uvSet) ? binding.uvSet : 0;
   const uvAttribute = geometry?.userData?.gtaUvSets?.[uvSet] || geometry?.attributes?.uv;
   if (!uvAttribute) return false;
+  const hadOverlay = Boolean(material.userData.nativeOverlayMap);
   geometry.setAttribute("nativeOverlayUv", uvAttribute);
   material.userData.nativeOverlayMap = texture;
   // A compiled program keeps the uniform made by onBeforeCompile.
   if (material.userData.nativeOverlayUniform) material.userData.nativeOverlayUniform.value = texture;
-  material.needsUpdate = true;
+  if (!hadOverlay) material.needsUpdate = true;
   return true;
 }
 
@@ -280,6 +467,9 @@ function placeholderTexture(role, binding) {
   if (!texture) {
     texture = new THREE.DataTexture(new Uint8Array(PLACEHOLDER_PIXELS[role]), 1, 1, THREE.RGBAFormat);
     texture.channel = uvSet;
+    texture.colorSpace = role === "baseColor" || role === "overlay" || role === "emissive"
+      ? THREE.SRGBColorSpace
+      : THREE.NoColorSpace;
     texture.userData.nativePlaceholder = true;
     texture.needsUpdate = true;
     placeholders.set(key, texture);
@@ -295,7 +485,7 @@ function placeholderTexture(role, binding) {
  * Compiles block the main thread, and per-texture variants were most of the
  * native load time. A slot whose texture fails keeps its neutral stand-in.
  */
-function assignPlaceholder(material, mesh, role, binding) {
+export function assignNativePlaceholder(material, mesh, role, binding) {
   const texture = placeholderTexture(role, binding);
   if (role === "baseColor") material.map = texture;
   else if (role === "overlay") configureOverlayShader(material, texture, mesh.geometry, binding);
@@ -306,13 +496,17 @@ function assignPlaceholder(material, mesh, role, binding) {
 }
 
 /** Returns true when the texture turned the mesh into a lamp blocker (native-occluder.js). */
-function assignTexture(material, mesh, role, texture, binding) {
+export function assignNativeTextureSlot(material, mesh, role, texture, binding) {
   if (material.userData.nativeDepthOnly) return false;
+  let needsCompile = false;
   if (role === "baseColor" && isLampBlocker(mesh.userData?.nativeMaterial, binding, texture, mesh.geometry)) {
     makeDepthOnlyOccluder(material, mesh);
+    material.needsUpdate = true;
     return true;
   } else if (role === "baseColor") {
+    const prev = material.map;
     material.map = texture;
+    if (!prev || prev.channel !== texture.channel) needsCompile = true;
     // Game glass is as opaque as its texture's alpha. The profile's fixed
     // opacity only covers the stand-in; kept on, it turns housings and
     // reflectors modelled as glass with opaque textures see-through.
@@ -320,20 +514,28 @@ function assignTexture(material, mesh, role, texture, binding) {
   } else if (role === "overlay") {
     configureOverlayShader(material, texture, mesh.geometry, binding);
   } else if (role === "normal") {
+    const prev = material.normalMap;
     material.normalMap = texture;
     material.normalScale?.set?.(1, 1);
+    if (!prev || prev.channel !== texture.channel) needsCompile = true;
   } else if (role === "specular") {
+    const prev = material.specularIntensityMap;
     material.specularIntensityMap = texture;
     material.specularIntensity = 1;
+    if (!prev || prev.channel !== texture.channel) needsCompile = true;
   } else if (role === "emissive") {
+    const prev = material.emissiveMap;
     material.emissiveMap = texture;
     material.emissive.setHex(0xffffff);
     material.emissiveIntensity = Math.max(material.emissiveIntensity || 0, 1);
+    if (!prev || prev.channel !== texture.channel) needsCompile = true;
   } else if (role === "ambientOcclusion") {
+    const prev = material.aoMap;
     material.aoMap = texture;
     material.aoMapIntensity = 1;
+    if (!prev || prev.channel !== texture.channel) needsCompile = true;
   }
-  material.needsUpdate = true;
+  if (needsCompile) material.needsUpdate = true;
   return false;
 }
 
@@ -350,23 +552,25 @@ function buildAssignments(object, excludeMesh) {
 
     if (!child.userData.baseMaterial) child.userData.baseMaterial = child.material;
     prepareNativeUvChannels(child.geometry);
-    const material = createNativeMaterial(child, nativeMaterial);
+    const selected = selectNativeMaterialBindings(nativeMaterial);
+    const material = createNativeMaterial(child, nativeMaterial, selected);
     child.userData.nativeMaterialObject = material;
     child.renderOrder = nativeMaterial.renderBucket || 0;
     if (material.transparent) applyMaterialDrawOrder(child);
     materials.add(material);
     meshes.push(child);
 
-    const selected = selectNativeMaterialBindings(nativeMaterial);
     for (const role of ["baseColor", "overlay", "normal", "specular", "emissive", "ambientOcclusion"]) {
       const binding = selected[role];
       if (!binding?.resolvedPath) continue;
-      assignPlaceholder(material, child, role, binding);
+      assignNativePlaceholder(material, child, role, binding);
       const pathKey = binding.resolvedPath.toLowerCase();
       if (!assignmentsByPath.has(pathKey)) {
-        assignmentsByPath.set(pathKey, { path: binding.resolvedPath, assignments: [] });
+        assignmentsByPath.set(pathKey, { path: binding.resolvedPath, assignments: [], needsTransparencyCheck: false });
       }
-      assignmentsByPath.get(pathKey).assignments.push({ material, mesh: child, role, binding });
+      const bucket = assignmentsByPath.get(pathKey);
+      if (role === "baseColor") bucket.needsTransparencyCheck = true;
+      bucket.assignments.push({ material, mesh: child, role, binding });
     }
   });
 
@@ -407,15 +611,18 @@ export async function loadNativeMaterialView({
     const bPriority = Math.min(...b.assignments.map((entry) => priority[entry.role] ?? 9));
     return aPriority - bPriority;
   });
-  const sourceTextures = new Set();
-  const variants = new Map();
+  const sourceReleases = [];
+  const textureMetas = [];
   const failures = [];
   // Occluders this view made. Kept here rather than read back from mesh
   // flags, which other code (a livery override) may have changed since.
   const occluders = new Set();
   let loaded = 0;
+  let disposed = false;
 
   const dispose = () => {
+    if (disposed) return;
+    disposed = true;
     for (const mesh of meshes) {
       const nativeMaterial = mesh.userData?.nativeMaterialObject;
       if (mesh.material === nativeMaterial && mesh.userData?.baseMaterial) {
@@ -432,11 +639,9 @@ export async function loadNativeMaterialView({
       }
     }
     for (const material of materials) material.dispose?.();
-    for (const texture of variants.values()) texture.dispose?.();
-    for (const texture of sourceTextures) texture.dispose?.();
+    for (const release of sourceReleases) release();
     occluders.clear();
-    variants.clear();
-    sourceTextures.clear();
+    sourceReleases.length = 0;
   };
 
   onSetup?.({ ...summary, plannedTextureCount: requests.length });
@@ -445,30 +650,38 @@ export async function loadNativeMaterialView({
   try {
     await runPool(requests, async (request) => {
       throwIfAborted(signal);
+      if (disposed) throw makeAbortError();
       try {
-        const source = await loadNativeTextureSource(request.path, renderer, signal);
-        throwIfAborted(signal);
-        sourceTextures.add(source);
+        const { texture: source, getVariant, release } = await acquireNativeTextureSource(
+          request.path,
+          renderer,
+          signal,
+          // isFullyTransparentDds early-outs on >64px headers, so always probing
+          // avoids cache-order misses if a small texture is first bound non-diffuse.
+          { checkTransparency: true },
+        );
+        if (disposed || signal?.aborted) {
+          release();
+          throw makeAbortError();
+        }
+        sourceReleases.push(release);
+        if (source.userData?.vramInfo) textureMetas.push(source.userData.vramInfo);
 
         for (const assignment of request.assignments) {
-          const key = textureVariantKey(request.path, assignment.role, assignment.binding.uvSet);
-          let texture = variants.get(key);
-          if (!texture) {
-            texture = configureTextureVariant(source, assignment.role, assignment.binding, renderer);
-            variants.set(key, texture);
-          }
-          if (assignTexture(assignment.material, assignment.mesh, assignment.role, texture, assignment.binding)) {
+          const texture = getVariant(assignment.role, assignment.binding);
+          if (assignNativeTextureSlot(assignment.material, assignment.mesh, assignment.role, texture, assignment.binding)) {
             occluders.add(assignment.mesh);
           }
         }
         loaded += 1;
       } catch (error) {
-        if (error?.name === "AbortError") throw error;
+        if (error?.name === "AbortError" || disposed) throw error;
         const message = (typeof error === "string" ? error : error?.message) || String(error || "") || "Texture load failed.";
         failures.push({ path: request.path, message });
         console.warn("[native-materials] Texture failed:", request.path, message);
       }
 
+      if (disposed || signal?.aborted) return;
       onProgress?.({
         ...summary,
         plannedTextureCount: requests.length,
@@ -491,6 +704,7 @@ export async function loadNativeMaterialView({
       loadedTextureCount: loaded,
       failedTextureCount: failures.length,
       failures,
+      textures: textureMetas,
     },
     dispose,
   };

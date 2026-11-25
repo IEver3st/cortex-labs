@@ -22,6 +22,8 @@ import { useWorkspaceHotkeys } from "../lib/use-workspace-hotkeys";
 import { openFolderPath } from "../lib/open-folder";
 import { applyWatermarkToDataUrl, stampCanvas } from "../lib/watermark";
 import { trackUsage } from "../lib/usage";
+import { analyzeClipMotion, formatClipCritiqueMarkdown } from "../lib/anim-critique.js";
+import { canvasToPngBytes, composeSheet } from "../lib/kit-shoot-media.js";
 import {
   COMPONENT_IDS,
   DEFAULT_BASE_OUTFIT,
@@ -370,6 +372,8 @@ export default function EupPage({
   const [playing, setPlaying] = useState(() => !normalizePlayback(initial.playback).paused);
   const [meshStats, setMeshStats] = useState(null);
   const [clipRevision, setClipRevision] = useState(0);
+  const [upperBodyMask, setUpperBodyMask] = useState("off");
+  const [filmstripBusy, setFilmstripBusy] = useState(false);
   const [clipListing, setClipListing] = useState(IDLE_CLIP_LISTING);
   const propIdRef = useRef(0);
   const [cameraPreset, setCameraPreset] = useState(() =>
@@ -400,6 +404,15 @@ export default function EupPage({
   // Dock and inspector widths the user dragged, kept for every EUP tab.
   const panes = usePaneWidths("cortex.eup.panes");
   const [helpOpen, setHelpOpen] = useState(false);
+  const helpWrapRef = useRef(null);
+  useEffect(() => {
+    if (!helpOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (!helpWrapRef.current?.contains(event.target)) setHelpOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [helpOpen]);
   const [notice, setNotice] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [focusComponent, setFocusComponent] = useState(null);
@@ -703,7 +716,7 @@ export default function EupPage({
     if (!figures.every((figure) => figure.isSettled())) return;
     framedRef.current = true;
     for (const figure of figures) figure.settleFloor();
-    viewportRef.current?.frame(cameraPresetRef.current);
+    viewportRef.current?.frame(cameraPresetRef.current, { instant: true });
   }, []);
 
   const figureShared = {
@@ -726,6 +739,7 @@ export default function EupPage({
     member: cast.a,
     offsetX: offsets.a,
     describeRetry: describeRetry.a,
+    upperBodyMask: focus === "a" ? upperBodyMask : "off",
     visibility: focus === "a" ? focusVisibility : undefined,
   });
   const figureB = usePedFigure({
@@ -734,6 +748,7 @@ export default function EupPage({
     member: cast.b,
     offsetX: offsets.b,
     describeRetry: describeRetry.b,
+    upperBodyMask: focus === "b" ? upperBodyMask : "off",
     visibility: focus === "b" ? focusVisibility : undefined,
   });
   figuresRef.current = { a: figureA, b: figureB };
@@ -1813,10 +1828,80 @@ export default function EupPage({
     try {
       await navigator.clipboard.writeText(text);
       notify(`Copied ${label}`);
+      return true;
     } catch (error) {
       raiseAlert("copy", "Couldn't copy", errorMessage(error));
+      return false;
     }
   }, [notify, raiseAlert]);
+
+  const clipCritique = useMemo(
+    () => (clip ? analyzeClipMotion(clip, figure.skeleton) : null),
+    [clip, figure.skeleton],
+  );
+
+  const handleCopyClipCritique = useCallback(() => {
+    if (!clipCritique) return Promise.resolve(false);
+    const clipName = pose === CUSTOM_POSE && customAnimation ? customAnimation.clip || pose : pose;
+    const dictName = pose === CUSTOM_POSE && customAnimation
+      ? (customAnimation.source === "file" ? baseName(customAnimation.path) : customAnimation.dict)
+      : "";
+    return copyText(formatClipCritiqueMarkdown(clipCritique, { name: clipName, dict: dictName }), "animation QA report");
+  }, [clipCritique, copyText, customAnimation, pose]);
+
+  const handleExportFilmstrip = useCallback(async () => {
+    const viewport = viewportRef.current;
+    const active = figureRef.current;
+    if (!isTauriRuntime || !viewport || !active?.clip || filmstripBusy || exportRun?.status === "running") return;
+    const clipName = pose === CUSTOM_POSE && customAnimation ? customAnimation.clip || pose : pose;
+    let target = null;
+    try {
+      target = await save({
+        defaultPath: `${exportFileStem(clipName, "anim")}_filmstrip.png`,
+        filters: [{ name: "PNG image", extensions: ["png"] }],
+        title: "Save 8-frame animation critique strip",
+      });
+    } catch (error) {
+      raiseAlert("filmstrip", "Filmstrip export failed", errorMessage(error));
+      return;
+    }
+    if (!target) return;
+    setFilmstripBusy(true);
+    const wasPlaying = playingRef.current;
+    const prevTime = active.getTime();
+    freezeRef.current = true;
+    setPlaying(false);
+    try {
+      const duration = active.clip.duration;
+      const frameCount = 8;
+      const items = [];
+      for (let i = 0; i < frameCount; i += 1) {
+        const t = (duration * i) / (frameCount - 1);
+        active.seek(t);
+        const image = viewport.captureFrame({ width: 540, height: 540, angle: "full", transparent: false });
+        const pct = Math.round((i / (frameCount - 1)) * 100);
+        items.push({ image, title: `F${i + 1} · ${t.toFixed(2)}s`, detail: `${pct}%` });
+      }
+      const sheet = await composeSheet({
+        items,
+        format: "square",
+        title: `${clipName} (${duration.toFixed(2)}s)`,
+        labels: true,
+      });
+      const { bytes } = await canvasToPngBytes(sheet);
+      await writeFile(target, bytes);
+      trackUsage("photo");
+      notify(`Saved filmstrip ${baseName(target)}`);
+    } catch (error) {
+      raiseAlert("filmstrip", "Filmstrip export failed", errorMessage(error));
+    } finally {
+      active.seek(prevTime);
+      freezeRef.current = false;
+      if (wasPlaying) setPlaying(true);
+      viewport.requestRender();
+      setFilmstripBusy(false);
+    }
+  }, [customAnimation, exportRun?.status, filmstripBusy, isTauriRuntime, notify, pose, raiseAlert]);
 
   const handleCopyCurrentLua = useCallback(() => {
     const lua = buildOutfitLua({
@@ -2345,8 +2430,14 @@ export default function EupPage({
       const component = activeComponent;
       const key = event.key;
       if (key === " " && (figuresRef.current.a?.clip || figuresRef.current.b?.clip)) {
+        if (event.target?.closest?.("button, a[href], [role='switch'], [role='radio'], [role='tab'], [role='menuitem'], summary")) return;
         event.preventDefault();
         togglePlay();
+        return;
+      }
+      if (key === "Escape" && helpOpen) {
+        event.preventDefault();
+        setHelpOpen(false);
         return;
       }
       if (key === "f" || key === "F") {
@@ -2390,6 +2481,7 @@ export default function EupPage({
     handleSelectVariant,
     handleToggleHidden,
     handleToggleSolo,
+    helpOpen,
     togglePlay,
   ]);
 
@@ -2610,6 +2702,12 @@ export default function EupPage({
             playback={timeline}
             selectedHeldId={selectedHeldId}
             onSelectHeld={isTauriRuntime ? handleSelectHeldProp : null}
+            upperBodyMask={upperBodyMask}
+            onUpperBodyMaskChange={setUpperBodyMask}
+            clipCritique={clipCritique}
+            onCopyCritique={handleCopyClipCritique}
+            onExportFilmstrip={handleExportFilmstrip}
+            filmstripBusy={filmstripBusy}
           />
           <EupPiecesPanel
             step={4}
@@ -2863,12 +2961,12 @@ export default function EupPage({
                   </>,
                 )]}
               />
-              <div className="lv-deck-group">
+              <div className="lv-deck-group" ref={helpWrapRef}>
                 <DeckButton active={helpOpen} onClick={() => setHelpOpen((open) => !open)} title="Mouse and keyboard controls" className="is-icon">
                   <CircleHelp aria-hidden="true" />
                 </DeckButton>
+                {helpOpen ? <EupHelp /> : null}
               </div>
-              {helpOpen ? <EupHelp /> : null}
             </div>
           ) : null}
         </div>

@@ -40,6 +40,7 @@ import {
 import {
   CUSTOM_POSE,
   PED_POSES,
+  blendPoses,
   clipGroundSpeed,
   customAnimationKey,
   heldPropModelKey,
@@ -48,6 +49,8 @@ import {
   sampleClipPose,
 } from "../../lib/ped-pose";
 import { advanceClipTime, clampClipTime } from "../../lib/eup-playback";
+import { maskUpperBodyPose } from "../../lib/anim-critique.js";
+import { prefersReducedMotion } from "../../lib/part-swap-animation.js";
 import { loadNativeMaterialView } from "../../lib/native-materials";
 import {
   characterKey,
@@ -76,6 +79,7 @@ import {
 // The floor sits under the lowest point across this many samples of a clip,
 // so feet never sink below it mid-step.
 const FLOOR_SAMPLES = 8;
+const POSE_BLEND_MS = 180;
 const NO_VISIBILITY = Object.freeze({ hidden: {}, solo: null });
 const EMPTY_PED_ASSETS = Object.freeze({ components: {}, props: {} });
 const SLOT_IDS = Object.freeze([...COMPONENT_IDS, ...PROP_IDS]);
@@ -185,6 +189,7 @@ export function usePedFigure({
   freezeRef,
   visibility = NO_VISIBILITY,
   clipRevision = 0,
+  upperBodyMask = "off",
   hairCrush = null,
   onSettled,
 }) {
@@ -213,6 +218,7 @@ export function usePedFigure({
   const [pedSkeleton, setPedSkeleton] = useState({ ped: null, skeleton: null, error: "" });
   const [pedListing, setPedListing] = useState({ ped: null, listing: null });
   const [clipState, setClipState] = useState({ key: "", clip: null, error: "", loading: false });
+  const [maskClipState, setMaskClipState] = useState({ key: "", clip: null });
   const [described, setDescribed] = useState({ key: "", description: null, error: "", loading: false, revision: 0 });
 
   const rootRef = useRef(null);
@@ -256,20 +262,80 @@ export function usePedFigure({
   const loadedClip = clipKey && clipState.key === clipKey ? clipState.clip : null;
   // A clip made for another skeleton (a human walk on a dog) would tear the
   // mesh apart; the character keeps its rest pose and the note says why.
+  const maskPair = upperBodyMask === "idle" || upperBodyMask === "walk" ? poseClip(upperBodyMask, gender) : null;
+  const maskKey = maskPair ? `game:${maskPair.dict}/${maskPair.clip}` : "";
+  useEffect(() => {
+    if (!enabled || !maskKey) return undefined;
+    let cancelled = false;
+    getClipByKey(maskKey).then(
+      (result) => {
+        if (!cancelled && isValidClip(result)) setMaskClipState({ key: maskKey, clip: result });
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, maskKey]);
+  const rawMaskClip = maskKey && maskClipState.key === maskKey ? maskClipState.clip : null;
+  const maskFit = custom && skeleton && rawMaskClip ? clipSkeletonMatch(skeleton, rawMaskClip) : null;
+  const maskBaseClip = maskFit?.fits === false ? null : rawMaskClip;
+
   const clipFit = custom && skeleton && loadedClip ? clipSkeletonMatch(skeleton, loadedClip) : null;
   const clip = clipFit?.fits === false ? null : loadedClip;
-  const walkSpeed = walkSpeedFor(member, clip);
+  const walkSpeed = upperBodyMask === "idle" && maskBaseClip
+    ? 0
+    : upperBodyMask === "walk" && maskBaseClip
+      ? (clipGroundSpeed(maskBaseClip) || 1.4)
+      : walkSpeedFor(member, clip);
   const heldProps = present ? member.heldProps || NO_HELD_PROPS : NO_HELD_PROPS;
   const tint = skinToneTint(member?.skinTone);
   const hair = member?.hair;
 
   // Slots finishing later pick up the pose and tint current at that moment.
-  const lookRef = useRef({ skeleton: null, clip: null, tint: null, walkSpeed: 0, hair: null });
-  lookRef.current = { skeleton, clip, tint, walkSpeed, hair };
-  const currentPose = useCallback(() => {
-    const { skeleton: bones, clip: active } = lookRef.current;
-    return bones && active ? sampleClipPose(bones, active, timeRef.current) : null;
+  const lookRef = useRef({ skeleton: null, clip: null, maskBaseClip: null, tint: null, walkSpeed: 0, hair: null });
+  lookRef.current = { skeleton, clip, maskBaseClip, tint, walkSpeed, hair };
+  const blendRef = useRef(null);
+  const lastPoseRef = useRef(null);
+  const lastSkeletonRef = useRef(null);
+  const cancelPoseBlend = useCallback(() => {
+    const active = blendRef.current;
+    if (!active) return;
+    if (active.rafId) cancelAnimationFrame(active.rafId);
+    blendRef.current = null;
   }, []);
+  useEffect(() => cancelPoseBlend, [cancelPoseBlend]);
+
+  const sampleCombinedPose = useCallback((bones, active, t, baseClip) => {
+    if (!bones || !active) return null;
+    const pose = sampleClipPose(bones, active, t);
+    if (!baseClip) return pose;
+    const baseTime = baseClip.duration > 0 ? ((t % baseClip.duration) + baseClip.duration) % baseClip.duration : 0;
+    return maskUpperBodyPose(pose, sampleClipPose(bones, baseClip, baseTime), bones);
+  }, []);
+  const resolvePoseWithBlend = useCallback((bones, active, t, baseClip, now = performance.now()) => {
+    const target = sampleCombinedPose(bones, active, t, baseClip);
+    const blend = blendRef.current;
+    if (!blend || freezeRef.current || !bones || blend.skeleton !== bones) {
+      if (blend) cancelPoseBlend();
+      lastPoseRef.current = target;
+      return target;
+    }
+    const raw = (now - blend.start) / blend.duration;
+    if (raw >= 1) {
+      cancelPoseBlend();
+      lastPoseRef.current = target;
+      return target;
+    }
+    const u = raw <= 0 ? 0 : raw * raw * (3 - 2 * raw);
+    const mixed = blendPoses(blend.fromPose, target, u, bones);
+    lastPoseRef.current = mixed;
+    return mixed;
+  }, [cancelPoseBlend, freezeRef, sampleCombinedPose]);
+  const currentPose = useCallback(() => {
+    const { skeleton: bones, clip: active, maskBaseClip: baseClip } = lookRef.current;
+    return resolvePoseWithBlend(bones, active, timeRef.current, baseClip);
+  }, [resolvePoseWithBlend]);
 
   /* ── Stage placement ── */
   useEffect(() => {
@@ -385,7 +451,7 @@ export function usePedFigure({
 
   const settleFloor = useCallback(() => {
     const root = rootRef.current;
-    const { skeleton: bones, clip: active } = lookRef.current;
+    const { skeleton: bones, clip: active, maskBaseClip: baseClip } = lookRef.current;
     root.position.y = 0;
     let lowest = Infinity;
     const measure = () => {
@@ -394,10 +460,10 @@ export function usePedFigure({
     };
     if (bones && active) {
       for (let i = 0; i < FLOOR_SAMPLES; i += 1) {
-        setPedPose(root, bones, sampleClipPose(bones, active, (active.duration * i) / FLOOR_SAMPLES));
+        setPedPose(root, bones, sampleCombinedPose(bones, active, (active.duration * i) / FLOOR_SAMPLES, baseClip));
         measure();
       }
-      setPedPose(root, bones, sampleClipPose(bones, active, timeRef.current));
+      setPedPose(root, bones, currentPose());
     } else {
       updatePedPropAttachments(root);
       measure();
@@ -405,7 +471,7 @@ export function usePedFigure({
     if (Number.isFinite(lowest)) root.position.y = -lowest;
     root.updateMatrixWorld(true);
     viewportRef.current?.refit?.();
-  }, [viewportRef]);
+  }, [currentPose, sampleCombinedPose, viewportRef]);
 
   // Skinned bounds cost a CPU skin pass per sample; slots load in bursts, so
   // settle once per frame at most.
@@ -850,11 +916,52 @@ export function usePedFigure({
 
   /* ── Pose, tint, hair, visibility and placement: applied in place ── */
   useEffect(() => {
+    const prevPose = lastPoseRef.current;
+    const sameSkeleton = Boolean(skeleton && lastSkeletonRef.current === skeleton);
+    lastSkeletonRef.current = skeleton;
+    cancelPoseBlend();
     timeRef.current = 0;
-    setPedPose(rootRef.current, skeleton, skeleton && clip ? sampleClipPose(skeleton, clip, 0) : null);
-    settleFloor();
-    viewportRef.current?.requestRender();
-  }, [skeleton, clip, settleFloor, viewportRef]);
+    const target = sampleCombinedPose(skeleton, clip, 0, maskBaseClip);
+    const shouldBlend = sameSkeleton
+      && !freezeRef.current
+      && !prefersReducedMotion()
+      && rootRef.current.children.length > 0
+      && (prevPose || target)
+      && prevPose !== target;
+
+    if (shouldBlend) {
+      const blend = {
+        skeleton,
+        fromPose: prevPose,
+        start: performance.now(),
+        duration: POSE_BLEND_MS,
+        stepped: false,
+        rafId: 0,
+      };
+      blendRef.current = blend;
+      settleFloor();
+      setPedPose(rootRef.current, skeleton, resolvePoseWithBlend(skeleton, clip, 0, maskBaseClip, blend.start));
+      viewportRef.current?.requestRender();
+      const pump = (now) => {
+        if (blendRef.current !== blend) return;
+        blend.rafId = 0;
+        const { skeleton: bones, clip: active, maskBaseClip: baseClip } = lookRef.current;
+        if (!blend.stepped) {
+          setPedPose(rootRef.current, bones, resolvePoseWithBlend(bones, active, timeRef.current, baseClip, now));
+          viewportRef.current?.requestRender();
+        }
+        blend.stepped = false;
+        if (blendRef.current === blend) blend.rafId = requestAnimationFrame(pump);
+      };
+      blend.rafId = requestAnimationFrame(pump);
+    } else {
+      lastPoseRef.current = target;
+      setPedPose(rootRef.current, skeleton, target);
+      settleFloor();
+      viewportRef.current?.requestRender();
+    }
+    return cancelPoseBlend;
+  }, [skeleton, clip, maskBaseClip, cancelPoseBlend, freezeRef, resolvePoseWithBlend, sampleCombinedPose, settleFloor, viewportRef]);
 
   useEffect(() => {
     for (const group of rootRef.current.children) setGroupSkinTint(group, tint);
@@ -891,21 +998,25 @@ export function usePedFigure({
   // One animation step; returns how fast a walk cycle moves over the ground.
   // With `loop` off the clip holds its last frame.
   const step = useCallback((dt, loop = true) => {
-    const { skeleton: bones, clip: active, walkSpeed: speed } = lookRef.current;
+    const { skeleton: bones, clip: active, maskBaseClip: baseClip, walkSpeed: speed } = lookRef.current;
     if (!bones || !active || freezeRef.current) return 0;
     timeRef.current = advanceClipTime(timeRef.current, dt, active.duration, loop);
-    setPedPose(rootRef.current, bones, sampleClipPose(bones, active, timeRef.current));
+    if (blendRef.current) blendRef.current.stepped = true;
+    setPedPose(rootRef.current, bones, resolvePoseWithBlend(bones, active, timeRef.current, baseClip));
     return speed;
-  }, [freezeRef]);
+  }, [freezeRef, resolvePoseWithBlend]);
 
   // Shows the clip at `time` seconds (kept inside the clip). False without a clip.
   const seek = useCallback((time) => {
-    const { skeleton: bones, clip: active } = lookRef.current;
+    const { skeleton: bones, clip: active, maskBaseClip: baseClip } = lookRef.current;
     if (!bones || !active) return false;
+    cancelPoseBlend();
     timeRef.current = clampClipTime(time, active.duration);
-    setPedPose(rootRef.current, bones, sampleClipPose(bones, active, timeRef.current));
+    const pose = sampleCombinedPose(bones, active, timeRef.current, baseClip);
+    lastPoseRef.current = pose;
+    setPedPose(rootRef.current, bones, pose);
     return true;
-  }, []);
+  }, [cancelPoseBlend, sampleCombinedPose]);
   const getTime = useCallback(() => timeRef.current, []);
   const heldGroupOf = useCallback((id) => heldRuntimeRef.current.get(id)?.group || null, []);
   const characterState = useMemo(() => {
@@ -943,6 +1054,7 @@ export function usePedFigure({
       : pedSkeleton.ped === ped ? pedSkeleton.error : "",
     listing,
     gameIndexes,
+    skeleton,
     clip,
     clipKey,
     clipState: shownClipState,
