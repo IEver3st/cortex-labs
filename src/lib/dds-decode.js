@@ -73,208 +73,524 @@ function maskMax(mask) {
   return mask ? (mask >>> maskShift(mask)) : 0;
 }
 
+const IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
+
+// Bit-exact RGB565 channel expansion tables matching ((c * 255 / max + 0.5) | 0).
+const LUT5 = new Uint8Array(32);
+for (let i = 0; i < 32; i += 1) LUT5[i] = ((i * 255) / 31 + 0.5) | 0;
+const LUT6 = new Uint8Array(64);
+for (let i = 0; i < 64; i += 1) LUT6[i] = ((i * 255) / 63 + 0.5) | 0;
+
+// Lazily built 64 KB BC5 normal-Z lookup table: replaces millions of Math.sqrt
+// calls per 2K normal map with a single byte read, bit-exact with the formula.
+let _bc5ZLut = null;
+function getBc5ZLut() {
+  if (!_bc5ZLut) {
+    const lut = new Uint8Array(65536);
+    const norm = new Float64Array(256);
+    for (let i = 0; i < 256; i += 1) norm[i] = (i / 255) * 2 - 1;
+    for (let r = 0; r < 256; r += 1) {
+      const nx2 = norm[r] * norm[r];
+      const base = r << 8;
+      for (let g = 0; g < 256; g += 1) {
+        const rem = 1 - nx2 - norm[g] * norm[g];
+        const nz = rem > 0 ? Math.sqrt(rem) : 0;
+        lut[base | g] = Math.floor((nz * 0.5 + 0.5) * 255);
+      }
+    }
+    _bc5ZLut = lut;
+  }
+  return _bc5ZLut;
+}
+
+function buildChannelLut(max) {
+  if (!max || max > 255) return null;
+  const lut = new Uint8Array(max + 1);
+  for (let i = 0; i <= max; i += 1) lut[i] = Math.round((i * 255) / max);
+  return lut;
+}
+
 /** Decoder for an uncompressed layout given channel masks (R, G, B, A). */
 function createMaskedDecoder({ bitCount, masks, luminance = false, alphaOnly = false }) {
   const bytes = bitCount >> 3;
-  const channels = masks.map((mask) => ({ mask: mask >>> 0, shift: maskShift(mask >>> 0), max: maskMax(mask >>> 0) }));
-  const read = (channel, value, fallback) =>
-    channel.mask ? Math.round((((value & channel.mask) >>> channel.shift) * 255) / channel.max) : fallback;
+  const m0 = masks[0] >>> 0;
+  const m1 = masks[1] >>> 0;
+  const m2 = masks[2] >>> 0;
+  const m3 = masks[3] >>> 0;
+
+  // Fast paths for the common uncompressed GTA DDS layouts (no per-pixel closures).
+  if (!alphaOnly && !luminance && bytes === 4) {
+    if (m0 === 0x00ff0000 && m1 === 0x0000ff00 && m2 === 0x000000ff && m3 === 0xff000000) {
+      return decodeUncompressedBGRA;
+    }
+    if (m0 === 0x00ff0000 && m1 === 0x0000ff00 && m2 === 0x000000ff && m3 === 0) {
+      return function decodeBGRX(src, off, w, h, rgba) {
+        const count = w * h;
+        for (let i = 0, si = off, di = 0; i < count; i += 1, si += 4, di += 4) {
+          rgba[di] = src[si + 2]; rgba[di + 1] = src[si + 1]; rgba[di + 2] = src[si]; rgba[di + 3] = 255;
+        }
+      };
+    }
+    if (m0 === 0x000000ff && m1 === 0x0000ff00 && m2 === 0x00ff0000 && m3 === 0xff000000) {
+      return decodeUncompressedRGBA;
+    }
+    if (m0 === 0x000000ff && m1 === 0x0000ff00 && m2 === 0x00ff0000 && m3 === 0) {
+      return function decodeRGBX(src, off, w, h, rgba) {
+        const count = w * h;
+        for (let i = 0, si = off, di = 0; i < count; i += 1, si += 4, di += 4) {
+          rgba[di] = src[si]; rgba[di + 1] = src[si + 1]; rgba[di + 2] = src[si + 2]; rgba[di + 3] = 255;
+        }
+      };
+    }
+  }
+  if (alphaOnly && bytes === 1) {
+    return function decodeA8(src, off, w, h, rgba) {
+      const count = w * h;
+      rgba.fill(0, 0, count * 4);
+      for (let i = 0; i < count; i += 1) rgba[(i << 2) + 3] = src[off + i];
+    };
+  }
+  if (luminance && bytes === 1 && m0 === 0xff && m3 === 0) {
+    return decodeL8;
+  }
+
+  const s0 = maskShift(m0), max0 = maskMax(m0), l0 = buildChannelLut(max0);
+  const s1 = maskShift(m1), max1 = maskMax(m1), l1 = buildChannelLut(max1);
+  const s2 = maskShift(m2), max2 = maskMax(m2), l2 = buildChannelLut(max2);
+  const s3 = maskShift(m3), max3 = maskMax(m3), l3 = buildChannelLut(max3);
+
   return function decodeMasked(src, off, w, h, rgba) {
     const count = w * h;
-    for (let i = 0; i < count; i += 1) {
-      const si = off + i * bytes;
+    for (let i = 0, si = off, di = 0; i < count; i += 1, si += bytes, di += 4) {
       let value = src[si];
       if (bytes > 1) value |= src[si + 1] << 8;
       if (bytes > 2) value |= src[si + 2] << 16;
       if (bytes > 3) value = (value | (src[si + 3] << 24)) >>> 0;
-      const di = i * 4;
       if (alphaOnly) {
         // D3D samples A8 as (0, 0, 0, a); vehshare's "black" tire texture relies on it.
         rgba[di] = 0; rgba[di + 1] = 0; rgba[di + 2] = 0;
-        rgba[di + 3] = channels[3].mask ? read(channels[3], value, 255) : value & 0xff;
+        const aRaw = (value & m3) >>> s3;
+        rgba[di + 3] = m3 ? (l3 ? l3[aRaw] : Math.round((aRaw * 255) / max3)) : value & 0xff;
       } else if (luminance) {
-        const l = read(channels[0], value, 0);
+        const rRaw = (value & m0) >>> s0;
+        const l = m0 ? (l0 ? l0[rRaw] : Math.round((rRaw * 255) / max0)) : 0;
+        const aRaw = (value & m3) >>> s3;
         rgba[di] = l; rgba[di + 1] = l; rgba[di + 2] = l;
-        rgba[di + 3] = read(channels[3], value, 255);
+        rgba[di + 3] = m3 ? (l3 ? l3[aRaw] : Math.round((aRaw * 255) / max3)) : 255;
       } else {
-        rgba[di] = read(channels[0], value, 0);
-        rgba[di + 1] = read(channels[1], value, 0);
-        rgba[di + 2] = read(channels[2], value, 0);
-        rgba[di + 3] = read(channels[3], value, 255);
+        const rRaw = (value & m0) >>> s0;
+        const gRaw = (value & m1) >>> s1;
+        const bRaw = (value & m2) >>> s2;
+        const aRaw = (value & m3) >>> s3;
+        rgba[di] = m0 ? (l0 ? l0[rRaw] : Math.round((rRaw * 255) / max0)) : 0;
+        rgba[di + 1] = m1 ? (l1 ? l1[gRaw] : Math.round((gRaw * 255) / max1)) : 0;
+        rgba[di + 2] = m2 ? (l2 ? l2[bRaw] : Math.round((bRaw * 255) / max2)) : 0;
+        rgba[di + 3] = m3 ? (l3 ? l3[aRaw] : Math.round((aRaw * 255) / max3)) : 255;
       }
     }
   };
 }
 
 const _cp = new Uint8Array(16);
+const _cp32 = new Uint32Array(4);
 const _ap = new Uint8Array(8);
-
-function decode565(c, slot) {
-  const b = slot << 2;
-  _cp[b]     = ((c >> 11) & 0x1F) * 255 / 31 + 0.5 | 0;
-  _cp[b + 1] = ((c >> 5) & 0x3F) * 255 / 63 + 0.5 | 0;
-  _cp[b + 2] = (c & 0x1F) * 255 / 31 + 0.5 | 0;
-  _cp[b + 3] = 255;
-}
+const _rp = new Uint8Array(8);
+const _gp = new Uint8Array(8);
 
 function buildPalette(c0, c1, fourColor) {
-  decode565(c0, 0);
-  decode565(c1, 1);
+  const r0 = LUT5[(c0 >> 11) & 0x1F];
+  const g0 = LUT6[(c0 >> 5) & 0x3F];
+  const b0 = LUT5[c0 & 0x1F];
+  const r1 = LUT5[(c1 >> 11) & 0x1F];
+  const g1 = LUT6[(c1 >> 5) & 0x3F];
+  const b1 = LUT5[c1 & 0x1F];
+  _cp[0] = r0; _cp[1] = g0; _cp[2] = b0; _cp[3] = 255;
+  _cp[4] = r1; _cp[5] = g1; _cp[6] = b1; _cp[7] = 255;
   if (fourColor) {
-    _cp[8]  = ((_cp[0]*2+_cp[4])/3)|0; _cp[9]  = ((_cp[1]*2+_cp[5])/3)|0;
-    _cp[10] = ((_cp[2]*2+_cp[6])/3)|0; _cp[11] = 255;
-    _cp[12] = ((_cp[0]+_cp[4]*2)/3)|0; _cp[13] = ((_cp[1]+_cp[5]*2)/3)|0;
-    _cp[14] = ((_cp[2]+_cp[6]*2)/3)|0; _cp[15] = 255;
+    const r2 = ((r0 * 2 + r1) / 3) | 0;
+    const g2 = ((g0 * 2 + g1) / 3) | 0;
+    const b2 = ((b0 * 2 + b1) / 3) | 0;
+    const r3 = ((r0 + r1 * 2) / 3) | 0;
+    const g3 = ((g0 + g1 * 2) / 3) | 0;
+    const b3 = ((b0 + b1 * 2) / 3) | 0;
+    _cp[8] = r2; _cp[9] = g2; _cp[10] = b2; _cp[11] = 255;
+    _cp[12] = r3; _cp[13] = g3; _cp[14] = b3; _cp[15] = 255;
+    if (IS_LITTLE_ENDIAN) {
+      _cp32[0] = (r0 | (g0 << 8) | (b0 << 16) | 0xff000000) >>> 0;
+      _cp32[1] = (r1 | (g1 << 8) | (b1 << 16) | 0xff000000) >>> 0;
+      _cp32[2] = (r2 | (g2 << 8) | (b2 << 16) | 0xff000000) >>> 0;
+      _cp32[3] = (r3 | (g3 << 8) | (b3 << 16) | 0xff000000) >>> 0;
+    }
   } else {
-    _cp[8]  = (_cp[0]+_cp[4])>>1; _cp[9]  = (_cp[1]+_cp[5])>>1;
-    _cp[10] = (_cp[2]+_cp[6])>>1; _cp[11] = 255;
+    const r2 = (r0 + r1) >> 1;
+    const g2 = (g0 + g1) >> 1;
+    const b2 = (b0 + b1) >> 1;
+    _cp[8] = r2; _cp[9] = g2; _cp[10] = b2; _cp[11] = 255;
     _cp[12] = 0; _cp[13] = 0; _cp[14] = 0; _cp[15] = 0;
+    if (IS_LITTLE_ENDIAN) {
+      _cp32[0] = (r0 | (g0 << 8) | (b0 << 16) | 0xff000000) >>> 0;
+      _cp32[1] = (r1 | (g1 << 8) | (b1 << 16) | 0xff000000) >>> 0;
+      _cp32[2] = (r2 | (g2 << 8) | (b2 << 16) | 0xff000000) >>> 0;
+      _cp32[3] = 0;
+    }
   }
 }
 
-function buildAlpha(a0, a1) {
-  _ap[0] = a0; _ap[1] = a1;
+function buildAlphaInto(a0, a1, out) {
+  out[0] = a0; out[1] = a1;
   if (a0 > a1) {
-    _ap[2]=((6*a0+1*a1)/7)|0; _ap[3]=((5*a0+2*a1)/7)|0;
-    _ap[4]=((4*a0+3*a1)/7)|0; _ap[5]=((3*a0+4*a1)/7)|0;
-    _ap[6]=((2*a0+5*a1)/7)|0; _ap[7]=((1*a0+6*a1)/7)|0;
+    out[2] = ((6 * a0 + a1) / 7) | 0;
+    out[3] = ((5 * a0 + 2 * a1) / 7) | 0;
+    out[4] = ((4 * a0 + 3 * a1) / 7) | 0;
+    out[5] = ((3 * a0 + 4 * a1) / 7) | 0;
+    out[6] = ((2 * a0 + 5 * a1) / 7) | 0;
+    out[7] = ((a0 + 6 * a1) / 7) | 0;
   } else {
-    _ap[2]=((4*a0+1*a1)/5)|0; _ap[3]=((3*a0+2*a1)/5)|0;
-    _ap[4]=((2*a0+3*a1)/5)|0; _ap[5]=((1*a0+4*a1)/5)|0;
-    _ap[6]=0; _ap[7]=255;
+    out[2] = ((4 * a0 + a1) / 5) | 0;
+    out[3] = ((3 * a0 + 2 * a1) / 5) | 0;
+    out[4] = ((2 * a0 + 3 * a1) / 5) | 0;
+    out[5] = ((a0 + 4 * a1) / 5) | 0;
+    out[6] = 0;
+    out[7] = 255;
   }
 }
 
 function decodeDXT1(src, off, w, h, rgba) {
-  const bx = Math.ceil(w/4), by = Math.ceil(h/4), w4 = w<<2;
+  const bx = (w + 3) >> 2, by = (h + 3) >> 2;
+  const fullX = w >> 2, fullY = h >> 2;
+  const rgba32 = IS_LITTLE_ENDIAN && (rgba.byteOffset & 3) === 0
+    ? new Uint32Array(rgba.buffer, rgba.byteOffset, w * h)
+    : null;
+  const w4 = w << 2;
   let bo = off;
-  for (let y=0; y<by; y++) for (let x=0; x<bx; x++) {
-    const c0=src[bo]|src[bo+1]<<8, c1=src[bo+2]|src[bo+3]<<8;
-    const idx=src[bo+4]|src[bo+5]<<8|src[bo+6]<<16|src[bo+7]<<24; bo+=8;
-    buildPalette(c0,c1,c0>c1);
-    for (let py=0;py<4;py++) { const ry=(y*4+py); if(ry>=h) break;
-      for (let px=0;px<4;px++) { const rx=x*4+px; if(rx>=w) continue;
-        const i=((idx>>((py*4+px)<<1))&3)<<2, o=ry*w4+(rx<<2);
-        rgba[o]=_cp[i]; rgba[o+1]=_cp[i+1]; rgba[o+2]=_cp[i+2]; rgba[o+3]=_cp[i+3];
+  for (let y = 0; y < by; y += 1) {
+    const y4 = y << 2;
+    const isFullY = y < fullY;
+    for (let x = 0; x < bx; x += 1) {
+      const c0 = src[bo] | (src[bo + 1] << 8);
+      const c1 = src[bo + 2] | (src[bo + 3] << 8);
+      let idx = src[bo + 4] | (src[bo + 5] << 8) | (src[bo + 6] << 16) | (src[bo + 7] << 24);
+      bo += 8;
+      buildPalette(c0, c1, c0 > c1);
+      const x4 = x << 2;
+      if (rgba32 && isFullY && x < fullX) {
+        let row = y4 * w + x4;
+        rgba32[row] = _cp32[idx & 3]; rgba32[row + 1] = _cp32[(idx >>> 2) & 3];
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3]; rgba32[row + 3] = _cp32[(idx >>> 6) & 3];
+        row += w; idx >>>= 8;
+        rgba32[row] = _cp32[idx & 3]; rgba32[row + 1] = _cp32[(idx >>> 2) & 3];
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3]; rgba32[row + 3] = _cp32[(idx >>> 6) & 3];
+        row += w; idx >>>= 8;
+        rgba32[row] = _cp32[idx & 3]; rgba32[row + 1] = _cp32[(idx >>> 2) & 3];
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3]; rgba32[row + 3] = _cp32[(idx >>> 6) & 3];
+        row += w; idx >>>= 8;
+        rgba32[row] = _cp32[idx & 3]; rgba32[row + 1] = _cp32[(idx >>> 2) & 3];
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3]; rgba32[row + 3] = _cp32[(idx >>> 6) & 3];
+      } else {
+        for (let py = 0; py < 4; py += 1) {
+          const ry = y4 + py;
+          if (ry >= h) break;
+          for (let px = 0; px < 4; px += 1) {
+            const rx = x4 + px;
+            if (rx >= w) continue;
+            const i = ((idx >>> ((py * 4 + px) << 1)) & 3) << 2;
+            const o = ry * w4 + (rx << 2);
+            rgba[o] = _cp[i]; rgba[o + 1] = _cp[i + 1]; rgba[o + 2] = _cp[i + 2]; rgba[o + 3] = _cp[i + 3];
+          }
+        }
       }
     }
   }
 }
 
 function decodeDXT3(src, off, w, h, rgba) {
-  const bx=Math.ceil(w/4), by=Math.ceil(h/4), w4=w<<2;
-  let bo=off;
-  for (let y=0;y<by;y++) for (let x=0;x<bx;x++) {
-    const aLo=src[bo]|src[bo+1]<<8|src[bo+2]<<16|src[bo+3]<<24;
-    const aHi=src[bo+4]|src[bo+5]<<8|src[bo+6]<<16|src[bo+7]<<24; bo+=8;
-    const c0=src[bo]|src[bo+1]<<8, c1=src[bo+2]|src[bo+3]<<8;
-    const idx=src[bo+4]|src[bo+5]<<8|src[bo+6]<<16|src[bo+7]<<24; bo+=8;
-    buildPalette(c0,c1,true);
-    for (let py=0;py<4;py++) { const ry=y*4+py; if(ry>=h) break;
-      for (let px=0;px<4;px++) { const rx=x*4+px; if(rx>=w) continue;
-        const i=((idx>>((py*4+px)<<1))&3)<<2;
-        const ai=py*4+px, ab=ai<8?aLo:aHi, as=(ai%8)*4, a=((ab>>as)&0xF)*17;
-        const o=ry*w4+(rx<<2);
-        rgba[o]=_cp[i]; rgba[o+1]=_cp[i+1]; rgba[o+2]=_cp[i+2]; rgba[o+3]=a;
+  const bx = (w + 3) >> 2, by = (h + 3) >> 2;
+  const fullX = w >> 2, fullY = h >> 2;
+  const rgba32 = IS_LITTLE_ENDIAN && (rgba.byteOffset & 3) === 0
+    ? new Uint32Array(rgba.buffer, rgba.byteOffset, w * h)
+    : null;
+  const w4 = w << 2;
+  let bo = off;
+  for (let y = 0; y < by; y += 1) {
+    const y4 = y << 2;
+    const isFullY = y < fullY;
+    for (let x = 0; x < bx; x += 1) {
+      const aLo = src[bo] | (src[bo + 1] << 8) | (src[bo + 2] << 16) | (src[bo + 3] << 24);
+      const aHi = src[bo + 4] | (src[bo + 5] << 8) | (src[bo + 6] << 16) | (src[bo + 7] << 24);
+      bo += 8;
+      const c0 = src[bo] | (src[bo + 1] << 8), c1 = src[bo + 2] | (src[bo + 3] << 8);
+      let idx = src[bo + 4] | (src[bo + 5] << 8) | (src[bo + 6] << 16) | (src[bo + 7] << 24);
+      bo += 8;
+      buildPalette(c0, c1, true);
+      const x4 = x << 2;
+      if (rgba32 && isFullY && x < fullX) {
+        const c0rgb = _cp32[0] & 0x00ffffff;
+        const c1rgb = _cp32[1] & 0x00ffffff;
+        const c2rgb = _cp32[2] & 0x00ffffff;
+        const c3rgb = _cp32[3] & 0x00ffffff;
+        _cp32[0] = c0rgb; _cp32[1] = c1rgb; _cp32[2] = c2rgb; _cp32[3] = c3rgb;
+        let row = y4 * w + x4;
+        let a = aLo;
+        rgba32[row]     = _cp32[idx & 3] | (((a & 0xF) * 17) << 24);
+        rgba32[row + 1] = _cp32[(idx >>> 2) & 3] | ((((a >>> 4) & 0xF) * 17) << 24);
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3] | ((((a >>> 8) & 0xF) * 17) << 24);
+        rgba32[row + 3] = _cp32[(idx >>> 6) & 3] | ((((a >>> 12) & 0xF) * 17) << 24);
+        row += w; idx >>>= 8; a >>>= 16;
+        rgba32[row]     = _cp32[idx & 3] | (((a & 0xF) * 17) << 24);
+        rgba32[row + 1] = _cp32[(idx >>> 2) & 3] | ((((a >>> 4) & 0xF) * 17) << 24);
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3] | ((((a >>> 8) & 0xF) * 17) << 24);
+        rgba32[row + 3] = _cp32[(idx >>> 6) & 3] | ((((a >>> 12) & 0xF) * 17) << 24);
+        row += w; idx >>>= 8; a = aHi;
+        rgba32[row]     = _cp32[idx & 3] | (((a & 0xF) * 17) << 24);
+        rgba32[row + 1] = _cp32[(idx >>> 2) & 3] | ((((a >>> 4) & 0xF) * 17) << 24);
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3] | ((((a >>> 8) & 0xF) * 17) << 24);
+        rgba32[row + 3] = _cp32[(idx >>> 6) & 3] | ((((a >>> 12) & 0xF) * 17) << 24);
+        row += w; idx >>>= 8; a >>>= 16;
+        rgba32[row]     = _cp32[idx & 3] | (((a & 0xF) * 17) << 24);
+        rgba32[row + 1] = _cp32[(idx >>> 2) & 3] | ((((a >>> 4) & 0xF) * 17) << 24);
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3] | ((((a >>> 8) & 0xF) * 17) << 24);
+        rgba32[row + 3] = _cp32[(idx >>> 6) & 3] | ((((a >>> 12) & 0xF) * 17) << 24);
+      } else {
+        for (let py = 0; py < 4; py += 1) {
+          const ry = y4 + py;
+          if (ry >= h) break;
+          for (let px = 0; px < 4; px += 1) {
+            const rx = x4 + px;
+            if (rx >= w) continue;
+            const i = ((idx >>> ((py * 4 + px) << 1)) & 3) << 2;
+            const ai = py * 4 + px, ab = ai < 8 ? aLo : aHi, as = (ai & 7) << 2;
+            const o = ry * w4 + (rx << 2);
+            rgba[o] = _cp[i]; rgba[o + 1] = _cp[i + 1]; rgba[o + 2] = _cp[i + 2]; rgba[o + 3] = ((ab >>> as) & 0xF) * 17;
+          }
+        }
       }
     }
   }
 }
 
 function decodeDXT5(src, off, w, h, rgba) {
-  const bx=Math.ceil(w/4), by=Math.ceil(h/4), w4=w<<2;
-  let bo=off;
-  for (let y=0;y<by;y++) for (let x=0;x<bx;x++) {
-    const a0=src[bo], a1=src[bo+1];
-    const abLo=src[bo+2]|src[bo+3]<<8|src[bo+4]<<16;
-    const abHi=src[bo+5]|src[bo+6]<<8|src[bo+7]<<16; bo+=8;
-    buildAlpha(a0,a1);
-    const c0=src[bo]|src[bo+1]<<8, c1=src[bo+2]|src[bo+3]<<8;
-    const idx=src[bo+4]|src[bo+5]<<8|src[bo+6]<<16|src[bo+7]<<24; bo+=8;
-    buildPalette(c0,c1,true);
-    for (let py=0;py<4;py++) { const ry=y*4+py; if(ry>=h) break;
-      for (let px=0;px<4;px++) { const rx=x*4+px; if(rx>=w) continue;
-        const ci=((idx>>((py*4+px)<<1))&3)<<2;
-        const pi=py*4+px, ab=pi<8?abLo:abHi, as=pi<8?pi*3:(pi-8)*3;
-        const ai=(ab>>as)&7;
-        const o=ry*w4+(rx<<2);
-        rgba[o]=_cp[ci]; rgba[o+1]=_cp[ci+1]; rgba[o+2]=_cp[ci+2]; rgba[o+3]=_ap[ai];
+  const bx = (w + 3) >> 2, by = (h + 3) >> 2;
+  const fullX = w >> 2, fullY = h >> 2;
+  const rgba32 = IS_LITTLE_ENDIAN && (rgba.byteOffset & 3) === 0
+    ? new Uint32Array(rgba.buffer, rgba.byteOffset, w * h)
+    : null;
+  const w4 = w << 2;
+  let bo = off;
+  for (let y = 0; y < by; y += 1) {
+    const y4 = y << 2;
+    const isFullY = y < fullY;
+    for (let x = 0; x < bx; x += 1) {
+      const a0 = src[bo], a1 = src[bo + 1];
+      const abLo = src[bo + 2] | (src[bo + 3] << 8) | (src[bo + 4] << 16);
+      const abHi = src[bo + 5] | (src[bo + 6] << 8) | (src[bo + 7] << 16);
+      bo += 8;
+      buildAlphaInto(a0, a1, _ap);
+      const c0 = src[bo] | (src[bo + 1] << 8), c1 = src[bo + 2] | (src[bo + 3] << 8);
+      let idx = src[bo + 4] | (src[bo + 5] << 8) | (src[bo + 6] << 16) | (src[bo + 7] << 24);
+      bo += 8;
+      buildPalette(c0, c1, true);
+      const x4 = x << 2;
+      if (rgba32 && isFullY && x < fullX) {
+        _cp32[0] &= 0x00ffffff; _cp32[1] &= 0x00ffffff; _cp32[2] &= 0x00ffffff; _cp32[3] &= 0x00ffffff;
+        let row = y4 * w + x4;
+        let ab = abLo;
+        rgba32[row]     = _cp32[idx & 3] | (_ap[ab & 7] << 24);
+        rgba32[row + 1] = _cp32[(idx >>> 2) & 3] | (_ap[(ab >>> 3) & 7] << 24);
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3] | (_ap[(ab >>> 6) & 7] << 24);
+        rgba32[row + 3] = _cp32[(idx >>> 6) & 3] | (_ap[(ab >>> 9) & 7] << 24);
+        row += w; idx >>>= 8; ab >>>= 12;
+        rgba32[row]     = _cp32[idx & 3] | (_ap[ab & 7] << 24);
+        rgba32[row + 1] = _cp32[(idx >>> 2) & 3] | (_ap[(ab >>> 3) & 7] << 24);
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3] | (_ap[(ab >>> 6) & 7] << 24);
+        rgba32[row + 3] = _cp32[(idx >>> 6) & 3] | (_ap[(ab >>> 9) & 7] << 24);
+        row += w; idx >>>= 8; ab = abHi;
+        rgba32[row]     = _cp32[idx & 3] | (_ap[ab & 7] << 24);
+        rgba32[row + 1] = _cp32[(idx >>> 2) & 3] | (_ap[(ab >>> 3) & 7] << 24);
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3] | (_ap[(ab >>> 6) & 7] << 24);
+        rgba32[row + 3] = _cp32[(idx >>> 6) & 3] | (_ap[(ab >>> 9) & 7] << 24);
+        row += w; idx >>>= 8; ab >>>= 12;
+        rgba32[row]     = _cp32[idx & 3] | (_ap[ab & 7] << 24);
+        rgba32[row + 1] = _cp32[(idx >>> 2) & 3] | (_ap[(ab >>> 3) & 7] << 24);
+        rgba32[row + 2] = _cp32[(idx >>> 4) & 3] | (_ap[(ab >>> 6) & 7] << 24);
+        rgba32[row + 3] = _cp32[(idx >>> 6) & 3] | (_ap[(ab >>> 9) & 7] << 24);
+      } else {
+        for (let py = 0; py < 4; py += 1) {
+          const ry = y4 + py;
+          if (ry >= h) break;
+          for (let px = 0; px < 4; px += 1) {
+            const rx = x4 + px;
+            if (rx >= w) continue;
+            const ci = ((idx >>> ((py * 4 + px) << 1)) & 3) << 2;
+            const pi = py * 4 + px, ab = pi < 8 ? abLo : abHi, as = pi < 8 ? pi * 3 : (pi - 8) * 3;
+            const o = ry * w4 + (rx << 2);
+            rgba[o] = _cp[ci]; rgba[o + 1] = _cp[ci + 1]; rgba[o + 2] = _cp[ci + 2]; rgba[o + 3] = _ap[(ab >>> as) & 7];
+          }
+        }
       }
     }
   }
 }
 
 function decodeBC4(src, off, w, h, rgba) {
-  const bx=Math.ceil(w/4), by=Math.ceil(h/4), w4=w<<2;
-  let bo=off;
-  for (let y=0;y<by;y++) for (let x=0;x<bx;x++) {
-    const r0=src[bo], r1=src[bo+1];
-    const rLo=src[bo+2]|src[bo+3]<<8|src[bo+4]<<16;
-    const rHi=src[bo+5]|src[bo+6]<<8|src[bo+7]<<16; bo+=8;
-    buildAlpha(r0,r1);
-    const rp=new Uint8Array(_ap);
-    for (let py=0;py<4;py++) { const ry=y*4+py; if(ry>=h) break;
-      for (let px=0;px<4;px++) { const rx=x*4+px; if(rx>=w) continue;
-        const pi=py*4+px, b=pi<8?rLo:rHi, s=pi<8?pi*3:(pi-8)*3;
-        const r=rp[(b>>s)&7], o=ry*w4+(rx<<2);
-        rgba[o]=r; rgba[o+1]=r; rgba[o+2]=r; rgba[o+3]=255;
+  const bx = (w + 3) >> 2, by = (h + 3) >> 2;
+  const fullX = w >> 2, fullY = h >> 2;
+  const rgba32 = IS_LITTLE_ENDIAN && (rgba.byteOffset & 3) === 0
+    ? new Uint32Array(rgba.buffer, rgba.byteOffset, w * h)
+    : null;
+  const w4 = w << 2;
+  let bo = off;
+  for (let y = 0; y < by; y += 1) {
+    const y4 = y << 2;
+    const isFullY = y < fullY;
+    for (let x = 0; x < bx; x += 1) {
+      const r0 = src[bo], r1 = src[bo + 1];
+      const rLo = src[bo + 2] | (src[bo + 3] << 8) | (src[bo + 4] << 16);
+      const rHi = src[bo + 5] | (src[bo + 6] << 8) | (src[bo + 7] << 16);
+      bo += 8;
+      buildAlphaInto(r0, r1, _rp);
+      const x4 = x << 2;
+      if (rgba32 && isFullY && x < fullX) {
+        let row = y4 * w + x4;
+        let b = rLo;
+        let r = _rp[b & 7]; rgba32[row] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 3) & 7]; rgba32[row + 1] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 6) & 7]; rgba32[row + 2] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 9) & 7]; rgba32[row + 3] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        row += w; b >>>= 12;
+        r = _rp[b & 7]; rgba32[row] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 3) & 7]; rgba32[row + 1] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 6) & 7]; rgba32[row + 2] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 9) & 7]; rgba32[row + 3] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        row += w; b = rHi;
+        r = _rp[b & 7]; rgba32[row] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 3) & 7]; rgba32[row + 1] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 6) & 7]; rgba32[row + 2] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 9) & 7]; rgba32[row + 3] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        row += w; b >>>= 12;
+        r = _rp[b & 7]; rgba32[row] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 3) & 7]; rgba32[row + 1] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 6) & 7]; rgba32[row + 2] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+        r = _rp[(b >>> 9) & 7]; rgba32[row + 3] = (r | (r << 8) | (r << 16) | 0xff000000) >>> 0;
+      } else {
+        for (let py = 0; py < 4; py += 1) {
+          const ry = y4 + py;
+          if (ry >= h) break;
+          for (let px = 0; px < 4; px += 1) {
+            const rx = x4 + px;
+            if (rx >= w) continue;
+            const pi = py * 4 + px, b = pi < 8 ? rLo : rHi, s = pi < 8 ? pi * 3 : (pi - 8) * 3;
+            const r = _rp[(b >>> s) & 7], o = ry * w4 + (rx << 2);
+            rgba[o] = r; rgba[o + 1] = r; rgba[o + 2] = r; rgba[o + 3] = 255;
+          }
+        }
       }
     }
   }
 }
 
 function decodeBC5(src, off, w, h, rgba) {
-  const bx=Math.ceil(w/4), by=Math.ceil(h/4), w4=w<<2;
-  let bo=off;
-  for (let y=0;y<by;y++) for (let x=0;x<bx;x++) {
-    const r0=src[bo],r1=src[bo+1];
-    const rLo=src[bo+2]|src[bo+3]<<8|src[bo+4]<<16;
-    const rHi=src[bo+5]|src[bo+6]<<8|src[bo+7]<<16; bo+=8;
-    buildAlpha(r0,r1); const rp=new Uint8Array(_ap);
-    const g0=src[bo],g1=src[bo+1];
-    const gLo=src[bo+2]|src[bo+3]<<8|src[bo+4]<<16;
-    const gHi=src[bo+5]|src[bo+6]<<8|src[bo+7]<<16; bo+=8;
-    buildAlpha(g0,g1); const gp=new Uint8Array(_ap);
-    for (let py=0;py<4;py++) { const ry=y*4+py; if(ry>=h) break;
-      for (let px=0;px<4;px++) { const rx=x*4+px; if(rx>=w) continue;
-        const pi=py*4+px;
-        const rs=pi<8?pi*3:(pi-8)*3, ri=((pi<8?rLo:rHi)>>rs)&7;
-        const gs=pi<8?pi*3:(pi-8)*3, gi=((pi<8?gLo:gHi)>>gs)&7;
-        const r=rp[ri], g=gp[gi];
-        const nx=(r/255)*2-1, ny=(g/255)*2-1;
-        const nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny));
-        const b=Math.floor((nz*0.5+0.5)*255);
-        const o=ry*w4+(rx<<2);
-        rgba[o]=r; rgba[o+1]=g; rgba[o+2]=b; rgba[o+3]=255;
+  const bx = (w + 3) >> 2, by = (h + 3) >> 2;
+  const fullX = w >> 2, fullY = h >> 2;
+  const zLut = getBc5ZLut();
+  const rgba32 = IS_LITTLE_ENDIAN && (rgba.byteOffset & 3) === 0
+    ? new Uint32Array(rgba.buffer, rgba.byteOffset, w * h)
+    : null;
+  const w4 = w << 2;
+  let bo = off;
+  for (let y = 0; y < by; y += 1) {
+    const y4 = y << 2;
+    const isFullY = y < fullY;
+    for (let x = 0; x < bx; x += 1) {
+      const r0 = src[bo], r1 = src[bo + 1];
+      const rLo = src[bo + 2] | (src[bo + 3] << 8) | (src[bo + 4] << 16);
+      const rHi = src[bo + 5] | (src[bo + 6] << 8) | (src[bo + 7] << 16);
+      bo += 8;
+      buildAlphaInto(r0, r1, _rp);
+      const g0 = src[bo], g1 = src[bo + 1];
+      const gLo = src[bo + 2] | (src[bo + 3] << 8) | (src[bo + 4] << 16);
+      const gHi = src[bo + 5] | (src[bo + 6] << 8) | (src[bo + 7] << 16);
+      bo += 8;
+      buildAlphaInto(g0, g1, _gp);
+      const x4 = x << 2;
+      if (rgba32 && isFullY && x < fullX) {
+        let row = y4 * w + x4;
+        let rb = rLo, gb = gLo;
+        for (let half = 0; half < 2; half += 1) {
+          if (half === 1) { rb = rHi; gb = gHi; }
+          let r = _rp[rb & 7], g = _gp[gb & 7];
+          rgba32[row]     = (r | (g << 8) | (zLut[(r << 8) | g] << 16) | 0xff000000) >>> 0;
+          r = _rp[(rb >>> 3) & 7]; g = _gp[(gb >>> 3) & 7];
+          rgba32[row + 1] = (r | (g << 8) | (zLut[(r << 8) | g] << 16) | 0xff000000) >>> 0;
+          r = _rp[(rb >>> 6) & 7]; g = _gp[(gb >>> 6) & 7];
+          rgba32[row + 2] = (r | (g << 8) | (zLut[(r << 8) | g] << 16) | 0xff000000) >>> 0;
+          r = _rp[(rb >>> 9) & 7]; g = _gp[(gb >>> 9) & 7];
+          rgba32[row + 3] = (r | (g << 8) | (zLut[(r << 8) | g] << 16) | 0xff000000) >>> 0;
+          row += w; rb >>>= 12; gb >>>= 12;
+          r = _rp[rb & 7]; g = _gp[gb & 7];
+          rgba32[row]     = (r | (g << 8) | (zLut[(r << 8) | g] << 16) | 0xff000000) >>> 0;
+          r = _rp[(rb >>> 3) & 7]; g = _gp[(gb >>> 3) & 7];
+          rgba32[row + 1] = (r | (g << 8) | (zLut[(r << 8) | g] << 16) | 0xff000000) >>> 0;
+          r = _rp[(rb >>> 6) & 7]; g = _gp[(gb >>> 6) & 7];
+          rgba32[row + 2] = (r | (g << 8) | (zLut[(r << 8) | g] << 16) | 0xff000000) >>> 0;
+          r = _rp[(rb >>> 9) & 7]; g = _gp[(gb >>> 9) & 7];
+          rgba32[row + 3] = (r | (g << 8) | (zLut[(r << 8) | g] << 16) | 0xff000000) >>> 0;
+          row += w;
+        }
+      } else {
+        for (let py = 0; py < 4; py += 1) {
+          const ry = y4 + py;
+          if (ry >= h) break;
+          for (let px = 0; px < 4; px += 1) {
+            const rx = x4 + px;
+            if (rx >= w) continue;
+            const pi = py * 4 + px;
+            const s = pi < 8 ? pi * 3 : (pi - 8) * 3;
+            const r = _rp[((pi < 8 ? rLo : rHi) >>> s) & 7];
+            const g = _gp[((pi < 8 ? gLo : gHi) >>> s) & 7];
+            const o = ry * w4 + (rx << 2);
+            rgba[o] = r; rgba[o + 1] = g; rgba[o + 2] = zLut[(r << 8) | g]; rgba[o + 3] = 255;
+          }
+        }
       }
     }
   }
 }
 
 function decodeBC7(src, off, w, h, rgba) {
-  const bx=Math.ceil(w/4), by=Math.ceil(h/4);
-  let bo=off;
-  for (let y=0;y<by;y++) for (let x=0;x<bx;x++) {
-    const block = src.subarray(bo, bo+16); bo+=16;
-    decodeBC7Block(block, x, y, w, h, rgba);
+  const bx = (w + 3) >> 2, by = (h + 3) >> 2;
+  let bo = off;
+  for (let y = 0; y < by; y += 1) {
+    for (let x = 0; x < bx; x += 1) {
+      decodeBC7Block(src, x, y, w, h, rgba, bo);
+      bo += 16;
+    }
   }
 }
 
 function decodeUncompressedBGRA(src, off, w, h, rgba) {
-  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
-    const si=off+(y*w+x)*4, di=(y*w+x)*4;
-    rgba[di]=src[si+2]; rgba[di+1]=src[si+1]; rgba[di+2]=src[si]; rgba[di+3]=src[si+3];
+  const count = w * h;
+  for (let i = 0, si = off, di = 0; i < count; i += 1, si += 4, di += 4) {
+    rgba[di] = src[si + 2]; rgba[di + 1] = src[si + 1]; rgba[di + 2] = src[si]; rgba[di + 3] = src[si + 3];
   }
 }
 
 function decodeUncompressedRGBA(src, off, w, h, rgba) {
-  rgba.set(src.subarray(off, off+w*h*4));
+  rgba.set(src.subarray(off, off + w * h * 4));
 }
 
 function decodeL8(src, off, w, h, rgba) {
-  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
-    const l=src[off+y*w+x], o=(y*w+x)*4;
-    rgba[o]=l; rgba[o+1]=l; rgba[o+2]=l; rgba[o+3]=255;
+  const count = w * h;
+  if (IS_LITTLE_ENDIAN && (rgba.byteOffset & 3) === 0) {
+    const rgba32 = new Uint32Array(rgba.buffer, rgba.byteOffset, count);
+    for (let i = 0; i < count; i += 1) {
+      const l = src[off + i];
+      rgba32[i] = (l | (l << 8) | (l << 16) | 0xff000000) >>> 0;
+    }
+    return;
+  }
+  for (let i = 0, di = 0; i < count; i += 1, di += 4) {
+    const l = src[off + i];
+    rgba[di] = l; rgba[di + 1] = l; rgba[di + 2] = l; rgba[di + 3] = 255;
   }
 }
 

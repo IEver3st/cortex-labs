@@ -42,9 +42,10 @@ import {
   setPedPose,
   updatePedPropAttachments,
 } from "../../lib/ped-assembly.js";
-import { isValidClip, sampleClipPose } from "../../lib/ped-pose.js";
+import { blendPoses, isValidClip, sampleClipPose } from "../../lib/ped-pose.js";
+import { prefersReducedMotion } from "../../lib/part-swap-animation.js";
 import { photoPoseClip } from "../../lib/photo-mode.js";
-import { exportPedAsset, getPedClip, getPedListing, getPedSkeleton } from "../eup/ped-files.js";
+import { exportPedAsset, getClipByKey, getPedClip, getPedListing, getPedSkeleton } from "../eup/ped-files.js";
 
 /* Scene objects for Photo Mode. Each loader returns a controller whose
    `holder` the viewport adds to the scene:
@@ -579,7 +580,19 @@ function createModelController(asset, kind) {
           if (material) materials.add(material);
         }
       }
-      for (const material of materials) material.dispose?.();
+      const disposedTextures = new Set();
+      for (const material of materials) {
+        if (asset.parser === "gltf") {
+          for (const key of ["map", "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "aoMap", "alphaMap", "bumpMap", "specularMap"]) {
+            const tex = material[key];
+            if (tex?.isTexture && !disposedTextures.has(tex)) {
+              disposedTextures.add(tex);
+              tex.dispose();
+            }
+          }
+        }
+        material.dispose?.();
+      }
     },
   };
 }
@@ -619,8 +632,10 @@ export async function loadPhotoPed({ look, renderer, signal, onStatus }) {
       return null;
     }
     try {
-      const exported = await exportPedAsset(ped, drawable);
-      const textures = texture ? await exportPedAsset(ped, texture) : null;
+      const [exported, textures] = await Promise.all([
+        exportPedAsset(ped, drawable),
+        texture ? exportPedAsset(ped, texture) : null,
+      ]);
       throwIfAborted(signal);
       const group = await buildSlotGroup({
         component,
@@ -662,6 +677,27 @@ function createPedController({ root, skeleton, warnings }) {
 
   let clip = null;
   let time = 0;
+  let lastPose = null;
+  let blend = null;
+  const POSE_BLEND_MS = 180;
+
+  const applyPose = (target, now = performance.now()) => {
+    if (blend) {
+      const raw = (now - blend.start) / blend.duration;
+      if (raw >= 1) {
+        blend = null;
+      } else {
+        const u = raw <= 0 ? 0 : raw * raw * (3 - 2 * raw);
+        const mixed = blendPoses(blend.fromPose, target, u, skeleton);
+        lastPose = mixed;
+        setPedPose(root, skeleton, mixed);
+        return true;
+      }
+    }
+    lastPose = target;
+    setPedPose(root, skeleton, target);
+    return false;
+  };
 
   const settle = () => {
     measureFloor(holder, ground, () => {
@@ -677,9 +713,9 @@ function createPedController({ root, skeleton, warnings }) {
           setPedPose(root, skeleton, sampleClipPose(skeleton, clip, (clip.duration * i) / FLOOR_SAMPLES));
           sample();
         }
-        setPedPose(root, skeleton, sampleClipPose(skeleton, clip, time));
+        applyPose(sampleClipPose(skeleton, clip, time));
       } else {
-        setPedPose(root, skeleton, null);
+        applyPose(null);
         sample();
       }
       return lowest;
@@ -690,8 +726,13 @@ function createPedController({ root, skeleton, warnings }) {
   return {
     kind: "ped",
     holder,
+    root,
+    skeleton,
     rig: null,
     warnings,
+    get clip() {
+      return clip;
+    },
     get duration() {
       return clip?.duration || 0;
     },
@@ -701,33 +742,53 @@ function createPedController({ root, skeleton, warnings }) {
 
     /** Loads the look's pose clip from the game files; the bind pose for none. */
     async setPose(look, signal) {
+      const prevPose = lastPose;
+      const hadPose = prevPose !== null || clip !== null;
       const wanted = photoPoseClip(look);
       if (!wanted) {
         clip = null;
         time = 0;
+        blend = hadPose && !prefersReducedMotion()
+          ? { fromPose: prevPose, start: performance.now(), duration: POSE_BLEND_MS }
+          : null;
         settle();
         return null;
       }
-      const result = await getPedClip(wanted.dict, wanted.clip);
+      const result = wanted.source === "file"
+        ? await getClipByKey(`file:${wanted.path}\n${wanted.clip}`)
+        : await getPedClip(wanted.dict, wanted.clip);
       throwIfAborted(signal);
-      if (!isValidClip(result)) throw new Error(`${wanted.dict} / ${wanted.clip} came back empty.`);
+      if (!isValidClip(result)) throw new Error(`${wanted.dict || wanted.path} / ${wanted.clip} came back empty.`);
       clip = result;
       time = Math.min(Math.max(0, Number(look.time) || 0), clip.duration);
+      blend = hadPose && !prefersReducedMotion()
+        ? { fromPose: prevPose, start: performance.now(), duration: POSE_BLEND_MS }
+        : null;
       settle();
       return { duration: clip.duration };
     },
 
     setTime(seconds) {
       if (!clip) return;
-      time = ((Number(seconds) || 0) % clip.duration + clip.duration) % clip.duration;
-      setPedPose(root, skeleton, sampleClipPose(skeleton, clip, time));
+      blend = null;
+      const raw = Number(seconds) || 0;
+      const maxFrame = clip.duration > 0 ? clip.duration * (1 - 1e-6) : 0;
+      time = Math.min(Math.max(0, raw), maxFrame);
+      applyPose(sampleClipPose(skeleton, clip, time));
     },
 
-    /** Plays the clip in place. Returns true while there is a clip to play. */
-    step(dt) {
-      if (!clip) return false;
-      this.setTime(time + dt);
-      return true;
+    /** Plays the clip (or advances an active pose cross-fade). Returns true while moving. */
+    step(dt, now = performance.now()) {
+      if (clip && dt > 0) {
+        time = ((time + dt) % clip.duration + clip.duration) % clip.duration;
+        applyPose(sampleClipPose(skeleton, clip, time), now);
+        return true;
+      }
+      if (blend) {
+        const target = clip ? sampleClipPose(skeleton, clip, time) : null;
+        return applyPose(target, now);
+      }
+      return false;
     },
 
     dispose() {

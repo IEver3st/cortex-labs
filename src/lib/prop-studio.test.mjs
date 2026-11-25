@@ -11,6 +11,7 @@ import {
   isPropModelPath,
   lightColorHex,
   listAvailableLods,
+  lodForCameraDistance,
   materialGroupKey,
   normalizeManifestDrawables,
   normalizeModelLights,
@@ -170,4 +171,13 @@ test("lengths read in the unit a prop artist expects", () => {
   assert.equal(formatLength(0.245), "24.5 cm");
   assert.equal(formatLength(1.5), "1.50 m");
   assert.equal(formatLength(Number.NaN), "–");
+});
+
+test("auto LOD distance steps down smoothly as the camera pulls back", () => {
+  const all = ["high", "med", "low", "vlow"];
+  assert.equal(lodForCameraDistance(2, 1, all), "high");
+  assert.equal(lodForCameraDistance(8, 1, all), "med");
+  assert.equal(lodForCameraDistance(18, 1, all), "low");
+  assert.equal(lodForCameraDistance(35, 1, all), "vlow");
+  assert.equal(lodForCameraDistance(35, 1, ["high", "med"]), "med");
 });

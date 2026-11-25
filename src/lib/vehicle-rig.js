@@ -235,50 +235,76 @@ export function createVehicleRig({ skeleton, meshes }) {
   const jointRotation = new THREE.Quaternion();
   const unitScale = new THREE.Vector3(1, 1, 1);
   const scratch = new Float32Array(4);
+  const clipTranslations = new Map();
+  const clipRotations = new Map();
+  const clipTranslationPool = [];
+  const clipRotationPool = [];
+  const offsets = new Map();
+  const skinPoint = new THREE.Vector3();
+  const skinNormal = new THREE.Vector3();
+  const skinSum = new THREE.Vector3();
+  const skinSumNormal = new THREE.Vector3();
+  const normalMatrices = skinned.length > 0 ? Array.from({ length: count }, () => new THREE.Matrix3()) : null;
 
-  function sampleClip(boneTranslations, boneRotations) {
+  function sampleClip() {
+    clipTranslations.clear();
+    clipRotations.clear();
     if (!clip || roofValue <= 0) return;
     const position = Math.min(1, Math.max(0, roofValue)) * (clip.samples - 1);
     const frame = Math.min(clip.samples - 2, Math.floor(position));
     const t = position - frame;
-    for (const track of clip.translations) {
+    for (let idx = 0; idx < clip.translations.length; idx += 1) {
+      const track = clip.translations[idx];
       const a = frame * 3;
       const b = a + 3;
-      boneTranslations.set(track.boneIndex, new THREE.Vector3(
+      let vec = clipTranslationPool[idx];
+      if (!vec) vec = clipTranslationPool[idx] = new THREE.Vector3();
+      vec.set(
         track.values[a] + (track.values[b] - track.values[a]) * t,
         track.values[a + 1] + (track.values[b + 1] - track.values[a + 1]) * t,
         track.values[a + 2] + (track.values[b + 2] - track.values[a + 2]) * t,
-      ));
+      );
+      clipTranslations.set(track.boneIndex, vec);
     }
-    for (const track of clip.rotations) {
+    for (let idx = 0; idx < clip.rotations.length; idx += 1) {
+      const track = clip.rotations[idx];
       THREE.Quaternion.slerpFlat(scratch, 0, track.values, frame * 4, track.values, frame * 4 + 4, t);
-      boneRotations.set(track.boneIndex, new THREE.Quaternion().fromArray(scratch).normalize());
+      let quat = clipRotationPool[idx];
+      if (!quat) quat = clipRotationPool[idx] = new THREE.Quaternion();
+      quat.fromArray(scratch).normalize();
+      clipRotations.set(track.boneIndex, quat);
     }
   }
 
   function computeDeltas() {
-    const clipTranslations = new Map();
-    const clipRotations = new Map();
-    sampleClip(clipTranslations, clipRotations);
-    const offsets = new Map();
-    for (const part of parts) {
+    sampleClip();
+    offsets.clear();
+    for (let idx = 0; idx < parts.length; idx += 1) {
+      const part = parts[idx];
       const value = values.get(part.id);
-      if (Math.abs(value) > 1e-7) offsets.set(part.boneIndex, { part, value });
+      if (Math.abs(value) > 1e-7) offsets.set(part.boneIndex, part);
     }
     for (let i = 0; i < count; i += 1) {
       const bone = bones[i];
-      const offset = offsets.get(i);
-      if (!offset && !clipTranslations.has(i) && !clipRotations.has(i)) {
+      const part = offsets.get(i);
+      const clipT = clipTranslations.get(i);
+      const clipR = clipRotations.get(i);
+      if (!part && !clipT && !clipR) {
         local[i].copy(bindLocal[i]);
       } else {
-        translation.copy(clipTranslations.get(i) || translation.fromArray(bone.translation));
-        rotation.copy(clipRotations.get(i) || rotation.fromArray(bone.rotation)).normalize();
-        if (offset?.part.kind === "rotation") {
-          rotation.multiply(jointRotation.setFromAxisAngle(AXES[offset.part.axis], offset.value));
-        } else if (offset?.part.kind === "translation") {
-          // Slides run along the bone's own axis. Sliding doors tilt their dummy a few
-          // degrees so the door travels outward and clears the body instead of clipping.
-          translation.addScaledVector(slideAxis.copy(AXES[offset.part.axis]).applyQuaternion(rotation), offset.value);
+        if (clipT) translation.copy(clipT);
+        else translation.fromArray(bone.translation);
+        if (clipR) rotation.copy(clipR);
+        else rotation.fromArray(bone.rotation).normalize();
+        if (part) {
+          const value = values.get(part.id);
+          if (part.kind === "rotation") {
+            rotation.multiply(jointRotation.setFromAxisAngle(AXES[part.axis], value));
+          } else if (part.kind === "translation") {
+            // Slides run along the bone's own axis. Sliding doors tilt their dummy a few
+            // degrees so the door travels outward and clears the body instead of clipping.
+            translation.addScaledVector(slideAxis.copy(AXES[part.axis]).applyQuaternion(rotation), value);
+          }
         }
         local[i].compose(translation, rotation, unitScale);
       }
@@ -291,7 +317,8 @@ export function createVehicleRig({ skeleton, meshes }) {
   }
 
   function applyRigid() {
-    for (const entry of rigid) {
+    for (let idx = 0; idx < rigid.length; idx += 1) {
+      const entry = rigid[idx];
       const identity = deltaIdentity[entry.boneIndex];
       if (identity && !entry.posed) continue;
       const { mesh } = entry;
@@ -308,13 +335,17 @@ export function createVehicleRig({ skeleton, meshes }) {
   }
 
   function applySkinned() {
-    const point = new THREE.Vector3();
-    const normal = new THREE.Vector3();
-    const sum = new THREE.Vector3();
-    const sumNormal = new THREE.Vector3();
-    const normalMatrices = delta.map((matrix) => new THREE.Matrix3().setFromMatrix4(matrix));
-    for (const entry of skinned) {
-      const identity = entry.bonesUsed.every((bone) => deltaIdentity[bone]);
+    if (skinned.length === 0) return;
+    for (let i = 0; i < count; i += 1) normalMatrices[i].setFromMatrix4(delta[i]);
+    for (let s = 0; s < skinned.length; s += 1) {
+      const entry = skinned[s];
+      let identity = true;
+      for (let b = 0; b < entry.bonesUsed.length; b += 1) {
+        if (!deltaIdentity[entry.bonesUsed[b]]) {
+          identity = false;
+          break;
+        }
+      }
       if (identity && !entry.posed) continue;
       const geometry = entry.mesh.geometry;
       const positions = geometry.attributes.position.array;
@@ -326,19 +357,19 @@ export function createVehicleRig({ skeleton, meshes }) {
         const { indices, weights } = entry.skin;
         const vertexCount = positions.length / 3;
         for (let v = 0; v < vertexCount; v += 1) {
-          sum.set(0, 0, 0);
-          sumNormal.set(0, 0, 0);
+          skinSum.set(0, 0, 0);
+          skinSumNormal.set(0, 0, 0);
           let total = 0;
           for (let k = 0; k < 4; k += 1) {
             const weight = weights[v * 4 + k];
             const bone = indices[v * 4 + k];
             if (weight === 0 || bone >= count) continue;
             total += weight;
-            point.fromArray(entry.restPositions, v * 3).applyMatrix4(delta[bone]);
-            sum.addScaledVector(point, weight);
+            skinPoint.fromArray(entry.restPositions, v * 3).applyMatrix4(delta[bone]);
+            skinSum.addScaledVector(skinPoint, weight);
             if (entry.restNormals) {
-              normal.fromArray(entry.restNormals, v * 3).applyMatrix3(normalMatrices[bone]);
-              sumNormal.addScaledVector(normal, weight);
+              skinNormal.fromArray(entry.restNormals, v * 3).applyMatrix3(normalMatrices[bone]);
+              skinSumNormal.addScaledVector(skinNormal, weight);
             }
           }
           if (total === 0) {
@@ -347,8 +378,8 @@ export function createVehicleRig({ skeleton, meshes }) {
             positions[v * 3 + 2] = entry.restPositions[v * 3 + 2];
             continue;
           }
-          sum.multiplyScalar(1 / total).toArray(positions, v * 3);
-          if (normals && entry.restNormals) sumNormal.normalize().toArray(normals, v * 3);
+          skinSum.multiplyScalar(1 / total).toArray(positions, v * 3);
+          if (normals && entry.restNormals) skinSumNormal.normalize().toArray(normals, v * 3);
         }
       }
       geometry.attributes.position.needsUpdate = true;

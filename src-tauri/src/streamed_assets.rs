@@ -83,13 +83,28 @@ pub fn read_header(path: &Path) -> Result<StreamedFile, String> {
 }
 
 fn model_twin(model: &Path) -> Option<PathBuf> {
+    if !model
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("yft"))
+    {
+        return None;
+    }
     let stem = model.file_stem()?.to_str()?;
-    let name = if stem.to_ascii_lowercase().ends_with("_hi") {
+    let name = if stem.len() > 3 && stem.to_ascii_lowercase().ends_with("_hi") {
         format!("{}.yft", &stem[..stem.len() - 3])
     } else {
         format!("{stem}_hi.yft")
     };
     Some(model.with_file_name(name))
+}
+
+fn escrowed_root(path: &Path) -> Option<PathBuf> {
+    let start = if path.is_dir() { path } else { path.parent()? };
+    start
+        .ancestors()
+        .find(|dir| dir.join(".fxap").exists())
+        .map(Path::to_path_buf)
 }
 
 fn is_regular_file(path: &Path) -> bool {
@@ -166,8 +181,10 @@ impl Collector {
 
     fn model(&mut self, model: &Path, allowed: &dyn Fn(&Path) -> bool) {
         if escrowed(model) {
-            if let Some(parent) = model.parent() {
-                self.out.escrowed.push(parent.to_path_buf());
+            if let Some(dir) =
+                escrowed_root(model).or_else(|| model.parent().map(Path::to_path_buf))
+            {
+                self.out.escrowed.push(dir);
             }
             return;
         }
@@ -184,6 +201,7 @@ impl Collector {
             if allowed(&path) {
                 self.read(&path);
             } else {
+                self.seen.insert(key(&path));
                 self.out.unreadable.push(Unreadable {
                     path,
                     message: "Cortex has no access to it; open its folder in Cortex first.".into(),

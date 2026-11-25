@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { FileUp, Move3d, RefreshCw, Search, X } from "lucide-react";
+import { Check, ChevronDown, Copy, FileUp, Film, Move3d, RefreshCw, Search, X } from "lucide-react";
 import { CUSTOM_POSE, MAX_HELD_PROPS, PED_POSES, PROP_ATTACH_BONES } from "../../lib/ped-pose";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { DropButton, FileCard, splitPath } from "../workspace/parts";
@@ -269,8 +269,20 @@ function EupPosePanel({
   playback = null,
   selectedHeldId = null,
   onSelectHeld = null,
+  upperBodyMask = "off",
+  onUpperBodyMaskChange = null,
+  clipCritique = null,
+  onCopyCritique = null,
+  onExportFilmstrip = null,
+  filmstripBusy = false,
 }) {
   const [source, setSource] = useState(customAnimation?.source === "file" ? "file" : "game");
+  const [copiedQa, setCopiedQa] = useState(false);
+  const [qaOpen, setQaOpen] = useState(false);
+  const copyTimerRef = useRef(null);
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
   const [addingGameProp, setAddingGameProp] = useState(false);
   const [emoteOpen, setEmoteOpen] = useState(false);
   const [emoteText, setEmoteText] = useState("");
@@ -322,6 +334,95 @@ function EupPosePanel({
         ) : null}
       </div>
       {playback}
+
+      {clipCritique ? (
+        <div className="lv-field eup-critique">
+          <div className="eup-critique-head">
+            <span className="cx-label">Animation QA</span>
+            {clipCritique.findings.length > 0 ? (
+              <button
+                type="button"
+                className="eup-critique-toggle"
+                aria-expanded={qaOpen}
+                onClick={() => setQaOpen((v) => !v)}
+              >
+                <ChevronDown className={qaOpen ? "is-open" : undefined} aria-hidden="true" />
+                <span className="eup-critique-meta is-warn">
+                  Seam {clipCritique.maxSeamDeg}° · {clipCritique.findings.length} {clipCritique.findings.length === 1 ? "issue" : "issues"}
+                </span>
+              </button>
+            ) : (
+              <span className="eup-critique-meta">
+                Seam {clipCritique.maxSeamDeg}° · clean
+              </span>
+            )}
+          </div>
+          {qaOpen && clipCritique.findings.length > 0 ? (
+            <ul className="eup-critique-list">
+              {clipCritique.findings.map((finding, idx) => (
+                <li key={`${finding.code}-${idx}`} className={`eup-critique-item is-${finding.severity}`}>
+                  <strong>{finding.message}</strong>
+                  {finding.fix ? <span>{finding.fix}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {onUpperBodyMaskChange ? (
+            <div className="lv-seg eup-mask-seg" role="radiogroup" aria-label="Upper-body mask (FiveM flags 48/49/51)">
+              {[
+                { id: "off", label: "Full" },
+                { id: "idle", label: "Upper + Idle" },
+                { id: "walk", label: "Upper + Walk" },
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={upperBodyMask === option.id}
+                  className={`lv-seg-btn ${upperBodyMask === option.id ? "is-on" : ""}`}
+                  onClick={() => onUpperBodyMaskChange(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="lv-slot-actions">
+            {onCopyCritique ? (
+              <button
+                type="button"
+                className="cx-btn lv-btn-sm"
+                onClick={async () => {
+                  const ok = await onCopyCritique();
+                  if (ok === false) return;
+                  setCopiedQa(true);
+                  if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+                  copyTimerRef.current = setTimeout(() => {
+                    copyTimerRef.current = null;
+                    setCopiedQa(false);
+                  }, 1800);
+                }}
+                title="Copy structured motion QA report (loop seam, pops, foot clipping)"
+              >
+                {copiedQa ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                {copiedQa ? "Copied QA" : "Copy QA"}
+              </button>
+            ) : null}
+            {onExportFilmstrip ? (
+              <button
+                type="button"
+                className="cx-btn lv-btn-sm"
+                disabled={filmstripBusy}
+                onClick={onExportFilmstrip}
+                title="Export an 8-frame labelled keyframe filmstrip PNG for review"
+              >
+                <Film aria-hidden="true" />
+                {filmstripBusy ? "Rendering…" : "8-frame strip…"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {custom && !blocked ? (
         <div className="lv-field eup-anim">

@@ -6,6 +6,7 @@ import {
   createAoPipeline,
   disposeAoPipeline,
   GLOW_LAYER,
+  resizeAoPipeline,
   setAoBounds,
   skipsAmbientOcclusion,
 } from "./viewer-render-effects.js";
@@ -130,4 +131,27 @@ test("a scene of several models sizes the AO radius from one model, not the whol
   assert.ok(ambientOcclusionRadius(car) < ambientOcclusionRadius(set));
   // The clip box still covers the whole set.
   assert.deepEqual(ao.aoPass.gtaoMaterial.uniforms.sceneBoxMax.value.toArray(), [7, 4, 4]);
+  disposeAoPipeline(ao);
+});
+
+test("disabled AO pipeline records pending size without reallocating GPU targets during drag", () => {
+  const ao = createAoPipeline({ renderer: fakeRenderer, scene: new THREE.Scene(), camera: new THREE.PerspectiveCamera(), width: 640, height: 360 });
+  let calls = 0;
+  const orig = ao.aoPass.setSize.bind(ao.aoPass);
+  ao.aoPass.setSize = (w, h) => {
+    calls += 1;
+    return orig(w, h);
+  };
+  for (let i = 0; i < 20; i += 1) {
+    resizeAoPipeline(ao, 800 + i * 10, 600 + i * 5, 2, { defer: true });
+  }
+  assert.equal(calls, 0, "disabled AO must not reallocate render targets while resizing");
+  assert.deepEqual(ao._pendingSize, { width: 1980, height: 1390 });
+
+  ao.enabled = true;
+  resizeAoPipeline(ao, 990, 695, 2, { defer: false });
+  assert.equal(calls, 1, "enabling and flushing applies the exact target size once");
+  resizeAoPipeline(ao, 990, 695, 2, { defer: false });
+  assert.equal(calls, 1, "identical size is a no-op");
+  disposeAoPipeline(ao);
 });

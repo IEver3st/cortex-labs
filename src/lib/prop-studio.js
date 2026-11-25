@@ -4,9 +4,13 @@
 
 import { SHOWROOM_FLOORS as STAGE_FLOORS } from "./showroom-floors.js";
 import { normalizeShowroomSubject } from "./studio-defaults.js";
+import { normalizePropAttachState } from "./prop-attach.js";
 
-export const PROP_MODEL_EXTENSIONS = Object.freeze(["ydr", "ydd", "yft"]);
-export const PROP_VIEW_MODES = Object.freeze(["textured", "clay", "normals", "uv"]);
+export const PROP_MODEL_EXTENSIONS = Object.freeze(["ydr", "ydd", "yft", "glb", "gltf"]);
+export const PROP_VIEW_MODES = Object.freeze(["textured", "clay", "normals", "uv", "backface", "vertex"]);
+export const PROP_CHANNELS = Object.freeze(["rgba", "r", "g", "b", "a"]);
+export const PROP_CHANNEL_MAPS = Object.freeze(["map", "normalMap", "specMap"]);
+export const PROP_SCALE_REFS = Object.freeze(["none", "ped", "table", "cube", "hand"]);
 export const PROP_LODS = Object.freeze(["high", "med", "low", "vlow"]);
 export const PROP_LOD_LABELS = Object.freeze({ high: "High", med: "Medium", low: "Low", vlow: "Very low" });
 export const PROP_CAMERA_PRESETS = Object.freeze([
@@ -110,6 +114,7 @@ export function normalizePropState(value, prefs = {}) {
 
   return {
     modelPath: typeof source.modelPath === "string" && isPropModelPath(source.modelPath) ? source.modelPath : "",
+    folderPath: typeof source.folderPath === "string" ? source.folderPath.trim() : "",
     extraYtds: stringList(source.extraYtds).filter((path) => /\.ytd$/i.test(path)),
     liveReload: bool(source.liveReload, true),
     cameraPreset: oneOf(source.cameraPreset, PROP_CAMERA_PRESETS.map((preset) => preset.key), "angle"),
@@ -132,18 +137,23 @@ export function normalizePropState(value, prefs = {}) {
     },
     view: {
       mode: oneOf(view.mode, PROP_VIEW_MODES, "textured"),
+      channel: oneOf(view.channel, PROP_CHANNELS, "rgba"),
+      channelMap: oneOf(view.channelMap, PROP_CHANNEL_MAPS, "map"),
       wireframe: bool(view.wireframe, false),
       meshStats: bool(view.meshStats, false),
       collisions: bool(view.collisions, false),
       lod: oneOf(view.lod, PROP_LODS, "high"),
+      autoLod: bool(view.autoLod, false),
       drawable: Number.isInteger(view.drawable) && view.drawable >= -1 ? view.drawable : -1,
       origin: bool(view.origin, false),
       bounds: bool(view.bounds, false),
+      scaleRef: oneOf(view.scaleRef, PROP_SCALE_REFS, "none"),
       turntable: bool(view.turntable, false),
       turntableSpeed: clamp(view.turntableSpeed, 2, 90, 20),
       orientation: normalizeOrientation(view.orientation),
       hiddenMaterials: flagMap(view.hiddenMaterials),
     },
+    attach: normalizePropAttachState(source.attach),
     emissive: {
       enabled: bool(emissive.enabled, true),
       strength: clamp(emissive.strength, 0, 8, 1),
@@ -390,6 +400,23 @@ export function resolveLod(requested, available) {
   if (levels.includes(PROP_LODS[want])) return PROP_LODS[want];
   for (let index = want - 1; index >= 0; index -= 1) if (levels.includes(PROP_LODS[index])) return PROP_LODS[index];
   return levels.find((lod) => PROP_LODS.indexOf(lod) > want) || levels[0];
+}
+
+/**
+ * Picks the LOD a player would see at `distance` metres from a prop of bounding
+ * `radius`, using GTA-like distance multipliers. Falls back through `available`.
+ */
+export function lodForCameraDistance(distance, radius, available) {
+  const levels = listAvailableLods(available);
+  if (levels.length <= 1) return levels[0] || "high";
+  const r = Math.max(0.2, Number(radius) || 0.5);
+  const d = Math.max(0, Number(distance) || 0);
+  const ratio = d / r;
+  let wanted = "high";
+  if (ratio >= 28) wanted = "vlow";
+  else if (ratio >= 14) wanted = "low";
+  else if (ratio >= 6.5) wanted = "med";
+  return resolveLod(wanted, levels) || levels[0];
 }
 
 /* ── Formatting ── */

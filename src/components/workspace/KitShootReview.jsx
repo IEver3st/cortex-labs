@@ -63,6 +63,7 @@ function Compare({ cache, before, after, beforeLabel, afterLabel }) {
       ref={frameRef}
       className="kr-compare"
       onPointerDown={(event) => {
+        if (event.button !== 0) return;
         dragging.current = true;
         event.currentTarget.setPointerCapture(event.pointerId);
         moveTo(event.clientX);
@@ -70,6 +71,7 @@ function Compare({ cache, before, after, beforeLabel, afterLabel }) {
       onPointerMove={(event) => dragging.current && moveTo(event.clientX)}
       onPointerUp={() => { dragging.current = false; }}
       onPointerCancel={() => { dragging.current = false; }}
+      onLostPointerCapture={() => { dragging.current = false; }}
     >
       <Picture cache={cache} path={after} alt={afterLabel} className="kr-compare-img" />
       <div className="kr-compare-before" style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}>
@@ -204,6 +206,12 @@ export default function KitShootReview({ root, manifest, onClose }) {
   const dialogRef = useRef(null);
 
   useEffect(() => {
+    setGroupId(review.groups[0]?.id || CHECKS);
+    setItemIndex(review.groups[0]?.items.length > 1 && review.groups[0].items[0].isBase ? 1 : 0);
+    setView("compare");
+  }, [review]);
+
+  useEffect(() => {
     const next = createShootFileCache(root);
     setCache(next);
     return () => next.dispose();
@@ -239,24 +247,29 @@ export default function KitShootReview({ root, manifest, onClose }) {
     selectGroup(ids[Math.min(ids.length - 1, Math.max(0, index + delta))]);
   }, [review.groups, groupId, selectGroup]);
 
-  const onKeyDown = (event) => {
-    // The review owns the keyboard while it is open; app hotkeys wait.
-    event.stopPropagation();
-    if (event.target.closest?.("input, textarea, select")) return;
-    const keys = {
-      Escape: onClose,
-      ArrowRight: () => step(1),
-      ArrowLeft: () => step(-1),
-      ArrowDown: () => stepGroup(1),
-      ArrowUp: () => stepGroup(-1),
-      c: () => setView((value) => (value === "compare" ? "shot" : "compare")),
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      // The review owns the keyboard while it is open; app hotkeys wait.
+      event.stopPropagation();
+      if (event.target?.closest?.("input, textarea, select")) return;
+      const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      const keys = {
+        Escape: onClose,
+        ArrowRight: () => step(1),
+        ArrowLeft: () => step(-1),
+        ArrowDown: () => stepGroup(1),
+        ArrowUp: () => stepGroup(-1),
+        c: () => setView((value) => (value === "compare" ? "shot" : "compare")),
+      };
+      const action = keys[key];
+      if (action && !(event.target?.getAttribute?.("role") === "slider" && event.key.startsWith("Arrow"))) {
+        event.preventDefault();
+        action();
+      }
     };
-    const action = keys[event.key];
-    if (action && !(event.target.getAttribute?.("role") === "slider" && event.key.startsWith("Arrow"))) {
-      event.preventDefault();
-      action();
-    }
-  };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose, step, stepGroup]);
 
   const openFolder = async () => {
     setOpenError("");
@@ -282,15 +295,14 @@ export default function KitShootReview({ root, manifest, onClose }) {
         aria-modal="true"
         aria-label={`Kit shoot review for ${manifest.vehicle?.modelName || "vehicle"}`}
         tabIndex={-1}
-        onKeyDown={onKeyDown}
       >
         <header className="kr-head">
           <div className="kr-id">
             <h2 className="cx-display kr-name">{manifest.vehicle?.modelName || "Vehicle"}</h2>
             <p className="kr-meta">
               {kit ? <span>{kit.name}</span> : null}
-              <span>{`${review.shotCount} shots`}</span>
-              <span>{`${manifest.settings?.width}×${manifest.settings?.height}`}</span>
+              <span>{`${review.shotCount} ${review.shotCount === 1 ? "shot" : "shots"}`}</span>
+              {manifest.settings?.width && manifest.settings?.height ? <span>{`${manifest.settings.width}×${manifest.settings.height}`}</span> : null}
               {created && !Number.isNaN(created.getTime()) ? <span>{created.toLocaleString()}</span> : null}
               {manifest.complete === false ? <span className="is-warn">Partial run</span> : null}
             </p>
@@ -324,7 +336,7 @@ export default function KitShootReview({ root, manifest, onClose }) {
                   <span className="kr-rail-title" title={entry.title}>{entry.title}</span>
                   <span className="kr-rail-sub">{entry.subtitle}</span>
                   <span className="kr-rail-count">{entry.items.length}</span>
-                  {entry.issueCount ? <span className="kr-rail-flag" aria-label={`${entry.issueCount} checks`}>{entry.issueCount}</span> : null}
+                  {entry.issueCount ? <span className="kr-rail-flag" aria-label={`${entry.issueCount} ${entry.issueCount === 1 ? "check" : "checks"}`}>{entry.issueCount}</span> : null}
                 </button>
               </li>
             ))}
@@ -339,7 +351,11 @@ export default function KitShootReview({ root, manifest, onClose }) {
             <span className="kr-rail-title">Checks</span>
             <span className="kr-rail-sub">
               {totals.error + totals.warning + totals.info
-                ? [totals.error ? `${totals.error} errors` : "", totals.warning ? `${totals.warning} warnings` : "", totals.info ? `${totals.info} notes` : ""].filter(Boolean).join(" · ")
+                ? [
+                  totals.error ? `${totals.error} ${totals.error === 1 ? "error" : "errors"}` : "",
+                  totals.warning ? `${totals.warning} ${totals.warning === 1 ? "warning" : "warnings"}` : "",
+                  totals.info ? `${totals.info} ${totals.info === 1 ? "note" : "notes"}` : "",
+                ].filter(Boolean).join(" · ")
                 : "No problems"}
             </span>
           </button>

@@ -660,8 +660,9 @@ export default function SirenEditor({ s, head = null, assist = null, foot = null
       const cols = strip.current;
       if (box && cols) {
         const view = box.getBoundingClientRect();
+        const zoom = cssZoom(box);
         const left = cols.querySelector(".se-col-steps")?.getBoundingClientRect().right ?? view.left;
-        const right = view.left + box.clientLeft + box.clientWidth;
+        const right = view.left + (box.clientLeft + box.clientWidth) * zoom;
         for (const top of cols.querySelectorAll(run.kind === "clear" ? ".se-col-top[data-clear]" : ".se-col-top[data-tint]")) {
           const rect = top.getBoundingClientRect();
           const shown = { left: Math.max(rect.left, left), right: Math.min(rect.right, right), top: rect.top, bottom: rect.bottom };

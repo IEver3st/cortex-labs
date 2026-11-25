@@ -53,6 +53,7 @@ import {
   restoreViewerCameraState,
   syncViewerCameraPose,
 } from "../lib/camera-state.js";
+import { createCameraGlide } from "../lib/camera-glide.js";
 import {
   applyShadowFlags,
   BLOOM_STRENGTH,
@@ -86,7 +87,7 @@ import {
   resolvePaintLayerSlot,
   summarizeNativeMaterialMeshes,
 } from "../lib/native-material-plan.js";
-import { loadNativeMaterialView, loadNativeTextureSource, setNativeOverlayTexture } from "../lib/native-materials.js";
+import { clearNativeTextureCache, loadNativeMaterialView, loadNativeTextureSource, setNativeOverlayTexture } from "../lib/native-materials.js";
 import { createLiveryOverride, findLiveryModTexturePath, findLiverySignPrefix, listTextureLiveries } from "../lib/vehicle-livery.js";
 import { applyFrontWheelSteering, getSteerableWheelMeshes } from "../lib/vehicle-steering.js";
 import { createVehicleRig, normalizeManifestSkeleton } from "../lib/vehicle-rig.js";
@@ -497,6 +498,7 @@ function ViewerComponent({
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
+  const cameraGlideRef = useRef(null);
   const modelRef = useRef(null);
   const textureRef = useRef(null);
   const windowTextureRef = useRef(null);
@@ -930,6 +932,12 @@ function ViewerComponent({
     const wheelWhileDragging = setupWheelWhileDragging(controls, requestRenderRef);
     renderer.domElement.addEventListener("wheel", wheelWhileDragging, { passive: false });
 
+    const cameraGlide = createCameraGlide({ camera, controls });
+    cameraGlideRef.current = cameraGlide;
+    const cancelGlide = () => cameraGlide.cancel();
+    renderer.domElement.addEventListener("pointerdown", cancelGlide, { passive: true });
+    renderer.domElement.addEventListener("wheel", cancelGlide, { passive: true });
+
     controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.5 * lightIntensity);
@@ -1011,7 +1019,12 @@ function ViewerComponent({
       }
       renderWithEffects({ renderer, scene, camera: view, ao: aoRef.current, bloom: bloomRef.current, wire: solidWirePass() });
     };
-    const applyCameraFrame = (presetKey = cameraStateRef.current.presetKey, zoomFactor = cameraStateRef.current.zoomFactor, shouldRequestRender = true) => {
+    const applyCameraFrame = (
+      presetKey = cameraStateRef.current.presetKey,
+      zoomFactor = cameraStateRef.current.zoomFactor,
+      shouldRequestRender = true,
+      { animate = false } = {},
+    ) => {
       if (!containerRef.current || !fitRef.current?.bounds) return;
       const { clientWidth, clientHeight } = containerRef.current;
       if (!clientWidth || !clientHeight) return;
@@ -1024,18 +1037,35 @@ function ViewerComponent({
         zoomFactor,
       });
 
-      syncViewerCameraPose({
-        camera,
-        controls,
-        position: framing.position,
-        target: framing.target,
-        up: framing.up,
-        near: framing.near,
-        far: framing.far,
-        minDistance: Math.max(framing.baseDistance * 0.05, 0.1),
-        // Zooming out stops at 4x the fitted distance so the model never shrinks to a speck.
-        maxDistance: Math.max(framing.baseDistance * 4, 1),
-      });
+      const minDistance = Math.max(framing.baseDistance * 0.05, 0.1);
+      // Zooming out stops at 4x the fitted distance so the model never shrinks to a speck.
+      const maxDistance = Math.max(framing.baseDistance * 4, 1);
+
+      if (animate) {
+        camera.up.copy(framing.up);
+        controls.minDistance = minDistance;
+        controls.maxDistance = maxDistance;
+        cameraGlide.to({
+          position: framing.position,
+          target: framing.target,
+          near: framing.near,
+          far: framing.far,
+          instant: false,
+        });
+      } else {
+        cameraGlide.cancel();
+        syncViewerCameraPose({
+          camera,
+          controls,
+          position: framing.position,
+          target: framing.target,
+          up: framing.up,
+          near: framing.near,
+          far: framing.far,
+          minDistance,
+          maxDistance,
+        });
+      }
 
       fitRef.current = {
         ...fitRef.current,
@@ -1055,6 +1085,7 @@ function ViewerComponent({
       if (shouldRequestRender) requestRenderRef.current?.();
     };
     const rescaleCameraFrame = () => {
+      cameraGlide.cancel();
       if (!containerRef.current || !fitRef.current?.bounds) return;
       const { clientWidth, clientHeight } = containerRef.current;
       if (!clientWidth || !clientHeight) return;
@@ -1187,6 +1218,7 @@ function ViewerComponent({
       const turning = advanceTurntable();
       stageRef.current?.fit(fitRef.current?.bounds, modelRef.current, { atRest: measureAtRest });
       stageRef.current?.constrainControls(controls);
+      const gliding = cameraGlide.step(performance.now());
       const needsUpdate = controls.update();
       // Flashing lights keep the loop running; it stops when they do.
       const lightsAnimating = lightRigRef.current?.update(camera) || false;
@@ -1200,7 +1232,7 @@ function ViewerComponent({
       if (!resizeOwnsDraw) renderView(camera);
       onFrameRef.current?.();
       reportMeshStats();
-      if (resizeOwnsDraw || renderRequested || needsUpdate || lightsAnimating || partsAnimating || swapsAnimating || turning) {
+      if (resizeOwnsDraw || renderRequested || needsUpdate || gliding || lightsAnimating || partsAnimating || swapsAnimating || turning) {
         renderRequested = false;
         frameId = requestAnimationFrame(renderFrame);
       } else {
@@ -1210,6 +1242,11 @@ function ViewerComponent({
 
     const flushPendingResize = () => {
       if (resizePending && !recording) applyResize(true);
+      if (!recording && lastViewport.width > 0 && lastViewport.height > 0) {
+        stageRef.current?.resize({ defer: false });
+        resizeBloomPipeline(bloomRef.current, lastViewport.width, lastViewport.height, lastViewport.pixelRatio, { defer: false });
+        resizeAoPipeline(aoRef.current, lastViewport.width, lastViewport.height, lastViewport.pixelRatio, { defer: false });
+      }
     };
 
     const requestRenderFrame = () => {
@@ -1592,28 +1629,32 @@ function ViewerComponent({
       if (!hasViewport) return;
       const pixelRatio = getPixelRatio();
       const sizeChanged = clientWidth !== lastViewport.width || clientHeight !== lastViewport.height;
-      if (!sizeChanged && pixelRatio === lastViewport.pixelRatio) {
+      const pixelRatioChanged = pixelRatio !== lastViewport.pixelRatio;
+      if (!sizeChanged && !pixelRatioChanged) {
         if (regained) requestRenderFrame();
         return;
       }
+      const hadViewportBefore = lastViewport.width > 0 && lastViewport.height > 0;
       lastViewport.width = clientWidth;
       lastViewport.height = clientHeight;
       // Only reconfigure pixel ratio when it actually changes (e.g. monitor switch)
-      if (pixelRatio !== lastViewport.pixelRatio) {
+      if (pixelRatioChanged) {
         lastViewport.pixelRatio = pixelRatio;
         renderer.setPixelRatio(pixelRatio);
       }
+      const deferOffscreen = force !== true && hadViewportBefore && !pixelRatioChanged;
+      const offscreenOpts = deferOffscreen ? { defer: true, onSettled: requestRenderFrame } : { defer: false };
       // false = don't touch canvas.style (avoids layout thrash during drag)
       renderer.setSize(clientWidth, clientHeight, false);
-      stageRef.current?.resize();
+      stageRef.current?.resize(offscreenOpts);
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
       if (sizeChanged && fitRef.current?.bounds) {
         if (cameraUserOwnedRef.current) rescaleCameraFrame();
         else applyCameraFrame(cameraStateRef.current.presetKey, cameraStateRef.current.zoomFactor, false);
       }
-      resizeBloomPipeline(bloomRef.current, clientWidth, clientHeight, pixelRatio);
-      resizeAoPipeline(aoRef.current, clientWidth, clientHeight, pixelRatio);
+      resizeBloomPipeline(bloomRef.current, clientWidth, clientHeight, pixelRatio, offscreenOpts);
+      resizeAoPipeline(aoRef.current, clientWidth, clientHeight, pixelRatio, offscreenOpts);
       if (!isActiveRef.current) return;
       if (force === true) {
         requestRenderFrame();
@@ -1645,6 +1686,7 @@ function ViewerComponent({
     let cameraInteracting = false;
     let interactionDistance = 0;
     const handleControlsStart = () => {
+      cameraGlide.cancel();
       cameraInteracting = true;
       interactionDistance = camera.position.distanceTo(controls.target);
       requestRenderFrame();
@@ -1953,6 +1995,7 @@ function ViewerComponent({
         return viewState && { ...viewState, userOwned: cameraUserOwnedRef.current };
       },
       restoreViewState: (viewState) => {
+        cameraGlide.cancel();
         const restored = restoreViewerCameraState({
           camera,
           controls,
@@ -1968,13 +2011,13 @@ function ViewerComponent({
         requestRenderRef.current?.();
       },
       setPreset: (presetKey) => {
-        applyCameraFrame(presetKey, cameraStateRef.current.zoomFactor);
+        applyCameraFrame(presetKey, cameraStateRef.current.zoomFactor, true, { animate: true });
       },
       setZoom: (zoomFactor) => {
-        applyCameraFrame(cameraStateRef.current.presetKey, zoomFactor);
+        applyCameraFrame(cameraStateRef.current.presetKey, zoomFactor, true, { animate: true });
       },
       reset: () => {
-        applyCameraFrame(DEFAULT_CAMERA_PRESET, 1);
+        applyCameraFrame(DEFAULT_CAMERA_PRESET, 1, true, { animate: true });
       },
       rotateModel: (axis) => {
         if (!modelRef.current) return;
@@ -2304,10 +2347,15 @@ function ViewerComponent({
       releaseTexture(materialTextureRef.current);
       materialTextureRef.current = null;
       controls.dispose();
+      clearNativeTextureCache(renderer);
       renderer.dispose();
       // dispose() frees three's bookkeeping; the context itself only goes away
       // once the browser collects it, so drop it explicitly.
       renderer.forceContextLoss();
+      renderer.domElement.removeEventListener("pointerdown", cancelGlide);
+      renderer.domElement.removeEventListener("wheel", cancelGlide);
+      cameraGlide.cancel();
+      cameraGlideRef.current = null;
       renderer.domElement.removeEventListener("wheel", wheelWhileDragging);
       renderer.domElement.remove();
       setSceneReady(false);
@@ -2499,6 +2547,7 @@ function ViewerComponent({
       domElement: rendererRef.current?.domElement,
       isActiveRef,
       onUserMove: ({ distanceChanged }) => {
+        cameraGlideRef.current?.cancel();
         cameraUserOwnedRef.current = true;
         if (distanceChanged) resizeZoomRatioRef.current = null;
       },
@@ -2729,11 +2778,19 @@ function ViewerComponent({
                 const manifestPath = typeof bridgeResult?.manifestPath === "string" ? bridgeResult.manifestPath.trim() : "";
                 if (meshPath) {
                   let meshBytes = null;
-                  try {
-                    meshBytes = await readFile(meshPath);
-                  } catch {
-                    meshBytes = null;
-                  }
+                  let manifest = null;
+                  let manifestError = null;
+                  const [meshRead, manifestRead] = await Promise.all([
+                    readFile(meshPath).catch(() => null),
+                    manifestPath
+                      ? readJsonFile(manifestPath).catch((error) => {
+                        manifestError = error;
+                        return null;
+                      })
+                      : Promise.resolve(null),
+                  ]);
+                  meshBytes = meshRead;
+                  manifest = manifestRead;
                   if (cancelled) return;
 
                   if (meshBytes) {
@@ -2741,18 +2798,14 @@ function ViewerComponent({
                     let parentTextures = null;
                     let lightBones = [];
                     let skeleton = null;
-                    if (manifestPath) {
-                      try {
-                        const manifest = await readJsonFile(manifestPath);
-                        if (cancelled) return;
-                        bridgeMeshes = applyNativeManifestToMeshes(bridgeMeshes, manifest, manifestPath);
-                        nativeMaterialSummary = summarizeNativeMaterialMeshes(bridgeMeshes);
-                        parentTextures = summarizeParentTextures(manifest, manifestPath);
-                        lightBones = normalizeManifestLightBones(manifest);
-                        skeleton = normalizeManifestSkeleton(manifest);
-                      } catch (error) {
-                        console.warn("[YFT] Failed to read bridge manifest:", error);
-                      }
+                    if (manifestError) {
+                      console.warn("[YFT] Failed to read bridge manifest:", manifestError);
+                    } else if (manifestPath && manifest) {
+                      bridgeMeshes = applyNativeManifestToMeshes(bridgeMeshes, manifest, manifestPath);
+                      nativeMaterialSummary = summarizeNativeMaterialMeshes(bridgeMeshes);
+                      parentTextures = summarizeParentTextures(manifest, manifestPath);
+                      lightBones = normalizeManifestLightBones(manifest);
+                      skeleton = normalizeManifestSkeleton(manifest);
                     }
 
                     if (bridgeMeshes?.length) {
@@ -3289,7 +3342,11 @@ function ViewerComponent({
     const controller = new AbortController();
     let resources = null;
     let cancelled = false;
-    let lastReported = -1;
+    let lastReportedAt = 0;
+
+    if (nativeMaterialsReloadToken > 0) {
+      clearNativeTextureCache(rendererRef.current, { onlyMutable: true });
+    }
 
     const load = async () => {
       try {
@@ -3301,15 +3358,16 @@ function ViewerComponent({
           excludeMesh: isVehicleModMesh,
           onSetup: (status) => {
             if (cancelled) return;
+            lastReportedAt = performance.now();
             onNativeMaterialsStatusRef.current?.({ ...status, state: "loading", available: true });
             reapplyMaterials();
           },
           onProgress: (status) => {
             if (cancelled) return;
             const complete = status.loadedTextureCount + status.failedTextureCount;
-            const reportEvery = Math.max(1, Math.ceil(status.plannedTextureCount / 20));
-            if (complete !== status.plannedTextureCount && complete - lastReported < reportEvery) return;
-            lastReported = complete;
+            const now = performance.now();
+            if (complete !== status.plannedTextureCount && now - lastReportedAt < 150) return;
+            lastReportedAt = now;
             onNativeMaterialsStatusRef.current?.({ ...status, state: "loading", available: true });
           },
           onRender: () => requestRenderRef.current?.(),

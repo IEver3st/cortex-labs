@@ -150,7 +150,7 @@ const SETTINGS_SECTION_GROUPS = [
       {
         id: "general",
         label: "System",
-        description: "Interface scaling and core behavior.",
+        description: "Interface scaling and core behaviour.",
         icon: Monitor,
         keywords: ["UI scale", "Interface size>UI scale", "Zoom>UI scale", "Show projects", "Home>Show projects", "Default order", "Sort>Default order", "Confirm before deleting", "Reopen tabs on launch", "Restore>Reopen tabs on launch", "Session>Reopen tabs on launch", "Capture folder", "Screenshots>Capture folder", "Variant and template folder", "Export folder>Variant and template folder", "Auto template format", "PSD>Auto template format", "PNG>Auto template format", "Replace existing files", "Overwrite>Replace existing files", "Capture size", "Resolution>Capture size", "4K>Capture size", "Capture angles", "Capture framing", "Zoom>Capture framing", "Photo Mode size", "Reset all settings"],
       },
@@ -171,16 +171,16 @@ const SETTINGS_SECTION_GROUPS = [
       {
         id: "appearance",
         label: "Appearance",
-        description: "Theme, window chrome, and studio colors.",
+        description: "Theme, window chrome, and studio colours.",
         icon: Palette,
-        keywords: ["Color scheme", "Theme>Color scheme", "Dark mode>Color scheme", "Light mode>Color scheme", "Studio palette", "Preset>Studio palette", "3D stage", "Showroom tone>3D stage", "Light showroom>3D stage", "Window controls", "Reduce motion", "Animations>Reduce motion", "Show shortcut keys", "Keycaps>Show shortcut keys", "Starting colors", "Base body>Starting colors", "Base background>Starting colors", "Auto template fill>Starting colors", "Auto template background>Starting colors"],
+        keywords: ["Colour scheme", "Color scheme>Colour scheme", "Theme>Colour scheme", "Dark mode>Colour scheme", "Light mode>Colour scheme", "Studio palette", "Preset>Studio palette", "3D stage", "Showroom tone>3D stage", "Light showroom>3D stage", "Window controls", "Reduce motion", "Animations>Reduce motion", "Show shortcut keys", "Keycaps>Show shortcut keys", "Starting colours", "Starting colors>Starting colours", "Base body>Starting colours", "Base background>Starting colours", "Auto template fill>Starting colours", "Auto template background>Starting colours"],
       },
       {
         id: "watermark",
         label: "Watermark",
         description: "Stamp captures with your text or logo.",
         icon: Stamp,
-        keywords: ["Stamp captures", "Presets", "Content", "Text", "Logo", "Logo size", "Match watermark color", "Font", "Weight", "Italic", "Capitals", "Letter spacing", "Finish", "Opacity", "Size", "Rotation", "Placement", "Position", "Edge margin", "Tile spacing"],
+        keywords: ["Stamp captures", "Presets", "Content", "Text", "Logo", "Logo size", "Match watermark colour", "Match watermark color>Match watermark colour", "Font", "Weight", "Italic", "Capitals", "Letter spacing", "Finish", "Opacity", "Size", "Rotation", "Placement", "Position", "Edge margin", "Tile spacing"],
       },
     ],
   },
@@ -959,6 +959,7 @@ export default function SettingsMenu({
                                         aria-label="UI scale"
                                         onChange={(e) => setUiScaleInput(clampUiScale(parseFloat(e.target.value)))}
                                         onPointerUp={commitUiScale}
+                                        onPointerCancel={commitUiScale}
                                         onKeyUp={commitUiScale}
                                         onBlur={commitUiScale}
                                       />
@@ -1034,67 +1035,73 @@ export default function SettingsMenu({
                                         </div>
                                       </div>
                                       {draft.previewFolder && !previewFolderExists ? null : (
-                                      <div className="settings-row-actions">
-                                        <button
-                                          type="button"
-                                          className="settings-mini"
-                                          onClick={handleSelectPreviewFolder}
-                                        >
-                                          Browse
-                                        </button>
-                                        {draft.previewFolder && (
+                                        <div className="settings-row-actions">
                                           <button
                                             type="button"
-                                            className="settings-mini is-danger"
-                                            onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
-                                          >
-                                            Clear
-                                          </button>
-                                        )}
-                                      </div>
-                                      )}
-                                    </div>
-                                    {draft.previewFolder && !previewFolderExists ? (
-                                      <div className="settings-callout is-warning" role="alert">
-                                        <AlertTriangle className="settings-callout-icon" aria-hidden="true" />
-                                        <div className="settings-callout-copy">
-                                          <div className="settings-callout-title">Preview folder not found</div>
-                                          <div className="settings-callout-text">
-                                            Captures can't be saved until you pick a folder that exists, or clear this to be asked each time.
-                                          </div>
-                                        </div>
-                                        <div className="settings-callout-actions">
-                                          <button
-                                            type="button"
-                                            className="cx-btn is-primary"
+                                            className="settings-mini"
+                                            disabled={!isTauriRuntime}
+                                            title={!isTauriRuntime ? "Choosing a folder requires the desktop app." : undefined}
                                             onClick={handleSelectPreviewFolder}
                                           >
-                                            Choose folder
+                                            Browse
                                           </button>
+                                          {draft.previewFolder && (
+                                            <button
+                                              type="button"
+                                              className="settings-mini is-danger"
+                                              onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                            >
+                                              Clear
+                                            </button>
+                                          )}
+                                        </div>
+                                        )}
+                                      </div>
+                                      {draft.previewFolder && !previewFolderExists ? (
+                                        <div className="settings-callout is-warning" role="alert">
+                                          <AlertTriangle className="settings-callout-icon" aria-hidden="true" />
+                                          <div className="settings-callout-copy">
+                                            <div className="settings-callout-title">Capture folder not found</div>
+                                            <div className="settings-callout-text">
+                                              Captures can't be saved until you pick a folder that exists, or clear this to be asked each time.
+                                            </div>
+                                          </div>
+                                          <div className="settings-callout-actions">
+                                            <button
+                                              type="button"
+                                              className="cx-btn is-primary"
+                                              disabled={!isTauriRuntime}
+                                              title={!isTauriRuntime ? "Choosing a folder requires the desktop app." : undefined}
+                                              onClick={handleSelectPreviewFolder}
+                                            >
+                                              Choose folder
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="cx-btn is-quiet"
+                                              onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                            >
+                                              Clear
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : null}
+
+                                      <div className="settings-row">
+                                        <div className="settings-row-label">
+                                          <div className="settings-row-title">Variant and template folder</div>
+                                          <div className={`settings-row-desc ${draft.variantExportFolder ? "settings-path" : ""}`.trim()}>{draft.variantExportFolder || "Not set. Variant Builder and Template Generator ask for a folder on each export."}</div>
+                                        </div>
+                                        <div className="settings-row-actions">
                                           <button
                                             type="button"
-                                            className="cx-btn is-quiet"
-                                            onClick={() => setDraft((p) => ({ ...p, previewFolder: "" }))}
+                                            className="settings-mini"
+                                            disabled={!isTauriRuntime}
+                                            title={!isTauriRuntime ? "Choosing a folder requires the desktop app." : undefined}
+                                            onClick={handleSelectVariantExportFolder}
                                           >
-                                            Clear
+                                            Browse
                                           </button>
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    <div className="settings-row">
-                                      <div className="settings-row-label">
-                                        <div className="settings-row-title">Variant and template folder</div>
-                                        <div className={`settings-row-desc ${draft.variantExportFolder ? "settings-path" : ""}`.trim()}>{draft.variantExportFolder || "Not set. Variant Builder and Template Generator ask for a folder on each export."}</div>
-                                      </div>
-                                      <div className="settings-row-actions">
-                                        <button
-                                          type="button"
-                                          className="settings-mini"
-                                          onClick={handleSelectVariantExportFolder}
-                                        >
-                                          Browse
-                                        </button>
                                         {draft.variantExportFolder && (
                                           <button
                                             type="button"
@@ -1362,7 +1369,7 @@ export default function SettingsMenu({
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="settings-row-title">Zoom toward cursor</div>
-                                      <div className="settings-row-desc">Scrolling zooms toward the point under the mouse instead of the center of the view</div>
+                                      <div className="settings-row-desc">Scrolling zooms toward the point under the mouse instead of the centre of the view</div>
                                     </div>
                                     <Toggle
                                       checked={draft.zoomToCursor === true}
@@ -1476,8 +1483,8 @@ export default function SettingsMenu({
                             {activeSection === "appearance" ? (
                               <div className="settings-appearance-stack">
                                 <section className="settings-panel settings-theme-panel">
-                                  <div className="settings-panel-title">Color scheme</div>
-                                  <div className="settings-theme-grid" role="group" aria-label="Color scheme">
+                                  <div className="settings-panel-title">Colour scheme</div>
+                                  <div className="settings-theme-grid" role="group" aria-label="Colour scheme">
                                     {THEME_OPTIONS.map((option) => (
                                       <ThemeChoice
                                         key={option.id}
@@ -1494,7 +1501,7 @@ export default function SettingsMenu({
                                     <div>
                                       <div className="settings-panel-title">Studio palette</div>
                                       <p className="settings-panel-description">
-                                        Recolor the full workbench while preserving your selected light or dark mode.
+                                        Recolour the full workbench while preserving your selected light or dark mode.
                                       </p>
                                     </div>
                                     <span className="settings-panel-count">{THEME_PRESETS.length} presets</span>
@@ -1546,7 +1553,7 @@ export default function SettingsMenu({
                                   <div className="settings-row">
                                     <div className="settings-row-label">
                                       <div className="settings-row-title">Window controls</div>
-                                      <div className="settings-row-desc">Style of minimize, maximize and close</div>
+                                      <div className="settings-row-desc">Style of minimise, maximise and close</div>
                                     </div>
                                     <div className="settings-seg" role="radiogroup" aria-label="Window controls">
                                       <button
@@ -1610,7 +1617,7 @@ export default function SettingsMenu({
                                 </section>
 
                                 <section className="settings-panel">
-                                  <div className="settings-panel-title">Starting colors</div>
+                                  <div className="settings-panel-title">Starting colours</div>
                                   <p className="settings-panel-description">
                                     Used by new viewers and generated templates.
                                   </p>

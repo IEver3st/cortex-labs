@@ -15,9 +15,10 @@
 .settings-center {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
-  padding: max(24px, 6vh) max(24px, 5vw);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(calc(20 * var(--u)), calc(6vh / var(--es-ui-scale, 1))) max(calc(20 * var(--u)), calc(5vw / var(--es-ui-scale, 1)));
   pointer-events: none;
 }
 

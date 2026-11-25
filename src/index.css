@@ -794,8 +794,8 @@ a {
   gap: 2px;
   color: var(--mg-muted);
   font-family: var(--font-hud);
-  font-size: 7px;
-  letter-spacing: 0.07em;
+  font-size: var(--cx-fs-meta);
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -808,7 +808,7 @@ a {
 
 .cs-light-axis-header output {
   color: var(--mg-fg);
-  font-size: 8px;
+  font-size: var(--cx-fs-meta);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
@@ -882,10 +882,11 @@ a {
   background: var(--mg-bg);
   color: var(--mg-muted);
   font-family: var(--font-hud);
-  font-size: 7.5px;
-  letter-spacing: 0.03em;
+  font-size: var(--cx-fs-meta);
+  letter-spacing: 0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
   transition:
     background-color 140ms ease-out,
     border-color 140ms ease-out,

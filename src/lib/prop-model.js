@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { parseClmesh } from "./clmesh.js";
-import { buildClmeshObject } from "./clmesh-object.js";
+import { buildClmeshObject, userTextureUvAttribute } from "./clmesh-object.js";
 import {
   applyNativeManifestToMeshes,
   normalizeManifestLightBones,
@@ -79,9 +79,117 @@ function errorText(error) {
  * `extraYtds` fill bindings the bridge could not resolve, by texture name, the
  * way the game falls back through a parent dictionary.
  */
+function disposeObjectGraph(root) {
+  if (!root) return;
+  const seenTex = new Set();
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    child.geometry?.dispose?.();
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      for (const slot of ["map", "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "aoMap", "alphaMap", "bumpMap", "specularIntensityMap"]) {
+        const tex = mat[slot];
+        if (tex && !seenTex.has(tex)) {
+          seenTex.add(tex);
+          tex.dispose?.();
+        }
+      }
+      mat.dispose?.();
+    }
+  });
+}
+
+function hasExternalGltfUri(bytes) {
+  // Non-binary .gltf JSON starts with '{' (after optional UTF-8 BOM / whitespace).
+  let i = 0;
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) i = 3;
+  while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0a || bytes[i] === 0x0d)) i += 1;
+  if (bytes[i] !== 0x7b) return false;
+  try {
+    const json = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+    const check = (list) => Array.isArray(list) && list.some((entry) => typeof entry?.uri === "string" && !entry.uri.startsWith("data:"));
+    return check(json?.buffers) || check(json?.images);
+  } catch {
+    return false;
+  }
+}
+
+async function loadGltfPropAsset(path, { format, readFile, signal }) {
+  const bytes = await readFile(path);
+  throwIfAborted(signal);
+  if (format === "gltf" && hasExternalGltfUri(bytes)) {
+    throw new Error("Separate .gltf files with external .bin or image references are not supported. Export a self-contained .glb (or embedded .gltf) from Blender instead.");
+  }
+  const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
+  const loader = new GLTFLoader();
+  const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+    ? bytes.buffer
+    : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const gltf = await new Promise((resolve, reject) => {
+    loader.parse(buffer, "", resolve, reject);
+  });
+  if (signal?.aborted) {
+    disposeObjectGraph(gltf.scene);
+    throw abortError();
+  }
+  const wrapper = new THREE.Group();
+  wrapper.name = fileStem(path);
+  // glTF is Y-up while createPropModel's `gta` node rotates -90° around X
+  // (GTA Z-up → three.js Y-up). Counter-rotating +90° keeps glTF upright and
+  // makes computeGtaBounds() emit accurate GTA Z-up coordinates for QA & .ytyp.
+  wrapper.rotation.x = Math.PI / 2;
+  wrapper.add(gltf.scene);
+  wrapper.updateMatrixWorld(true);
+
+  const gltfTextures = [];
+  const seenTex = new Set();
+  wrapper.traverse((child) => {
+    if (!child.isMesh) return;
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      for (const slot of ["map", "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "aoMap"]) {
+        const tex = mat[slot];
+        if (!tex || seenTex.has(tex)) continue;
+        seenTex.add(tex);
+        const w = Number(tex.image?.width || 0);
+        const h = Number(tex.image?.height || 0);
+        if (w > 0 && h > 0) {
+          gltfTextures.push({
+            name: tex.name || `${mat.name || child.name}_${slot}`,
+            path: "",
+            width: w,
+            height: h,
+            mipmaps: tex.generateMipmaps === false ? 1 : Math.floor(Math.log2(Math.max(w, h))) + 1,
+            format: "RGBA8",
+          });
+        }
+      }
+    }
+  });
+
+  return {
+    object: wrapper,
+    format,
+    parser: "gltf",
+    lights: [],
+    drawables: [],
+    skeleton: null,
+    parentTextures: null,
+    nativeSummary: { available: false },
+    embeddedTextures: gltfTextures,
+    warnings: [],
+    cached: false,
+  };
+}
+
 export async function loadPropAsset(path, { invoke, readFile, force = false, extraYtds = [], signal } = {}) {
   const format = propModelFormat(path);
-  if (!format) throw new Error("Prop Studio opens .ydr, .ydd and .yft models.");
+  if (!format) throw new Error("Prop Studio opens .ydr, .ydd, .yft, .glb and .gltf models.");
+  if (format === "glb" || format === "gltf") {
+    return loadGltfPropAsset(path, { format, readFile, signal });
+  }
   const warnings = [];
 
   let bridgeError = null;
@@ -92,11 +200,24 @@ export async function loadPropAsset(path, { invoke, readFile, force = false, ext
     const meshPath = typeof result?.meshPath === "string" ? result.meshPath.trim() : "";
     const manifestPath = typeof result?.manifestPath === "string" ? result.manifestPath.trim() : "";
     if (!meshPath) throw new Error("The CodeWalker bridge returned no mesh cache.");
-    let meshes = parseClmesh(await readFile(meshPath));
+    let manifestError = null;
+    const [meshBytes, manifestBytes] = await Promise.all([
+      readFile(meshPath),
+      manifestPath
+        ? readFile(manifestPath).catch((error) => {
+          manifestError = error;
+          return null;
+        })
+        : Promise.resolve(null),
+    ]);
+    throwIfAborted(signal);
+    let meshes = parseClmesh(meshBytes);
     let manifest = null;
-    if (manifestPath) {
+    if (manifestError) {
+      warnings.push(`The model's material list didn't load, so textures are off: ${errorText(manifestError)}`);
+    } else if (manifestPath && manifestBytes) {
       try {
-        manifest = decodeJson(await readFile(manifestPath));
+        manifest = decodeJson(manifestBytes);
         meshes = applyNativeManifestToMeshes(meshes, manifest, manifestPath);
       } catch (error) {
         warnings.push(`The model's material list didn't load, so textures are off: ${errorText(error)}`);
@@ -195,17 +316,82 @@ function createCheckerTexture() {
   return texture;
 }
 
+function createChannelMaterial(texture, channel) {
+  const mat = new THREE.MeshBasicMaterial({
+    map: texture || null,
+    color: texture ? 0xffffff : 0x444850,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  if (texture && channel && channel !== "rgba") {
+    const swizzle = { r: "vec3(sampledDiffuseColor.r)", g: "vec3(sampledDiffuseColor.g)", b: "vec3(sampledDiffuseColor.b)", a: "vec3(sampledDiffuseColor.a)" }[channel];
+    if (swizzle) {
+      mat.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <map_fragment>",
+          `#ifdef USE_MAP
+            vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+            diffuseColor.rgb = ${swizzle};
+            diffuseColor.a = 1.0;
+          #endif`,
+        );
+      };
+      mat.customProgramCacheKey = () => `prop-channel-${channel}`;
+    }
+  }
+  return mat;
+}
+
+function selectMapForChannel(material, channelMap) {
+  const mat = Array.isArray(material) ? material[0] : material;
+  if (!mat) return null;
+  if (channelMap === "normalMap") return mat.normalMap || null;
+  if (channelMap === "specMap") return mat.specularIntensityMap || mat.roughnessMap || mat.metalnessMap || null;
+  return mat.map || null;
+}
+
+function createBackfaceMaterial() {
+  const material = new THREE.MeshStandardMaterial({
+    color: CLAY_COLOR,
+    roughness: 0.72,
+    metalness: 0,
+    side: THREE.DoubleSide,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <color_fragment>",
+      `#include <color_fragment>
+      if (!gl_FrontFacing) {
+        diffuseColor.rgb = vec3(0.88, 0.22, 0.20);
+      }`,
+    );
+  };
+  material.customProgramCacheKey = () => "prop-backface-v1";
+  return material;
+}
+
 function createViewMaterials() {
   const checker = createCheckerTexture();
   const materials = {
     clay: new THREE.MeshStandardMaterial({ color: CLAY_COLOR, roughness: 0.78, metalness: 0, side: THREE.DoubleSide }),
     normals: new THREE.MeshNormalMaterial({ side: THREE.DoubleSide }),
-    uv: new THREE.MeshBasicMaterial({ map: checker, side: THREE.DoubleSide }),
+    uv: new THREE.MeshBasicMaterial({ map: checker, side: THREE.DoubleSide, toneMapped: false }),
+    backface: createBackfaceMaterial(),
+    vertex: new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false }),
+    vertexEmpty: new THREE.MeshBasicMaterial({ color: 0x727780, side: THREE.DoubleSide, toneMapped: false }),
     wire: new THREE.MeshBasicMaterial({
       color: WIRE_COLOR,
       wireframe: true,
       transparent: true,
       opacity: 0.45,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+    highlightWire: new THREE.MeshBasicMaterial({
+      color: 0x558bf6,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.8,
       depthWrite: false,
       toneMapped: false,
     }),
@@ -217,6 +403,74 @@ function createViewMaterials() {
       checker.dispose();
     },
   };
+}
+
+function ensureVertexColorAttribute(geometry) {
+  if (!geometry) return false;
+  if (geometry.getAttribute("color")) return true;
+  const raw = geometry.userData?.gtaVertexColors;
+  const posCount = geometry.getAttribute("position")?.count || 0;
+  if (!raw || raw.length < posCount * 4 || !posCount) return false;
+  // Normalize RGBA Uint8 to RGB Float32 (Three.js vertexColors reads RGB).
+  const rgb = new Float32Array(posCount * 3);
+  for (let i = 0; i < posCount; i += 1) {
+    rgb[i * 3] = raw[i * 4] / 255;
+    rgb[i * 3 + 1] = raw[i * 4 + 1] / 255;
+    rgb[i * 3 + 2] = raw[i * 4 + 2] / 255;
+  }
+  geometry.setAttribute("color", new THREE.BufferAttribute(rgb, 3));
+  return true;
+}
+
+function analyzeGeometryQuality(geometry) {
+  const position = geometry?.getAttribute("position");
+  const count = position?.count || 0;
+  if (!count) return { missingUv: false, missingNormal: false, degenerate: 0, inverted: false };
+  const missingUv = !geometry.getAttribute("uv");
+  const normal = geometry.getAttribute("normal");
+  const missingNormal = !normal;
+  const index = geometry.getIndex();
+  const triCount = Math.floor((index ? index.count : count) / 3);
+  let degenerate = 0;
+  let flipped = 0;
+  let checked = 0;
+  const ax = new THREE.Vector3();
+  const bx = new THREE.Vector3();
+  const cx = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  const fn = new THREE.Vector3();
+  const vn = new THREE.Vector3();
+  const stride = triCount > 12000 ? Math.ceil(triCount / 12000) : 1;
+  for (let t = 0; t < triCount; t += stride) {
+    const i0 = index ? index.getX(t * 3) : t * 3;
+    const i1 = index ? index.getX(t * 3 + 1) : t * 3 + 1;
+    const i2 = index ? index.getX(t * 3 + 2) : t * 3 + 2;
+    ax.fromBufferAttribute(position, i0);
+    bx.fromBufferAttribute(position, i1);
+    cx.fromBufferAttribute(position, i2);
+    ab.subVectors(bx, ax);
+    ac.subVectors(cx, ax);
+    fn.crossVectors(ab, ac);
+    const area2 = fn.lengthSq();
+    if (!Number.isFinite(area2) || area2 < 1e-12) {
+      degenerate += stride;
+      continue;
+    }
+    if (normal) {
+      vn.set(
+        normal.getX(i0) + normal.getX(i1) + normal.getX(i2),
+        normal.getY(i0) + normal.getY(i1) + normal.getY(i2),
+        normal.getZ(i0) + normal.getZ(i1) + normal.getZ(i2),
+      );
+      if (vn.lengthSq() > 1e-8) {
+        checked += 1;
+        if (fn.dot(vn) < 0) flipped += 1;
+      }
+    }
+  }
+  const inverted = checked >= 12 && flipped / checked > 0.72;
+  return { missingUv, missingNormal, degenerate, inverted };
 }
 
 /* ── Prop model ── */
@@ -278,8 +532,9 @@ export function createPropModel(asset) {
     // native-materials.js keeps the material it found as the one to restore;
     // record it now so a clay or UV view at load time is never mistaken for it.
     child.userData.baseMaterial = child.material;
-    child.userData.materialKey = materialGroupKey(native, child.material?.name || child.name);
-    child.userData.materialLabel = materialGroupLabel(native, child.material?.name || child.name);
+    const primaryMat = Array.isArray(child.material) ? child.material[0] : child.material;
+    child.userData.materialKey = materialGroupKey(native, primaryMat?.name || child.name);
+    child.userData.materialLabel = materialGroupLabel(native, primaryMat?.name || child.name);
     child.userData.lodLevel = native?.lodLevel || "";
     child.userData.drawableIndex = Number.isInteger(native?.drawableIndex) ? native.drawableIndex : 0;
     if (native) native.lodActive = true;
@@ -319,29 +574,135 @@ export function createPropModel(asset) {
         nightOnly: isNightOnlyShader(native?.shaderName),
         multiplier: Number.isFinite(native?.emissiveMultiplier) ? native.emissiveMultiplier : null,
         textures: new Set(),
+        bindings: new Map(),
         meshCount: 0,
+        triangles: 0,
       };
       groups.set(key, group);
     }
     group.meshCount += 1;
+    group.triangles += meshStats(mesh).triangles;
     for (const binding of native?.textureBindings || []) {
-      if (binding?.textureName) group.textures.add(binding.textureName);
+      if (!binding?.textureName) continue;
+      group.textures.add(binding.textureName);
+      const bKey = `${binding.usage || "unknown"}|${binding.paramName || ""}|${binding.textureName.toLowerCase()}`;
+      const existing = group.bindings.get(bKey);
+      if (!existing || (!existing.resolvedPath && binding.resolvedPath)) {
+        group.bindings.set(bKey, {
+          paramName: binding.paramName || "",
+          usage: binding.usage || "unknown",
+          textureName: binding.textureName,
+          source: binding.source || "",
+          resolved: Boolean(binding.resolvedPath),
+          resolvedPath: binding.resolvedPath || "",
+        });
+      }
     }
   }
 
   let viewMode = "textured";
+  let viewChannel = "rgba";
+  let viewChannelMap = "map";
   let wireframe = false;
+  let highlightedKey = "";
   let overlays = [];
   let emissiveSettings = null;
+  let cachedQaMetrics = null;
+  const channelMaterials = new Map();
+  // User live texture overrides keyed by materialKey: { texture, path, originals: Map<mesh, { map, uv }> }
+  const textureOverrides = new Map();
+
+  const channelMaterialFor = (sourceMat) => {
+    const tex = selectMapForChannel(sourceMat, viewChannelMap);
+    const key = `${tex?.uuid || "none"}|${viewChannel}`;
+    let mat = channelMaterials.get(key);
+    if (!mat) {
+      mat = createChannelMaterial(tex, viewChannel);
+      channelMaterials.set(key, mat);
+    }
+    return mat;
+  };
 
   const applyMaterials = () => {
-    for (const mesh of meshes) {
+    for (let index = 0; index < meshes.length; index += 1) {
+      const mesh = meshes[index];
+      const baseMat = mesh.userData.nativeMaterialObject || mesh.userData.propBaseMaterial;
       if (viewMode === "clay") mesh.material = views.clay;
       else if (viewMode === "normals") mesh.material = views.normals;
       else if (viewMode === "uv") mesh.material = views.uv;
-      else mesh.material = mesh.userData.nativeMaterialObject || mesh.userData.propBaseMaterial;
+      else if (viewMode === "backface") mesh.material = views.backface;
+      else if (viewMode === "vertex") {
+        mesh.material = ensureVertexColorAttribute(mesh.geometry) ? views.vertex : views.vertexEmpty;
+      } else if (viewChannel !== "rgba" || viewChannelMap !== "map") {
+        mesh.material = channelMaterialFor(baseMat);
+      } else {
+        mesh.material = baseMat;
+      }
+      const wire = wires[index];
+      const isHighlighted = Boolean(highlightedKey) && mesh.userData.materialKey === highlightedKey;
+      wire.material = isHighlighted ? views.highlightWire : views.wire;
+      wire.visible = wireframe || isHighlighted;
     }
-    for (const wire of wires) wire.visible = wireframe;
+  };
+
+  const clearChannelMaterials = () => {
+    for (const mat of channelMaterials.values()) mat.dispose();
+    channelMaterials.clear();
+  };
+
+  const applyOverrideToMesh = (mesh, override) => {
+    const rawMat = mesh.userData.nativeMaterialObject || mesh.userData.propBaseMaterial;
+    if (!rawMat) return;
+    const mats = Array.isArray(rawMat) ? rawMat.filter(Boolean) : [rawMat];
+    if (!mats.length) return;
+    if (!override.originals.has(mesh)) {
+      const baseUv = mesh.geometry?.userData?.gtaUvSets?.[0] || mesh.geometry?.attributes?.uv || null;
+      override.originals.set(mesh, {
+        materials: mats.map((material) => ({
+          material,
+          map: material.map || null,
+          emissiveMap: material.emissiveMap || null,
+        })),
+        uv: baseUv,
+      });
+    }
+    const baseUv = override.originals.get(mesh).uv;
+    if (baseUv && mesh.geometry) {
+      mesh.geometry.setAttribute("uv", userTextureUvAttribute(mesh.geometry, baseUv));
+    }
+    for (const material of mats) {
+      material.map = override.texture;
+      if (material.emissiveMap) material.emissiveMap = override.texture;
+      material.needsUpdate = true;
+    }
+    for (const overlay of overlays) {
+      if (overlay.userData.target === mesh && overlay.material) {
+        overlay.material.map = override.texture;
+        overlay.material.needsUpdate = true;
+      }
+    }
+  };
+
+  const restoreOverride = (override, { disposeTexture = true } = {}) => {
+    if (!override) return;
+    for (const [mesh, saved] of override.originals) {
+      if (saved.uv && mesh.geometry) mesh.geometry.setAttribute("uv", saved.uv);
+      for (const entry of saved.materials || []) {
+        if (!entry.material) continue;
+        entry.material.map = entry.map;
+        if ("emissiveMap" in entry.material) entry.material.emissiveMap = entry.emissiveMap;
+        entry.material.needsUpdate = true;
+      }
+      for (const overlay of overlays) {
+        if (overlay.userData.target === mesh && overlay.material) {
+          const restored = saved.materials?.[0];
+          overlay.material.map = restored?.emissiveMap || restored?.map || null;
+          overlay.material.needsUpdate = true;
+        }
+      }
+    }
+    override.originals.clear();
+    if (disposeTexture) override.texture?.dispose?.();
   };
 
   const visibleMeshes = () => meshes.filter((mesh) => isShown(mesh, turntable.parent));
@@ -357,12 +718,34 @@ export function createPropModel(asset) {
     return bounds.isEmpty() ? null : bounds;
   };
 
+  /** Axis-aligned bounding box in raw GTA Z-up model coordinates (for Prop Doctor & .ytyp). */
+  const computeGtaBounds = (list = null) => {
+    const target = list || meshes.filter((mesh) => !mesh.userData.lodLevel || mesh.userData.lodLevel === "high");
+    const source = target.length ? target : meshes;
+    gta.updateMatrixWorld(true);
+    const invGta = gta.matrixWorld.clone().invert();
+    const toGta = new THREE.Matrix4();
+    const bounds = new THREE.Box3();
+    const box = new THREE.Box3();
+    for (const mesh of source) {
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      toGta.multiplyMatrices(invGta, mesh.matrixWorld);
+      bounds.union(box.copy(mesh.geometry.boundingBox).applyMatrix4(toGta));
+    }
+    if (bounds.isEmpty()) return null;
+    return {
+      min: [bounds.min.x, bounds.min.y, bounds.min.z],
+      max: [bounds.max.x, bounds.max.y, bounds.max.z],
+    };
+  };
+
   const controller = {
     root: container,
     gta,
     model,
     meshes,
     format: asset.format,
+    embeddedTextures: asset.embeddedTextures || [],
     parser: asset.parser,
     lights: asset.lights || [],
     drawables: asset.drawables || [],
@@ -370,7 +753,111 @@ export function createPropModel(asset) {
 
     /** Material rows for the inspector, in first-seen order. */
     materialGroups() {
-      return [...groups.values()].map((group) => ({ ...group, textures: [...group.textures] }));
+      return [...groups.values()].map((group) => ({
+        ...group,
+        textures: [...group.textures],
+        bindings: [...group.bindings.values()],
+        overridePath: textureOverrides.get(group.key)?.path || "",
+      }));
+    },
+
+    /** Raw GTA Z-up bounding box across high-LOD meshes (or all meshes if no LODs). */
+    gtaBounds() {
+      return computeGtaBounds();
+    },
+
+    /** Cached geometry, LOD, vertex-colour and missing-binding metrics for Prop Doctor. */
+    qaMetrics() {
+      if (cachedQaMetrics) return cachedQaMetrics;
+      const lodStats = {};
+      let missingUvMeshes = 0;
+      let missingNormalMeshes = 0;
+      let degenerateTriangles = 0;
+      let invertedWindingMeshes = 0;
+      let hasVertexColors = false;
+      const missingBindings = [];
+      const seenMissing = new Set();
+
+      const highMeshes = [];
+      for (const mesh of meshes) {
+        const lod = mesh.userData.lodLevel || "high";
+        const counts = meshStats(mesh);
+        if (!lodStats[lod]) lodStats[lod] = { meshes: 0, vertices: 0, triangles: 0 };
+        lodStats[lod].meshes += 1;
+        lodStats[lod].vertices += counts.vertices;
+        lodStats[lod].triangles += counts.triangles;
+        if (mesh.geometry?.userData?.gtaVertexColors?.length || mesh.geometry?.attributes?.color?.count > 0) hasVertexColors = true;
+        if (lod === "high" || !mesh.userData.lodLevel) highMeshes.push(mesh);
+      }
+
+      const inspected = highMeshes.length ? highMeshes : meshes;
+      let highTriangles = 0;
+      let highVertices = 0;
+      for (const mesh of inspected) {
+        const counts = meshStats(mesh);
+        highTriangles += counts.triangles;
+        highVertices += counts.vertices;
+        const quality = analyzeGeometryQuality(mesh.geometry);
+        if (quality.missingUv) missingUvMeshes += 1;
+        if (quality.missingNormal) missingNormalMeshes += 1;
+        degenerateTriangles += quality.degenerate;
+        if (quality.inverted) invertedWindingMeshes += 1;
+        const native = mesh.userData.nativeMaterial;
+        for (const binding of native?.textureBindings || []) {
+          if (binding?.textureName && !binding.resolvedPath) {
+            const mKey = `${mesh.userData.materialKey}|${binding.paramName}|${binding.textureName.toLowerCase()}`;
+            if (seenMissing.has(mKey)) continue;
+            seenMissing.add(mKey);
+            missingBindings.push({
+              material: mesh.userData.materialLabel,
+              materialKey: mesh.userData.materialKey,
+              paramName: binding.paramName || binding.usage || "",
+              textureName: binding.textureName,
+            });
+          }
+        }
+      }
+
+      cachedQaMetrics = {
+        gtaBounds: computeGtaBounds(inspected),
+        lodStats,
+        highTriangles,
+        highVertices,
+        missingBindings,
+        missingUvMeshes,
+        missingNormalMeshes,
+        degenerateTriangles,
+        invertedWindingMeshes,
+        hasVertexColors,
+      };
+      return cachedQaMetrics;
+    },
+
+    setHighlightedMaterial(key) {
+      highlightedKey = key || "";
+      applyMaterials();
+    },
+
+    setMaterialTextureOverride(materialKey, texture, path = "") {
+      if (!materialKey || !texture) return;
+      const previous = textureOverrides.get(materialKey);
+      if (previous) restoreOverride(previous);
+      clearChannelMaterials();
+      const override = { texture, path, originals: new Map() };
+      textureOverrides.set(materialKey, override);
+      for (const mesh of meshes) {
+        if (mesh.userData.materialKey === materialKey) applyOverrideToMesh(mesh, override);
+      }
+      applyMaterials();
+    },
+
+    clearMaterialTextureOverride(materialKey) {
+      const override = textureOverrides.get(materialKey);
+      if (!override) return;
+      restoreOverride(override);
+      textureOverrides.delete(materialKey);
+      clearChannelMaterials();
+      applyMaterials();
     },
 
     /** LOD levels any drawable has, best first. */
@@ -469,9 +956,11 @@ export function createPropModel(asset) {
       return { meshes: visible.length, totalMeshes: meshes.length, vertices, triangles };
     },
 
-    setView(mode, nextWireframe) {
+    setView(mode, nextWireframe, nextChannel = "rgba", nextChannelMap = "map") {
       viewMode = mode;
       wireframe = Boolean(nextWireframe);
+      viewChannel = nextChannel || "rgba";
+      viewChannelMap = nextChannelMap || "map";
       applyMaterials();
       if (emissiveSettings) controller.setEmissive(emissiveSettings);
     },
@@ -486,6 +975,10 @@ export function createPropModel(asset) {
      * glow overlay for every emissive surface. Call again after a reload.
      */
     attachNativeMaterials() {
+      clearChannelMaterials();
+      for (const override of textureOverrides.values()) {
+        restoreOverride(override, { disposeTexture: false });
+      }
       for (const overlay of overlays) {
         overlay.removeFromParent();
         overlay.material.dispose();
@@ -538,6 +1031,11 @@ export function createPropModel(asset) {
         mesh.add(overlay);
         overlays.push(overlay);
       }
+      for (const [key, override] of textureOverrides) {
+        for (const mesh of meshes) {
+          if (mesh.userData.materialKey === key) applyOverrideToMesh(mesh, override);
+        }
+      }
       applyMaterials();
       if (emissiveSettings) controller.setEmissive(emissiveSettings);
     },
@@ -545,7 +1043,7 @@ export function createPropModel(asset) {
     /** Applies emissive settings; returns true when any glow overlay is lit. */
     setEmissive(settings) {
       emissiveSettings = settings;
-      const textured = viewMode === "textured";
+      const textured = viewMode === "textured" && viewChannel === "rgba" && viewChannelMap === "map";
       let glowing = false;
       for (const mesh of meshes) {
         const material = mesh.userData.nativeMaterialObject;
@@ -592,18 +1090,36 @@ export function createPropModel(asset) {
     },
 
     dispose() {
+      for (const override of textureOverrides.values()) restoreOverride(override);
+      textureOverrides.clear();
+      for (const mat of channelMaterials.values()) mat.dispose();
+      channelMaterials.clear();
       for (const overlay of overlays) overlay.material.dispose();
       overlays = [];
       for (const wire of wires) wire.removeFromParent();
       axes.geometry.dispose();
       axes.material.dispose();
       const disposed = new Set();
+      const disposedTextures = new Set();
+      const disposeMatTextures = asset.parser === "gltf";
       model.traverse((child) => {
         if (!child.isMesh || child.userData.propHelper) return;
         child.geometry?.dispose?.();
-        for (const material of [child.userData.propBaseMaterial, ...(Array.isArray(child.material) ? child.material : [child.material])]) {
+        const baseList = Array.isArray(child.userData.propBaseMaterial)
+          ? child.userData.propBaseMaterial
+          : [child.userData.propBaseMaterial];
+        const currList = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of [...baseList, ...currList]) {
           if (!material || disposed.has(material) || Object.values(views).includes(material)) continue;
           disposed.add(material);
+          if (disposeMatTextures) {
+            for (const value of Object.values(material)) {
+              if (value?.isTexture && !disposedTextures.has(value)) {
+                disposedTextures.add(value);
+                value.dispose?.();
+              }
+            }
+          }
           material.dispose?.();
         }
       });

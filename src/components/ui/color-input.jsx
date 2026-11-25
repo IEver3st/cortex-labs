@@ -59,22 +59,36 @@ function hsvToHex({ h, s, v }) {
   return `#${[r, g, b].map((part) => Math.round((part + m) * 255).toString(16).padStart(2, "0")).join("")}`;
 }
 
+function getUiZoom() {
+  const zoom = Number.parseFloat(window.getComputedStyle(document.body).zoom);
+  return Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+}
+
 function placePanel(anchor, panel) {
+  const zoom = getUiZoom();
   const rect = anchor.getBoundingClientRect();
-  const { width, height } = panel.getBoundingClientRect();
-  const viewW = window.innerWidth;
-  const viewH = window.innerHeight;
+  const panelRect = panel.getBoundingClientRect();
+  const width = panelRect.width / zoom;
+  const height = panelRect.height / zoom;
+  const viewW = window.innerWidth / zoom;
+  const viewH = window.innerHeight / zoom;
+  const rectLeft = rect.left / zoom;
+  const rectTop = rect.top / zoom;
+  const rectBottom = rect.bottom / zoom;
   const column = anchor.closest("aside");
-  const fitTop = (top) => clamp(top, EDGE, viewH - height - EDGE);
+  const fitTop = (top) => clamp(top, EDGE, Math.max(EDGE, viewH - height - EDGE));
   if (column) {
     const box = column.getBoundingClientRect();
-    const onRight = box.left + box.width / 2 > viewW / 2;
-    const left = onRight ? box.left - GAP - width : box.right + GAP;
-    if (left >= EDGE && left + width <= viewW - EDGE) return { left, top: fitTop(rect.top - EDGE) };
+    const boxLeft = box.left / zoom;
+    const boxRight = box.right / zoom;
+    const boxWidth = box.width / zoom;
+    const onRight = boxLeft + boxWidth / 2 > viewW / 2;
+    const left = onRight ? boxLeft - GAP - width : boxRight + GAP;
+    if (left >= EDGE && left + width <= viewW - EDGE) return { left, top: fitTop(rectTop - EDGE) };
   }
-  const left = clamp(rect.left, EDGE, viewW - width - EDGE);
-  const below = rect.bottom + GAP + height <= viewH - EDGE;
-  return { left, top: below ? rect.bottom + GAP : fitTop(rect.top - GAP - height) };
+  const left = clamp(rectLeft, EDGE, Math.max(EDGE, viewW - width - EDGE));
+  const below = rectBottom + GAP + height <= viewH - EDGE;
+  return { left, top: below ? rectBottom + GAP : fitTop(rectTop - GAP - height) };
 }
 
 function useDrag(onMove) {

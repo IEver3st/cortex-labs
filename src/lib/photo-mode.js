@@ -14,7 +14,7 @@ export const PHOTO_OBJECT_LIMIT = 16;
 export const PHOTO_SHOT_LIMIT = 12;
 export const PHOTO_MODEL_EXTENSIONS = Object.freeze({
   vehicle: ["yft"],
-  prop: ["ydr", "yft", "ydd"],
+  prop: ["ydr", "yft", "ydd", "glb", "gltf"],
 });
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -110,6 +110,9 @@ export const DEFAULT_PHOTO_POSE = "idle";
  */
 export function photoPoseClip(ped) {
   if (ped?.pose === "custom") {
+    if (typeof ped.ycdPath === "string" && /\.ycd$/i.test(ped.ycdPath.trim()) && typeof ped.clip === "string" && ped.clip.trim()) {
+      return { source: "file", path: ped.ycdPath.trim(), clip: ped.clip.trim() };
+    }
     return CLIP_NAME.test(ped.dict || "") && CLIP_NAME.test(ped.clip || "") ? { dict: ped.dict, clip: ped.clip } : null;
   }
   const pose = PHOTO_POSES.find((item) => item.id === ped?.pose);
@@ -204,13 +207,18 @@ export function normalizePedLook(value) {
   const bodies = BODY_PRESETS[gender];
   const outfits = CLOTHING_PRESETS[gender];
   const pose = source.pose === "custom" || PHOTO_POSES.some((item) => item.id === source.pose) ? source.pose : DEFAULT_PHOTO_POSE;
+  const ycdPath = typeof source.ycdPath === "string" && /\.ycd$/i.test(source.ycdPath.trim()) ? source.ycdPath.trim() : "";
+  const clip = ycdPath
+    ? (typeof source.clip === "string" ? source.clip.trim().slice(0, 128) : "")
+    : (CLIP_NAME.test(source.clip || "") ? source.clip : "");
   return {
     gender,
     body: bodies.some((item) => item.id === source.body) ? source.body : bodies[0].id,
     outfit: outfits.some((item) => item.id === source.outfit) ? source.outfit : outfits[0].id,
     pose,
     dict: CLIP_NAME.test(source.dict || "") ? source.dict : "",
-    clip: CLIP_NAME.test(source.clip || "") ? source.clip : "",
+    ycdPath,
+    clip,
     time: clamp(source.time, 0, 600, 0),
     playing: source.playing === true,
   };

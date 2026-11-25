@@ -65,6 +65,7 @@ export function buildClmeshObject(meshes) {
     if (gtaUvSets[3]) geometry.setAttribute("uv4", gtaUvSets[3]);
     geometry.userData.gtaUvSets = gtaUvSets;
     geometry.userData.uvOrigin = UV_ORIGIN_TOP;
+    if (mesh.colors?.length) geometry.userData.gtaVertexColors = mesh.colors;
     applyVertexEmissiveDim(geometry, mesh);
     if (mesh.indices) geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
     if (!mesh.normals) geometry.computeVertexNormals();

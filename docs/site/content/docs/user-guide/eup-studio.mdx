@@ -5,7 +5,7 @@ description: Preview clothing on the freemode peds, and stage any game ped or yo
 
 Open **EUP Studio** from Home, the new-tab menu, or **Alt + 7**. Cortex reads the freemode assets from your installed GTA V files and dresses a freemode ped with your clothing.
 
-The page uses the same layout as Livery: a numbered pipeline on the left (**Clothing**, **Character**, **Pose**, **Addon pieces**, **Outfit**, with **Export** pinned below), the ped in the middle with the camera deck, and an inspector on the right with **Clothing**, **Pack**, **Body**, **Scene**, **Export** and **Issues** tabs. The layout icon in the top bar hides the pipeline (its left half) or the inspector (its right half).
+The page uses the same layout as Vehicle: a numbered pipeline on the left (**Clothing**, **Character**, **Pose**, **Addon pieces**, **Outfit**, with **Export** pinned below), the ped in the middle with the camera deck, and an inspector on the right with **Clothing**, **Pack**, **Body**, **Scene**, **Export** and **Issues** tabs. The layout icon in the top bar hides the pipeline (its left half) or the inspector (its right half).
 
 ## Clothing
 
@@ -61,6 +61,8 @@ The **Pose** step picks how the ped stands: **A-pose** (the game's bind pose), *
 - **My .ycd** opens your own animation dictionary, such as one exported from Sollumz or taken from a resource, and lists its clips. With **Reload when files change** on, exporting a new version reloads the clip by itself on the frame you were watching; **Reload** reads the file again by hand. The file is only read, never changed.
 
 Clips that move the ped forward play in place with the floor scrolling underneath, like **Walk**. Animations play on the ped's skeleton only: facial animation, the game's helper-bone expressions and the clip's own prop tracks are not played.
+
+**Animation QA** under the timeline checks the active clip's loop seam (first-to-last frame delta in degrees) and single-frame angular velocity spikes, lets you preview **Upper + Idle** or **Upper + Walk** upper-body masking (matching FiveM flags `48`/`49`/`51`), copies a structured Markdown motion report, and exports an **8-frame strip** PNG filmstrip across the clip for visual review.
 
 **Props** hangs up to four models from the ped's bones, the way a FiveM script attaches a phone or clipboard with `AttachEntityToEntity`. **Game prop** searches the drawables (`.ydr`) in your game files; **From file** opens your own `.ydr`, `.ydd` or `.yft`. Each prop picks a bone (the hand prop points `PH_R_Hand` 28422 and `PH_L_Hand` 60309, the hands, head, chest, pelvis, or any bone ID) and an offset in metres and rotation in degrees in that bone's space, so the numbers from an emote menu's `PropPlacement` or an `AttachEntityToEntity` call carry over. Props follow the animation and appear in shots and videos. They don't count toward the floor or camera framing.
 

@@ -162,6 +162,7 @@ const HResizer = memo(function HResizer({ onResize }) {
   const dragging = useRef(false);
   const startX = useRef(0);
   const onPointerDown = useCallback((e) => {
+    if (e.button !== 0) return;
     dragging.current = true; startX.current = e.clientX;
     e.currentTarget.setPointerCapture(e.pointerId);
     document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
@@ -189,6 +190,7 @@ const HResizer = memo(function HResizer({ onResize }) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onLostPointerCapture={onPointerUp}
     />
   );
 });
@@ -197,13 +199,16 @@ const VResizer = memo(function VResizer({ onResize }) {
   const dragging = useRef(false);
   const startY = useRef(0);
   const onPointerDown = useCallback((e) => {
+    if (e.button !== 0) return;
     dragging.current = true; startY.current = e.clientY;
     e.currentTarget.setPointerCapture(e.pointerId);
     document.body.style.cursor = "row-resize"; document.body.style.userSelect = "none";
   }, []);
   const onPointerMove = useCallback((e) => {
     if (!dragging.current) return;
-    const dy = startY.current - e.clientY; startY.current = e.clientY; onResize(dy);
+    const el = e.currentTarget;
+    const uiZoom = el.offsetHeight ? el.getBoundingClientRect().height / el.offsetHeight || 1 : 1;
+    const dy = (startY.current - e.clientY) / uiZoom; startY.current = e.clientY; onResize(dy);
   }, [onResize]);
   const onPointerUp = useCallback(() => {
     dragging.current = false; document.body.style.cursor = ""; document.body.style.userSelect = "";
@@ -224,6 +229,7 @@ const VResizer = memo(function VResizer({ onResize }) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onLostPointerCapture={onPointerUp}
     />
   );
 });
@@ -427,16 +433,31 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   // here would re-arm the persist timer on each render and loop indefinitely.
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
+  const psdPathRef = useRef(psdPath);
+  psdPathRef.current = psdPath;
+  const psdDataRef = useRef(psdData);
+  psdDataRef.current = psdData;
+  const latestPersistStateRef = useRef(null);
+  latestPersistStateRef.current = { psdPath, modelPath, variants, selectedVariantId, exportSize, exportShape, exportRenders, outputFolder };
   useEffect(() => {
     if (!onStateChangeRef.current) return;
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
-      onStateChangeRef.current?.({ psdPath, modelPath, variants, selectedVariantId, exportSize, exportShape, exportRenders, outputFolder });
+      persistTimerRef.current = null;
+      onStateChangeRef.current?.(latestPersistStateRef.current);
     }, 140);
     return () => {
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     };
   }, [psdPath, modelPath, variants, selectedVariantId, exportSize, exportShape, exportRenders, outputFolder]);
+
+  useEffect(() => () => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+      onStateChangeRef.current?.(latestPersistStateRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!settingsVersion) return;
@@ -527,7 +548,8 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   }, [selectedVariantId, psdData]);
 
   useEffect(() => {
-    const id = selectedVariantIdRef.current; if (!id) return;
+    const id = selectedVariantIdRef.current;
+    if (!id || !psdPathRef.current || !psdDataRef.current) return;
     setVariants((prev) => prev.map((v) => v.id === id ? { ...v, layerVisibility: { ...layerVisibility } } : v));
   }, [layerVisibility]);
 
@@ -658,20 +680,27 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
           for (const l of psdData.locked || []) vis[l.name] = true;
         }
         const canvas = await compositePsdVariant(psdPath, vis, outW, outH);
-        const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
-        if (!blob) throw new Error(`“${vr.name}” could not be encoded as PNG.`);
-        const u8 = new Uint8Array(await blob.arrayBuffer());
-        await writeFile(`${outputFolder}/${exportFileName(vr.name)}`, u8);
-        written.push(vr.name);
-        if (rendersWanted) {
-          const viewer = viewerApiRef.current;
-          if (!viewer?.setCompositeTexture) throw new Error("The vehicle preview isn't available for renders.");
-          // Swapped in and shot in one task, so the frame always shows this variant.
-          viewer.setCompositeTexture(canvas);
-          const shot = await captureViewerFrameBytes(viewer, { watermark: loadPrefs()?.defaults?.watermark || null });
-          if (!shot) throw new Error(`The vehicle render of “${vr.name}” came back empty.`);
-          await writeFile(`${outputFolder}/${renderFileName(vr.name)}`, shot);
-          renders += 1;
+        try {
+          const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+          if (!blob) throw new Error(`“${vr.name}” could not be encoded as PNG.`);
+          const u8 = new Uint8Array(await blob.arrayBuffer());
+          await writeFile(`${outputFolder}/${exportFileName(vr.name)}`, u8);
+          written.push(vr.name);
+          if (rendersWanted) {
+            const viewer = viewerApiRef.current;
+            if (!viewer?.setCompositeTexture) throw new Error("The vehicle preview isn't available for renders.");
+            // Swapped in and shot in one task, so the frame always shows this variant.
+            viewer.setCompositeTexture(canvas);
+            const shot = await captureViewerFrameBytes(viewer, { watermark: loadPrefs()?.defaults?.watermark || null });
+            if (!shot) throw new Error(`The vehicle render of “${vr.name}” came back empty.`);
+            await writeFile(`${outputFolder}/${renderFileName(vr.name)}`, shot);
+            renders += 1;
+          }
+        } finally {
+          if (canvas && canvas !== previewCanvasRef.current) {
+            canvas.width = 0;
+            canvas.height = 0;
+          }
         }
         setExportProgress(((i + 1) / toExp.length) * 100);
       }
@@ -764,7 +793,17 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
   }, [modelPath]);
 
   /* ── Texture pan/zoom ── */
-  const handleUvPointerDown = useCallback((e) => { if (e.button === 1 || (e.button === 0 && e.altKey)) { setUvPanning(true); e.currentTarget.setPointerCapture(e.pointerId); } }, []);
+  const uvPanRef = useRef(uvPan);
+  uvPanRef.current = uvPan;
+  const uvPanDragRef = useRef(null);
+  const handleUvPointerDown = useCallback((e) => {
+    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault();
+      uvPanDragRef.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, pan: uvPanRef.current };
+      setUvPanning(true);
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+  }, []);
   const handleUvPointerMove = useCallback((e) => {
     if (uvContainerRef.current && uvImgRef.current) {
       const r = uvImgRef.current.getBoundingClientRect();
@@ -774,9 +813,21 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
         ? { px: Math.round((x / r.width) * canvas.width), py: Math.round((y / r.height) * canvas.height) }
         : null);
     }
-    if (uvPanning) setUvPan((p) => ({ x: p.x + e.movementX, y: p.y + e.movementY }));
-  }, [uvPanning]);
-  const handleUvPointerUp = useCallback(() => { setUvPanning(false); }, []);
+    const drag = uvPanDragRef.current;
+    if (drag && drag.pointerId === e.pointerId) {
+      const container = uvContainerRef.current;
+      const uiZoom = container?.clientWidth ? container.getBoundingClientRect().width / container.clientWidth || 1 : 1;
+      setUvPan({
+        x: drag.pan.x + (e.clientX - drag.x) / uiZoom,
+        y: drag.pan.y + (e.clientY - drag.y) / uiZoom,
+      });
+    }
+  }, []);
+  const handleUvPointerUp = useCallback((e) => {
+    if (uvPanDragRef.current && e?.pointerId != null && uvPanDragRef.current.pointerId !== e.pointerId) return;
+    uvPanDragRef.current = null;
+    setUvPanning(false);
+  }, []);
   const handleUvZoomFit = useCallback(() => { setUvZoom(1); setUvPan({ x: 0, y: 0 }); }, []);
   useEffect(() => {
     const element = uvContainerRef.current;
@@ -1488,6 +1539,8 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                     onPointerDown={handleUvPointerDown}
                     onPointerMove={handleUvPointerMove}
                     onPointerUp={handleUvPointerUp}
+                    onPointerCancel={handleUvPointerUp}
+                    onLostPointerCapture={handleUvPointerUp}
                     onPointerLeave={() => setUvHover(null)}
                   >
                     {hasPreview ? (
@@ -1526,7 +1579,7 @@ export default function VariantsPage({ workspaceState, onStateChange, onRenameTa
                     <div className="lv-deck-group">
                       <DeckButton onClick={handleUvZoomFit} title="Fit (F)" className="is-icon"><Maximize2 aria-hidden="true" /></DeckButton>
                       <DeckButton onClick={() => setUvZoom((z) => Math.max(0.1, z * 0.8))} title="Zoom out" className="is-icon"><ZoomOut aria-hidden="true" /></DeckButton>
-                      <DeckButton onClick={() => setUvZoom(1)} title="Actual fit size">100%</DeckButton>
+                      <DeckButton onClick={() => setUvZoom(1)} title="Reset zoom to fit">100%</DeckButton>
                       <DeckButton onClick={() => setUvZoom((z) => Math.min(10, z * 1.25))} title="Zoom in" className="is-icon"><ZoomIn aria-hidden="true" /></DeckButton>
                     </div>
                     <div className="lv-deck-group">

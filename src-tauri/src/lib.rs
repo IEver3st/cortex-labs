@@ -541,18 +541,17 @@ fn replace_watch(
                 return;
             }
             let kind = format!("{:?}", event.kind);
-            match event.paths.first() {
-                Some(path) => {
-                    let _ = changes.send((path.clone(), kind));
-                }
-                None => {
-                    let _ = app_handle.emit(
-                        "texture:update",
-                        WatchPayload {
-                            path: String::new(),
-                            kind,
-                        },
-                    );
+            if event.paths.is_empty() {
+                let _ = app_handle.emit(
+                    "texture:update",
+                    WatchPayload {
+                        path: String::new(),
+                        kind,
+                    },
+                );
+            } else {
+                for path in event.paths {
+                    let _ = changes.send((path, kind.clone()));
                 }
             }
         })
@@ -1438,12 +1437,17 @@ fn dir_size_bytes(dir: &Path) -> u64 {
             continue;
         };
         for entry in entries.flatten() {
-            let Ok(meta) = entry.metadata() else {
+            // file_type does not follow symlinks or Windows junctions, avoiding cycles.
+            let Ok(kind) = entry.file_type() else {
                 continue;
             };
-            if meta.is_dir() {
-                stack.push(entry.path());
-            } else {
+            if kind.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if kind.is_dir() {
+                stack.push(path);
+            } else if let Ok(meta) = std::fs::symlink_metadata(&path) {
                 total = total.saturating_add(meta.len());
             }
         }
@@ -1726,6 +1730,13 @@ fn run_cache_maintenance(app: &tauri::AppHandle) {
     }
 
     std::thread::spawn(move || {
+        struct MaintenanceGuard;
+        impl Drop for MaintenanceGuard {
+            fn drop(&mut self) {
+                CACHE_MAINTENANCE_RUNNING.store(false, Ordering::Release);
+            }
+        }
+        let _guard = MaintenanceGuard;
         if yft_root.is_dir() {
             evict_duplicate_inputs(&yft_root);
             evict_lru(&yft_root, YFT_CACHE_TRIGGER_BYTES, YFT_CACHE_TARGET_BYTES);
@@ -1734,7 +1745,6 @@ fn run_cache_maintenance(app: &tauri::AppHandle) {
         if ytd_root.is_dir() {
             evict_lru(&ytd_root, YTD_CACHE_TRIGGER_BYTES, YTD_CACHE_TARGET_BYTES);
         }
-        CACHE_MAINTENANCE_RUNNING.store(false, Ordering::Release);
     });
 }
 
@@ -2233,11 +2243,14 @@ async fn open_model_meta_file(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        model_resource_scope::validate_meta_file(Path::new(&model_path), Path::new(&path))?;
+        let canonical =
+            model_resource_scope::validate_meta_file(Path::new(&model_path), Path::new(&path))?;
+        let open_target = canonical.to_string_lossy();
+        let open_target = open_target.strip_prefix(r"\\?\").unwrap_or(&open_target);
         // The renderer's opener scope is independent of its filesystem scope.
         // Only this validated, user-clicked resource file reaches the native opener.
         app.opener()
-            .open_path(path, None::<&str>)
+            .open_path(open_target, None::<&str>)
             .map_err(|error| format!("Could not open metadata in its default editor: {error}"))
     })
     .await
@@ -2404,8 +2417,9 @@ async fn livery_dictionaries(
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let model = PathBuf::from(model_path.trim());
-        if !has_extension(&model_path, "yft") || !model.is_file() {
+        let trimmed = model_path.trim();
+        let model = PathBuf::from(trimmed);
+        if !has_extension(trimmed, "yft") || !model.is_file() {
             return Err(format!("Model not found: {}", model.display()));
         }
         let mut dictionaries = Vec::new();
@@ -2450,8 +2464,9 @@ async fn livery_write_begin(
     model_path: String,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    let model = PathBuf::from(model_path.trim());
-    if !has_extension(&model_path, "yft") || !model.is_file() {
+    let trimmed = model_path.trim();
+    let model = PathBuf::from(trimmed);
+    if !has_extension(trimmed, "yft") || !model.is_file() {
         return Err(format!("Model not found: {}", model.display()));
     }
     if !model_opened(&app, &model) {
@@ -2860,17 +2875,23 @@ async fn describe_streamed_assets(
         let root = root
             .map(|value| PathBuf::from(value.trim()))
             .filter(|path| !path.as_os_str().is_empty());
-        if let Some(root) = &root {
-            if !root.is_dir() || !model_opened(&app, root) {
+        let canonical_root = if let Some(root) = &root {
+            let resolved = root
+                .canonicalize()
+                .map_err(|_| format!("Open {} in Cortex first.", root.display()))?;
+            if !resolved.is_dir() || (!model_opened(&app, root) && !model_opened(&app, &resolved)) {
                 return Err(format!("Open {} in Cortex first.", root.display()));
             }
-            if let Some(owner) = clothing_write::protected_source(root) {
+            if let Some(owner) = clothing_write::protected_source(&resolved) {
                 return Err(format!(
                     "{} is part of {owner}; Pack Doctor checks resources you have as files.",
                     root.display()
                 ));
             }
-        }
+            Some(resolved)
+        } else {
+            None
+        };
         let models: Vec<PathBuf> = models
             .unwrap_or_default()
             .iter()
@@ -2882,17 +2903,28 @@ async fn describe_streamed_assets(
                 streamed_assets::MAX_MODELS
             ));
         }
+        let mut canonical_models = Vec::with_capacity(models.len());
         for model in &models {
-            if !has_extension(&model.to_string_lossy(), "yft")
-                || !model.is_file()
-                || !model_opened(&app, model)
+            let resolved = model
+                .canonicalize()
+                .map_err(|_| format!("Open {} in Cortex first.", model.display()))?;
+            if !is_bridge_model(&resolved.to_string_lossy())
+                || !resolved.is_file()
+                || (!model_opened(&app, model) && !model_opened(&app, &resolved))
             {
                 return Err(format!("Open {} in Cortex first.", model.display()));
             }
+            if let Some(owner) = clothing_write::protected_source(&resolved) {
+                return Err(format!(
+                    "{} is part of {owner}; Pack Doctor checks resources you have as files.",
+                    model.display()
+                ));
+            }
+            canonical_models.push(resolved);
         }
         Ok(streamed_assets::describe(
-            root.as_deref(),
-            &models,
+            canonical_root.as_deref(),
+            &canonical_models,
             &|path| model_opened(&app, path),
         ))
     })
@@ -3842,6 +3874,9 @@ fn export_ytd_listing(app: &tauri::AppHandle, path: &str) -> Result<serde_json::
     let key = cache_key(b"export_ytd_v1", &trimmed, mtime, size);
     let out_dir = cache_root.join(&key);
 
+    let key_lock = parse_key_lock(&format!("ytd:{key}"));
+    let _key_guard = lock_ignoring_poison(&key_lock);
+
     {
         let _guard = CACHE_LOCK
             .lock()
@@ -4196,9 +4231,23 @@ fn ensure_dir(path: String, app: tauri::AppHandle) -> Result<(), String> {
     .filter_map(Result::ok)
     .collect();
 
+    let existing_ancestor = candidate
+        .ancestors()
+        .find(|ancestor| ancestor.exists())
+        .and_then(|ancestor| ancestor.canonicalize().ok());
+    let Some(existing_ancestor) = existing_ancestor else {
+        return Err("Path is outside the user's home, app data, or temp folders".to_string());
+    };
+    let canonical_roots: Vec<PathBuf> = allowed_roots
+        .iter()
+        .map(|root| root.canonicalize().unwrap_or_else(|_| root.clone()))
+        .collect();
     if !allowed_roots
         .iter()
         .any(|root| path_is_within(&candidate, root))
+        || !canonical_roots
+            .iter()
+            .any(|root| path_is_within(&existing_ancestor, root))
     {
         return Err("Path is outside the user's home, app data, or temp folders".to_string());
     }

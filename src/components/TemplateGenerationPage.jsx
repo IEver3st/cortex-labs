@@ -480,6 +480,11 @@ export default function TemplateGenerationPage({
   const [selectedMarkerId, setSelectedMarkerId] = useState("");
   // The box being drawn, moved or resized; committed on pointer up.
   const [markerDraft, setMarkerDraft] = useState(null);
+  const markerDraftRef = useRef(null);
+  const updateMarkerDraft = useCallback((next) => {
+    markerDraftRef.current = next;
+    setMarkerDraft(next);
+  }, []);
   const [markerPixelCounts, setMarkerPixelCounts] = useState({});
   // Marker add, move, resize, fill and delete undo as whole-list snapshots.
   const {
@@ -581,8 +586,9 @@ export default function TemplateGenerationPage({
     const node = previewShellRef.current;
     if (node && Number.isFinite(clientX) && Number.isFinite(clientY)) {
       const rect = node.getBoundingClientRect();
-      anchorX = clientX - (rect.left + rect.width / 2);
-      anchorY = clientY - (rect.top + rect.height / 2);
+      const uiZoom = node.clientWidth ? rect.width / node.clientWidth || 1 : 1;
+      anchorX = (clientX - (rect.left + rect.width / 2)) / uiZoom;
+      anchorY = (clientY - (rect.top + rect.height / 2)) / uiZoom;
     }
     const ratio = next / zoom;
     applySheetView(next, {
@@ -627,8 +633,10 @@ export default function TemplateGenerationPage({
   const handleSheetPointerMove = useCallback((event) => {
     const drag = sheetDragRef.current;
     if (!drag || drag.id !== event.pointerId) return;
-    const dx = event.clientX - drag.x;
-    const dy = event.clientY - drag.y;
+    const node = previewShellRef.current;
+    const uiZoom = node?.clientWidth ? node.getBoundingClientRect().width / node.clientWidth || 1 : 1;
+    const dx = (event.clientX - drag.x) / uiZoom;
+    const dy = (event.clientY - drag.y) / uiZoom;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     if (!drag.moved) {
       drag.moved = true;
@@ -686,27 +694,30 @@ export default function TemplateGenerationPage({
   // here would re-arm the persist timer on each render and loop indefinitely.
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
+  const latestPersistStateRef = useRef(null);
+  latestPersistStateRef.current = {
+    modelPath,
+    outputFolder,
+    templatePurpose,
+    selectedTemplatePartNames,
+    exportSize,
+    exteriorOnly,
+    includeTemplateWireframe,
+    useWorldSpaceNormalsAsBase,
+    includeVehicleOverlay,
+    vehicleOverlayColor,
+    includeTemplateLogo,
+    autoSaveStamps: autoSaveStampsRef.current,
+    templateMarkers,
+    templateMarkerColor,
+    viewMode,
+  };
   useEffect(() => {
     if (!onStateChangeRef.current) return;
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
-      onStateChangeRef.current?.({
-        modelPath,
-        outputFolder,
-        templatePurpose,
-        selectedTemplatePartNames,
-        exportSize,
-        exteriorOnly,
-        includeTemplateWireframe,
-        useWorldSpaceNormalsAsBase,
-        includeVehicleOverlay,
-        vehicleOverlayColor,
-        includeTemplateLogo,
-        autoSaveStamps: autoSaveStampsRef.current,
-        templateMarkers,
-        templateMarkerColor,
-        viewMode,
-      });
+      persistTimerRef.current = null;
+      onStateChangeRef.current?.(latestPersistStateRef.current);
     }, 140);
 
     return () => {
@@ -729,6 +740,14 @@ export default function TemplateGenerationPage({
     templateMarkerColor,
     viewMode,
   ]);
+
+  useEffect(() => () => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+      onStateChangeRef.current?.(latestPersistStateRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!templatePolicy.isEup || templatePurpose !== "windows") return;
@@ -800,7 +819,7 @@ export default function TemplateGenerationPage({
     // Marker boxes belong to one model's UV layout.
     setTemplateMarkers([]);
     setSelectedMarkerId("");
-    setMarkerDraft(null);
+    updateMarkerDraft(null);
     setMarkerPixelCounts({});
     setMarkerToolActive(false);
     markerDragRef.current = null;
@@ -821,7 +840,7 @@ export default function TemplateGenerationPage({
       clearTimeout(regenerateTimerRef.current);
       regenerateTimerRef.current = null;
     }
-  }, []);
+  }, [clearMarkerHistory, updateMarkerDraft]);
 
   const handleSelectModel = useCallback(async () => {
     if (!isTauriRuntime) return;
@@ -833,7 +852,7 @@ export default function TemplateGenerationPage({
       setModelPath(selected);
       clearGeneratedState();
       const fileName = getFileLabel(selected, "Template Generator");
-      if (fileName && onRenameTab) onRenameTab(`${fileName} // TEMPLATE`);
+      if (fileName && onRenameTab) onRenameTab(fileName);
     } catch (error) {
       showSaveNotice("error", `The file picker couldn't open. ${toErrorMessage(error, "")}`.trim(), "Model not opened");
     }
@@ -884,12 +903,12 @@ export default function TemplateGenerationPage({
   const applyMarkerSnapshot = useCallback((snapshot) => {
     if (!snapshot) return;
     markerDragRef.current = null;
-    setMarkerDraft(null);
+    updateMarkerDraft(null);
     templateMarkersRef.current = snapshot;
     setTemplateMarkers(snapshot);
     setSelectedMarkerId((current) => (snapshot.some((marker) => marker.id === current) ? current : ""));
     setAutoSavedPath("");
-  }, []);
+  }, [updateMarkerDraft]);
 
   const handleUndoMarkers = useCallback(() => {
     applyMarkerSnapshot(undoMarkerEdit(templateMarkersRef.current));
@@ -962,22 +981,22 @@ export default function TemplateGenerationPage({
     const point = getSheetPoint(event);
     if (!point) return;
     if (drag.mode === "draw") {
-      setMarkerDraft(markerFromDrag(drag.start, point, "__draft__"));
+      updateMarkerDraft(markerFromDrag(drag.start, point, "__draft__"));
     } else if (drag.mode === "move") {
-      setMarkerDraft(moveTemplateMarker(drag.origin, point.x - drag.start.x, point.y - drag.start.y));
+      updateMarkerDraft(moveTemplateMarker(drag.origin, point.x - drag.start.x, point.y - drag.start.y));
     } else {
-      setMarkerDraft(resizeTemplateMarker(drag.origin, drag.handle, point));
+      updateMarkerDraft(resizeTemplateMarker(drag.origin, drag.handle, point));
     }
-  }, [getSheetPoint]);
+  }, [getSheetPoint, updateMarkerDraft]);
 
   const handleMarkerPointerUp = useCallback((event) => {
     const drag = markerDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     event.stopPropagation();
     markerDragRef.current = null;
-    const draft = markerDraft;
-    setMarkerDraft(null);
-    if (!drag.moved || !draft || event.type === "pointercancel") return;
+    const draft = markerDraftRef.current;
+    updateMarkerDraft(null);
+    if (!drag.moved || !draft || event.type === "pointercancel" || event.type === "lostpointercapture") return;
     if (drag.mode === "draw") {
       const created = markerFromDrag({ x: draft.x, y: draft.y }, { x: draft.x + draft.w, y: draft.y + draft.h });
       if (!created) return;
@@ -988,7 +1007,7 @@ export default function TemplateGenerationPage({
         current.map((marker) => (marker.id === drag.origin.id ? { ...draft, id: marker.id } : marker)),
       );
     }
-  }, [markerDraft, updateTemplateMarkers]);
+  }, [updateMarkerDraft, updateTemplateMarkers]);
 
   const handleSheetKeyDown = useCallback((event) => {
     if (markerToolActive && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -2143,6 +2162,7 @@ export default function TemplateGenerationPage({
               onPointerMove={handleSheetPointerMove}
               onPointerUp={handleSheetPointerUp}
               onPointerCancel={handleSheetPointerUp}
+              onLostPointerCapture={handleSheetPointerUp}
               aria-label={
                 previewUrl
                   ? markerDrawing
@@ -2195,6 +2215,7 @@ export default function TemplateGenerationPage({
                           onPointerMove={handleMarkerPointerMove}
                           onPointerUp={handleMarkerPointerUp}
                           onPointerCancel={handleMarkerPointerUp}
+                          onLostPointerCapture={handleMarkerPointerUp}
                           aria-hidden="true"
                         >
                           {displayedMarkers.map((marker) => {
@@ -2232,7 +2253,7 @@ export default function TemplateGenerationPage({
                             );
                           })}
                         </svg>
-                        {templateMarkers.map((marker, index) => (
+                        {displayedMarkers.filter((marker) => marker.id !== "__draft__").map((marker, index) => (
                           <span
                             key={marker.id}
                             className="tm-box-label"

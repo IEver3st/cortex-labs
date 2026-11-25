@@ -213,6 +213,11 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   const [windowTexturePath, setWindowTexturePath] = useState("");
   const [bodyColor, setBodyColor] = useState(() => getInitialDefaults().bodyColor);
   const [vehiclePaint, setVehiclePaint] = useState(() => buildVehiclePaint(getInitialDefaults().bodyColor));
+  const paintFollowsDefaultRef = useRef(true);
+  const handleSetBodyColor = useCallback((value) => {
+    paintFollowsDefaultRef.current = false;
+    setBodyColor(value);
+  }, []);
   const [backgroundColor, setBackgroundColor] = useState(() => getInitialDefaults().backgroundColor);
   const [backgroundImagePath, setBackgroundImagePath] = useState("");
   const [backgroundImageBlur, setBackgroundImageBlur] = useState(0);
@@ -649,6 +654,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   // `value` is a slot paint ({ index, color, finish }); primary also sets the base body colour.
   const setVehiclePaintSlot = useCallback((slot, value) => {
     if (!value) return;
+    paintFollowsDefaultRef.current = false;
     if (slot === "primary") setBodyColor(paintDisplayColor(value));
     setVehiclePaint((prev) => ({ ...prev, [slot]: value }));
   }, []);
@@ -697,8 +703,8 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     setShowGrid(Boolean(merged.showGrid));
     setShowShadows(Boolean(merged.showShadows));
     setAmbientOcclusion(Boolean(merged.ambientOcclusion));
-    // Open paint follows a new base body colour; saving other settings keeps it.
-    if (merged.bodyColor !== defaultsRef.current.bodyColor) {
+    // Open paint follows a new base body colour only until customised in this tab.
+    if (merged.bodyColor !== previous.bodyColor && paintFollowsDefaultRef.current) {
       setBodyColor(merged.bodyColor);
       setVehiclePaint(buildVehiclePaint(merged.bodyColor));
       multi.repaintAll(merged.bodyColor);
@@ -750,7 +756,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       const lower = path.toString().toLowerCase();
       if (lower.endsWith(".obj")) {
         setDialogError(
-          "out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported.",
+          ".OBJ files are not supported. Open a GTA V model (.yft, .ydd, .clmesh, or .dff) instead.",
         );
         return;
       }
@@ -1238,11 +1244,6 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   const selectWindowTextureRef = useRef(null);
 
   const applyRestoredState = useCallback(async (state) => {
-    const fileOk = async (p) => {
-      if (!p) return false;
-      try { return await fsExists(p); } catch { return false; }
-    };
-
     // Restore non-path settings immediately
     let resolvedTextureMode = normalizeTextureMode(state.textureMode);
     if (!resolvedTextureMode && typeof state.openFile === "string") {
@@ -1262,7 +1263,12 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     if (state.bodyColor) setBodyColor(state.bodyColor);
     // Tabs saved before paint followed the game palette stored `vehicleSlotColors`.
     const savedPaint = state.vehiclePaint || state.vehicleSlotColors;
-    if (savedPaint || state.bodyColor) setVehiclePaint(normalizeVehiclePaint(savedPaint, state.bodyColor || DEFAULT_BODY));
+    if (savedPaint || state.bodyColor) {
+      if (savedPaint || state.bodyColor !== defaultsRef.current.bodyColor) {
+        paintFollowsDefaultRef.current = false;
+      }
+      setVehiclePaint(normalizeVehiclePaint(savedPaint, state.bodyColor || DEFAULT_BODY));
+    }
     if (state.backgroundColor) setBackgroundColor(state.backgroundColor);
     if (typeof state.backgroundImageBlur === "number") {
       setBackgroundImageBlur(clampBackgroundImageBlur(state.backgroundImageBlur));
@@ -1353,12 +1359,9 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       }
     }
     if (state.licensePlate && typeof state.licensePlate === "object") setPlateOverride(normalizePlateDefault(state.licensePlate));
-    if (state.texturePath && (await fileOk(state.texturePath))) setTexturePath(state.texturePath);
-    else if (state.texturePath) setTexturePath(state.texturePath);
-    if (state.backgroundImagePath && (await fileOk(state.backgroundImagePath))) setBackgroundImagePath(state.backgroundImagePath);
-    else if (state.backgroundImagePath) setBackgroundImagePath(state.backgroundImagePath);
-    if (state.windowTexturePath && (await fileOk(state.windowTexturePath))) setWindowTexturePath(state.windowTexturePath);
-    else if (state.windowTexturePath) setWindowTexturePath(state.windowTexturePath);
+    if (state.texturePath) setTexturePath(state.texturePath);
+    if (state.backgroundImagePath) setBackgroundImagePath(state.backgroundImagePath);
+    if (state.windowTexturePath) setWindowTexturePath(state.windowTexturePath);
   }, [loadModel, multi.restore, modkits.restore]);
 
   const restoreState = useCallback(async (state) => {
@@ -1381,7 +1384,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   const selectModel = async () => {
     if (textureMode === "multi") return selectMultiModel(multi.selectedId);
     if (!isTauriRuntime) {
-      setDialogError("Tauri runtime required for file dialog.");
+      setDialogError("Choosing files requires the Cortex Studio desktop app.");
       return;
     }
     try {
@@ -1393,7 +1396,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         await loadModel(selected, { autoTexture: true });
       }
     } catch (error) {
-      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      setDialogError("The file picker could not be opened.");
       console.error(error);
     }
   };
@@ -1402,7 +1405,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   // everything under it for this session.
   const openVehicleFolder = async () => {
     if (!isTauriRuntime) {
-      setDialogError("Tauri runtime required for file dialog.");
+      setDialogError("Choosing files requires the Cortex Studio desktop app.");
       return;
     }
     try {
@@ -1419,7 +1422,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       }
       setFolderView("pack");
     } catch (error) {
-      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      setDialogError("The file picker could not be opened.");
       console.error(error);
     }
   };
@@ -1457,7 +1460,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   const selectTexture = async () => {
     if (textureMode === "multi") return selectMultiLivery(multi.selectedId);
     if (!isTauriRuntime) {
-      setDialogError("Tauri runtime required for file dialog.");
+      setDialogError("Choosing files requires the Cortex Studio desktop app.");
       return;
     }
     try {
@@ -1495,7 +1498,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         setTexturePath(selected);
       }
     } catch (error) {
-      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      setDialogError("The file picker could not be opened.");
       console.error(error);
     }
   };
@@ -1506,7 +1509,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   const selectWindowTexture = async (slotId) => {
     const targetSlotId = typeof slotId === "string" && slotId ? slotId : multi.selectedId;
     if (!isTauriRuntime) {
-      setDialogError("Tauri runtime required for file dialog.");
+      setDialogError("Choosing files requires the Cortex Studio desktop app.");
       return;
     }
     try {
@@ -1547,14 +1550,14 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         setWindowTexturePath(selected);
       }
     } catch (error) {
-      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      setDialogError("The file picker could not be opened.");
       console.error(error);
     }
   };
 
   const selectBackgroundImage = async () => {
     if (!isTauriRuntime) {
-      setDialogError("Tauri runtime required for file dialog.");
+      setDialogError("Choosing files requires the Cortex Studio desktop app.");
       return;
     }
     try {
@@ -1595,7 +1598,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         });
       }
     } catch (error) {
-      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      setDialogError("The file picker could not be opened.");
       console.error(error);
     }
   };
@@ -1628,7 +1631,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
 
   const selectMultiModel = async (slotId) => {
     if (!isTauriRuntime) {
-      setDialogError("Tauri runtime required for file dialog.");
+      setDialogError("Choosing files requires the Cortex Studio desktop app.");
       return;
     }
     try {
@@ -1637,14 +1640,14 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       setDialogError("");
       multi.setModel(slotId || multi.selectedId, selected);
     } catch (error) {
-      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      setDialogError("The file picker could not be opened.");
       console.error(error);
     }
   };
 
   const selectMultiLivery = async (slotId) => {
     if (!isTauriRuntime) {
-      setDialogError("Tauri runtime required for file dialog.");
+      setDialogError("Choosing files requires the Cortex Studio desktop app.");
       return;
     }
     try {
@@ -1657,7 +1660,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       setDialogError("");
       multi.updateSlot(slotId || multi.selectedId, { liveryPath: selected });
     } catch (error) {
-      setDialogError("Dialog permission blocked. Check Tauri capabilities.");
+      setDialogError("The file picker could not be opened.");
       console.error(error);
     }
   };
@@ -1825,24 +1828,30 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     // its switch is on, and Save this view lives in the Livery, All, EUP and
     // Multi docks.
     const singleLayout = textureMode !== "multi" && textureMode !== "sirens";
-    const isAvailable = (action, event) => {
+    const isAvailable = (action) => {
       switch (action) {
+        case HOTKEY_ACTIONS.TOGGLE_EXTERIOR_ONLY:
+          return textureMode === "vehicle";
+        case HOTKEY_ACTIONS.TOGGLE_DUAL_GIZMO:
+        case HOTKEY_ACTIONS.SWAP_DUAL_SLOT:
+          return textureMode === "multi";
         case HOTKEY_ACTIONS.SELECT_LIVERY:
           return textureMode !== "sirens";
         case HOTKEY_ACTIONS.SELECT_GLASS:
           return textureMode === "multi" || (singleLayout && textureMode !== "eup" && windowTemplateEnabled);
         case HOTKEY_ACTIONS.CAPTURE_VIEW:
-          return textureMode !== "sirens" && viewerReady && !event.repeat;
+          return textureMode !== "sirens" && viewerReady;
         case HOTKEY_ACTIONS.PREVIOUS_VEHICLE:
         case HOTKEY_ACTIONS.NEXT_VEHICLE:
-          return textureMode === "vehicle" && Boolean(stepFolderVehicleRef.current) && !event.repeat;
+          return textureMode === "vehicle" && Boolean(stepFolderVehicleRef.current);
         default:
           return true;
       }
     };
 
     const handleKeyDown = (event) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || event.repeat) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]')) return;
       const target = event.target;
       if (target instanceof Element) {
         const tag = target.tagName;
@@ -1852,7 +1861,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       }
 
       const action = findMatchingAction(hotkeys, event);
-      if (!action || !isAvailable(action, event)) return;
+      if (!action || !isAvailable(action)) return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -2272,7 +2281,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     event.preventDefault();
     setIsDragging(false);
     if (!isTauriRuntime) {
-      setDialogError("Drag-and-drop requires the Tauri app.");
+      setDialogError("Drag-and-drop requires the Cortex Studio desktop app.");
       return;
     }
 
@@ -2287,7 +2296,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     if (!modelFile) {
       setDialogError(
         objFile
-          ? "out of sheer respect for vehicle devs and those who pour their hearts and souls into their creations, .OBJ files will never be supported."
+          ? ".OBJ files are not supported. Open a GTA V model (.yft, .ydd, .clmesh, or .dff) instead."
           : `Only ${modelDropLabel} files are supported for drop.`,
       );
       return;
@@ -2306,6 +2315,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
   const multiWatchKey = lineupWatchPaths(multi.slots).join("\n");
 
   useEffect(() => {
+    if (!isActive) return undefined;
     let unlisten = null;
     let cancelled = false;
 
@@ -2432,7 +2442,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         invoke("stop_multi_watch").catch(() => null);
       }
     };
-  }, [textureMode, texturePath, windowTexturePath, windowTemplateEnabled, multiWatchKey]);
+  }, [isActive, isTauriRuntime, textureMode, texturePath, windowTexturePath, windowTemplateEnabled, multiWatchKey]);
 
   const onTextureReload = useCallback(() => {
     setLastUpdate(new Date().toLocaleTimeString());
@@ -2671,7 +2681,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       event.preventDefault();
       setIsDragging(false);
       if (!isTauriRuntime || !textureFile.path) {
-        setDialogError("Drag-and-drop requires the Tauri app.");
+        setDialogError("Drag-and-drop requires the Cortex Studio desktop app.");
         return;
       }
       setDialogError("");
@@ -2730,7 +2740,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     event.preventDefault();
     setIsDragging(false);
     if (!isTauriRuntime) {
-      setDialogError("Drag-and-drop requires the Tauri app.");
+      setDialogError("Drag-and-drop requires the Cortex Studio desktop app.");
       return;
     }
     const files = Array.from(event.dataTransfer?.files || []);
@@ -2810,9 +2820,27 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       unloadModel: () => {
         setModelPath("");
         setModelSourcePath("");
+        setModelRotation(null);
         setDialogError("");
         setGeneratedTemplateMap(null);
         setTemplateMapError("");
+        setMetaModelInfo(null);
+        setTextureTargets([]);
+        setLiveryTarget("");
+        setLiveryLabel("");
+        setWindowLiveryTarget("");
+        setWindowLiveryLabel("");
+        setCollisionInfo(null);
+        setMeshStats(null);
+        setVehicleParts(null);
+        setPaintSlotsInUse(null);
+        setVehicleModsStatus(null);
+        setGameLiveries(null);
+        setLicensePlateStatus(null);
+        setNativeMaterialsStatus({ state: "idle", available: false });
+        setFormatWarning(null);
+        setPreviewReplace(null);
+        setPreviewComplete(false);
       },
       texturePath, setTexturePath, selectTexture, liveryTargetLabel,
       windowTemplateEnabled, setWindowTemplateEnabled, windowTexturePath, setWindowTexturePath,
@@ -2851,6 +2879,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
         setTexturePath(path);
       },
       onApplyMetaColors: (preset) => {
+        paintFollowsDefaultRef.current = false;
         const next = {};
         for (const key of VEHICLE_PAINT_KEYS) {
           const paint = paintFromMetaColor(preset[key]);
@@ -2882,7 +2911,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       selectedPreviewPresetCount, allPreviewPresetsSelected,
       togglePreviewCapturePreset, toggleAllPreviewCapturePresets, previewCaptureTooltip, previewResult,
       previewReplace, confirmPreviewReplace, cancelPreviewReplace: () => setPreviewReplace(null),
-      previewFolder: loadPrefs()?.defaults?.previewFolder || "",
+      previewFolder: defaults.previewFolder || "",
       previewZoom,
       stage, setStage, stageSpot, setStageSpot, stageReflect, setStageReflect, stageBeam, setStageBeam, stageLight, setStageLight,
       stageFloor, setStageFloor,
@@ -2913,7 +2942,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
       nativeMaterialsStatusMessage, nativeMaterialsProgress,
       nativeMaterialsPlannedCount, nativeMaterialsCompleteCount,
       retryNativeMaterials: () => setNativeMaterialsReloadToken((token) => token + 1),
-      bodyColor, setBodyColor,
+      bodyColor, setBodyColor: handleSetBodyColor,
     };
 
     const Workspace = textureMode === "sirens" ? SirenWorkspace : SingleWorkspace;
@@ -2948,7 +2977,7 @@ function App({ shellTab, isActive = true, onRenameTab, onTabDetail = null, onOpe
     selectMultiWindow: (slotId) => selectWindowTexture(slotId),
     lineUp: () => multiViewerApiRef.current?.lineUp?.(multi.slots.map((slot) => slot.id)),
     saveViewPhoto: handleSaveViewPhoto, savingPhoto, photoError, setPhotoError,
-    previewFolder: loadPrefs()?.defaults?.previewFolder || "",
+    previewFolder: defaults.previewFolder || "",
   };
   const multiLoading = Object.values(multi.status).some((entry) => entry?.loading);
 

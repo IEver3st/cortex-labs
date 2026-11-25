@@ -5,8 +5,9 @@
   position: fixed;
   inset: 0;
   z-index: 100;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: calc(24 * var(--u));
   background: rgba(8, 9, 11, 0.6);
 }

@@ -123,8 +123,11 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
   const onRenameTabRef = useRef(onRenameTab);
   onRenameTabRef.current = onRenameTab;
   const pedalRef = useRef(null);
+  const helpWrapRef = useRef(null);
   const liftRef = useRef({ peak: 0 });
   const startTimerRef = useRef(0);
+  const blipTimerRef = useRef(0);
+  const crankingRef = useRef(false);
 
   const slot = settings.slot;
   const activeRef = settings[slot];
@@ -193,9 +196,30 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
   useEffect(() => () => {
     cancelAnimationFrame(frameRef.current);
     clearTimeout(startTimerRef.current);
+    clearTimeout(blipTimerRef.current);
+    crankingRef.current = false;
     audioRef.current?.dispose();
     audioRef.current = null;
   }, []);
+
+  useEffect(() => {
+    if (!helpOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (!helpWrapRef.current?.contains(event.target)) setHelpOpen(false);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setHelpOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [helpOpen]);
 
   useEffect(() => {
     audioRef.current?.setMix(settings.mix);
@@ -335,6 +359,12 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
       return;
     }
     cancelAnimationFrame(frameRef.current);
+    clearTimeout(startTimerRef.current);
+    clearTimeout(blipTimerRef.current);
+    if (crankingRef.current) {
+      crankingRef.current = false;
+      setRunning(false);
+    }
     frameRef.current = 0;
     inputRef.current.keys.clear();
     inputRef.current.pedal = 0;
@@ -345,6 +375,7 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
   const ignition = useCallback(async () => {
     if (!activeLoaded) return;
     clearTimeout(startTimerRef.current);
+    clearTimeout(blipTimerRef.current);
     const engine = audio();
     try {
       await engine.ensure();
@@ -353,7 +384,9 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
       return;
     }
     const sim = simRef.current;
-    if (sim.running) {
+    if (sim.running || crankingRef.current) {
+      crankingRef.current = false;
+      inputRef.current.pedal = 0;
       engine.play("shutdown", { strength: 0.9 });
       simRef.current = { ...sim, running: false, throttle: 0, gear: 0, shift: null, limiter: false, launch: false };
       setRunning(false);
@@ -363,13 +396,19 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
     markCoached("started");
     const crank = engine.hasShot("startup") ? Math.min(0.9, Math.max(0.25, engine.shotLength("startup") * 0.45)) : 0;
     if (crank) engine.play("startup", { strength: 0.9 });
+    crankingRef.current = true;
     setRunning(true);
     startTimerRef.current = setTimeout(() => {
+      crankingRef.current = false;
+      if (!isActiveRef.current) {
+        setRunning(false);
+        return;
+      }
       simRef.current = { ...createEngineState(), running: true, rev: 0.02 };
       if (engine.hasShot("startup_revs")) engine.play("startup_revs", { strength: 0.8 });
       else {
         inputRef.current.pedal = 0.55;
-        setTimeout(() => {
+        blipTimerRef.current = setTimeout(() => {
           if (inputRef.current.pedal === 0.55) inputRef.current.pedal = 0;
         }, 220);
       }
@@ -379,11 +418,17 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
   }, [activeLoaded, audio, kick, markCoached, pushAlert]);
 
   useEffect(() => {
-    if (!activeLoaded && simRef.current.running) {
-      simRef.current = { ...simRef.current, running: false };
-      setRunning(false);
+    if (!activeLoaded) {
+      clearTimeout(startTimerRef.current);
+      clearTimeout(blipTimerRef.current);
+      crankingRef.current = false;
+      inputRef.current.pedal = 0;
+      if (simRef.current.running || running) {
+        simRef.current = { ...simRef.current, running: false };
+        setRunning(false);
+      }
     }
-  }, [activeLoaded]);
+  }, [activeLoaded, running]);
 
   const cyclePops = useCallback(() => {
     setSettings((prev) => ({ ...prev, pops: POP_STYLES[(POP_STYLES.indexOf(prev.pops) + 1) % POP_STYLES.length] }));
@@ -469,18 +514,26 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
 
   const pedalHandlers = {
     onPointerDown: (event) => {
+      if (event.button !== 0 || !activeLoaded || !running) return;
       event.currentTarget.setPointerCapture(event.pointerId);
       inputRef.current.pedal = pedalFrom(event);
       markCoached("revved");
       kick();
     },
     onPointerMove: (event) => {
+      if (!activeLoaded || !running) {
+        inputRef.current.pedal = 0;
+        return;
+      }
       if (event.currentTarget.hasPointerCapture(event.pointerId)) inputRef.current.pedal = pedalFrom(event);
     },
     onPointerUp: () => {
       inputRef.current.pedal = 0;
     },
     onPointerCancel: () => {
+      inputRef.current.pedal = 0;
+    },
+    onLostPointerCapture: () => {
       inputRef.current.pedal = 0;
     },
   };
@@ -919,9 +972,8 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
             <div className="es-bench">
               <EngineDyno ref={dynoRef} range={range} label={activeRef.audioName} sublabel={activeEntry ? downloadLabel(activeEntry.name) : ""} coach={coach} />
               <div
-                ref={pedalRef}
                 className={`es-pedal ${activeLoaded && running ? "" : "is-off"}`}
-                {...(activeLoaded && running ? pedalHandlers : {})}
+                {...pedalHandlers}
                 role="slider"
                 aria-label="Throttle pedal"
                 aria-valuemin={0}
@@ -930,7 +982,7 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
                 title={running ? "Hold to rev. Higher is more throttle." : "Start the engine first"}
               >
                 <span className="cx-label">Pedal</span>
-                <span className="es-pedal-well" />
+                <span ref={pedalRef} className="es-pedal-well" />
               </div>
               {busyLoading ? (
                 <div className="es-loading" role="status">
@@ -1014,15 +1066,15 @@ export default function EngineBench({ workspaceState, onStateChange, onRenameTab
                   </DeckButton>
                 ))}
               </div>
-              <div className="lv-deck-group">
+              <div className="lv-deck-group" ref={helpWrapRef}>
                 <DeckButton active={Boolean(recording)} onClick={toggleRecording} disabled={!activeLoaded} title={recording ? "Stop and save the recording (R)" : "Record what you hear (R)"} className={`is-icon es-rec ${recording ? "is-live" : ""}`}>
                   <span className="es-rec-dot" aria-hidden="true" />
                 </DeckButton>
                 <DeckButton active={helpOpen} onClick={() => setHelpOpen((value) => !value)} title="Keyboard controls" className="is-icon">
                   <CircleHelp aria-hidden="true" />
                 </DeckButton>
+                {helpOpen ? <EngineHelp /> : null}
               </div>
-              {helpOpen ? <EngineHelp /> : null}
             </div>
           ) : null}
         </div>

@@ -2,7 +2,7 @@
   "name": "cortex-studio",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
-  "version": "6.2.6",
+  "version": "6.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -31,7 +31,7 @@
     "test:native-materials": "node --test src/lib/native-dds.test.mjs src/lib/native-material-plan.test.mjs src/lib/native-shader.test.mjs src/lib/native-occluder.test.mjs src/lib/native-draw-order.test.mjs",
     "test:perf-helpers": "node --test src/lib/texture-cache.test.mjs src/lib/dds.test.mjs src/lib/worker-client.test.mjs",
     "test:pdn": "node --test src/lib/pdn.test.mjs",
-    "test:prop": "node --test src/lib/prop-studio.test.mjs",
+    "test:prop": "node --test src/lib/prop-studio.test.mjs src/lib/prop-doctor.test.mjs src/lib/prop-ytyp.test.mjs src/lib/prop-attach.test.mjs src/lib/prop-folder.test.mjs src/lib/prop-script-audit.test.mjs src/lib/texture-vram.test.mjs src/lib/anim-critique.test.mjs src/lib/studio-presets.test.mjs",
     "test:studio-defaults": "node --test src/lib/studio-defaults.test.mjs",
     "test:template": "node --test src/lib/template-generation.test.mjs src/lib/template-overlay.test.mjs src/lib/template-markers.test.mjs",
     "test:e2e": "e2e run"

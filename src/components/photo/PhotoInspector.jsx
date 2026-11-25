@@ -1,14 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Bookmark, Pause, Play, Search, Trash2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { Bookmark, Camera, Check, ChevronDown, Copy, FileUp, Film, Pause, Play, Search, Square, Trash2 } from "lucide-react";
 import { CLOTHING_PRESETS, bodyPresetsFor } from "../../lib/eup.js";
 import { buildVehiclePaint } from "../../lib/vehicle-paint.js";
+import { analyzeClipMotion, formatClipCritiqueMarkdown } from "../../lib/anim-critique.js";
+import { listYcdFileClips } from "../eup/ped-files.js";
 import {
   LENS_MAX_MM,
   LENS_MIN_MM,
   LENS_PRESETS,
   OUTPUT_PRESETS,
   PHOTO_POSES,
+  PHOTO_SHOT_LIMIT,
   PHOTO_SPOTLIGHT_LIMIT,
   STEERING_LIMIT,
   litObjectIds,
@@ -17,6 +21,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Toggle } from "../ui/toggle";
 import { ColorLine, ErrorText, FloorField, InspectorTabs, Slider, StageSection } from "../workspace/parts";
+import { STUDIO_LOOK_PRESETS, getStudioPresetPatch, matchStudioPreset } from "../../lib/studio-presets.js";
 import PaintSlots from "../workspace/PaintSlots";
 import { PaneResizer } from "../workspace/PaneResizer";
 import VehiclePlatePanel from "../VehiclePlatePanel";
@@ -64,12 +69,12 @@ function Seg({ id, label, value, options, onChange }) {
   );
 }
 
-function SelectRow({ label, value, onChange, options }) {
+function SelectRow({ label, value, onChange, options, placeholder }) {
   return (
     <div className="lv-field">
       <span className="cx-label">{label}</span>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger aria-label={label}><SelectValue /></SelectTrigger>
+        <SelectTrigger aria-label={label}><SelectValue placeholder={placeholder} /></SelectTrigger>
         <SelectContent>
           {options.map((option) => (
             <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>
@@ -83,13 +88,18 @@ function SelectRow({ label, value, onChange, options }) {
 /* ── Custom animation: search the game's dictionaries, then pick a clip ── */
 
 function CustomPose({ ped, desktop, onChange }) {
+  const [source, setSource] = useState(ped.ycdPath ? "file" : "game");
   const [query, setQuery] = useState(ped.dict || "");
   const [dicts, setDicts] = useState({ status: "idle", list: [], error: "" });
-  const [clips, setClips] = useState({ dict: "", status: "idle", list: [], error: "" });
+  const [clips, setClips] = useState({ key: "", status: "idle", list: [], error: "" });
   const trimmed = query.trim().toLowerCase();
 
   useEffect(() => {
-    if (!desktop || trimmed.length < 3 || trimmed === ped.dict) {
+    setSource(ped.ycdPath ? "file" : "game");
+  }, [ped.ycdPath]);
+
+  useEffect(() => {
+    if (!desktop || source !== "game" || trimmed.length < 3 || trimmed === ped.dict) {
       setDicts({ status: "idle", list: [], error: "" });
       return undefined;
     }
@@ -109,73 +119,127 @@ function CustomPose({ ped, desktop, onChange }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [desktop, ped.dict, trimmed]);
+  }, [desktop, ped.dict, source, trimmed]);
 
+  const listKey = source === "file" ? (ped.ycdPath ? `file:${ped.ycdPath}` : "") : (ped.dict ? `game:${ped.dict}` : "");
   useEffect(() => {
-    if (!desktop || !ped.dict) return undefined;
+    if (!desktop || !listKey) return undefined;
     let cancelled = false;
-    setClips({ dict: ped.dict, status: "loading", list: [], error: "" });
-    invoke("list_ped_clips", { dict: ped.dict }).then(
-      (result) => !cancelled && setClips({
-        dict: ped.dict,
-        status: "ready",
-        list: (Array.isArray(result?.clips) ? result.clips : []).map((clip) => clip.name).filter(Boolean),
-        error: "",
-      }),
-      (error) => !cancelled && setClips({ dict: ped.dict, status: "error", list: [], error: errorText(error) }),
+    setClips({ key: listKey, status: "loading", list: [], error: "" });
+    const req = source === "file"
+      ? listYcdFileClips(ped.ycdPath)
+      : invoke("list_ped_clips", { dict: ped.dict });
+    req.then(
+      (result) => {
+        if (cancelled) return;
+        const list = (Array.isArray(result?.clips) ? result.clips : []).map((clip) => clip.name).filter(Boolean);
+        setClips({ key: listKey, status: "ready", list, error: "" });
+        if (source === "file" && list.length > 0 && !ped.clip) {
+          onChange({ clip: list[0], time: 0 });
+        }
+      },
+      (error) => !cancelled && setClips({ key: listKey, status: "error", list: [], error: errorText(error) }),
     );
     return () => {
       cancelled = true;
     };
-  }, [desktop, ped.dict]);
+  }, [desktop, listKey, ped.dict, ped.ycdPath, source]);
+
+  const pickYcd = async () => {
+    if (!desktop) return;
+    const picked = await open({ multiple: false, filters: [{ name: "Animation dictionary", extensions: ["ycd"] }], title: "Choose a .ycd animation file" });
+    if (typeof picked === "string" && picked) {
+      setSource("file");
+      onChange({ ycdPath: picked, dict: "", clip: "", time: 0 });
+    }
+  };
 
   return (
     <div className="pm-custom-pose">
-      <label className="pm-search">
-        <Search aria-hidden="true" />
-        <input
-          type="search"
-          value={query}
-          spellCheck={false}
-          placeholder="Animation dictionary, e.g. amb@world_human"
-          aria-label="Search animation dictionaries"
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </label>
-      {dicts.status === "loading" ? <Note>Searching the game&apos;s animations…</Note> : null}
-      {dicts.status === "error" ? <Note tone="error">{dicts.error}</Note> : null}
-      {dicts.status === "ready" ? (
-        dicts.list.length ? (
-          <div className="pm-pick-list custom-scrollbar" role="listbox" aria-label="Animation dictionaries">
-            {dicts.list.map((dict) => (
-              <button
-                key={dict}
-                type="button"
-                role="option"
-                aria-selected={dict === ped.dict}
-                className={`pm-pick ${dict === ped.dict ? "is-on" : ""}`}
-                onClick={() => {
-                  setQuery(dict);
-                  onChange({ dict, clip: "", time: 0 });
-                }}
-              >
-                {dict}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <Note>No dictionary matches.</Note>
-        )
-      ) : null}
-      {ped.dict ? (
+      <div className="lv-seg" role="radiogroup" aria-label="Animation source">
+        {[
+          { id: "game", label: "Game files" },
+          { id: "file", label: "My .ycd" },
+        ].map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            role="radio"
+            aria-checked={source === option.id}
+            className={`lv-seg-btn ${source === option.id ? "is-on" : ""}`}
+            onClick={() => {
+              setSource(option.id);
+              if (option.id === "game" && ped.ycdPath) onChange({ ycdPath: "", clip: "", time: 0 });
+            }}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      {source === "file" ? (
+        <div className="pm-ycd-row">
+          <button type="button" className="cx-btn lv-btn-sm" onClick={pickYcd} disabled={!desktop}>
+            <FileUp aria-hidden="true" />
+            {ped.ycdPath ? "Change .ycd…" : "Choose a .ycd…"}
+          </button>
+          {ped.ycdPath ? (
+            <span className="pm-ycd-name" title={ped.ycdPath}>
+              {ped.ycdPath.split(/[\\/]/).pop()}
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <>
+          <label className="pm-search">
+            <Search aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              spellCheck={false}
+              placeholder="Animation dictionary, e.g. amb@world_human"
+              aria-label="Search animation dictionaries"
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          {dicts.status === "loading" ? <Note>Searching the game&apos;s animations…</Note> : null}
+          {dicts.status === "error" ? <Note tone="error">{dicts.error}</Note> : null}
+          {dicts.status === "ready" ? (
+            dicts.list.length ? (
+              <div className="pm-pick-list custom-scrollbar" role="listbox" aria-label="Animation dictionaries">
+                {dicts.list.map((dict) => (
+                  <button
+                    key={dict}
+                    type="button"
+                    role="option"
+                    aria-selected={dict === ped.dict}
+                    className={`pm-pick ${dict === ped.dict ? "is-on" : ""}`}
+                    onClick={() => {
+                      setQuery(dict);
+                      onChange({ dict, ycdPath: "", clip: "", time: 0 });
+                    }}
+                  >
+                    {dict}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <Note>No dictionary matches.</Note>
+            )
+          ) : null}
+        </>
+      )}
+
+      {listKey ? (
         clips.status === "loading" ? (
-          <Note>Listing the clips in {ped.dict}…</Note>
+          <Note>Listing clips…</Note>
         ) : clips.status === "error" ? (
           <Note tone="error">{clips.error}</Note>
         ) : clips.list.length ? (
           <SelectRow
             label="Clip"
             value={ped.clip || ""}
+            placeholder="Choose a clip…"
             onChange={(clip) => onChange({ clip, time: 0 })}
             options={clips.list.map((clip) => ({ id: clip, label: clip }))}
           />
@@ -281,7 +345,35 @@ function PersonGroups({ object, runtime, desktop, onChange, onTogglePlay }) {
   const ped = object.ped;
   const setPed = (patch) => onChange({ ped: { ...ped, ...patch } });
   const duration = runtime?.duration || 0;
-  const poseOptions = [...PHOTO_POSES.map((pose) => ({ id: pose.id, label: pose.label })), { id: "custom", label: "Any game animation…" }];
+  const [copiedQa, setCopiedQa] = useState(false);
+  const [qaOpen, setQaOpen] = useState(false);
+  const copyTimerRef = useRef(null);
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
+  const clipReport = useMemo(
+    () => (runtime?.controller?.clip ? analyzeClipMotion(runtime.controller.clip, runtime.controller.skeleton) : null),
+    [runtime?.controller?.clip, runtime?.controller?.skeleton, duration],
+  );
+  const poseOptions = [...PHOTO_POSES.map((pose) => ({ id: pose.id, label: pose.label })), { id: "custom", label: "Custom / .ycd animation…" }];
+  const copyClipQa = async () => {
+    if (!clipReport) return;
+    try {
+      const md = formatClipCritiqueMarkdown(clipReport, {
+        name: ped.clip || ped.pose,
+        dict: ped.ycdPath ? ped.ycdPath.split(/[\\/]/).pop() : ped.dict,
+      });
+      await navigator.clipboard.writeText(md);
+      setCopiedQa(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        copyTimerRef.current = null;
+        setCopiedQa(false);
+      }, 1800);
+    } catch {
+      // Clipboard unavailable
+    }
+  };
   return (
     <>
       <section className="lv-group">
@@ -305,7 +397,7 @@ function PersonGroups({ object, runtime, desktop, onChange, onTogglePlay }) {
       <section className="lv-group">
         <h3 className="lv-group-title">Pose</h3>
         <SelectRow label="Animation" value={ped.pose} onChange={(pose) => setPed({ pose, time: 0, playing: false })} options={poseOptions} />
-        {ped.pose === "custom" ? <CustomPose ped={ped} desktop={desktop} onChange={setPed} /> : null}
+        {ped.pose === "custom" ? <CustomPose key={object.id} ped={ped} desktop={desktop} onChange={setPed} /> : null}
         {runtime?.poseStatus === "loading" ? <Note>Loading the animation…</Note> : null}
         {runtime?.poseStatus === "error" ? <Note tone="error">{runtime.poseError}</Note> : null}
         {duration > 0 ? (
@@ -329,6 +421,41 @@ function PersonGroups({ object, runtime, desktop, onChange, onTogglePlay }) {
               format={(v) => `${v.toFixed(2)} s`}
               onChange={(time) => setPed({ time, playing: false })}
             />
+          </div>
+        ) : null}
+        {clipReport ? (
+          <div className="pm-clip-qa-box">
+            <div className="pm-clip-qa">
+              {clipReport.findings.length > 0 ? (
+                <button
+                  type="button"
+                  className="pm-clip-qa-toggle"
+                  aria-expanded={qaOpen}
+                  onClick={() => setQaOpen((v) => !v)}
+                >
+                  <ChevronDown className={qaOpen ? "is-open" : undefined} aria-hidden="true" />
+                  <span className="pm-clip-qa-meta">
+                    Loop seam {clipReport.maxSeamDeg}° · {clipReport.findings.length} {clipReport.findings.length === 1 ? "note" : "notes"}
+                  </span>
+                </button>
+              ) : (
+                <span className="pm-clip-qa-meta">Loop seam {clipReport.maxSeamDeg}° · clean</span>
+              )}
+              <button type="button" className="lv-link" onClick={copyClipQa}>
+                {copiedQa ? <Check className="pm-inline-icon" aria-hidden="true" /> : <Copy className="pm-inline-icon" aria-hidden="true" />}
+                {copiedQa ? "Copied QA" : "Copy motion QA"}
+              </button>
+            </div>
+            {qaOpen && clipReport.findings.length > 0 ? (
+              <ul className="pm-clip-qa-list">
+                {clipReport.findings.map((finding, idx) => (
+                  <li key={`${finding.code}-${idx}`} className={`pm-clip-qa-item is-${finding.severity}`}>
+                    <strong>{finding.message}</strong>
+                    {finding.fix ? <span>{finding.fix}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -367,17 +494,17 @@ function ObjectTab({ object, runtime, desktop, lit, showroom, onChange, onToggle
         <p className="lv-slot-note">Doors, mods, extras, livery, plate and paint are in the Vehicle tab.</p>
       ) : null}
       {object.kind === "ped" ? (
-        <PersonGroups object={object} runtime={runtime} desktop={desktop} onChange={onChange} onTogglePlay={onTogglePlay} />
+        <PersonGroups key={object.id} object={object} runtime={runtime} desktop={desktop} onChange={onChange} onTogglePlay={onTogglePlay} />
       ) : null}
     </>
   );
 }
 
 const SPOT_FROM = [
-  { id: "", label: "Scene" },
+  { id: "__scene__", label: "Scene default" },
   { id: "top", label: "Top" },
   { id: "front", label: "Front" },
-  { id: "back", label: "Back" },
+  { id: "back", label: "Rear" },
   { id: "left", label: "Left" },
   { id: "right", label: "Right" },
 ];
@@ -408,7 +535,12 @@ function SpotlightGroup({ object, lit, showroom, onChange }) {
             format={(v) => `${Math.round(v * 100)}%`}
             onChange={(strength) => setLight({ strength })}
           />
-          <Seg id="pm-spot-from" label="Light from" value={light.from} options={SPOT_FROM} onChange={(from) => setLight({ from })} />
+          <SelectRow
+            label="Light from"
+            value={light.from || "__scene__"}
+            onChange={(value) => setLight({ from: value === "__scene__" ? "" : value })}
+            options={SPOT_FROM}
+          />
           <p className="lv-slot-note">Directions are from this object&apos;s front; Scene follows the Scene tab.</p>
           <div className="lv-colors">
             <ColorLine
@@ -649,8 +781,9 @@ function VehicleTab({ object, runtime, desktop, onChange }) {
 
 /* ── Camera tab ── */
 
-function CameraTab({ settings, onLens, onSaveShot, onUseShot, onDeleteShot, onOutput }) {
+function CameraTab({ settings, desktop, busy, dollyProgress, onLens, onSaveShot, onUseShot, onDeleteShot, onShootAllShots, onRecordDolly, onStopDolly, onOutput }) {
   const showroom = settings.scene.stage === "showroom";
+  const shotsFull = settings.shots.length >= PHOTO_SHOT_LIMIT;
   return (
     <>
       <section className="lv-group">
@@ -675,27 +808,54 @@ function CameraTab({ settings, onLens, onSaveShot, onUseShot, onDeleteShot, onOu
       <section className="lv-group">
         <div className="lv-group-head">
           <h3 className="lv-group-title">Saved views</h3>
-          <button type="button" className="lv-link" onClick={onSaveShot} disabled={settings.shots.length >= 12}>
+          <button
+            type="button"
+            className="lv-link"
+            onClick={onSaveShot}
+            disabled={shotsFull}
+            title={shotsFull ? `Up to ${PHOTO_SHOT_LIMIT} saved views per set` : "Save the current camera angle and lens"}
+          >
             Save this view
           </button>
         </div>
         {settings.shots.length ? (
-          <ul className="pm-shots">
-            {settings.shots.map((shot) => (
-              <li key={shot.id} className="pm-shot">
-                <button type="button" className="pm-shot-use" onClick={() => onUseShot(shot)} title="Return to this view">
-                  <Bookmark aria-hidden="true" />
-                  <span>{shot.name}</span>
-                  <span className="pm-shot-lens">{Math.round(shot.lens)} mm</span>
+          <>
+            <ul className="pm-shots">
+              {settings.shots.map((shot) => (
+                <li key={shot.id} className="pm-shot">
+                  <button type="button" className="pm-shot-use" onClick={() => onUseShot(shot)} title="Return to this view">
+                    <Bookmark aria-hidden="true" />
+                    <span>{shot.name}</span>
+                    <span className="pm-shot-lens">{Math.round(shot.lens)} mm</span>
+                  </button>
+                  <button type="button" className="cx-icon-btn" onClick={() => onDeleteShot(shot.id)} aria-label={`Delete ${shot.name}`} title="Delete">
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {settings.shots.length >= 2 && desktop ? (
+              <div className="pm-shot-actions">
+                <button type="button" className="cx-btn lv-btn-sm" disabled={busy} onClick={onShootAllShots} title="Render every saved view into a folder as PNGs">
+                  <Camera aria-hidden="true" />
+                  Shoot all ({settings.shots.length})
                 </button>
-                <button type="button" className="cx-icon-btn" onClick={() => onDeleteShot(shot.id)} aria-label={`Delete ${shot.name}`} title="Delete">
-                  <Trash2 aria-hidden="true" />
-                </button>
-              </li>
-            ))}
-          </ul>
+                {dollyProgress ? (
+                  <button type="button" className="cx-btn lv-btn-sm is-danger" onClick={onStopDolly} title="Stop recording the dolly clip">
+                    <Square aria-hidden="true" />
+                    Stop ({dollyProgress.current}/{dollyProgress.total})
+                  </button>
+                ) : (
+                  <button type="button" className="cx-btn lv-btn-sm" disabled={busy} onClick={onRecordDolly} title="Record a smooth 30 fps camera dolly clip through all saved views">
+                    <Film aria-hidden="true" />
+                    Dolly clip
+                  </button>
+                )}
+              </div>
+            ) : null}
+          </>
         ) : (
-          <p className="lv-slot-note">Save a camera angle and lens to come back to it after you rearrange the set.</p>
+          <p className="lv-slot-note">Save a camera angle and lens to come back to it — or save 2+ views to batch-shoot them all or record a smooth dolly clip.</p>
         )}
       </section>
 
@@ -735,6 +895,7 @@ function CameraTab({ settings, onLens, onSaveShot, onUseShot, onDeleteShot, onOu
 /* ── Scene tab ── */
 
 function SceneTab({ scene, onScene, defaultBackdrop }) {
+  const activePreset = matchStudioPreset(scene, "photo");
   const stageControls = {
     stage: scene.stage,
     setStage: (stage) => onScene({ stage }),
@@ -749,6 +910,26 @@ function SceneTab({ scene, onScene, defaultBackdrop }) {
   };
   return (
     <>
+      <section className="lv-group">
+        <h3 className="lv-group-title">Studio looks</h3>
+        <div className="lv-chips" role="group" aria-label="Studio lighting presets">
+          {STUDIO_LOOK_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className={`lv-chip-btn ${activePreset === preset.id ? "is-on" : ""}`}
+              aria-pressed={activePreset === preset.id}
+              title={preset.note}
+              onClick={() => {
+                const patch = getStudioPresetPatch(preset.id, "photo");
+                if (patch) onScene(patch);
+              }}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </section>
       <StageSection s={stageControls} notes={STAGE_NOTES}>
         <FloorField id="pm-floor-label" value={scene.floor} onChange={(floor) => onScene({ floor })} />
       </StageSection>
@@ -793,6 +974,11 @@ export default function PhotoInspector({
   onSaveShot,
   onUseShot,
   onDeleteShot,
+  onShootAllShots,
+  onRecordDolly,
+  onStopDolly,
+  dollyProgress = null,
+  busy = false,
   onOutput,
 }) {
   const isVehicle = selected?.kind === "vehicle";
@@ -827,10 +1013,16 @@ export default function PhotoInspector({
         {shown === "camera" ? (
           <CameraTab
             settings={settings}
+            desktop={desktop}
+            busy={busy}
+            dollyProgress={dollyProgress}
             onLens={onLens}
             onSaveShot={onSaveShot}
             onUseShot={onUseShot}
             onDeleteShot={onDeleteShot}
+            onShootAllShots={onShootAllShots}
+            onRecordDolly={onRecordDolly}
+            onStopDolly={onStopDolly}
             onOutput={onOutput}
           />
         ) : null}

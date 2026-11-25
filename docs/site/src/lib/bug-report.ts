@@ -8,6 +8,7 @@ export type BugArea =
   | "eup"
   | "eup-studio"
   | "prop-studio"
+  | "photo-mode"
   | "sound-studio"
   | "multi"
   | "sirens"
@@ -92,6 +93,7 @@ const AREA_LABELS = new Map<BugArea, string>([
   ["eup", "EUP"],
   ["eup-studio", "EUP Studio"],
   ["prop-studio", "Prop Studio"],
+  ["photo-mode", "Photo Mode"],
   ["sirens", "Sirens"],
   ["sound-studio", "Sound Studio"],
   ["multi", "Multi"],

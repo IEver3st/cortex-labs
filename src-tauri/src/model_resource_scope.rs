@@ -8,11 +8,16 @@ fn resource_root(model: &Path) -> Result<PathBuf, String> {
         .and_then(|value| value.to_str())
         .is_some_and(|value| {
             value.eq_ignore_ascii_case("yft")
+                || value.eq_ignore_ascii_case("ydr")
                 || value.eq_ignore_ascii_case("ydd")
                 || value.eq_ignore_ascii_case("clmesh")
+                || value.eq_ignore_ascii_case("glb")
+                || value.eq_ignore_ascii_case("gltf")
         })
     {
-        return Err("Resource access requires a .yft, .ydd or .clmesh model.".into());
+        return Err(
+            "Resource access requires a .yft, .ydr, .ydd, .clmesh, .glb or .gltf model.".into(),
+        );
     }
     let model = model
         .canonicalize()
@@ -127,7 +132,7 @@ pub fn find_animation_dictionary(model: &Path, dict: &str) -> Result<Option<Path
     Ok(None)
 }
 
-pub fn validate_meta_file(model: &Path, file: &Path) -> Result<(), String> {
+pub fn validate_meta_file(model: &Path, file: &Path) -> Result<PathBuf, String> {
     let root = resource_root(model)?;
     let target = file
         .canonicalize()
@@ -143,22 +148,24 @@ pub fn validate_meta_file(model: &Path, file: &Path) -> Result<(), String> {
     if !target.starts_with(root) {
         return Err("Metadata file is outside the selected model's resource.".into());
     }
-    Ok(())
+    Ok(target)
 }
 
 /// The texture dictionaries a model pairs with, as the bridge reads them
 /// (EnumerateSiblingYtdPaths): `x_hi.yft` uses `x_hi.ytd`, `x+hi.ytd` and `x.ytd`.
 fn sibling_ytd_names(stem: &str) -> Vec<String> {
     let lower = stem.to_ascii_lowercase();
-    // The suffixes are ASCII, so cutting three bytes stays on a char boundary.
-    let stripped = &stem[..stem.len().saturating_sub(3)];
-    if lower.ends_with("_hi") {
+    // Slice only after verifying an ASCII `_hi` / `+hi` suffix so multi-byte
+    // UTF-8 stems never split a character boundary.
+    if stem.len() > 3 && lower.ends_with("_hi") {
+        let stripped = &stem[..stem.len() - 3];
         vec![
             format!("{stem}.ytd"),
             format!("{stripped}+hi.ytd"),
             format!("{stripped}.ytd"),
         ]
-    } else if lower.ends_with("+hi") {
+    } else if stem.len() > 3 && lower.ends_with("+hi") {
+        let stripped = &stem[..stem.len() - 3];
         vec![
             format!("{stem}.ytd"),
             format!("{stripped}_hi.ytd"),
@@ -304,6 +311,18 @@ impl From<String> for RenameFailure {
     }
 }
 
+fn collision_key(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        text.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        text.into_owned()
+    }
+}
+
 /// Renames a vehicle's stream files for the vehicle renamer. Each source must
 /// be a `.yft` or `.ytd` file inside the selected model's resource; each new
 /// name stays in its source's folder, keeps its extension, and must not exist.
@@ -315,11 +334,16 @@ pub fn rename_stream_files(
     renames: &[(PathBuf, String)],
 ) -> Result<Vec<PathBuf>, RenameFailure> {
     let root = resource_root(model)?;
-    let mut planned: Vec<(PathBuf, PathBuf, PathBuf)> = Vec::with_capacity(renames.len());
+    let mut planned: Vec<(PathBuf, PathBuf, PathBuf, PathBuf)> = Vec::with_capacity(renames.len());
+    let mut seen_sources = std::collections::HashSet::with_capacity(renames.len());
+    let mut seen_targets = std::collections::HashSet::with_capacity(renames.len());
     for (from, name) in renames {
         let source = from
             .canonicalize()
             .map_err(|error| format!("Cannot access {}: {error}", from.display()))?;
+        if !seen_sources.insert(collision_key(&source)) {
+            return Err(format!("{} is listed more than once.", from.display()).into());
+        }
         let extension = source
             .extension()
             .and_then(|value| value.to_str())
@@ -341,24 +365,26 @@ pub fn rename_stream_files(
             );
         }
         let target = source.with_file_name(name);
+        let shown = from.with_file_name(name);
         if std::fs::symlink_metadata(&target).is_ok()
-            || planned.iter().any(|(_, other, _)| other == &target)
+            || !seen_targets.insert(collision_key(&target))
         {
-            return Err(format!("{} already exists.", target.display()).into());
+            return Err(format!("{} already exists.", shown.display()).into());
         }
-        planned.push((source, target, from.with_file_name(name)));
+        planned.push((source, target, from.clone(), shown));
     }
-    let mut done: Vec<(&PathBuf, &PathBuf)> = Vec::new();
-    for (source, target, _) in &planned {
+    let mut done: Vec<(&PathBuf, &PathBuf, &PathBuf, &PathBuf)> = Vec::new();
+    for (source, target, from_shown, target_shown) in &planned {
         if let Err(error) = std::fs::rename(source, target) {
-            let mut message = format!("Could not rename {}: {error}.", source.display());
+            let mut message = format!("Could not rename {}: {error}.", from_shown.display());
             let mut stranded = Vec::new();
-            for (back_source, back_target) in done.iter().rev() {
+            for (back_source, back_target, back_from_shown, back_target_shown) in done.iter().rev()
+            {
                 if let Err(undo) = std::fs::rename(back_target, back_source) {
                     stranded.push(format!(
                         "{} is still named {} ({undo})",
-                        back_source.display(),
-                        back_target.display()
+                        back_from_shown.display(),
+                        back_target_shown.display()
                     ));
                 }
             }
@@ -372,9 +398,9 @@ pub fn rename_stream_files(
                 rolled_back: stranded.is_empty(),
             });
         }
-        done.push((source, target));
+        done.push((source, target, from_shown, target_shown));
     }
-    Ok(planned.into_iter().map(|(_, _, shown)| shown).collect())
+    Ok(planned.into_iter().map(|(_, _, _, shown)| shown).collect())
 }
 
 #[cfg(test)]
@@ -467,6 +493,11 @@ mod tests {
         assert_eq!(
             resource_root(&standalone).unwrap(),
             standalone.parent().unwrap().canonicalize().unwrap()
+        );
+        let prop = fixture.file("props/prop_radio.ydr");
+        assert_eq!(
+            resource_root(&prop).unwrap(),
+            prop.parent().unwrap().canonicalize().unwrap()
         );
     }
 
@@ -730,5 +761,47 @@ mod tests {
         assert!(failure.rolled_back, "{}", failure.message);
         assert!(model.is_file() && ytd.is_file());
         assert!(!model.with_file_name("new.yft").exists());
+    }
+
+    #[test]
+    fn non_ascii_and_short_hi_stems_never_panic_in_sibling_ytd_names() {
+        assert_eq!(
+            sibling_ytd_names("straßen"),
+            vec!["straßen.ytd", "straßen+hi.ytd"]
+        );
+        assert_eq!(
+            sibling_ytd_names("policía1"),
+            vec!["policía1.ytd", "policía1+hi.ytd"]
+        );
+        assert_eq!(
+            sibling_ytd_names("テスト1"),
+            vec!["テスト1.ytd", "テスト1+hi.ytd"]
+        );
+        assert_eq!(sibling_ytd_names("_hi"), vec!["_hi.ytd", "_hi+hi.ytd"]);
+        assert_eq!(
+            sibling_ytd_names("straßen_hi"),
+            vec!["straßen_hi.ytd", "straßen+hi.ytd", "straßen.ytd"]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn case_only_target_collision_is_rejected_without_overwriting() {
+        let fixture = Fixture::new();
+        fixture.file("res/fxmanifest.lua");
+        let model = fixture.file("res/stream/car.yft");
+        let ytd_a = fixture.file("res/stream/a.ytd");
+        let ytd_b = fixture.file("res/stream/b.ytd");
+        let failure = rename_stream_files(
+            &model,
+            &[
+                (ytd_a.clone(), "Target.ytd".into()),
+                (ytd_b.clone(), "target.ytd".into()),
+            ],
+        )
+        .expect_err("case-only collision must fail");
+        assert!(failure.rolled_back);
+        assert!(ytd_a.is_file() && ytd_b.is_file());
+        assert!(!ytd_a.with_file_name("Target.ytd").exists());
     }
 }

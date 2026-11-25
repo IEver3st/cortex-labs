@@ -2651,8 +2651,9 @@ html.dark .se-callout-num.is-selected {
   position: fixed;
   inset: 0;
   z-index: 900;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
   background: rgba(8, 9, 11, 0.6);
 }
@@ -2661,8 +2662,7 @@ html.dark .se-callout-num.is-selected {
   display: flex;
   flex-direction: column;
   width: min(520px, 100%);
-  /* 100% does not resolve inside the scrim's auto grid row, so tall dialogs ran off screen. */
-  max-height: calc(100vh - 48px);
+  max-height: 100%;
   border: 1px solid var(--mg-border);
   border-radius: 8px;
   background: var(--cx-raised);
@@ -2715,7 +2715,7 @@ html.dark .se-callout-num.is-selected {
   align-content: start;
   gap: 18px;
   min-height: 0;
-  max-height: min(62vh, 640px);
+  max-height: min(calc(62vh / var(--es-ui-scale, 1)), 640px);
   padding-right: 6px;
   overflow-y: auto;
 }
@@ -2725,7 +2725,7 @@ html.dark .se-callout-num.is-selected {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
-  max-height: min(62vh, 640px);
+  max-height: min(calc(62vh / var(--es-ui-scale, 1)), 640px);
 }
 
 .se-dialog-preview .sw-meta {

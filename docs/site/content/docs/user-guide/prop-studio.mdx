@@ -1,15 +1,15 @@
 ---
 title: Prop Studio
-description: Preview props with their textures, emissives and their own lights, and export images of them.
+description: Preview, audit, attach and export GTA V and FiveM props with textures, emissives, lights, Prop Doctor QA, `.ytyp.xml` generation and batch media tools.
 ---
 
 Open **Prop Studio** from Home, the new-tab menu, or **Alt + 8**. Opening a `.ydr` with Cortex Studio from Windows also opens it here. Prop Studio needs the desktop app: it reads models through the CodeWalker bridge.
 
-The page uses the same layout as the other viewers: the files on the left (**Model**, **Textures**, with **Export** pinned below), the prop in the middle with the camera deck, and an inspector on the right with **Model**, **Light**, **Scene** and **Info** tabs.
+The page uses the same layout as the other viewers: the files on the left (**Model**, **Textures**, **Folder**, with **Export media…** and **Save this view** pinned below), the prop in the middle with the camera deck, and an inspector on the right with **Model**, **QA**, **Light**, **Attach** and **Scene** tabs.
 
-## Opening a prop
+## Opening a prop, script or folder
 
-**Open a prop** takes a `.ydr` (a single drawable, the usual prop), a `.ydd` (a drawable dictionary) or a `.yft` (a fragment, including breakable props and vehicles). You can also drop the file on the viewfinder. Dropping a `.ytd` adds it as a texture dictionary.
+**Open a prop** takes a `.ydr` (a single drawable, the usual prop), a `.ydd` (a drawable dictionary), a `.yft` (a fragment, including breakable props and vehicles), or a self-contained `.glb`/`.gltf` (`.glb` or `.gltf` with embedded buffers/textures for pre-export Blender/3D preview). You can also click **Select script / folder** (or drop a FiveM resource folder onto the viewfinder): when the folder contains a `stream/` directory (or nested resources with `fxmanifest.lua` and `stream/`), Prop Studio auto-detects `stream/`, lists every model inside it, and lets you filter and step through them with **`[`** and **`]`**. Opening a single prop inside a FiveM script automatically discovers its enclosing `stream/` folder too. Dropping a `.ytd` adds it as a texture dictionary.
 
 Textures are found the way the game finds them:
 
@@ -22,21 +22,37 @@ Textures are found the way the game finds them:
 
 If the bridge can't read a model, Prop Studio falls back to its built-in parser and shows the geometry only, without textures, lights or LODs, and says so under the model.
 
-With **Live reload** on, saving the model, a `.ytd` or a `.ytyp` in its folder reloads the prop and keeps the camera where it is. The reload button on the Model step does the same by hand.
+With **Live reload** on, saving the model, a `.ytd` or a `.ytyp` in its folder reloads the prop and keeps the camera where it is. When the same model reloads, a compact delta chip in the viewfinder shows how triangle count, vertex count or dimensions changed since the previous load. The reload button on the Model step does the same by hand.
 
 ## Model tab
 
-- **Shading**: **Textured** shows the prop's own materials. **Clay** shows the form without textures. **Normals** colours surfaces by direction, which shows flipped faces. **UV check** lays a checker over the first UV set; a red ramp runs along U and a green ramp along V, so mirrored or rotated islands stand out.
-- **Level of detail**: shows the High, Medium, Low or Very low LOD. A drawable without the chosen LOD shows its nearest more detailed one.
+- **Shading**:
+  - **Textured** shows the prop's own materials.
+  - **Clay** shows the form without textures.
+  - **Normals** colours surfaces by direction.
+  - **UV check** lays a checker over the first UV set with red along U and green along V so mirrored or stretched islands stand out.
+  - **Backface** shades front faces neutral grey and highlights backfaces in bright red so inverted normals stand out before shipping to FiveM.
+  - **Vertex** displays the model's vertex colour channel.
+- **Channel & Map slot** (in Textured mode): isolate **RGB**, **R**, **G**, **B** or **A** across the **Diffuse**, **Normal**, or **Spec / Rough** texture map to debug `_s` specular channels, inverted normals or alpha masks.
+- **Level of detail**: shows the High, Medium, Low or Very low LOD. Turn on **Auto by distance** to switch LODs automatically as you zoom in and out, with the active LOD and camera distance shown in the HUD.
 - **Drawable**: for a `.ydd` or a fragment with several drawables, shows one or all of them.
-- **Materials**: one row per shader and colour texture, with a switch to hide it. Emissive materials are marked.
-- **Presentation**: the turntable and its speed, the GTA origin with its axes (X red, Y green, Z blue, in the game's own space, useful for attach offsets), and a bounding box with the prop's size in the viewfinder.
+- **Materials**: one row per shader and colour texture, with triangle count, missing-texture count and a visibility switch. Click any row — or click directly on a surface in the 3D viewfinder — to highlight that material, inspect every texture sampler and source, and click **Test texture…** to preview any local PNG, PSD, DDS, JPG, WebP or TGA directly on that material without repacking a `.ytd`.
+- **Presentation & scale**:
+  - **Scale reference**: toggle a 1:1 GTA-metre ghost beside the prop (**Ped 1.8 m**, **Table 75 cm**, **1 m cube**, or **Hand 19 cm**).
+  - Turntable and speed, GTA origin with axes (X red, Y green, Z blue), and a bounding box with the prop's dimensions in the viewfinder.
 
 The **X**, **Y** and **Z** buttons on the deck turn the prop a quarter turn for viewing; the reset button returns it to its authored orientation. Turning never changes the file or the sizes shown.
 
-The triangle button on the deck opens a **Mesh stats** panel in the viewfinder: triangles, vertices, meshes, shaders, textures and size for what is on screen now. Hidden materials, other LODs and other drawables are not counted, so switching LOD or drawable updates the numbers. Use **W** for the wireframe.
+The triangle button on the deck opens a **Mesh stats** panel in the viewfinder: triangles, vertices, meshes, shaders, textures and size for what is on screen now. Use **W** for the wireframe.
 
 The hexagon button draws the prop's collision bounds over it, coloured by collision material, with a **Collisions** panel that counts them and names the materials. Turn off **Show the model** to see the collisions alone. Exported images leave the collisions out; **Save this view** keeps them, as it shows the viewfinder.
+
+## QA tab (Prop Doctor, VRAM, Script Audit & `.ytyp` generator)
+
+- **Prop Doctor** runs automatic checks whenever a prop loads: collision presence, alignment offset, size mismatch, collision triangle density and default material; missing or unreduced LODs; triangle budget relative to the prop's physical size; extreme scale or far-off pivot; missing UVs or normals, degenerate triangles and inverted winding; missing textures named per material; RSC7 streamed GPU/RAM memory; **Texture VRAM breakdown** sorted largest first (flagging 4K+, 2K on small props, missing mipmaps and non-power-of-two sizes); and `.ytyp.xml` bounds drift when a matching archetype exists in the folder. Click **Copy report** to copy a structured Markdown QA report, or click the HUD badge to jump straight to the findings.
+- **Script audit** (when a FiveM script or folder is open) checks `fxmanifest.lua` for `DLC_ITYP_REQUEST`, cross-references every streamed model against `.ytyp.xml` archetypes (flagging missing and orphan entries), and flags any streamed file over FiveM's 16 MiB RSC7 limit — with one-click Markdown report copy.
+- **`.ytyp` generator** calculates exact `bbMin`, `bbMax`, `bsCentre`, `bsRadius`, `lodDist` and `hdTextureDist` from the model's GTA-space bounds. Choose an archetype name, texture dictionary, flag preset (`Static prop (32)` or `Dynamic prop (0)`) and optional custom LOD distance, then **Copy XML**, **Save .ytyp.xml…**, or copy a matching **`fxmanifest`** snippet.
+- **Model facts** summarizes format, parser, GTA dimensions, mesh/vertex/triangle counts, drawables, LODs, materials, vertex colours, lights, textures and quick access to the model's folder.
 
 ## Light tab
 
@@ -44,7 +60,15 @@ The hexagon button draws the prop's collision bounds over it, coloured by collis
 
 **Prop lights** are the lights authored into the model: a flashlight's cone, a lamp's bulb. Each shows its type, intensity, range and cone, and can be switched off. **Strength** scales them all and **Beam haze** shows the cone of each spotlight in the air. Up to 16 lights are previewed, the strongest first. Range and cone follow the file; the falloff is an approximation of the game's light shader.
 
+## Attach tab (Ped bone attachment)
+
+Turn on **Ped attachment** to load a GTA V freemode **Male** or **Female** ped from your game install, pick a **Pose**, and mount the open prop onto any common attachment bone (`PH_R_Hand`, `PH_L_Hand`, `SKEL_R_Hand`, `SKEL_L_Hand`, `SKEL_Head`, `SKEL_Spine3`, `SKEL_Pelvis`, forearms, thighs and calves).
+
+Position and rotate the prop directly in 3D with the **Move (`G`)** / **Rotate (`R`)** gizmo or dial exact **Offset X/Y/Z** (metres) and **Rot X/Y/Z** (degrees, rotation order 2 matching GTA's `AttachEntityToEntity`), or click **Paste Lua** to import offsets from an existing `AttachEntityToEntity`, `ox_lib`, `rpemotes` or QB/QBX snippet. Copy the live generated snippet in **FiveM Native**, **ox_lib**, **rpemotes** or **QB / QBX** format.
+
 ## Scene tab
+
+**Studio looks** switches lighting, stage and backdrop in one click (**Showroom**, **Clean dark**, **Clean light**, **Moody rim**, **Night glow**, **Inspect**).
 
 **Workbench** shows your backdrop colour with a ground grid sized to the prop and a shadow. **Showroom** is a dark product studio scaled to the prop, with a reflective floor and a spotlight you can aim from the top, front, back or either side, a rim light, and **Concrete**, **Polished**, **Tiles**, **Marble**, **Checker**, **Epoxy**, **Asphalt**, **Wood** or **Tread plate** floors. In the showroom the prop's four strongest lights also light the floor.
 
@@ -52,10 +76,14 @@ The hexagon button draws the prop's collision bounds over it, coloured by collis
 
 ## Export
 
-- **Export image** saves a square PNG of the prop alone, 128 to 2048 pixels, framed as you have it or from the front, top or a three-quarter angle, with adjustable padding and a transparent or backdrop-coloured background. It suits inventory icons and store images. Emissives render; glow and beam haze stay in the viewfinder.
-- **Save this view** saves the viewfinder exactly as it looks, including the stage, glow and haze.
+- **Export media…** opens a four-mode export dialog:
+  - **Icon PNG**: a square PNG of the prop alone (128 to 2048 px), framed as you have it or from 3/4, Front or Top, with adjustable padding and transparent or backdrop background.
+  - **Sheet**: a labelled showcase PNG of 4 angles (3/4, Front, Side, Top), every drawable in a `.ydd`, or every prop in the current folder.
+  - **Batch**: writes one consistently framed `<name>.png` for every prop in the folder or every drawable in a `.ydd` into a destination folder you pick — ready for `ox_inventory`, `qb-inventory` or store listings.
+  - **Turntable**: records a 30 fps 360° turntable video (1080 × 1080 or 1920 × 1080, 4 to 12 seconds) directly from the current stage and lighting.
+- **Save this view** saves the viewfinder exactly as it looks, including the stage, glow, haze and any active overlays.
 
-Both ask where to save first.
+Every export asks where to save first and never modifies your source files.
 
 ## Keys
 
@@ -67,5 +95,8 @@ Both ask where to save first.
 | E | Emissives on or off |
 | L | Prop lights on or off |
 | N | Dark room |
+| G | Move gizmo (while Ped attachment is on) |
+| R | Rotate gizmo (while Ped attachment is on) |
+| `[` / `]` | Previous / next prop in folder |
 
-Left drag orbits, right drag pans and the wheel zooms.
+Left drag orbits, left click inspects a surface's material, right drag pans and the wheel zooms.

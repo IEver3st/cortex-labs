@@ -1,4 +1,5 @@
 const CLMESH_MAGIC = "CLM1";
+const UTF8_DECODER = new TextDecoder("utf-8");
 
 export function parseClmesh(bytes) {
   if (!bytes || bytes.length < 8) {
@@ -22,14 +23,13 @@ export function parseClmesh(bytes) {
   const meshCount = view.getUint16(offset, true);
   offset += 2;
 
-  const decoder = new TextDecoder("utf-8");
   const meshes = [];
 
   for (let i = 0; i < meshCount; i += 1) {
-    const name = readClmeshString(view, bytes, decoder, () => offset, (next) => {
+    const name = readClmeshString(view, bytes, UTF8_DECODER, () => offset, (next) => {
       offset = next;
     });
-    const materialName = readClmeshString(view, bytes, decoder, () => offset, (next) => {
+    const materialName = readClmeshString(view, bytes, UTF8_DECODER, () => offset, (next) => {
       offset = next;
     });
 
@@ -84,7 +84,7 @@ export function parseClmesh(bytes) {
       if (offset + vertexCount * 4 > bytes.length) {
         throw new Error("Mesh cache is truncated.");
       }
-      skinWeights = bytes.slice(offset, offset + vertexCount * 4);
+      skinWeights = bytes.subarray(offset, offset + vertexCount * 4);
       offset += vertexCount * 4;
     }
 
@@ -150,6 +150,10 @@ function readClmeshUint16Array(bytes, offset, count) {
   const length = count * 2;
   if (offset + length > bytes.length) {
     throw new Error("Mesh cache is truncated.");
+  }
+  const base = bytes.byteOffset + offset;
+  if (base % 2 === 0) {
+    return new Uint16Array(bytes.buffer, base, count);
   }
   const copy = new Uint8Array(length);
   copy.set(bytes.subarray(offset, offset + length));

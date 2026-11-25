@@ -94,3 +94,48 @@ export function createWorkerClient(createWorker, { timeoutMs = 45_000, label = "
 
   return { request, terminate };
 }
+
+/**
+ * Pool of `size` worker clients, spawned lazily as concurrent requests arrive.
+ * Keeps `createWorkerClient`'s per-request timeout and crash isolation while
+ * letting multi-texture CPU decodes (uncompressed/BC4/BC5 DDS) run across cores.
+ */
+export function createWorkerPool(createWorker, { size = 2, timeoutMs = 45_000, label = "worker" } = {}) {
+  const maxWorkers = Math.max(1, Math.min(8, Math.floor(Number(size) || 1)));
+  const slots = [];
+
+  function pickSlot() {
+    let best = null;
+    for (const slot of slots) {
+      if (slot.pending === 0) return slot;
+      if (!best || slot.pending < best.pending) best = slot;
+    }
+    if (slots.length < maxWorkers) {
+      const slot = {
+        client: createWorkerClient(createWorker, { timeoutMs, label: `${label} #${slots.length + 1}` }),
+        pending: 0,
+      };
+      slots.push(slot);
+      return slot;
+    }
+    return best;
+  }
+
+  function request(payload, transfer = []) {
+    const slot = pickSlot();
+    slot.pending += 1;
+    return slot.client.request(payload, transfer).finally(() => {
+      slot.pending = Math.max(0, slot.pending - 1);
+    });
+  }
+
+  function terminate(error) {
+    for (const slot of slots) {
+      slot.pending = 0;
+      slot.client.terminate(error);
+    }
+    slots.length = 0;
+  }
+
+  return { request, terminate };
+}

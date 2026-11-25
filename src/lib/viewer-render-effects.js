@@ -45,14 +45,27 @@ const depthOnlyOccluderMaterial = new THREE.MeshBasicMaterial({
   polygonOffsetUnits: -2,
 });
 
+const shaderNameFlags = new Map();
+function shaderFlags(shaderName) {
+  if (!shaderName) return 0;
+  let flags = shaderNameFlags.get(shaderName);
+  if (flags === undefined) {
+    flags = (/glass/i.test(shaderName) ? 1 : 0) | (/lightsemissive/i.test(shaderName) ? 2 : 0);
+    shaderNameFlags.set(shaderName, flags);
+  }
+  return flags;
+}
+
 function isLensSurface(object) {
   if (!object.isMesh || !object.userData?.nativeMaterial) return false;
-  if (/lightsemissive/i.test(object.userData.nativeMaterial.shaderName || "")) return false;
+  const flags = shaderFlags(object.userData.nativeMaterial.shaderName);
+  if (flags & 2) return false;
   const material = Array.isArray(object.material) ? object.material[0] : object.material;
-  return Boolean(material?.map) && (material.transparent || material.transmission > 0 || /glass/i.test(object.userData.nativeMaterial.shaderName || ""));
+  return Boolean(material?.map) && (material.transparent || material.transmission > 0 || Boolean(flags & 1));
 }
 
 function lensFilterFor(source) {
+  if (!source) return null;
   let filter = lensFilters.get(source);
   if (filter && filter.map === source.map) return filter;
   filter?.dispose();
@@ -81,6 +94,12 @@ function lensFilterFor(source) {
     );
   };
   filter.customProgramCacheKey = () => "glow-lens-filter";
+  const onSourceDispose = () => {
+    source.removeEventListener?.("dispose", onSourceDispose);
+    if (lensFilters.get(source) === filter) lensFilters.delete(source);
+    filter.dispose();
+  };
+  source.addEventListener?.("dispose", onSourceDispose);
   lensFilters.set(source, filter);
   return filter;
 }
@@ -91,9 +110,16 @@ function skipsOcclusion(object) {
   if (object.onBeforeRender !== defaultOnBeforeRender) return true;
   // Only what writes depth in the real render may hide a lamp: lenses, the
   // showroom light beam and other depthWrite-off effects never do.
-  const materials = Array.isArray(object.material) ? object.material : [object.material];
-  if (materials.some((entry) => entry?.transparent || entry?.transmission > 0 || entry?.depthWrite === false)) return true;
-  return /glass/i.test(object.userData?.nativeMaterial?.shaderName || "");
+  const material = object.material;
+  if (Array.isArray(material)) {
+    for (let index = 0; index < material.length; index += 1) {
+      const entry = material[index];
+      if (entry?.transparent || entry?.transmission > 0 || entry?.depthWrite === false) return true;
+    }
+  } else if (material?.transparent || material?.transmission > 0 || material?.depthWrite === false) {
+    return true;
+  }
+  return Boolean(shaderFlags(object.userData?.nativeMaterial?.shaderName) & 1);
 }
 
 class GlowSourcePass extends Pass {
@@ -102,6 +128,11 @@ class GlowSourcePass extends Pass {
     this.scene = scene;
     this.camera = camera;
     this.needsSwap = false;
+    this._hidden = [];
+    this._lenses = [];
+    this._blockers = [];
+    this._lights = [];
+    this._swapped = [];
   }
 
   render(renderer, writeBuffer, readBuffer) {
@@ -118,72 +149,93 @@ class GlowSourcePass extends Pass {
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = false;
 
-    const hidden = [];
-    const lenses = [];
-    const blockers = [];
-    const lights = [];
-    scene.traverse((object) => {
-      if (object.isLight) {
-        lights.push(object, object.layers.mask);
-        object.layers.enableAll();
-        return;
-      }
-      if (!object.visible || object.layers.isEnabled(GLOW_LAYER)) return;
-      if (object.userData?.nativeDepthOnly && object.isMesh) {
-        object.visible = false;
-        hidden.push(object);
-        blockers.push(object);
-      } else if (skipsOcclusion(object)) {
-        object.visible = false;
-        hidden.push(object);
-        if (isLensSurface(object)) lenses.push(object);
-      }
-    });
+    const hidden = this._hidden;
+    const lenses = this._lenses;
+    const blockers = this._blockers;
+    const lights = this._lights;
+    const swapped = this._swapped;
+    hidden.length = 0;
+    lenses.length = 0;
+    blockers.length = 0;
+    lights.length = 0;
+    swapped.length = 0;
 
-    renderer.setRenderTarget(readBuffer);
-    renderer.setClearColor(0x000000, 1);
-    renderer.clear();
-    renderer.autoClear = false;
-    scene.background = null;
-    scene.overrideMaterial = occluderMaterial;
-    camera.layers.set(0);
-    renderer.render(scene, camera);
-    for (const object of hidden) object.visible = true;
-    if (blockers.length) {
-      for (const object of blockers) object.layers.enable(DEPTH_ONLY_LAYER);
-      scene.overrideMaterial = depthOnlyOccluderMaterial;
-      camera.layers.set(DEPTH_ONLY_LAYER);
-      renderer.render(scene, camera);
-      for (const object of blockers) object.layers.disable(DEPTH_ONLY_LAYER);
-    }
-    scene.overrideMaterial = savedOverride;
-    camera.layers.set(GLOW_LAYER);
-    renderer.render(scene, camera);
-
-    // Lit overlays wrote depth, so only lens surfaces in front of a lamp pass;
-    // elsewhere the glow buffer is black and the multiply changes nothing.
-    if (lenses.length) {
-      const swapped = lenses.map((object) => {
-        const material = object.material;
-        object.material = Array.isArray(material) ? material.map(lensFilterFor) : lensFilterFor(material);
-        object.layers.enable(LENS_FILTER_LAYER);
-        return material;
+    try {
+      scene.traverse((object) => {
+        if (object.isLight) {
+          lights.push(object, object.layers.mask);
+          object.layers.enableAll();
+          return;
+        }
+        if (!object.visible || object.layers.isEnabled(GLOW_LAYER)) return;
+        if (object.userData?.nativeDepthOnly && object.isMesh) {
+          object.visible = false;
+          hidden.push(object);
+          blockers.push(object);
+        } else if (skipsOcclusion(object)) {
+          object.visible = false;
+          hidden.push(object);
+          if (isLensSurface(object)) lenses.push(object);
+        }
       });
-      camera.layers.set(LENS_FILTER_LAYER);
+
+      renderer.setRenderTarget(readBuffer);
+      renderer.setClearColor(0x000000, 1);
+      renderer.clear();
+      renderer.autoClear = false;
+      scene.background = null;
+      scene.overrideMaterial = occluderMaterial;
+      camera.layers.set(0);
       renderer.render(scene, camera);
-      lenses.forEach((object, index) => {
+      for (let index = 0; index < hidden.length; index += 1) hidden[index].visible = true;
+      hidden.length = 0;
+      if (blockers.length) {
+        for (let index = 0; index < blockers.length; index += 1) blockers[index].layers.enable(DEPTH_ONLY_LAYER);
+        scene.overrideMaterial = depthOnlyOccluderMaterial;
+        camera.layers.set(DEPTH_ONLY_LAYER);
+        renderer.render(scene, camera);
+        for (let index = 0; index < blockers.length; index += 1) blockers[index].layers.disable(DEPTH_ONLY_LAYER);
+        blockers.length = 0;
+      }
+      scene.overrideMaterial = savedOverride;
+      camera.layers.set(GLOW_LAYER);
+      renderer.render(scene, camera);
+
+      // Lit overlays wrote depth, so only lens surfaces in front of a lamp pass;
+      // elsewhere the glow buffer is black and the multiply changes nothing.
+      if (lenses.length) {
+        for (let index = 0; index < lenses.length; index += 1) {
+          const object = lenses[index];
+          const material = object.material;
+          swapped.push(material);
+          object.material = Array.isArray(material) ? material.map(lensFilterFor) : lensFilterFor(material);
+          object.layers.enable(LENS_FILTER_LAYER);
+        }
+        camera.layers.set(LENS_FILTER_LAYER);
+        renderer.render(scene, camera);
+      }
+    } finally {
+      for (let index = 0; index < hidden.length; index += 1) hidden[index].visible = true;
+      for (let index = 0; index < blockers.length; index += 1) blockers[index].layers.disable(DEPTH_ONLY_LAYER);
+      for (let index = 0; index < swapped.length; index += 1) {
+        const object = lenses[index];
         object.material = swapped[index];
         object.layers.disable(LENS_FILTER_LAYER);
-      });
+      }
+      for (let index = 0; index < lights.length; index += 2) lights[index].layers.mask = lights[index + 1];
+      hidden.length = 0;
+      lenses.length = 0;
+      blockers.length = 0;
+      lights.length = 0;
+      swapped.length = 0;
+      scene.overrideMaterial = savedOverride;
+      renderer.shadowMap.autoUpdate = shadowAutoUpdate;
+      renderer.shadowMap.needsUpdate = shadowNeedsUpdate;
+      camera.layers.mask = savedMask;
+      scene.background = savedBackground;
+      renderer.autoClear = savedAutoClear;
+      renderer.setClearColor(clearColor, savedAlpha);
     }
-
-    for (let index = 0; index < lights.length; index += 2) lights[index].layers.mask = lights[index + 1];
-    renderer.shadowMap.autoUpdate = shadowAutoUpdate;
-    renderer.shadowMap.needsUpdate = shadowNeedsUpdate;
-    camera.layers.mask = savedMask;
-    scene.background = savedBackground;
-    renderer.autoClear = savedAutoClear;
-    renderer.setClearColor(clearColor, savedAlpha);
   }
 }
 
@@ -204,28 +256,96 @@ function createGlowCompositeMaterial() {
   });
 }
 
+const OFFSCREEN_RESIZE_SETTLE_MS = 120;
+
+function flushBloomResize(pipeline) {
+  if (!pipeline?.glowComposer || !pipeline._pendingSize) return false;
+  if (pipeline._resizeTimer) {
+    clearTimeout(pipeline._resizeTimer);
+    pipeline._resizeTimer = 0;
+  }
+  const { width, height, pixelRatio } = pipeline._pendingSize;
+  pipeline._pendingSize = null;
+  if (
+    pipeline._appliedWidth === width &&
+    pipeline._appliedHeight === height &&
+    pipeline._appliedPixelRatio === pixelRatio
+  ) {
+    return false;
+  }
+  pipeline._appliedWidth = width;
+  pipeline._appliedHeight = height;
+  pipeline._appliedPixelRatio = pixelRatio;
+  pipeline.glowComposer.setPixelRatio(pixelRatio);
+  pipeline.glowComposer.setSize(width, height);
+  return true;
+}
+
 export function createBloomPipeline({ renderer, scene, camera, width, height }) {
   if (!renderer || !scene || !camera) return null;
   const glowComposer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
   glowComposer.renderToScreen = false;
   const glowPass = new GlowSourcePass(scene, camera);
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(width || 1, height || 1), BLOOM_STRENGTH, 0.4, 0);
+  // Start at 1x1 so creating the pipeline while disabled allocates minimal VRAM;
+  // flushBloomResize resizes both composer and bloomPass on first enabled frame.
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM_STRENGTH, 0.4, 0);
   glowComposer.addPass(glowPass);
   glowComposer.addPass(bloomPass);
   const composite = new FullScreenQuad(createGlowCompositeMaterial());
-  const pipeline = { glowComposer, glowPass, bloomPass, composite, enabled: false };
+  const pipeline = {
+    glowComposer,
+    glowPass,
+    bloomPass,
+    composite,
+    enabled: false,
+    _appliedWidth: 0,
+    _appliedHeight: 0,
+    _appliedPixelRatio: 0,
+    _pendingSize: null,
+    _resizeTimer: 0,
+  };
   resizeBloomPipeline(pipeline, width, height, renderer.getPixelRatio?.() || 1);
   return pipeline;
 }
 
-export function resizeBloomPipeline(pipeline, width, height, pixelRatio = 1) {
+export function resizeBloomPipeline(pipeline, width, height, pixelRatio = 1, { defer = false, onSettled = null } = {}) {
   if (!pipeline?.glowComposer || !width || !height) return;
-  pipeline.glowComposer.setPixelRatio(pixelRatio);
-  pipeline.glowComposer.setSize(width, height);
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+  const pr = pixelRatio || 1;
+  if (pipeline._appliedWidth === w && pipeline._appliedHeight === h && pipeline._appliedPixelRatio === pr) {
+    if (pipeline._resizeTimer) {
+      clearTimeout(pipeline._resizeTimer);
+      pipeline._resizeTimer = 0;
+    }
+    pipeline._pendingSize = null;
+    return;
+  }
+  pipeline._pendingSize = { width: w, height: h, pixelRatio: pr };
+  if (!pipeline.enabled) {
+    if (pipeline._resizeTimer) {
+      clearTimeout(pipeline._resizeTimer);
+      pipeline._resizeTimer = 0;
+    }
+    return;
+  }
+  if (defer) {
+    if (pipeline._resizeTimer) clearTimeout(pipeline._resizeTimer);
+    pipeline._resizeTimer = setTimeout(() => {
+      pipeline._resizeTimer = 0;
+      if (pipeline.enabled && flushBloomResize(pipeline)) onSettled?.();
+    }, OFFSCREEN_RESIZE_SETTLE_MS);
+    return;
+  }
+  flushBloomResize(pipeline);
 }
 
 export function disposeBloomPipeline(pipeline) {
   if (!pipeline) return;
+  if (pipeline._resizeTimer) {
+    clearTimeout(pipeline._resizeTimer);
+    pipeline._resizeTimer = 0;
+  }
   pipeline.bloomPass.dispose();
   pipeline.composite.material.dispose();
   pipeline.composite.dispose();
@@ -336,9 +456,11 @@ export function renderSolidWire(renderer, scene, camera, wire) {
 
 export function renderWithEffects({ renderer, scene, camera, ao, bloom, wire = null }) {
   const occlusion = ao?.enabled ? ao : null;
+  if (occlusion && occlusion._pendingSize && !occlusion._resizeTimer) flushAoResize(occlusion);
   // Glow objects render with the scene unless the glow pipeline adds them.
   camera.layers.enable(GLOW_LAYER);
   if (bloom?.enabled) {
+    if (bloom._pendingSize && !bloom._resizeTimer) flushBloomResize(bloom);
     bloom.glowPass.scene = scene;
     bloom.glowPass.camera = camera;
     bloom.glowComposer.render();
@@ -373,6 +495,19 @@ const AO_RADIUS_SCALE = 0.05;
 const AO_MIN_RADIUS = 0.04;
 const AO_MAX_RADIUS = 1.2;
 
+function materialSkipsAo(entry) {
+  return (
+    !entry ||
+    entry.visible === false ||
+    entry.transparent ||
+    entry.colorWrite === false ||
+    entry.transmission > 0 ||
+    entry.depthWrite === false ||
+    entry.alphaTest > 0 ||
+    entry.wireframe
+  );
+}
+
 // Only opaque, depth-writing model surfaces may occlude. Glass, see-through
 // decals, cut-out grilles (the override material would make them solid),
 // wireframes, lamp glow and self-rendering objects such as the showroom
@@ -383,18 +518,13 @@ export function skipsAmbientOcclusion(object) {
   if (!object.isMesh) return false;
   if (object.layers?.isEnabled?.(GLOW_LAYER)) return true;
   if (object.onBeforeRender !== defaultOnBeforeRender) return true;
-  if (/glass/i.test(object.userData?.nativeMaterial?.shaderName || "")) return true;
-  const materials = Array.isArray(object.material) ? object.material : [object.material];
-  return materials.every((entry) =>
-    !entry ||
-    entry.visible === false ||
-    entry.transparent ||
-    entry.colorWrite === false ||
-    entry.transmission > 0 ||
-    entry.depthWrite === false ||
-    entry.alphaTest > 0 ||
-    entry.wireframe,
-  );
+  if ((shaderFlags(object.userData?.nativeMaterial?.shaderName) & 1) !== 0) return true;
+  const material = object.material;
+  if (!Array.isArray(material)) return materialSkipsAo(material);
+  for (let i = 0; i < material.length; i += 1) {
+    if (!materialSkipsAo(material[i])) return false;
+  }
+  return true;
 }
 
 const _aoSize = new THREE.Vector3();
@@ -444,6 +574,21 @@ function createAoCompositeMaterial() {
   });
 }
 
+function flushAoResize(pipeline) {
+  if (!pipeline?.aoPass || !pipeline._pendingSize) return false;
+  if (pipeline._resizeTimer) {
+    clearTimeout(pipeline._resizeTimer);
+    pipeline._resizeTimer = 0;
+  }
+  const { width, height } = pipeline._pendingSize;
+  pipeline._pendingSize = null;
+  if (pipeline._appliedWidth === width && pipeline._appliedHeight === height) return false;
+  pipeline._appliedWidth = width;
+  pipeline._appliedHeight = height;
+  pipeline.aoPass.setSize(width, height);
+  return true;
+}
+
 export function createAoPipeline({ renderer, scene, camera, width, height }) {
   if (!renderer || !scene || !camera) return null;
   const aoPass = new ModelGTAOPass(scene, camera, 1, 1);
@@ -457,15 +602,45 @@ export function createAoPipeline({ renderer, scene, camera, width, height }) {
     radius: null,
     clipBox: new THREE.Box3(),
     hasClipBox: false,
+    _appliedWidth: 0,
+    _appliedHeight: 0,
+    _pendingSize: null,
+    _resizeTimer: 0,
   };
   resizeAoPipeline(pipeline, width, height, renderer.getPixelRatio?.() || 1);
   setAoBounds(pipeline, null);
   return pipeline;
 }
 
-export function resizeAoPipeline(pipeline, width, height, pixelRatio = 1) {
+export function resizeAoPipeline(pipeline, width, height, pixelRatio = 1, { defer = false, onSettled = null } = {}) {
   if (!pipeline?.aoPass || !width || !height) return;
-  pipeline.aoPass.setSize(Math.max(1, Math.round(width * pixelRatio)), Math.max(1, Math.round(height * pixelRatio)));
+  const pw = Math.max(1, Math.round(width * pixelRatio));
+  const ph = Math.max(1, Math.round(height * pixelRatio));
+  if (pipeline._appliedWidth === pw && pipeline._appliedHeight === ph) {
+    if (pipeline._resizeTimer) {
+      clearTimeout(pipeline._resizeTimer);
+      pipeline._resizeTimer = 0;
+    }
+    pipeline._pendingSize = null;
+    return;
+  }
+  pipeline._pendingSize = { width: pw, height: ph };
+  if (!pipeline.enabled) {
+    if (pipeline._resizeTimer) {
+      clearTimeout(pipeline._resizeTimer);
+      pipeline._resizeTimer = 0;
+    }
+    return;
+  }
+  if (defer) {
+    if (pipeline._resizeTimer) clearTimeout(pipeline._resizeTimer);
+    pipeline._resizeTimer = setTimeout(() => {
+      pipeline._resizeTimer = 0;
+      if (pipeline.enabled && flushAoResize(pipeline)) onSettled?.();
+    }, OFFSCREEN_RESIZE_SETTLE_MS);
+    return;
+  }
+  flushAoResize(pipeline);
 }
 
 // Fits radius and clip box to the model. Cheap enough to call every frame:
@@ -484,7 +659,7 @@ export function setAoBounds(pipeline, bounds, { radiusBounds = null } = {}) {
     pipeline.hasClipBox = true;
     pipeline.aoPass.setSceneClipBox(bounds);
   } else {
-    if (!pipeline.hasClipBox && pipeline.radius !== null) return;
+    if (!pipeline.hasClipBox && pipeline.radius === radius) return;
     pipeline.hasClipBox = false;
     pipeline.aoPass.setSceneClipBox(null);
   }
@@ -500,23 +675,29 @@ function renderAmbientOcclusion(renderer, ao, scene, camera) {
   // not draw them again.
   const shadowAutoUpdate = renderer.shadowMap.autoUpdate;
   const shadowNeedsUpdate = renderer.shadowMap.needsUpdate;
+  const autoClear = renderer.autoClear;
   renderer.shadowMap.autoUpdate = false;
   renderer.shadowMap.needsUpdate = false;
-  aoPass.render(renderer, null, null);
-  renderer.shadowMap.autoUpdate = shadowAutoUpdate;
-  renderer.shadowMap.needsUpdate = shadowNeedsUpdate;
-
-  renderer.setRenderTarget(null);
-  const autoClear = renderer.autoClear;
-  renderer.autoClear = false;
-  composite.material.uniforms.tAO.value = aoPass.pdRenderTarget.texture;
-  composite.material.uniforms.intensity.value = ao.intensity;
-  composite.render(renderer);
-  renderer.autoClear = autoClear;
+  try {
+    aoPass.render(renderer, null, null);
+    renderer.setRenderTarget(null);
+    renderer.autoClear = false;
+    composite.material.uniforms.tAO.value = aoPass.pdRenderTarget.texture;
+    composite.material.uniforms.intensity.value = ao.intensity;
+    composite.render(renderer);
+  } finally {
+    renderer.shadowMap.autoUpdate = shadowAutoUpdate;
+    renderer.shadowMap.needsUpdate = shadowNeedsUpdate;
+    renderer.autoClear = autoClear;
+  }
 }
 
 export function disposeAoPipeline(pipeline) {
   if (!pipeline) return;
+  if (pipeline._resizeTimer) {
+    clearTimeout(pipeline._resizeTimer);
+    pipeline._resizeTimer = 0;
+  }
   pipeline.aoPass.dispose();
   pipeline.composite.material.dispose();
   pipeline.composite.dispose();
@@ -556,6 +737,24 @@ function pushShadowLight(write, light) {
   write(camera.layers.mask);
 }
 
+function pushShadowMaterial(write, material) {
+  if (!material) {
+    write(-1);
+    return;
+  }
+  write(material.id);
+  write(material.visible ? 1 : 0);
+  write(material.side);
+  write(material.shadowSide ?? -1);
+  write(material.alphaTest);
+  write(material.alphaHash ? 1 : 0);
+  write(material.displacementScale ?? 0);
+  write(material.displacementBias ?? 0);
+  pushTexture(write, material.map);
+  pushTexture(write, material.alphaMap);
+  pushTexture(write, material.displacementMap);
+}
+
 function pushShadowCaster(write, object) {
   write(object.id);
   write(object.layers.mask);
@@ -571,28 +770,20 @@ function pushShadowCaster(write, object) {
     write(object.count);
     write(object.instanceMatrix.version);
   }
-  if (object.morphTargetInfluences) for (const influence of object.morphTargetInfluences) write(influence);
-  if (object.isSkinnedMesh) {
-    pushMatrix(write, object.bindMatrix);
-    for (const bone of object.skeleton.bones) pushMatrix(write, bone.matrixWorld);
+  const influences = object.morphTargetInfluences;
+  if (influences) {
+    for (let i = 0; i < influences.length; i += 1) write(influences[i]);
   }
-  const materials = Array.isArray(object.material) ? object.material : [object.material];
-  for (const material of materials) {
-    if (!material) {
-      write(-1);
-      continue;
-    }
-    write(material.id);
-    write(material.visible ? 1 : 0);
-    write(material.side);
-    write(material.shadowSide ?? -1);
-    write(material.alphaTest);
-    write(material.alphaHash ? 1 : 0);
-    write(material.displacementScale ?? 0);
-    write(material.displacementBias ?? 0);
-    pushTexture(write, material.map);
-    pushTexture(write, material.alphaMap);
-    pushTexture(write, material.displacementMap);
+  if (object.isSkinnedMesh && object.skeleton?.bones) {
+    pushMatrix(write, object.bindMatrix);
+    const bones = object.skeleton.bones;
+    for (let i = 0; i < bones.length; i += 1) pushMatrix(write, bones[i].matrixWorld);
+  }
+  const material = object.material;
+  if (Array.isArray(material)) {
+    for (let i = 0; i < material.length; i += 1) pushShadowMaterial(write, material[i]);
+  } else {
+    pushShadowMaterial(write, material);
   }
 }
 
@@ -634,11 +825,13 @@ export function createShadowMapCache(renderer) {
       length = 0;
       write(renderer.shadowMap.type);
       let layers = 0;
-      for (const light of lights) {
+      for (let i = 0; i < lights.length; i += 1) {
+        const light = lights[i];
         layers |= light.shadow.camera.layers.mask;
         pushShadowLight(write, light);
       }
-      for (const caster of casters) {
+      for (let i = 0; i < casters.length; i += 1) {
+        const caster = casters[i];
         if (caster.layers.mask & layers) pushShadowCaster(write, caster);
       }
       lights.length = 0;
